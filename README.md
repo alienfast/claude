@@ -2,7 +2,9 @@
 
 Assuming you have already used claude, there will already be a `~/.claude` directory.  The goal is to supplement your user directory with reusable agent definitions and commands, not to overwrite (or check in!) your personal user settings or data.  Always double check before committing information to ensure it is not local user data, and adjust the `.gitignore` accordingly.
 
-## Setup
+## Setup 
+
+### Add this repo to your user directory
 
 ```sh
 cd ~/.claude
@@ -12,6 +14,11 @@ git fetch
 git checkout -b main origin/main
 git pull
 ```
+### Configure MCP servers
+
+See [mcpServers.md](mcpServers.md)
+
+
 
 ## Background
 Claude Code is Anthropic's official CLI tool for software development that integrates Claude's AI capabilities directly into the terminal. It provides intelligent code assistance through a sophisticated agent architecture designed to maximize efficiency and minimize context pollution.

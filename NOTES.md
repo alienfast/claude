@@ -26,6 +26,8 @@
 ## Admin MCPs:
 - slack
 - notion
+- intercom
+- hubspot
 
 ## Command examples
 - *Sample claude repo with commands and workflows https://github.com/anthropics/claude-code
