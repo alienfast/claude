@@ -6,5 +6,17 @@
 - [Generate a PAT](https://github.com/settings/personal-access-tokens/new) with the specific permissions you want.
 
   ![GitHub Permissions](pics/gh-perms.png)
-- Add the token (to your lastpass first) then to `~/.claude.env` as `GITHUB_PAT`
-- Run `claude mcp add --transport http github https://api.githubcopilot.com/mcp -H "Authorization: Bearer $(grep GITHUB_PAT ~/.claude.env | cut -d '=' -f2)"`
+- Add the token (to your lastpass first) then to `~/.zshrc` as `GITHUB_PAT`
+- Add the code block to your  `~/.claude.json` (user level config):
+
+```json
+  "mcpServers": {
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${GITHUB_PAT}"
+      }
+    }
+  },
+```
