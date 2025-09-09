@@ -1,4 +1,4 @@
-# .claude reusable agents and commands
+# Claude Code reusable agents, commands, and MCP configurations
 
 Assuming you have already used claude, there will already be a `~/.claude` directory.  The goal is to supplement your user directory with reusable agent definitions and commands, not to overwrite (or check in!) your personal user settings or data.  Always double check before committing information to ensure it is not local user data, and adjust the `.gitignore` accordingly.
 
