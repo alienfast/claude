@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Claude Configuration Validator
-# Validates the JSON syntax and structure of claude configurations
+# Validates the markdown syntax and structure of claude configurations
 
 set -e
 
@@ -18,30 +18,59 @@ fi
 
 cd "$CLAUDE_DIR"
 
-# Validate JSON syntax for all JSON files
-echo "📋 Validating JSON syntax..."
-json_errors=0
+# Validate markdown syntax for configuration files
+echo "📋 Validating markdown files..."
+md_errors=0
 
-for file in $(find . -name "*.json" -type f); do
+# Check agents directory
+if [ -d "agents" ]; then
+    for file in agents/*.md; do
+        if [ -f "$file" ]; then
+            if [ -s "$file" ] && head -n 1 "$file" | grep -q "^#"; then
+                echo "✅ $file"
+            else
+                echo "❌ $file - Invalid markdown format or empty"
+                md_errors=$((md_errors + 1))
+            fi
+        fi
+    done
+fi
+
+# Check commands directory  
+if [ -d "commands" ]; then
+    for file in commands/*.md; do
+        if [ -f "$file" ]; then
+            if [ -s "$file" ] && head -n 1 "$file" | grep -q "^#"; then
+                echo "✅ $file"
+            else
+                echo "❌ $file - Invalid markdown format or empty"
+                md_errors=$((md_errors + 1))
+            fi
+        fi
+    done
+fi
+
+# Still validate JSON files in templates
+for file in $(find templates -name "*.json" -type f 2>/dev/null); do
     if python -m json.tool "$file" > /dev/null 2>&1; then
         echo "✅ $file"
     else
         echo "❌ $file - Invalid JSON syntax"
-        json_errors=$((json_errors + 1))
+        md_errors=$((md_errors + 1))
     fi
 done
 
-if [ $json_errors -eq 0 ]; then
-    echo "✅ All JSON files are valid"
+if [ $md_errors -eq 0 ]; then
+    echo "✅ All configuration files are valid"
 else
-    echo "❌ Found $json_errors JSON syntax errors"
+    echo "❌ Found $md_errors configuration errors"
 fi
 
 # Check directory structure
 echo ""
 echo "📁 Checking directory structure..."
 
-required_dirs=("subagents" "commands" "templates" "scripts" "docs")
+required_dirs=("agents" "commands" "templates" "scripts" "docs")
 missing_dirs=0
 
 for dir in "${required_dirs[@]}"; do
@@ -63,12 +92,12 @@ fi
 echo ""
 echo "📊 Available Configurations:"
 echo ""
-echo "Subagents:"
-ls -1 subagents/*.json 2>/dev/null | sed 's/.*\///; s/\.json$//' | sed 's/^/  - /' || echo "  (none found)"
+echo "Agents:"
+ls -1 agents/*.md 2>/dev/null | sed 's/.*\///; s/\.md$//' | sed 's/^/  - /' || echo "  (none found)"
 
 echo ""
 echo "Commands:"
-ls -1 commands/*.json 2>/dev/null | sed 's/.*\///; s/\.json$//' | sed 's/^/  - /' || echo "  (none found)"
+ls -1 commands/*.md 2>/dev/null | sed 's/.*\///; s/\.md$//' | sed 's/^/  - /' || echo "  (none found)"
 
 echo ""
 echo "Templates:"
@@ -76,7 +105,7 @@ find templates -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sed 's/.*\///; s/\/
 
 # Summary
 echo ""
-if [ $json_errors -eq 0 ] && [ $missing_dirs -eq 0 ]; then
+if [ $md_errors -eq 0 ] && [ $missing_dirs -eq 0 ]; then
     echo "🎉 Configuration validation passed!"
     echo "Your ~/.claude directory is ready to use."
 else

@@ -19,7 +19,7 @@ This template provides a basic Claude configuration for web development projects
 ## Configuration
 
 The template includes:
-- Default coding assistant subagent
+- Default coding assistant agent
 - Common web development commands
 - Context files for typical web project structure
 - Ignore patterns for build artifacts and dependencies
@@ -27,7 +27,7 @@ The template includes:
 ## Customization
 
 Edit `claude-config.json` to:
-- Change the default subagent
+- Change the default agent
 - Add project-specific commands
 - Modify context files and ignore patterns
 - Add custom tools or configurations

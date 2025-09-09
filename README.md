@@ -1,6 +1,6 @@
 # Claude Configuration Repository
 
-A reference repository for reusable Claude code subagent and command definitions. This repository is designed to be cloned into your home directory as `~/.claude` for easy access and reuse across all your projects.
+A reference repository for reusable Claude code agent and command definitions. This repository is designed to be cloned into your home directory as `~/.claude` for easy access and reuse across all your projects.
 
 ## Installation
 
@@ -28,7 +28,7 @@ After installation, validate your configuration:
 
 ```
 ~/.claude/
-├── subagents/          # Reusable Claude subagent configurations
+├── agents/              # Reusable Claude agent configurations
 ├── commands/           # Command definitions and templates
 ├── templates/          # Project templates and examples
 ├── scripts/            # Utility scripts for setup and management
@@ -37,13 +37,13 @@ After installation, validate your configuration:
 
 ## Usage
 
-### Using Subagents
+### Using Agents
 
-Subagent configurations in `~/.claude/subagents/` can be referenced in your projects:
+Agent configurations in `~/.claude/agents/` can be referenced in your projects:
 
 ```bash
-# Reference a subagent from your project
-claude --subagent ~/.claude/subagents/coding-assistant.json
+# Reference an agent from your project
+claude --agent ~/.claude/agents/coding-assistant.md
 ```
 
 ### Using Commands
@@ -52,7 +52,7 @@ Command definitions in `~/.claude/commands/` provide reusable command templates:
 
 ```bash
 # Use a predefined command
-claude --command ~/.claude/commands/code-review.json
+claude --command ~/.claude/commands/code-review.md
 ```
 
 ### Using Templates
@@ -66,7 +66,7 @@ cp -r ~/.claude/templates/web-project ./my-new-project
 
 ## Contributing
 
-Feel free to contribute new subagents, commands, or templates that would be useful across projects.
+Feel free to contribute new agents, commands, or templates that would be useful across projects.
 
 ## License
 

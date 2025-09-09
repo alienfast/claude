@@ -49,7 +49,7 @@ fi
 echo "✅ Setup completed successfully!"
 echo ""
 echo "📖 Next steps:"
-echo "1. Explore available subagents: ls ~/.claude/subagents/"
+echo "1. Explore available agents: ls ~/.claude/agents/"
 echo "2. Check available commands: ls ~/.claude/commands/"
 echo "3. Use project templates: ls ~/.claude/templates/"
 echo "4. Read the documentation: cat ~/.claude/README.md"

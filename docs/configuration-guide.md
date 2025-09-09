@@ -2,23 +2,23 @@
 
 ## Overview
 
-This repository contains reusable Claude configurations, subagents, commands, and templates that can be shared across multiple projects. By cloning this repository to `~/.claude`, you can access these configurations from any project on your system.
+This repository contains reusable Claude configurations, agents, commands, and templates that can be shared across multiple projects. By cloning this repository to `~/.claude`, you can access these configurations from any project on your system.
 
 ## Directory Structure
 
-### `/subagents/`
-Contains pre-configured Claude subagents for specific tasks:
+### `/agents/`
+Contains pre-configured Claude agents for specific tasks:
 
-- **coding-assistant.json**: General-purpose coding assistant
-- **documentation-writer.json**: Specialized for technical documentation
-- **code-reviewer.json**: Focused on code review and quality analysis
+- **coding-assistant.md**: General-purpose coding assistant
+- **documentation-writer.md**: Specialized for technical documentation
+- **code-reviewer.md**: Focused on code review and quality analysis
 
 ### `/commands/`
 Contains reusable command definitions:
 
-- **code-review.json**: Comprehensive code review command
-- **generate-readme.json**: Automatic README generation
-- **refactor-code.json**: Code refactoring assistant
+- **code-review.md**: Comprehensive code review command
+- **generate-readme.md**: Automatic README generation
+- **refactor-code.md**: Code refactoring assistant
 
 ### `/templates/`
 Contains project templates with pre-configured Claude settings:
@@ -34,60 +34,84 @@ Utility scripts for setup and management:
 
 ## Configuration Format
 
-### Subagent Configuration
+### Agent Configuration
 
-```json
-{
-  "name": "subagent-name",
-  "description": "Description of the subagent's purpose",
-  "version": "1.0.0",
-  "capabilities": ["list", "of", "capabilities"],
-  "prompt_template": "Base prompt for the subagent",
-  "model_preferences": {
-    "primary": "claude-3-5-sonnet-20241022",
-    "fallback": "claude-3-haiku-20240307"
-  },
-  "context_settings": {
-    "max_tokens": 4096,
-    "temperature": 0.1,
-    "preserve_conversation": true
-  },
-  "tools": ["list", "of", "tools"]
-}
+Agent configurations are written in markdown format for clarity and readability:
+
+```markdown
+# Agent Name
+
+Description of the agent's purpose and capabilities.
+
+## Configuration
+
+**Version:** 1.0.0
+
+## Capabilities
+
+- capability-1
+- capability-2
+- capability-3
+
+## Prompt Template
+
+Base prompt template for the agent with instructions and context.
+
+## Model Preferences
+
+- **Primary:** claude-3-5-sonnet-20241022
+- **Fallback:** claude-3-haiku-20240307
+
+## Context Settings
+
+- **Max Tokens:** 4096
+- **Temperature:** 0.1
+- **Preserve Conversation:** true
+
+## Tools
+
+- tool-1
+- tool-2
+- tool-3
 ```
 
 ### Command Configuration
 
-```json
-{
-  "name": "command-name",
-  "description": "Description of what the command does",
-  "version": "1.0.0",
-  "type": "analysis|generation|transformation",
-  "parameters": {
-    "param_name": {
-      "type": "string|path|boolean",
-      "description": "Parameter description",
-      "required": true,
-      "default": "default_value",
-      "options": ["list", "of", "valid", "options"]
-    }
-  },
-  "execution": {
-    "subagent": "subagent-to-use",
-    "prompt_template": "Template with {parameter} placeholders",
-    "tools_required": ["required", "tools"]
-  },
-  "output": {
-    "type": "file|summary",
-    "filename": "output-filename-template"
-  }
-}
+Command configurations are also written in markdown format:
+
+```markdown
+# Command Name
+
+Description of what the command does.
+
+## Configuration
+
+**Version:** 1.0.0  
+**Type:** analysis|generation|transformation
+
+## Parameters
+
+### parameter_name (required/optional)
+- **Type:** string|path|boolean
+- **Description:** Parameter description
+- **Default:** default_value
+- **Options:** option1, option2, option3
+
+## Execution
+
+- **Agent:** agent-to-use
+- **Prompt Template:** Template with {parameter} placeholders
+- **Tools Required:** tool1, tool2
+
+## Output
+
+- **Type:** file|summary
+- **Filename:** output-filename-template
 ```
 
 ## Best Practices
 
-1. **Naming**: Use descriptive names for subagents and commands
+1. **Naming**: Use descriptive names for agents and commands
 2. **Versioning**: Always include version numbers for compatibility
 3. **Documentation**: Provide clear descriptions and usage examples
 4. **Testing**: Test configurations before adding them to the repository
@@ -105,14 +129,14 @@ When adding new configurations:
 
 ## Usage Examples
 
-### Using a Subagent
+### Using an Agent
 ```bash
-claude --subagent ~/.claude/subagents/coding-assistant.json "Help me debug this function"
+claude --agent ~/.claude/agents/coding-assistant.md "Help me debug this function"
 ```
 
 ### Using a Command
 ```bash
-claude --command ~/.claude/commands/code-review.json --target ./src/
+claude --command ~/.claude/commands/code-review.md --target ./src/
 ```
 
 ### Using a Template

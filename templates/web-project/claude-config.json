@@ -1,7 +1,7 @@
 {
   "claude_config": {
     "project_type": "web",
-    "default_subagent": "coding-assistant",
+    "default_agent": "coding-assistant",
     "common_commands": [
       "code-review",
       "generate-readme",

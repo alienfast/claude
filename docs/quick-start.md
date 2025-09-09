@@ -16,8 +16,8 @@
 
 ### 1. Explore Available Configurations
 ```bash
-# List available subagents
-ls ~/.claude/subagents/
+# List available agents
+ls ~/.claude/agents/
 
 # List available commands  
 ls ~/.claude/commands/
@@ -26,19 +26,19 @@ ls ~/.claude/commands/
 ls ~/.claude/templates/
 ```
 
-### 2. Use a Subagent
+### 2. Use an Agent
 ```bash
 # Start with the coding assistant
-claude --subagent ~/.claude/subagents/coding-assistant.json "Help me write a Python function"
+claude --agent ~/.claude/agents/coding-assistant.md "Help me write a Python function"
 ```
 
 ### 3. Run a Command
 ```bash
 # Generate a README for your project
-claude --command ~/.claude/commands/generate-readme.json --project_path ./
+claude --command ~/.claude/commands/generate-readme.md --project_path ./
 
 # Review your code
-claude --command ~/.claude/commands/code-review.json --target ./src/ --focus security
+claude --command ~/.claude/commands/code-review.md --target ./src/ --focus security
 ```
 
 ### 4. Set Up a New Project
@@ -56,31 +56,31 @@ claude --config ./claude-config.json "Help me set up this Python project"
 ### Code Review Workflow
 ```bash
 # Quick review
-claude --command ~/.claude/commands/code-review.json --target ./src/
+claude --command ~/.claude/commands/code-review.md --target ./src/
 
 # Security-focused review
-claude --command ~/.claude/commands/code-review.json --target ./src/ --focus security
+claude --command ~/.claude/commands/code-review.md --target ./src/ --focus security
 
 # Performance review
-claude --command ~/.claude/commands/code-review.json --target ./src/ --focus performance
+claude --command ~/.claude/commands/code-review.md --target ./src/ --focus performance
 ```
 
 ### Documentation Workflow
 ```bash
 # Generate README
-claude --command ~/.claude/commands/generate-readme.json --project_path ./
+claude --command ~/.claude/commands/generate-readme.md --project_path ./
 
 # Update documentation
-claude --subagent ~/.claude/subagents/documentation-writer.json "Update the API docs"
+claude --agent ~/.claude/agents/documentation-writer.md "Update the API docs"
 ```
 
 ### Development Workflow
 ```bash
 # Code assistance
-claude --subagent ~/.claude/subagents/coding-assistant.json "Help me implement this feature"
+claude --agent ~/.claude/agents/coding-assistant.md "Help me implement this feature"
 
 # Code refactoring
-claude --command ~/.claude/commands/refactor-code.json --target ./src/ --refactor_type improve-naming
+claude --command ~/.claude/commands/refactor-code.md --target ./src/ --refactor_type improve-naming
 ```
 
 ## Tips
