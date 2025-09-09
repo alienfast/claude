@@ -1,0 +1,15 @@
+# OS and IDE files
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+*.log
+
+# User-specific customizations
+local/
+custom/

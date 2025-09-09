@@ -10,6 +10,20 @@ Clone this repository to your home directory:
 git clone https://github.com/alienfast/claude.git ~/.claude
 ```
 
+Or use the automated installer:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/alienfast/claude/main/scripts/install.sh | bash
+```
+
+### Validation
+
+After installation, validate your configuration:
+
+```bash
+~/.claude/scripts/validate.sh
+```
+
 ## Directory Structure
 
 ```
