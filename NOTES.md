@@ -14,8 +14,9 @@
 - *mui https://mui.com/material-ui/getting-started/mcp/
 - *claude-context - make the entire codebase available https://github.com/zilliztech/claude-context or serena https://github.com/oraios/serena#claude-code
 - *pulumi
+- *gcloud https://github.com/googleapis/gcloud-mcp
 - *playwright-mcp https://github.com/microsoft/playwright-mcp or firecrawl
-- github - interactions with github instead of gh
+- x github - interactions with github instead of gh
 - cloudflare
 - sentry
 - mcp-toolbox (db access)

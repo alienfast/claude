@@ -1,6 +1,10 @@
 # Setup for MCP servers
 
-## Github
+## User scoped
+
+Generally applicable MCP servers for any kind of coding project.
+
+### Github
 ([doc](https://github.com/github/github-mcp-server/blob/main/docs/installation-guides/install-claude.md))
 
 - [Generate a PAT](https://github.com/settings/personal-access-tokens/new) with the specific permissions you want.
@@ -20,3 +24,22 @@
     }
   },
 ```
+### Context7
+
+Create an api key at context7.com and save it in your lastpass.  Then add the following to your `~/.claude.json`
+
+```json
+  "mcpServers": {
+    "context7": {
+      "type": "http",
+      "url": "https://mcp.context7.com/mcp",
+      "headers": {
+        "CONTEXT7_API_KEY": "${CONTEXT7_API_KEY}"
+      }
+    }
+  },
+```
+
+## Project scoped
+
+Project scoped MCP servers can be shared by a `.mcp.json` file in the root of the project.
