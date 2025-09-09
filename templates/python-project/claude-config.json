@@ -1,0 +1,41 @@
+{
+  "claude_config": {
+    "project_type": "python",
+    "default_subagent": "coding-assistant",
+    "common_commands": [
+      "code-review",
+      "generate-readme",
+      "refactor-code"
+    ],
+    "context_files": [
+      "*.py",
+      "requirements.txt",
+      "setup.py",
+      "pyproject.toml",
+      "README.md",
+      "tests/**/*.py"
+    ],
+    "ignore_patterns": [
+      "__pycache__/**",
+      "*.pyc",
+      ".pytest_cache/**",
+      "venv/**",
+      ".venv/**",
+      "dist/**",
+      "build/**",
+      ".git/**"
+    ]
+  },
+  "project_structure": {
+    "src/": "Source code directory",
+    "tests/": "Test files directory",
+    "docs/": "Documentation directory",
+    "scripts/": "Utility scripts directory"
+  },
+  "recommended_tools": [
+    "file_editor",
+    "bash_execution",
+    "code_analysis",
+    "python_execution"
+  ]
+}

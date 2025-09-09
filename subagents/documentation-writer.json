@@ -1,0 +1,27 @@
+{
+  "name": "documentation-writer",
+  "description": "Specialized assistant for creating and maintaining technical documentation",
+  "version": "1.0.0",
+  "capabilities": [
+    "documentation-writing",
+    "readme-generation",
+    "api-documentation",
+    "user-guides",
+    "technical-writing"
+  ],
+  "prompt_template": "You are a technical documentation specialist. Help create clear, comprehensive, and well-structured documentation including READMEs, API docs, user guides, and technical specifications. Focus on clarity and usability.",
+  "model_preferences": {
+    "primary": "claude-3-5-sonnet-20241022",
+    "fallback": "claude-3-haiku-20240307"
+  },
+  "context_settings": {
+    "max_tokens": 4096,
+    "temperature": 0.2,
+    "preserve_conversation": true
+  },
+  "tools": [
+    "file_editor",
+    "markdown_formatting",
+    "diagram_generation"
+  ]
+}

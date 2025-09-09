@@ -1,0 +1,27 @@
+{
+  "name": "coding-assistant",
+  "description": "A general-purpose coding assistant for software development tasks",
+  "version": "1.0.0",
+  "capabilities": [
+    "code-generation",
+    "code-review",
+    "debugging",
+    "documentation",
+    "testing"
+  ],
+  "prompt_template": "You are an expert software developer assistant. Help with coding tasks including writing, reviewing, debugging, and documenting code. Follow best practices and provide clear explanations.",
+  "model_preferences": {
+    "primary": "claude-3-5-sonnet-20241022",
+    "fallback": "claude-3-haiku-20240307"
+  },
+  "context_settings": {
+    "max_tokens": 4096,
+    "temperature": 0.1,
+    "preserve_conversation": true
+  },
+  "tools": [
+    "file_editor",
+    "bash_execution",
+    "code_analysis"
+  ]
+}

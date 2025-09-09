@@ -1,0 +1,35 @@
+{
+  "name": "code-review",
+  "description": "Perform a comprehensive code review of files or directories",
+  "version": "1.0.0",
+  "type": "analysis",
+  "parameters": {
+    "target": {
+      "type": "path",
+      "description": "File or directory to review",
+      "required": true
+    },
+    "focus": {
+      "type": "string",
+      "description": "Specific area to focus on (security, performance, maintainability, etc.)",
+      "required": false,
+      "default": "general"
+    },
+    "output_format": {
+      "type": "string",
+      "description": "Output format for the review",
+      "required": false,
+      "default": "markdown",
+      "options": ["markdown", "json", "plain"]
+    }
+  },
+  "execution": {
+    "subagent": "code-reviewer",
+    "prompt_template": "Please review the code at {target} with a focus on {focus}. Provide detailed feedback on code quality, potential issues, and improvement suggestions. Format the output as {output_format}.",
+    "tools_required": ["file_reader", "code_analysis"]
+  },
+  "output": {
+    "type": "file",
+    "filename": "code-review-{timestamp}.{output_format}"
+  }
+}

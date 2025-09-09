@@ -1,0 +1,37 @@
+{
+  "claude_config": {
+    "project_type": "web",
+    "default_subagent": "coding-assistant",
+    "common_commands": [
+      "code-review",
+      "generate-readme",
+      "refactor-code"
+    ],
+    "context_files": [
+      "package.json",
+      "src/**/*.js",
+      "src/**/*.ts",
+      "src/**/*.jsx",
+      "src/**/*.tsx",
+      "README.md"
+    ],
+    "ignore_patterns": [
+      "node_modules/**",
+      "dist/**",
+      "build/**",
+      ".git/**"
+    ]
+  },
+  "project_structure": {
+    "src/": "Source code directory",
+    "public/": "Public assets directory",
+    "tests/": "Test files directory",
+    "docs/": "Documentation directory"
+  },
+  "recommended_tools": [
+    "file_editor",
+    "bash_execution",
+    "browser_automation",
+    "code_analysis"
+  ]
+}
