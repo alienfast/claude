@@ -28,7 +28,13 @@ Claude Code is Anthropic's official CLI tool for software development that integ
 - Leverage MCP servers for large codebase navigation and real-time information retrieval
 - Reserve iterative workflows (edit, test, debug cycles) for subagent execution to prevent main context bloat
 - Create reusable agent configurations for common development patterns
+- `CLAUDE.md` 
+  - Can be in root and child directories (in addition to the user dir)
+  - Are loaded as a prompt with every request
+  - More specific yields better results
+  - Use the [prompt improver](https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/prompt-improver) periodically to refine these files
 
 References: 
   - https://htdocs.dev/posts/revolutionizing-ai-development-how-claude-codes-sub-agents-transform-task-management/
   - https://htdocs.dev/posts/claude-code-best-practices-and-pro-tips/
+  - https://github.com/hesreallyhim/awesome-claude-code
