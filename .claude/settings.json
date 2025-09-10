@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv:*)",
+      "Bash(yarn:*)",
+      "Bash(docker:*)",
+      "Bash(git:*)",
+      "Bash(node:*)",
+      "Bash(mv:*)",
+      "Bash(cp:*)",
+      "Bash(rm:*)",
+      "Bash(mkdir:*)",
+      "Bash(chmod:*)",
+      "Bash(touch:*)",
+      "Bash(ls:*)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(rg:*)",
+      "Bash(tree:*)",
+      "Bash(make:*)",
+      "Bash(curl:*)",
+      "Bash(timeout:*)",
+      "Bash(pkill:*)",
+      "Bash(kill:*)",
+      "Bash(open:*)",
+      "Bash(env)",
+      "Bash(unset:*)",
+      "Bash(export:*)",
+      "WebFetch(domain:localhost)",
+      "mcp__github__get_file_contents",
+      "mcp__github__search_repositories",
+      "mcp__github__list_issues",
+      "mcp__github__create_issue",
+      "mcp__github__update_issue"
+    ],
+    "deny": []
+  }
+}
