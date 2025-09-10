@@ -1,60 +1,62 @@
 # Setup for MCP servers
 
+Note: at any time, you can check the status of your MCP servers with `claude mcp list`.
+
 ## User scoped
 
 Generally applicable MCP servers for any kind of coding project.
 
-### Github
+### Github ([doc](https://github.com/github/github-mcp-server/blob/main/docs/installation-guides/install-claude.md))
 
 View, edit, create github content (this is used in place of command line `gh`)
 
-([doc](https://github.com/github/github-mcp-server/blob/main/docs/installation-guides/install-claude.md))
+- Generate a PAT with the specific permissions you want.
 
-- [Generate a PAT](https://github.com/settings/personal-access-tokens/new) with the specific permissions you want.
+  <details>
+  <summary>Show permissions</summary>
 
   ![GitHub Permissions](pics/gh-perms.png)
-- Add the token (to your lastpass first) then to `~/.zshrc` as `GITHUB_PAT` and `source ~/.zshrc`
-- Add the code block to your  `~/.claude.json` (user level config):
 
-```json
-  "mcpServers": {
-    "github": {
-      "type": "http",
-      "url": "https://api.githubcopilot.com/mcp",
-      "headers": {
-        "Authorization": "Bearer ${GITHUB_PAT}"
-      }
-    }
-  },
-```
-### Context7
+  </details>
+
+- Create the token and add to your lastpass. Add to your `~/.zshrc` as `GITHUB_PAT`
+- `source ~/.zshrc`
+- Run
+  ```sh
+  claude mcp add \
+    -s user \
+    --transport http \
+    github \
+    https://api.githubcopilot.com/mcp \
+    --header "Authorization: Bearer \${GITHUB_PAT}"
+  ```
+
+### Context7 ([docs](https://github.com/upstash/context7))
 
 MCP for most up to date libraries (not delayed based on LLM training date) as well as documentation.  Reduces hallucinations.
 
-Create an api key at context7.com and save it in your lastpass.  Then add the following to your `~/.claude.json`
+- Create an api key at context7.com and save it in your lastpass.  Add to your `~/.zshrc` as `CONTEXT7_API_KEY`
+- `source ~/.zshrc`
+- Run
+  ```sh
+  claude mcp add \
+    -s user \
+    --transport http \
+    context7 \
+    https://mcp.context7.com/mcp \
+    --header "CONTEXT7_API_KEY: \${CONTEXT7_API_KEY}"
+  ```
 
-```json
-  "mcpServers": {
-    "context7": {
-      "type": "http",
-      "url": "https://mcp.context7.com/mcp",
-      "headers": {
-        "CONTEXT7_API_KEY": "${CONTEXT7_API_KEY}"
-      }
-    }
-  },
-```
-
-### Playwright
+### Playwright ([docs](https://github.com/microsoft/playwright-mcp))
 
 Navigate web pages, take screenshots, generally control a browser.
 
 Easiest to install with `claude mcp add playwright -s user -- npx @playwright/mcp@latest`
 
-### Claude Context 
-Index the entire codebase ([docs](https://github.com/zilliztech/claude-context)).
+### Claude Context ([docs](https://github.com/zilliztech/claude-context))
+Index the entire codebase and reduce token usage.
 
-You'll need to manually re-index periodically when you want your search results to include recent changes. The system doesn't automatically detect file changes - it uses incremental indexing (via Merkle trees) to make re-indexing efficient, but you still need to trigger it manually when needed.
+NOTE: You'll need to manually re-index periodically when you want your search results to include recent changes. The system doesn't automatically detect file changes - it uses incremental indexing (via Merkle trees) to make re-indexing efficient, but you still need to trigger it manually when needed.
 
 For active development, consider re-indexing after significant changes or at regular intervals (daily/weekly) depending on how often you modify your codebase.
 

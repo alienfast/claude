@@ -17,7 +17,7 @@
 - x *claude-context - make the entire codebase available https://github.com/zilliztech/claude-context
 - x *mui https://mui.com/material-ui/getting-started/mcp/
 - x *gcloud https://github.com/googleapis/gcloud-mcp
-- *pulumi https://www.pulumi.com/docs/iac/using-pulumi/mcp-server/
+- x *pulumi https://www.pulumi.com/docs/iac/using-pulumi/mcp-server/
 
 Later:
 - sentry https://docs.sentry.io/product/sentry-mcp/
