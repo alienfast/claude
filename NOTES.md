@@ -11,13 +11,13 @@
 - -Docker MCP Toolkit? many missing, sentry archived, not enough
 
 ## Dev MCPs:
+- x *github - interactions with github instead of gh
 - x *context7
+- x *playwright-mcp https://github.com/microsoft/playwright-mcp or firecrawl
+- *claude-context - make the entire codebase available https://github.com/zilliztech/claude-context
 - *mui https://mui.com/material-ui/getting-started/mcp/
-- *claude-context - make the entire codebase available https://github.com/zilliztech/claude-context or serena https://github.com/oraios/serena#claude-code
 - *pulumi
 - *gcloud https://github.com/googleapis/gcloud-mcp
-- *playwright-mcp https://github.com/microsoft/playwright-mcp or firecrawl
-- x *github - interactions with github instead of gh
 - cloudflare
 - sentry
 - mcp-toolbox (db access)
