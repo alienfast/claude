@@ -20,6 +20,7 @@
 - x *pulumi https://www.pulumi.com/docs/iac/using-pulumi/mcp-server/
 
 Later:
+- kubernetes
 - sentry https://docs.sentry.io/product/sentry-mcp/
 - mcp-toolbox (db access)
 - memory-mcp?
