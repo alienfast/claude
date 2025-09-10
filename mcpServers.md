@@ -51,8 +51,12 @@ Navigate web pages, take screenshots, generally control a browser.
 
 Easiest to install with `claude mcp add playwright -s user -- npx @playwright/mcp@latest`
 
-### claude-context 
-Make the entire codebase available ([docs](https://github.com/zilliztech/claude-context))
+### Claude Context 
+Index the entire codebase ([docs](https://github.com/zilliztech/claude-context)).
+
+You'll need to manually re-index periodically when you want your search results to include recent changes. The system doesn't automatically detect file changes - it uses incremental indexing (via Merkle trees) to make re-indexing efficient, but you still need to trigger it manually when needed.
+
+For active development, consider re-indexing after significant changes or at regular intervals (daily/weekly) depending on how often you modify your codebase.
 
 - See the docs and sign up for Zilliz Cloud to get an API key for a vector database.  Add to your `~/.zshrc` as `MILVUS_TOKEN`
 - Create an [OpenAI API key](https://platform.openai.com/api-keys) dedicated for `claude-context`.  Add to your `~/.zshrc` as `OPENAI_API_KEY`
@@ -64,11 +68,23 @@ Make the entire codebase available ([docs](https://github.com/zilliztech/claude-
     -e MILVUS_TOKEN=\${MILVUS_TOKEN} \
     -- npx @zilliz/claude-context-mcp@latest
   ```
-- In your codebase, run prompt `Index this codebase`
+- In your codebase, run prompt `Index this codebase` to kick off indexing for later use. 
 - You can check on the status by runing `Check the indexing status`
 - Example prompt `Find functions that handle user authentication`
 
+### Material UI ([docs](https://mui.com/material-ui/getting-started/mcp/))
 
+Note: verified that that this is deeper/more useful information that adds to the use of `context7` and can be used in addition.
+
+`claude mcp add mui -s user -- npx @mui/mcp@latest`
+
+### Gcloud ([docs](https://github.com/googleapis/gcloud-mcp))
+
+`claude mcp add gcloud -s user -- npx @google-cloud/gcloud-mcp@latest`
+
+### Pulumi ([docs](https://www.pulumi.com/docs/iac/using-pulumi/mcp-server/))
+
+`claude mcp add pulumi -s user -- npx @pulumi/mcp-server@latest`
 
 ## Project scoped
 

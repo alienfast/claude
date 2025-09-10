@@ -14,16 +14,18 @@
 - x *github - interactions with github instead of gh
 - x *context7
 - x *playwright-mcp https://github.com/microsoft/playwright-mcp or firecrawl
-- *claude-context - make the entire codebase available https://github.com/zilliztech/claude-context
-- *mui https://mui.com/material-ui/getting-started/mcp/
-- *pulumi
-- *gcloud https://github.com/googleapis/gcloud-mcp
-- cloudflare
-- sentry
+- x *claude-context - make the entire codebase available https://github.com/zilliztech/claude-context
+- x *mui https://mui.com/material-ui/getting-started/mcp/
+- x *gcloud https://github.com/googleapis/gcloud-mcp
+- *pulumi https://www.pulumi.com/docs/iac/using-pulumi/mcp-server/
+
+Later:
+- sentry https://docs.sentry.io/product/sentry-mcp/
 - mcp-toolbox (db access)
 - memory-mcp?
 - sequential thinking vs code reasoning https://github.com/mettamatt/code-reasoning - break big problems into small https://github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking
 - figma
+- -cloudflare https://github.com/cloudflare/mcp-server-cloudflare multiple available based on the need.  Doesn't seem like we need any at this time.
 
 ## Admin MCPs:
 - slack
