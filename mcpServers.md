@@ -10,16 +10,16 @@ Generally applicable MCP servers for any kind of coding project.
 
 View, edit, create github content (this is used in place of command line `gh`)
 
-- Generate a PAT with the specific permissions you want.
+- Generate a (classic) PAT with the specific permissions you want.  NOTE that a fine grained one, created properly failed to work on personal repos, even though all permissions and org policies were verified (see pics dir)
 
   <details>
   <summary>Show permissions</summary>
 
-  ![GitHub Permissions](pics/gh-perms.png)
+  ![GitHub Permissions](pics/gh-classic.png)
 
   </details>
 
-- Create the token and add to your lastpass. Add to your `~/.zshrc` as `GITHUB_PAT`
+- Create the token and add to your lastpass. Add to your `~/.zshrc` as `GITHUB_MCP`
 - `source ~/.zshrc`
 - Run
   ```sh
@@ -28,7 +28,7 @@ View, edit, create github content (this is used in place of command line `gh`)
     --transport http \
     github \
     https://api.githubcopilot.com/mcp \
-    --header "Authorization: Bearer \${GITHUB_PAT}"
+    --header "Authorization: Bearer \${GITHUB_MCP}"
   ```
 
 ### Context7 ([docs](https://github.com/upstash/context7))
