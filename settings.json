@@ -28,7 +28,11 @@
       "Bash(export:*)",
       "WebFetch(domain:localhost)",
       "mcp__github",
-      "mcp__playwright"
+      "mcp__playwright",
+      "mcp__mui",
+      "mcp__context7",
+      "mcp__claudecontext"
+
     ],
     "deny": []
   }
