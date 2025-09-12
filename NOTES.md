@@ -39,12 +39,14 @@ Later:
 - *Commands examples https://claudecodecommands.directory/ (some but may not be great great.  pr fix etc might be nice)
 
 ## Agent examples
-- *https://github.com/vijaythecoder/awesome-claude-agents pretty good, may be a good start. Talks about symlinking to agents (could do this with our own git repo or git submodule too to have dir of ref agents)
-- *https://github.com/0xfurai/claude-code-subagents - reasonable and may be a good basis to start including react, pulumi, gh actions, cci, ruby, k8
-- *https://github.com/lst97/claude-code-sub-agents pretty extensive/detailed listing
+- https://github.com/solatis/claude-config/blob/main/commands/plan-execution.md good cc basics, includes great doc on prompt-engineering
+- https://docs.agentinterviews.com/blog/parallel-ai-coding-with-gitworktrees/ parallel worktrees
+
+Perhaps not?
+- https://github.com/vijaythecoder/awesome-claude-agents pretty good, may be a good start. Talks about symlinking to agents (could do this with our own git repo or git submodule too to have dir of ref agents)
+- https://github.com/0xfurai/claude-code-subagents - reasonable and may be a good basis to start including react, pulumi, gh actions, cci, ruby, k8
+- https://github.com/lst97/claude-code-sub-agents pretty extensive/detailed listing
 - https://github.com/wshobson/agents
-- -Very verbose, need converted to claude agent format and DRY'ed/simplified https://github.com/VoltAgent/awesome-claude-code-subagents including devops, k8, pentester, sec (inc SOC), git wf manager, tooling,
-    fintech, seo, agent-organizer, multi-agent-coordinator, context-manager, error-coordinator
 
 ## Prompt examples
 Not sure if these are workable or not, but ran into them

@@ -2,7 +2,7 @@
   "permissions": {
     "allow": [
       "Bash(uv:*)",
-      "Bash(yarn:*)",
+      "Bash(yarn:*)",   
       "Bash(docker:*)",
       "Bash(git:*)",
       "Bash(node:*)",
@@ -27,11 +27,8 @@
       "Bash(unset:*)",
       "Bash(export:*)",
       "WebFetch(domain:localhost)",
-      "mcp__github__get_file_contents",
-      "mcp__github__search_repositories",
-      "mcp__github__list_issues",
-      "mcp__github__create_issue",
-      "mcp__github__update_issue"
+      "mcp__github",
+      "mcp__playwright"
     ],
     "deny": []
   }
