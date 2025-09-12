@@ -1,0 +1,8 @@
+{
+  "name": ".claude",
+  "packageManager": "yarn@4.9.4",
+  "devDependencies": {
+    "@alienfast/eslint-config": "^6.0.5",
+    "eslint": "^9.35.0"
+  }
+}
