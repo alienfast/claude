@@ -14,5 +14,5 @@ export default defineConfig([
       'markdown/no-missing-label-refs': 'off', // too many false positives on .claude files, move up to preset.
     },
   },
-  { ignores: ['.storybook'] },
+  { ignores: ['ide', 'pics', 'projects', 'shell-snapshots', 'statsig', 'todos', 'tmp'] },
 ])

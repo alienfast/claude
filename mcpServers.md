@@ -10,7 +10,7 @@ Generally applicable MCP servers for any kind of coding project.
 
 View, edit, create github content (this is used in place of command line `gh`)
 
-- Generate a (classic) PAT with the specific permissions you want.  NOTE that a fine grained one, created properly failed to work on personal repos, even though all permissions and org policies were verified (see pics dir)
+- Generate a (classic) PAT with the specific permissions you want. NOTE that a fine grained one, created properly failed to work on personal repos, even though all permissions and org policies were verified (see pics dir)
 
   <details>
   <summary>Show permissions</summary>
@@ -33,9 +33,9 @@ View, edit, create github content (this is used in place of command line `gh`)
 
 ### Context7 ([docs](https://github.com/upstash/context7))
 
-MCP for most up to date libraries (not delayed based on LLM training date) as well as documentation.  Reduces hallucinations.
+MCP for most up to date libraries (not delayed based on LLM training date) as well as documentation. Reduces hallucinations.
 
-- Create an api key at context7.com and save it in your lastpass.  Add to your `~/.zshrc` as `CONTEXT7_API_KEY`
+- Create an api key at context7.com and save it in your lastpass. Add to your `~/.zshrc` as `CONTEXT7_API_KEY`
 - `source ~/.zshrc`
 - Run
   ```sh
@@ -54,14 +54,15 @@ Navigate web pages, take screenshots, generally control a browser.
 Easiest to install with `claude mcp add playwright -s user -- npx @playwright/mcp@latest`
 
 ### Claude Context ([docs](https://github.com/zilliztech/claude-context))
+
 Index the entire codebase and reduce token usage.
 
 NOTE: You'll need to manually re-index periodically when you want your search results to include recent changes. The system doesn't automatically detect file changes - it uses incremental indexing (via Merkle trees) to make re-indexing efficient, but you still need to trigger it manually when needed.
 
 For active development, consider re-indexing after significant changes or at regular intervals (daily/weekly) depending on how often you modify your codebase.
 
-- See the docs and sign up for Zilliz Cloud to get an API key for a vector database.  Add to your `~/.zshrc` as `MILVUS_TOKEN`
-- Create an [OpenAI API key](https://platform.openai.com/api-keys) dedicated for `claude-context`.  Add to your `~/.zshrc` as `OPENAI_API_KEY`
+- See the docs and sign up for Zilliz Cloud to get an API key for a vector database. Add to your `~/.zshrc` as `MILVUS_TOKEN`
+- Create an [OpenAI API key](https://platform.openai.com/api-keys) dedicated for `claude-context`. Add to your `~/.zshrc` as `OPENAI_API_KEY`
 - `source ~/.zshrc`
 - Run
   ```sh
@@ -70,7 +71,7 @@ For active development, consider re-indexing after significant changes or at reg
     -e MILVUS_TOKEN=\${MILVUS_TOKEN} \
     -- npx @zilliz/claude-context-mcp@latest
   ```
-- In your codebase, run prompt `Index this codebase` to kick off indexing for later use. 
+- In your codebase, run prompt `Index this codebase` to kick off indexing for later use.
 - You can check on the status by runing `Check the indexing status`
 - Example prompt `Find functions that handle user authentication`
 

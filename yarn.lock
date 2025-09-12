@@ -10,7 +10,10 @@ __metadata:
   resolution: ".claude@workspace:."
   dependencies:
     "@alienfast/eslint-config": "npm:^6.0.5"
+    "@alienfast/prettier-config": "npm:^1.0.2"
     eslint: "npm:^9.35.0"
+    prettier: "npm:^3.6.2"
+    typescript: "npm:^5.9.2"
   languageName: unknown
   linkType: soft
 
@@ -41,6 +44,15 @@ __metadata:
     eslint: "*"
     prettier: "*"
   checksum: 10/8fcff967fef51fb0c33a7aa00e8a7d2c2bccc908c0054d9e91c9b52019e4a661b5b9de7768e6041ac1b7e1761fdd2a42101356877e28dde31080426090c12ee2
+  languageName: node
+  linkType: hard
+
+"@alienfast/prettier-config@npm:^1.0.2":
+  version: 1.0.2
+  resolution: "@alienfast/prettier-config@npm:1.0.2::__archiveUrl=https%3A%2F%2Fnpm.pkg.github.com%2Fdownload%2F%40alienfast%2Fprettier-config%2F1.0.2%2Fe6a49945fc58b8b1fcf76be65b15fc7623bfdb75"
+  peerDependencies:
+    prettier: "*"
+  checksum: 10/a44a2b27dc416b66b62b88274057fc8062a4a0453af4239bc624e0a8151ee4241b9fac14a77b3cea9b130ccae49d502479f8ef76225b7bc49d9e74fad69b7e5f
   languageName: node
   linkType: hard
 
@@ -2342,6 +2354,15 @@ __metadata:
   languageName: node
   linkType: hard
 
+"prettier@npm:^3.6.2":
+  version: 3.6.2
+  resolution: "prettier@npm:3.6.2"
+  bin:
+    prettier: bin/prettier.cjs
+  checksum: 10/1213691706bcef1371d16ef72773c8111106c3533b660b1cc8ec158bd109cdf1462804125f87f981f23c4a3dba053b6efafda30ab0114cc5b4a725606bb9ff26
+  languageName: node
+  linkType: hard
+
 "punycode@npm:^2.1.0":
   version: 2.3.1
   resolution: "punycode@npm:2.3.1"
@@ -2544,6 +2565,26 @@ __metadata:
     eslint: ^8.57.0 || ^9.0.0
     typescript: ">=4.8.4 <6.0.0"
   checksum: 10/51bd655f43aa6363932dee0d290fb26752875afdf6360a9940bc1c744b67ef82a1715392a65490ba4aa8a0490ad0ae0eb8903d831949f68af6a4e89e01a85b1c
+  languageName: node
+  linkType: hard
+
+"typescript@npm:^5.9.2":
+  version: 5.9.2
+  resolution: "typescript@npm:5.9.2"
+  bin:
+    tsc: bin/tsc
+    tsserver: bin/tsserver
+  checksum: 10/cc2fe6c822819de5d453fa25aa9f32096bf70dde215d481faa1ad84a283dfb264e33988ed8f6d36bc803dd0b16dbe943efa311a798ef76d5b3892a05dfbfd628
+  languageName: node
+  linkType: hard
+
+"typescript@patch:typescript@npm%3A^5.9.2#optional!builtin<compat/typescript>":
+  version: 5.9.2
+  resolution: "typescript@patch:typescript@npm%3A5.9.2#optional!builtin<compat/typescript>::version=5.9.2&hash=5786d5"
+  bin:
+    tsc: bin/tsc
+    tsserver: bin/tsserver
+  checksum: 10/bd810ab13e8e557225a8b5122370385440b933e4e077d5c7641a8afd207fdc8be9c346e3c678adba934b64e0e70b0acf5eef9493ea05170a48ce22bef845fdc7
   languageName: node
   linkType: hard
 
