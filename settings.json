@@ -31,8 +31,10 @@
       "mcp__playwright",
       "mcp__mui",
       "mcp__context7",
-      "mcp__claudecontext"
-
+      "mcp__claudecontext",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)"
     ],
     "deny": []
   }
