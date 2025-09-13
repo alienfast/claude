@@ -51,8 +51,8 @@ Later:
 
 Perhaps not good examples?
 
-- https://github.com/vijaythecoder/awesome-claude-agents pretty good, may be a good start. Talks about symlinking to agents (could do this with our own git repo or git submodule too to have dir of ref agents)
-- https://github.com/0xfurai/claude-code-subagents - reasonable and may be a good basis to start including react, pulumi, gh actions, cci, ruby, k8
+- https://github.com/vijaythecoder/awesome-claude-agents
+- https://github.com/0xfurai/claude-code-subagents - numerous agents for inspiration including react, pulumi, gh actions, cci, ruby, k8
 - https://github.com/lst97/claude-code-sub-agents pretty extensive/detailed listing
 
 ## Prompt examples

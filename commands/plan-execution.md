@@ -22,6 +22,7 @@ $ARGUMENTS
 
 Available agents:
 
+- `architect`: Analyzes architecture, designs solutions, makes technical recommendations
 - `developer`: Implements code, writes tests, fixes bugs
 - `debugger`: Investigates errors, analyzes root causes
 - `quality-reviewer`: Reviews for security, performance, best practices
