@@ -6,7 +6,11 @@ Note: at any time, you can check the status of your MCP servers with `claude mcp
 
 Generally applicable MCP servers for any kind of coding project.
 
-### Github ([doc](https://github.com/github/github-mcp-server/blob/main/docs/installation-guides/install-claude.md))
+### AVOID Github ([doc](https://github.com/github/github-mcp-server/blob/main/docs/installation-guides/install-claude.md))
+
+WARNING: unnecessary context bloat!!! This can be accomplished by `brew install gh`
+
+DO the following ONLY if `gh` can't do what you want.
 
 View, edit, create github content (this is used in place of command line `gh`)
 

@@ -2,6 +2,27 @@
 
 Assuming you have already used claude, there will already be a `~/.claude` directory. The goal is to supplement your user directory with reusable agent definitions and commands, not to overwrite (or check in!) your personal user settings or data. Always double check before committing information to ensure it is not local user data, and adjust the `.gitignore` accordingly.
 
+## Rationale
+
+I’ve selected several MCP servers targeting development context and tooling to provide to the LLM. I have created a team of agents including an `architect`, `debugger`, `developer`, `quality reviewer`, and a `technical-writer`. The top level orchestration and the `architect` run on the more expensive Opus 4.1, while the other agents are pinned to a cheaper model Sonnet that works fine for focused tasks. The top level orchestration may run each of the agents many times to accomplish an objective.
+
+A lot of the agent architecture is aimed at limitations in current LLMs: context rot and context poisoning. Too much information in the context can send the LLM way off track. With the agent model, agents get their own context, while the architect orchestrates from above, creating a plan and handing down assignments. Each agent reports back after success, so both the the top level context and the agent contexts stay smaller and smarter.
+
+## Usage
+
+Initially, using is triggered through `/plan-execution`, with something like the following:
+
+```sh
+/plan-execution I want to update Traefik.  Search traefik documents, compare the version we are currently on, and what we might need to change to be up to date.  Implement the changes.
+```
+
+or
+
+```sh
+/plan-execution this code was originally written for react 16.  While some files have been updated for react 19, I want you
+ to take a look at a comprehensive review of all react code, and implement the best practices for react 19.
+```
+
 ## Setup
 
 ### Add this repo to your user directory
@@ -16,6 +37,10 @@ git pull
 ```
 
 ### Configure MCP servers
+
+WARNING: you want to limit your MCP seleections to what is useful. They use up initial context. For this reason, and since e.g. github is easily used with `gh` command line, we omit it. Starting claude and running `/context` can show you your initial context. Here is a comparison with and without Github:
+
+![MCP Token Comparison](pics/mcp-tokens.png)
 
 See [mcpServers.md](mcpServers.md)
 
@@ -45,6 +70,6 @@ Claude Code is Anthropic's official CLI tool for software development that integ
 
 References:
 
+- Primary inspiration for our agents: https://github.com/solatis/claude-config
 - https://htdocs.dev/posts/revolutionizing-ai-development-how-claude-codes-sub-agents-transform-task-management/
 - https://htdocs.dev/posts/claude-code-best-practices-and-pro-tips/
-- https://github.com/hesreallyhim/awesome-claude-code
