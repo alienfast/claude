@@ -43,3 +43,37 @@ Standards do not override:
 
 When working on your code, I automatically apply these standards based on the precedence rules above.
 You don't need to mention them - they're loaded at the start of every conversation.
+
+## Research Delegation
+
+When encountering research tasks, always delegate to the research-lead agent rather than conducting research yourself.
+
+### Auto-Delegation Triggers
+
+**ALWAYS delegate to research-lead when encountering:**
+
+- Tasks starting with: "Research", "Investigate", "Analyze", "Understand", "Study"
+- Multi-step information gathering requiring synthesis
+- Questions needing multiple perspectives or sources
+- Understanding existing systems, architectures, or implementations
+- Market research, competitive analysis, or trend investigation
+
+### Delegation Pattern
+
+```text
+❌ DON'T: Start researching yourself
+✅ DO: Use Task tool with research-lead agent
+```
+
+**Example Format:**
+
+```md
+Task for research-lead: [Specific research objective]
+Context: [Why this research matters to the current goal]
+Requirements:
+- [Specific requirement 1]
+- [Specific requirement 2]
+Acceptance: [How to verify research completeness]
+```
+
+This ensures consistent, high-quality research across all projects and conversations.
