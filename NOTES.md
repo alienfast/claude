@@ -4,6 +4,18 @@
 - `-` means probably not
 - `x` means done and documented
 
+## todo
+
+https://github.com/anthropics/anthropic-cookbook/tree/main/patterns/agents/prompts
+
+Using the research-agent, parallelize 3-5 of as needed to complete the research. Start with short, broad queries, evaluate what’s available, then progressively narrow focus.
+
+After gaining an understanding, you might also parallelize agents for the following:
+
+- gain a comprehensive understanding of any related documentation
+- gain a comprehensive understanding of any related APIs
+- search for best practices to obtain the objective
+
 ## Overall:
 
 - https://claudelog.com/mechanics/you-are-the-main-thread/

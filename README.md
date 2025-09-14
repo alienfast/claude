@@ -72,6 +72,7 @@ Claude Code is Anthropic's official CLI tool for software development that integ
 
 References:
 
+- https://github.com/anthropics/anthropic-cookbook/tree/main/patterns/
 - Primary inspiration for our agents: https://github.com/solatis/claude-config
 - https://htdocs.dev/posts/revolutionizing-ai-development-how-claude-codes-sub-agents-transform-task-management/
 - https://htdocs.dev/posts/claude-code-best-practices-and-pro-tips/
