@@ -33,7 +33,8 @@
       "mcp__mui",
       "mcp__playwright",
       "WebFetch(domain:*)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(time:*)"
     ],
     "deny": []
   }
