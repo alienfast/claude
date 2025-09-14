@@ -103,7 +103,7 @@ Run quality checks concurrently:
    - Quality validation results
    - Links to changelogs and release notes
 4. Push branch and create PR via `gh pr create`
-5. Provide a link to the PR when completed
+5. **REQUIRED**: Provide the GitHub PR link in the final output for easy user review
 
 ## Usage Options
 
