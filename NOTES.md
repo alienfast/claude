@@ -4,6 +4,10 @@
 - `-` means probably not
 - `x` means done and documented
 
+## Overall:
+
+- https://claudelog.com/mechanics/you-are-the-main-thread/
+
 ## Gateway:
 
 - MetaMCP https://docs.metamcp.com/en
@@ -47,11 +51,11 @@ Later:
 
 - https://github.com/solatis/claude-config/blob/main/commands/plan-execution.md good cc basics, includes great doc on prompt-engineering
 - https://docs.agentinterviews.com/blog/parallel-ai-coding-with-gitworktrees/ parallel worktrees
-- https://github.com/wshobson/agents
+- https://github.com/wshobson/agents - ok for some inspiration
+- https://github.com/vijaythecoder/awesome-claude-agents - interesting approach. Rediscovers agents/specialists and updates the project CLAUDE.md
 
 Perhaps not good examples?
 
-- https://github.com/vijaythecoder/awesome-claude-agents
 - https://github.com/0xfurai/claude-code-subagents - numerous agents for inspiration including react, pulumi, gh actions, cci, ruby, k8
 - https://github.com/lst97/claude-code-sub-agents pretty extensive/detailed listing
 

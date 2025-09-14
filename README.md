@@ -8,6 +8,8 @@ I’ve selected several MCP servers targeting development context and tooling to
 
 A lot of the agent architecture is aimed at limitations in current LLMs: context rot and context poisoning. Too much information in the context can send the LLM way off track. With the agent model, agents get their own context, while the architect orchestrates from above, creating a plan and handing down assignments. Each agent reports back after success, so both the the top level context and the agent contexts stay smaller and smarter.
 
+For a great overview, read the [ClaudeLog](https://claudelog.com/mechanics/you-are-the-main-thread/) site.
+
 ## Usage
 
 Initially, using is triggered through `/plan-execution`, with something like the following:

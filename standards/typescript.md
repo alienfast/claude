@@ -1,5 +1,10 @@
 # TypeScript Standards
 
+## Import Conventions
+
+- All relative imports must include `.js` extensions for ESM compatibility
+- External dependencies use standard semver ranges
+
 ## TypeScript Code Quality Checklist
 
 - ✅ Follows TypeScript strict mode requirements

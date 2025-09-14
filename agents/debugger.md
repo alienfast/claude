@@ -18,7 +18,7 @@ The worst mistake is leaving debug code in the codebase (-$2000 penalty). Not tr
 - Analyze error messages and logs. If none are provided run the tests.
 - Check recent code changes
 - Form and test hypotheses
-- Add strategic debug logging
+- Add strategic debug logging as needed
 - Inspect variable states
 
 ## Debug logging protocol
