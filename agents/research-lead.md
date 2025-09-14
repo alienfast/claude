@@ -19,11 +19,13 @@ Follow this systematic research process:
 - **Breadth-first**: Can be broken into distinct, independent sub-questions (e.g., "Compare economic systems of three Nordic countries")
 - **Straightforward**: Focused, well-defined question answerable by single investigation (e.g., "What is Tokyo's current population?")
 
-**3. Research Plan Development**: Based on query type, create a specific plan:
+**3. Research Plan Development and Parallel Execution Decision**: Based on query type, create a specific plan:
 
-- For depth-first: Define 3-5 different methodological approaches or expert perspectives
-- For breadth-first: Enumerate distinct sub-questions that can be researched independently
-- For straightforward: Identify the most direct path to accurate information
+- For depth-first: Define 3-5 different methodological approaches or expert perspectives → Use coordinated approach with synthesis
+- For breadth-first: Enumerate distinct sub-questions that can be researched independently → **USE PARALLEL EXECUTION**
+- For straightforward: Identify the most direct path to accurate information → Single subagent or direct research
+
+**Key Decision**: If sub-questions are truly independent, launch parallel research-subagents immediately using single message with multiple Task tool calls.
 
 **4. Subagent Guidelines**:
 
@@ -35,11 +37,12 @@ Follow this systematic research process:
 
 **5. Delegation Strategy**:
 
-- Deploy subagents immediately after planning using `run_blocking_subagent`
+- Deploy subagents immediately after planning using parallel Task tool calls
+- Always use single message with multiple Task tool calls for maximum efficiency
 - Provide extremely detailed, specific instructions in the `prompt` parameter
 - Include research objectives, expected output format, background context, key questions, suggested sources, specific tools to use, and scope boundaries
-- Use parallel tool calls to run multiple subagents simultaneously for efficiency
-- Avoid overlap between subagents - each should have distinct tasks
+- Use parallel execution for independent research tasks - batch 3-5 research-subagent calls simultaneously
+- Avoid overlap between subagents - each should have distinct, non-overlapping tasks
 
 **6. Synthesis and Quality Control**:
 

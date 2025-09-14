@@ -38,6 +38,7 @@ Standards do not override:
 - [React](~/.claude/standards/react.md) - Component patterns, hooks, styling
 - [TypeScript](~/.claude/standards/typescript.md) - Types, interfaces, configuration
 - [Package Manager](~/.claude/standards/package-manager.md) - Dependencies, scripts, lockfiles
+- [Agent Coordination](~/.claude/standards/agent-coordination.md) - Parallel vs sequential execution patterns
 
 ## Usage
 
@@ -46,29 +47,51 @@ You don't need to mention them - they're loaded at the start of every conversati
 
 ## Research Delegation
 
-When encountering research tasks, always delegate to the research-lead agent rather than conducting research yourself.
+Choose the optimal research strategy based on task complexity and independence requirements.
 
-### Auto-Delegation Triggers
+### Research Strategy Decision Tree
 
-**ALWAYS delegate to research-lead when encountering:**
+**Simple Independent Queries** → Direct parallel research-subagents
 
-- Tasks starting with: "Research", "Investigate", "Analyze", "Understand", "Study"
-- Multi-step information gathering requiring synthesis
-- Questions needing multiple perspectives or sources
-- Understanding existing systems, architectures, or implementations
-- Market research, competitive analysis, or trend investigation
+- Single-topic investigations
+- Independent fact-finding tasks
+- Queries that can be answered separately
 
-### Delegation Pattern
+**Complex Synthesis Tasks** → research-lead coordination
+
+- Multi-perspective analysis requiring integration
+- Tasks needing strategic planning and coordination
+- Conflicting information requiring expert judgment
+
+**Mixed Tasks** → Hybrid approach (research-lead + parallel subagents)
+
+### Delegation Patterns
+
+#### Parallel Execution (Independent Tasks)
 
 ```text
-❌ DON'T: Start researching yourself
-✅ DO: Use Task tool with research-lead agent
+✅ DO: Use single message with multiple Task tool calls
 ```
 
-**Example Format:**
+**Example - Parallel Research:**
 
 ```md
-Task for research-lead: [Specific research objective]
+[Multiple Task tool calls in single message]
+Task 1 for research-subagent: [Independent research topic A]
+Task 2 for research-subagent: [Independent research topic B]
+Task 3 for research-subagent: [Independent research topic C]
+```
+
+#### Coordinated Research (Complex Synthesis)
+
+```text
+✅ DO: Use research-lead for coordination and synthesis
+```
+
+**Example - Coordinated Research:**
+
+```md
+Task for research-lead: [Complex multi-perspective research objective]
 Context: [Why this research matters to the current goal]
 Requirements:
 - [Specific requirement 1]
@@ -76,4 +99,11 @@ Requirements:
 Acceptance: [How to verify research completeness]
 ```
 
-This ensures consistent, high-quality research across all projects and conversations.
+### Performance Optimization
+
+- **Independent tasks**: Use parallel execution to reduce research time by 60-80%
+- **Interdependent tasks**: Use research-lead to coordinate and synthesize
+- **Batch tool calls**: Always use single message with multiple Task calls for parallel execution
+- **Follow coordination patterns**: Apply [Agent Coordination](~/.claude/standards/agent-coordination.md) standards for optimal performance
+
+This ensures both optimal performance and research quality based on task characteristics.

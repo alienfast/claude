@@ -16,7 +16,7 @@ $ARGUMENTS
 
 - Break plan into discrete, testable phases
 - Create todos for each implementation and validation step
-- Track progress rigorously - one task in_progress at a time
+- Track progress efficiently - allow parallel tasks for independent work, sequential for dependent tasks
 
 ### 2. Delegate All Tasks
 
@@ -29,7 +29,18 @@ Available agents:
 - `quality-reviewer`: Reviews for security, performance, best practices
 - `technical-writer`: Creates documentation
 
-**Delegation Format:**
+**Parallel Delegation (Independent Tasks):**
+
+Use single message with multiple Task tool calls when tasks are independent:
+
+```md
+[Multiple Task tool calls in single message]
+Task 1 for [agent]: [Independent task A]
+Task 2 for [agent]: [Independent task B]
+Task 3 for [agent]: [Independent task C]
+```
+
+**Sequential Delegation (Dependent Tasks):**
 
 ```md
 Task for [agent]: [Specific, focused task]
@@ -43,14 +54,27 @@ Requirements:
 Acceptance: [How to verify success]
 ```
 
+**Examples of Parallelizable Tasks:**
+- Independent component implementations
+- Separate feature developments
+- Documentation for different modules
+- Testing different system parts
+
 ### 3. Incremental Validation
 
-After each delegated task:
+**For Sequential Tasks:**
 
 - Verify implementation matches plan requirements
 - Run relevant tests and quality checks
 - Mark todo complete before proceeding
 - Document any discovered issues
+
+**For Parallel Tasks:**
+
+- Allow agents to work concurrently
+- Validate each completion independently
+- Coordinate integration points as needed
+- Batch validation where possible for efficiency
 
 ## Error Handling
 
