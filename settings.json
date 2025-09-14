@@ -17,6 +17,8 @@
       "Bash(grep:*)",
       "Bash(rg:*)",
       "Bash(tree:*)",
+      "Bash(ncu:*)",
+      "Bash(gh:*)",
       "Bash(make:*)",
       "Bash(curl:*)",
       "Bash(timeout:*)",
