@@ -31,13 +31,13 @@ Available agents:
 
 **Parallel Delegation (Independent Research):**
 
-Use single message with multiple Task tool calls for package research:
+Use single message with multiple Task tool calls for package research (prioritize by semver change type):
 
 ```md
 [Multiple Task tool calls in single message]
-Task 1 for research-subagent: Research changelog for package A
-Task 2 for research-subagent: Research changelog for package B
-Task 3 for research-subagent: Research changelog for package C
+Task 1 for research-subagent: Full research for MAJOR update package A (breaking changes, migration guides)
+Task 2 for research-subagent: Minimal research for MINOR update package B (new features, deprecations only)
+Task 3 for research-subagent: Security check only for PATCH update package C
 ```
 
 **Sequential Delegation (Dependent Operations):**
@@ -62,13 +62,12 @@ Requirements:
 
 #### Phase 2: Parallel Research (Independent Tasks)
 
-Research each package concurrently:
+Research each package concurrently based on semver change type:
 
-- Fetch release notes and changelogs via GitHub API
-- **Flag MAJOR version changes** (X.y.z → X+1.y.z) for special attention
-- Identify breaking changes and migration requirements
-- Assess semantic versioning implications with emphasis on major updates
-- Document security advisories or critical fixes
+- **MAJOR changes** (X.y.z → X+1.y.z): Full research including changelogs, breaking changes, migration guides
+- **MINOR changes** (x.Y.z → x.Y+1.z): Minimal research - check for new features and deprecated APIs only
+- **PATCH changes** (x.y.Z → x.y.Z+1): Skip research entirely - assume safe bug fixes
+- Document any security advisories regardless of change type
 
 #### Phase 3: Impact Assessment (Sequential)
 
