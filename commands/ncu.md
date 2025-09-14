@@ -65,8 +65,9 @@ Requirements:
 Research each package concurrently:
 
 - Fetch release notes and changelogs via GitHub API
+- **Flag MAJOR version changes** (X.y.z → X+1.y.z) for special attention
 - Identify breaking changes and migration requirements
-- Assess semantic versioning implications
+- Assess semantic versioning implications with emphasis on major updates
 - Document security advisories or critical fixes
 
 #### Phase 3: Impact Assessment (Sequential)
@@ -97,9 +98,9 @@ Run quality checks concurrently:
 1. Create feature branch with timestamp
 2. **Technical-writer**: Generate comprehensive commit message
 3. **Technical-writer**: Create detailed PR description including:
-   - Package update summary with version changes
-   - Breaking change impact analysis
-   - Migration steps performed
+   - Package update summary with version changes (highlight **MAJOR** semver changes prominently)
+   - Breaking change impact analysis with special emphasis on major version updates
+   - Migration steps performed for major version changes
    - Quality validation results
    - Links to changelogs and release notes
 4. Push branch and create PR via `gh pr create`
