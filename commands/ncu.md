@@ -46,45 +46,54 @@ Task 3 for research-subagent: Research changelog for package C
 Task for [agent]: [Specific update task]
 Context: [Package update details and research findings]
 Requirements:
+
 - [Compatibility requirement]
 - [Breaking change handling]
-Acceptance: [Quality gates to verify success]
+  Acceptance: [Quality gates to verify success]
 ```
 
 ### 3. Dependency Update Workflow
 
 #### Phase 1: Update Analysis
+
 1. Run `ncu --jsonUpgraded` to detect available updates
 2. Parse output to identify packages with version changes
 3. Filter packages based on user criteria (`--filter`, `--dry-run`)
 
 #### Phase 2: Parallel Research (Independent Tasks)
+
 Research each package concurrently:
+
 - Fetch release notes and changelogs via GitHub API
 - Identify breaking changes and migration requirements
 - Assess semantic versioning implications
 - Document security advisories or critical fixes
 
 #### Phase 3: Impact Assessment (Sequential)
+
 1. **Architect**: Analyze breaking changes across all packages
 2. **Architect**: Assess migration complexity and code impact
 3. Search codebase for package usage patterns
 4. Identify files requiring updates due to breaking changes
 
 #### Phase 4: Apply Updates (Sequential)
+
 1. **Developer**: Update package.json files (`ncu -u`)
 2. **Developer**: Install dependencies (`yarn install`)
 3. **Developer**: Implement required code changes for breaking changes
 4. Handle dependency conflicts and version mismatches
 
 #### Phase 5: Quality Validation (Parallel)
+
 Run quality checks concurrently:
+
 - TypeScript compilation (`yarn build:ide`)
 - Linting with fixes (`yarn lint:fix`)
 - Test suite execution (`yarn test`)
 - **Quality-reviewer**: Security and performance validation
 
 #### Phase 6: PR Creation (Sequential)
+
 1. Create feature branch with timestamp
 2. **Technical-writer**: Generate comprehensive commit message
 3. **Technical-writer**: Create detailed PR description including:
@@ -94,6 +103,7 @@ Run quality checks concurrently:
    - Quality validation results
    - Links to changelogs and release notes
 4. Push branch and create PR via `gh pr create`
+5. Provide a link to the PR when completed
 
 ## Usage Options
 
@@ -103,7 +113,7 @@ Run quality checks concurrently:
 
 ## Example Usage
 
-```
+```bash
 /ncu
 /ncu --dry-run
 /ncu --filter react
@@ -145,5 +155,11 @@ Dependency update succeeds when:
 3. **Quality First**: Never compromise on testing and validation
 4. **Evidence-Based**: Use agent research for all decisions
 5. **Comprehensive Documentation**: Ensure PR provides complete context
+
+## Important Notes
+
+- **Always use `ncu` command directly** - NEVER use `npx npm-check-updates`
+- Ensure `ncu` is globally installed: `npm install -g npm-check-updates`
+- Use `ncu` for all update detection and application operations
 
 Remember: Your strength is in orchestration, delegation, and ensuring safe dependency updates.
