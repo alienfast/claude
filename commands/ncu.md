@@ -16,8 +16,7 @@ $ARGUMENTS
 
 - Break dependency update workflow into discrete, testable phases
 - Create todos for analysis, research, impact assessment, updates, and validation
-- Enable parallel execution for independent research and validation tasks
-- Coordinate sequential tasks for dependent operations
+- Refer to [Agent Coordination Standards](~/.claude/standards/agent-coordination.md) for parallel vs sequential execution patterns
 
 ### 2. Delegate All Tasks
 
@@ -29,18 +28,7 @@ Available agents:
 - `quality-reviewer`: Reviews security implications, performance impacts
 - `technical-writer`: Creates comprehensive PR documentation
 
-**Parallel Delegation (Independent Research):**
-
-Use single message with multiple Task tool calls for package research (prioritize by semver change type):
-
-```md
-[Multiple Task tool calls in single message]
-Task 1 for research-subagent: Full research for MAJOR update package A (breaking changes, migration guides)
-Task 2 for research-subagent: Minimal research for MINOR update package B (new features, deprecations only)
-Task 3 for research-subagent: Security check only for PATCH update package C
-```
-
-**Sequential Delegation (Dependent Operations):**
+**Delegation Format:**
 
 ```md
 Task for [agent]: [Specific update task]
@@ -49,7 +37,8 @@ Requirements:
 
 - [Compatibility requirement]
 - [Breaking change handling]
-  Acceptance: [Quality gates to verify success]
+
+Acceptance: [Quality gates to verify success]
 ```
 
 ### 3. Dependency Update Workflow
