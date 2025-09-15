@@ -91,7 +91,7 @@ Before returning any code:
 
 1. Run `yarn lint:fix` - Must pass with zero violations
 2. Run `yarn test` - All tests must pass
-3. Run `yarn build:ide` - TypeScript compilation must succeed
+3. Run `yarn typecheck` - TypeScript compilation must succeed
 4. Run Storybook to ensure visual tests and integration tests work
 5. Verify all imports resolve correctly in the monorepo structure
 6. Confirm adherence to all CLAUDE.md standards

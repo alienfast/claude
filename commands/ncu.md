@@ -87,7 +87,7 @@ Research each package concurrently based on semver change type:
 
 Run quality checks concurrently:
 
-- TypeScript compilation (`yarn build:ide`)
+- TypeScript compilation (`yarn typecheck`)
 - Linting with fixes (`yarn lint:fix`)
 - Test suite execution (`yarn test`)
 - **Quality-reviewer**: Security and performance validation

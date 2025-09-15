@@ -1,32 +1,18 @@
 # Package Manager Standards
 
-## Tool Preference
+## Tool Selection
 
-- **Use Yarn** (modern, not classic) over npm
-- Follow existing project's package manager choice
+- Follow existing project's package manager (check for `yarn.lock`, `package-lock.json`, `pnpm-lock.yaml`)
+- Default to Yarn (modern) for new projects
+- Never commit `package-lock.json` if project uses Yarn
 
 ## Dependencies
 
-- Add packages to specific workspace projects, not root `package.json`
 - Check existing dependencies before adding new ones
+- In workspaces: add packages to specific workspace projects, not root
 
 ## Command Usage
 
 - Use project scripts over direct tool invocation
-- Prefer `yarn build:ide` over `npx tsc --noEmit`
+- Prefer `yarn typecheck` over `npx tsc --noEmit`
 - Use `yarn npm audit` instead of `npm audit`
-- Avoid `npx` when equivalent `yarn` scripts exist
-- Avoid `npx vitest` and run `yarn vitest` instead
-
-## Examples
-
-```bash
-# ✅ Good
-yarn build
-yarn test
-yarn lint
-
-# ❌ Avoid
-npx tsc --noEmit
-npm run build
-```

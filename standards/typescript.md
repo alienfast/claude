@@ -194,7 +194,7 @@ type NonEmptyArray<T> = [T, ...T[]]
 ```bash
 # ✅ Good
 yarn build
-yarn build:ide
+yarn typecheck
 yarn tsc
 
 # ❌ Bad
