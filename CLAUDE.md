@@ -18,7 +18,7 @@ Standards apply to:
 - New code written by Claude
 - Code modifications/refactoring
 - Code reviews and suggestions
-- Tool execution - for example yarn, npm, git, gh
+- Tool usage (commands, configurations, workflows)
 
 Standards do not override:
 
@@ -44,69 +44,4 @@ Standards do not override:
 
 ## Usage
 
-When working on your code, I automatically apply these standards based on the precedence rules above.
-You don't need to mention them - they're loaded at the start of every conversation.
-
-## Research Delegation
-
-Choose the optimal research strategy based on task complexity and independence requirements.
-
-### Research Strategy Decision Tree
-
-**Simple Independent Queries** → Direct parallel research-subagents
-
-- Single-topic investigations
-- Independent fact-finding tasks
-- Queries that can be answered separately
-
-**Complex Synthesis Tasks** → research-lead coordination
-
-- Multi-perspective analysis requiring integration
-- Tasks needing strategic planning and coordination
-- Conflicting information requiring expert judgment
-
-**Mixed Tasks** → Hybrid approach (research-lead + parallel subagents)
-
-### Delegation Patterns
-
-#### Parallel Execution (Independent Tasks)
-
-```text
-✅ DO: Use single message with multiple Task tool calls
-```
-
-**Example - Parallel Research:**
-
-```md
-[Multiple Task tool calls in single message]
-Task 1 for research-subagent: [Independent research topic A]
-Task 2 for research-subagent: [Independent research topic B]
-Task 3 for research-subagent: [Independent research topic C]
-```
-
-#### Coordinated Research (Complex Synthesis)
-
-```text
-✅ DO: Use research-lead for coordination and synthesis
-```
-
-**Example - Coordinated Research:**
-
-```md
-Task for research-lead: [Complex multi-perspective research objective]
-Context: [Why this research matters to the current goal]
-Requirements:
-
-- [Specific requirement 1]
-- [Specific requirement 2]
-  Acceptance: [How to verify research completeness]
-```
-
-### Performance Optimization
-
-- **Independent tasks**: Use parallel execution to reduce research time by 60-80%
-- **Interdependent tasks**: Use research-lead to coordinate and synthesize
-- **Batch tool calls**: Always use single message with multiple Task calls for parallel execution
-- **Follow coordination patterns**: Apply [Agent Coordination](~/.claude/standards/agent-coordination.md) standards for optimal performance
-
-This ensures both optimal performance and research quality based on task characteristics.
+Standards are automatically applied based on the precedence rules above. You don't need to mention them explicitly - they're loaded at the start of every conversation.
