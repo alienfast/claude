@@ -64,7 +64,7 @@ Requirements:
 
 Research each package concurrently based on semver change type:
 
-- **MAJOR changes** (X.y.z → X+1.y.z): Full research including changelogs, breaking changes, migration guides
+- **MAJOR changes** (X.y.z → X+1.y.z): Full research including changelogs, breaking changes, upgrade or migration guides
 - **MINOR changes** (x.Y.z → x.Y+1.z): Minimal research - check for new features and deprecated APIs only. **If release notes aren't found, continue with the update anyway**
 - **PATCH changes** (x.y.Z → x.y.Z+1): Skip research entirely - assume safe bug fixes. **Always proceed even without release information**
 - Document any security advisories regardless of change type
