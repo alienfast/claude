@@ -66,7 +66,7 @@ NOTE: You'll need to manually re-index periodically when you want your search re
 For active development, consider re-indexing after significant changes or at regular intervals (daily/weekly) depending on how often you modify your codebase.
 
 - See the docs and sign up for Zilliz Cloud to get an API key for a vector database. Add to your `~/.zshrc` as `MILVUS_TOKEN`
-- Create an [OpenAI API key](https://platform.openai.com/api-keys) dedicated for `claude-context`. Add to your `~/.zshrc` as `OPENAI_API_KEY`
+- Create an [OpenAI API key](https://platform.openai.com/api-keys) dedicated for `claude-context`. Add to your `~/.zshrc` as `OPENAI_API_KEY` - usage is incredibly low, pennies a month.
 - `source ~/.zshrc`
 - Run
   ```sh
