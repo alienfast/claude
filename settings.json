@@ -18,10 +18,12 @@
       "Bash(mv:*)",
       "Bash(ncu:*)",
       "Bash(node:*)",
+      "Bash(npx yaml-lint:*)",
       "Bash(open:*)",
       "Bash(pkill:*)",
       "Bash(rg:*)",
       "Bash(rm:*)",
+      "Bash(time:*)",
       "Bash(timeout:*)",
       "Bash(touch:*)",
       "Bash(tree:*)",
@@ -30,12 +32,23 @@
       "Bash(yarn:*)",
       "mcp__claudecontext",
       "mcp__context7",
+      "mcp__ide__getDiagnostics",
       "mcp__mui",
       "mcp__playwright",
+      "WebFetch",
       "WebFetch(domain:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:security.snyk.io)",
+      "WebFetch(domain:typescript-eslint.io)",
+      "WebFetch(domain:vite.dev)",
+      "WebFetch(domain:www.npmjs.com)",
       "WebSearch",
-      "Bash(time:*)"
+      "WebFetch(domain:devblogs.microsoft.com)",
+      "Bash(npm view:*)",
+      "Bash(cat:*)",
+      "Bash(npm audit:*)"
     ],
     "deny": []
-  }
+  },
+  "model": "opusplan"
 }
