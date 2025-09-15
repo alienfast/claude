@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with an
 
 ## Standards
 
-Standards are conventions or guidelines in a specific area, this could be a programming language, or a tool. Follow these standards.
+Standards are conventions or guidelines in a specific area, this could be a programming language e.g. Typescript, or a tool e.g. package manager like yarn. Always apply standards according to the rules in this section.
 
 ### Location
 
@@ -18,6 +18,7 @@ Standards apply to:
 - New code written by Claude
 - Code modifications/refactoring
 - Code reviews and suggestions
+- Tool execution - for example yarn, npm, git, gh
 
 Standards do not override:
 
@@ -95,9 +96,10 @@ Task 3 for research-subagent: [Independent research topic C]
 Task for research-lead: [Complex multi-perspective research objective]
 Context: [Why this research matters to the current goal]
 Requirements:
+
 - [Specific requirement 1]
 - [Specific requirement 2]
-Acceptance: [How to verify research completeness]
+  Acceptance: [How to verify research completeness]
 ```
 
 ### Performance Optimization
