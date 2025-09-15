@@ -1,5 +1,11 @@
 version: '3.5'
 
+# from https://milvus.io/docs/install_standalone-docker-compose.md
+# wget https://github.com/milvus-io/milvus/releases/download/v2.6.0/milvus-standalone-docker-compose.yml -O docker-compose.yml
+# also see https://github.com/zilliztech/claude-context/issues/162
+
+# note, to remove this altogether, remove the `~/.claude/volumes
+
 services:
   etcd:
     container_name: milvus-etcd

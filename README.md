@@ -38,13 +38,17 @@ git checkout -b main origin/main
 git pull
 ```
 
+### Run MCP resources
+
+Due to caps on collections for cloud services such as Zilliz (Milvus), we are running some services locally via `docker compose`. See `start.sh` and `stop.sh` commands, and be sure these are running.
+
 ### Configure MCP servers
 
 WARNING: you want to limit your MCP seleections to what is useful. They use up initial context. For this reason, and since e.g. github is easily used with `gh` command line, we omit it. Starting claude and running `/context` can show you your initial context. Here is a comparison with and without Github:
 
 ![MCP Token Comparison](pics/mcp-tokens.png)
 
-See [mcpServers.md](mcpServers.md)
+See [mcpServers.md](mcpServers.md) for full setup information
 
 ## Background
 

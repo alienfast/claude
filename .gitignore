@@ -20,3 +20,4 @@ packages/*/.npmignore
 
 .env.local
 /.playwright-mcp
+/volumes

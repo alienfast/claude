@@ -61,20 +61,24 @@ Easiest to install with `claude mcp add playwright -s user -- npx @playwright/mc
 
 Index the entire codebase and reduce token usage.
 
+This is run locally via `docker compose`. See the `start.sh` and `stop.sh` commands.
+
 NOTE: You'll need to manually re-index periodically when you want your search results to include recent changes. The system doesn't automatically detect file changes - it uses incremental indexing (via Merkle trees) to make re-indexing efficient, but you still need to trigger it manually when needed.
 
 For active development, consider re-indexing after significant changes or at regular intervals (daily/weekly) depending on how often you modify your codebase.
 
-- See the docs and sign up for Zilliz Cloud to get an API key for a vector database. Add to your `~/.zshrc` as `MILVUS_TOKEN`
 - Create an [OpenAI API key](https://platform.openai.com/api-keys) dedicated for `claude-context`. Add to your `~/.zshrc` as `OPENAI_API_KEY` - usage is incredibly low, pennies a month.
 - `source ~/.zshrc`
 - Run
+
   ```sh
-  claude mcp add claude-context -s user \
+  claude mcp add codeIndexer -s user \
     -e OPENAI_API_KEY=\${OPENAI_API_KEY} \
-    -e MILVUS_TOKEN=\${MILVUS_TOKEN} \
+    -e MILVUS_ADDRESS=127.0.0.1:19530 \
+    -e MILVUS_TOKEN=local \
     -- npx @zilliz/claude-context-mcp@latest
   ```
+
 - In your codebase, run prompt `Index this codebase` to kick off indexing for later use.
 - You can check on the status by runing `Check the indexing status`
 - Example prompt `Find functions that handle user authentication`
