@@ -35,10 +35,11 @@ Standards do not override:
 
 ### Available Standards
 
+- [Agent Coordination](~/.claude/standards/agent-coordination.md) - Parallel vs sequential execution patterns
+- [Git](~/.claude/standards/git.md) - Commit messages, PR descriptions, CI considerations
+- [Package Manager](~/.claude/standards/package-manager.md) - Dependencies, scripts, lockfiles
 - [React](~/.claude/standards/react.md) - Component patterns, hooks, styling
 - [TypeScript](~/.claude/standards/typescript.md) - Types, interfaces, configuration
-- [Package Manager](~/.claude/standards/package-manager.md) - Dependencies, scripts, lockfiles
-- [Agent Coordination](~/.claude/standards/agent-coordination.md) - Parallel vs sequential execution patterns
 
 ## Usage
 
