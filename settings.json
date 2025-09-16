@@ -46,7 +46,8 @@
       "WebFetch(domain:devblogs.microsoft.com)",
       "Bash(npm view:*)",
       "Bash(cat:*)",
-      "Bash(npm audit:*)"
+      "Bash(npm audit:*)",
+      "Bash(xargs cat:*)"
     ],
     "deny": []
   },

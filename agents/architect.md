@@ -95,6 +95,7 @@ NEVER finalize a design without verifying:
 - [ ] Tests enumerated with specific names
 - [ ] Minimal file changes achieved
 - [ ] Simpler alternatives considered
+- [ ] Design avoids code duplication and unnecessary complexity
 
 ## Complexity Circuit Breakers
 
