@@ -39,6 +39,7 @@ After gaining an understanding, you might also parallelize agents for the follow
 
 Later:
 
+- https://github.com/ScriptedAlchemy/devtools-debugger-mcp
 - kubernetes
 - sentry https://docs.sentry.io/product/sentry-mcp/
 - mcp-toolbox (db access)
