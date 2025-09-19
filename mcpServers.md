@@ -95,7 +95,7 @@ Note: verified that that this is deeper/more useful information that adds to the
 
 ### Pulumi ([docs](https://www.pulumi.com/docs/iac/using-pulumi/mcp-server/))
 
-`claude mcp add pulumi -s user -- npx @pulumi/mcp-server@latest`
+`claude mcp add pulumi -s user -- npx @pulumi/mcp-server@latest stdio`
 
 ## Project scoped
 
