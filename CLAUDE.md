@@ -41,6 +41,7 @@ Standards do not override:
 ### Available Standards
 
 - [Agent Coordination](~/.claude/standards/agent-coordination.md) - Parallel vs sequential execution patterns
+- [Deprecations](~/.claude/standards/deprecations.md) - Handling deprecated APIs, types, and modules
 - [Git](~/.claude/standards/git.md) - Commit messages, PR descriptions, CI considerations
 - [Package Manager](~/.claude/standards/package-manager.md) - Dependencies, scripts, lockfiles
 - [React](~/.claude/standards/react.md) - Component patterns, hooks, styling
@@ -58,3 +59,4 @@ ALWAYS prefer editing an existing file to creating a new one.
 NEVER proactively create documentation files (\*.md) or README files. Only create documentation files if explicitly requested by the User.
 NEVER leave temporary files behind, always clean up.
 NEVER modify generated or build artifact files such as `src/generated/` or `dist` directories - these will be regenerated with build or gen commands.
+ALWAYS apply deprecation standards when writing or modifying code - avoid deprecated APIs and proactively update them when encountered.
