@@ -49,16 +49,43 @@ Acceptance: [Quality gates to verify success]
 2. Parse output to identify packages with version changes
 3. Filter packages based on user criteria (`--filter`, `--dry-run`)
 
+#### Phase 1.5: Semver Classification
+
+**CRITICAL**: Properly classify ALL version changes according to semantic versioning rules before proceeding. Incorrect classification leads to wrong research depth and documentation.
+
+**Classification Rules:**
+
+- **MAJOR** (X.y.z → X+1.y.z): Breaking changes, incompatible API changes
+- **MINOR** (x.Y.z → x.Y+1.z): New functionality, backward compatible
+- **PATCH** (x.y.Z → x.y.Z+1): Bug fixes, backward compatible
+
+**Examples of Correct Classification:**
+
+- `^7.1.5 → ^7.1.6` = PATCH (NOT Major!)
+- `^9.35.0 → ^9.36.0` = MINOR (NOT Major!)
+- `^4.0.0 → ^5.0.0` = MAJOR
+- `^24.5.1 → ^24.5.2` = PATCH
+- `^13.1.5 → ^13.2.0` = MINOR
+
+**Process:**
+
+1. Parse current and target versions using semantic versioning
+2. Compare X.Y.Z numbers digit by digit to determine change type
+3. Group packages by classification: MAJOR, MINOR, PATCH
+4. Verify classification before delegating research tasks
+
 #### Phase 2: Parallel Research (Independent Tasks)
 
 **CRITICAL**: Launch ALL package research tasks in a single parallel batch using one message with multiple Task tool calls. Target 10-20 parallel research-subagents for maximum efficiency.
 
-Research each package concurrently based on semver change type:
+Research each package concurrently based on **semver classification from Phase 1.5**:
 
 - **MAJOR changes** (X.y.z → X+1.y.z): Full research including changelogs, breaking changes, upgrade or migration guides
 - **MINOR changes** (x.Y.z → x.Y+1.z): Minimal research - check for new features and deprecated APIs only. **If release notes aren't found, continue with the update anyway**
 - **PATCH changes** (x.y.Z → x.y.Z+1): Skip research entirely - assume safe bug fixes. **Always proceed even without release information**
 - Document any security advisories regardless of change type
+
+**Verification**: Ensure research depth matches the actual semver classification, not package names or assumed importance.
 
 **Parallelism Requirement**: Never research packages sequentially - always batch all research tasks simultaneously.
 
@@ -90,9 +117,12 @@ Run quality checks concurrently:
 1. Create feature branch with timestamp
 2. **Technical-writer**: Generate comprehensive commit message
 3. **Technical-writer**: Create detailed PR description including:
-   - Package update summary with version changes (highlight **MAJOR** semver changes prominently)
-   - Breaking change impact analysis with special emphasis on major version updates
-   - Migration steps performed for major version changes
+   - **Package update summary grouped by semver classification**:
+     - Major Version Updates (X.y.z → X+1.y.z): Breaking changes requiring attention
+     - Minor Version Updates (x.Y.z → x.Y+1.z): New features, backward compatible
+     - Patch Version Updates (x.y.Z → x.y.Z+1): Bug fixes, backward compatible
+   - Breaking change impact analysis with special emphasis on ACTUAL major version updates
+   - Migration steps performed for major version changes only
    - Quality validation results
    - Links to changelogs and release notes
 4. Push branch and create PR via `gh pr create`
