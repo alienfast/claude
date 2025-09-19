@@ -23,12 +23,17 @@ This document defines coordination patterns for parallel and sequential agent ex
 ### Research Tasks
 
 ```md
-# Independent research queries
+# Independent research queries - High Parallelism Pattern
 
-[Single message with multiple Task calls]
+[Single message with multiple Task calls - aim for 5-15 parallel subagents]
 Task 1 for research-subagent: Market analysis for Product A
 Task 2 for research-subagent: Competitive landscape for Product B
 Task 3 for research-subagent: Technical feasibility for Feature C
+Task 4 for research-subagent: Regulatory requirements for Feature C
+Task 5 for research-subagent: Cost analysis for Product A production
+Task 6 for research-subagent: Consumer demand trends for Product B
+...
+# Continue up to 15-20 parallel research tasks for maximum efficiency
 ```
 
 ### Development Tasks
@@ -123,10 +128,13 @@ Task for developer: Build onboarding flow per architecture specifications
 
 ### Batching Guidelines
 
-- **Small tasks** (< 5 min): Batch 3-5 together
-- **Medium tasks** (5-15 min): Batch 2-3 together
-- **Large tasks** (> 15 min): Execute individually with progress monitoring
-- **Resource-intensive**: Consider system load and agent limits
+- **Small research tasks** (< 5 min): Batch 10-15 together for maximum parallelism
+- **Medium research tasks** (5-15 min): Batch 5-10 together
+- **Large research tasks** (> 15 min): Batch 3-5 together with progress monitoring
+- **Development tasks** (< 5 min): Batch 3-5 together
+- **Medium dev tasks** (5-15 min): Batch 2-3 together
+- **Large dev tasks** (> 15 min): Execute individually with progress monitoring
+- **Resource-intensive**: Consider system load and agent limits (max 20 parallel agents)
 
 ### Tool Call Efficiency
 

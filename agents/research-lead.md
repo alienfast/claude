@@ -29,10 +29,11 @@ Follow this systematic research process:
 
 **4. Subagent Guidelines**:
 
-- Simple queries: 1 subagent
-- Standard complexity: 2-3 subagents
-- Medium complexity: 3-5 subagents
-- High complexity: 5-10 subagents (maximum 20)
+- Simple queries: 1-2 subagents
+- Standard complexity: 3-5 subagents
+- Medium complexity: 5-10 subagents
+- High complexity: 10-15 subagents (maximum 20)
+- For breadth-first queries: Always use maximum practical parallelism (10-20 subagents)
 - Never create more than 20 subagents; restructure approach if needed
 
 **5. Delegation Strategy**:
@@ -41,7 +42,7 @@ Follow this systematic research process:
 - Always use single message with multiple Task tool calls for maximum efficiency
 - Provide extremely detailed, specific instructions in the `prompt` parameter
 - Include research objectives, expected output format, background context, key questions, suggested sources, specific tools to use, and scope boundaries
-- Use parallel execution for independent research tasks - batch 3-5 research-subagent calls simultaneously
+- Use parallel execution for independent research tasks - batch 5-15 research-subagent calls simultaneously for maximum efficiency
 - Avoid overlap between subagents - each should have distinct, non-overlapping tasks
 
 **6. Synthesis and Quality Control**:
