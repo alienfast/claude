@@ -112,9 +112,13 @@ Run quality checks concurrently:
 
 #### Phase 6: PR Creation (Sequential)
 
-1. Create feature branch with timestamp
+1. **Check existing PR status**:
+   - Run `gh pr status` to check if current branch has an open PR
+   - If PR exists: Continue with existing branch and update existing PR
+   - If no PR exists: Create feature branch with timestamp
+
 2. **Technical-writer**: Generate comprehensive commit message
-3. **Technical-writer**: Create detailed PR description including:
+3. **Technical-writer**: Create or update PR description including:
    - **Package update summary grouped by semver classification using markdown tables**:
      - Major Version Updates (X.y.z → X+1.y.z): Use table format with columns: Package, Current, Target, Breaking Changes
      - Minor Version Updates (x.Y.z → x.Y+1.z): Use table format with columns: Package, Current, Target, New Features
@@ -146,7 +150,9 @@ Run quality checks concurrently:
    | lodash  | ^4.17.20 | ^4.17.21 | Security vulnerability fixes |
    ```
 
-4. Push branch and create PR via `gh pr create`
+4. **Push and handle PR**:
+   - If existing PR: Push commits to existing branch, update PR description via `gh pr edit`
+   - If new PR: Push branch and create PR via `gh pr create`
 5. **REQUIRED**: Provide the GitHub PR link in the final output for easy user review
 
 ## Usage Options
