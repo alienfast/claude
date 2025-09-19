@@ -45,6 +45,7 @@ Standards do not override:
 - [Git](~/.claude/standards/git.md) - Commit messages, PR descriptions, CI considerations
 - [Package Manager](~/.claude/standards/package-manager.md) - Dependencies, scripts, lockfiles
 - [React](~/.claude/standards/react.md) - Component patterns, hooks, styling
+- [Semantic Versioning](~/.claude/standards/semver.md) - Version classification, compatibility rules, update strategies
 - [TypeScript](~/.claude/standards/typescript.md) - Types, interfaces, configuration
 
 ## Usage

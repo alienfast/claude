@@ -16,3 +16,10 @@
 - Use project scripts over direct tool invocation
 - Prefer `yarn typecheck` over `npx tsc --noEmit`
 - Use `yarn npm audit` instead of `npm audit`
+
+## Version Management
+
+- Follow [Semantic Versioning Standards](~/.claude/standards/semver.md) for all version-related decisions
+- Apply semver classification when updating dependencies
+- Use appropriate version ranges based on compatibility requirements
+- Reference semver standards for breaking change assessment

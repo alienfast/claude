@@ -51,28 +51,26 @@ Acceptance: [Quality gates to verify success]
 
 #### Phase 1.5: Semver Classification
 
-**CRITICAL**: Properly classify ALL version changes according to semantic versioning rules before proceeding. Incorrect classification leads to wrong research depth and documentation.
+**CRITICAL**: Properly classify ALL version changes according to [Semantic Versioning Standards](~/.claude/standards/semver.md) before proceeding. Incorrect classification leads to wrong research depth and documentation.
 
-**Classification Rules:**
+**Reference**: Follow the comprehensive semver classification rules in `~/.claude/standards/semver.md` which includes:
+
+- Detailed classification examples
+- Common error patterns to avoid
+- Version range notation handling
+- Pre-release version rules
+
+**Quick Classification:**
 
 - **MAJOR** (X.y.z → X+1.y.z): Breaking changes, incompatible API changes
 - **MINOR** (x.Y.z → x.Y+1.z): New functionality, backward compatible
 - **PATCH** (x.y.Z → x.y.Z+1): Bug fixes, backward compatible
 
-**Examples of Correct Classification:**
-
-- `^7.1.5 → ^7.1.6` = PATCH (NOT Major!)
-- `^9.35.0 → ^9.36.0` = MINOR (NOT Major!)
-- `^4.0.0 → ^5.0.0` = MAJOR
-- `^24.5.1 → ^24.5.2` = PATCH
-- `^13.1.5 → ^13.2.0` = MINOR
-
 **Process:**
 
-1. Parse current and target versions using semantic versioning
-2. Compare X.Y.Z numbers digit by digit to determine change type
-3. Group packages by classification: MAJOR, MINOR, PATCH
-4. Verify classification before delegating research tasks
+1. Apply semver standards for parsing and classification
+2. Group packages by classification: MAJOR, MINOR, PATCH
+3. Verify classification matches semver standards before delegating
 
 #### Phase 2: Parallel Research (Independent Tasks)
 
