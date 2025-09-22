@@ -10,6 +10,8 @@
 
 - Check existing dependencies before adding new ones
 - In workspaces: add packages to specific workspace projects, not root
+- Do not downgrade a dependency to fix an issue without explicit user approval
+- When debugging and you think there is a problem with a dependency, check the latest APIs of the dependency based on the version currently being used
 
 ## Command Usage
 

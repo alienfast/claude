@@ -56,7 +56,8 @@
       "WebFetch(domain:typescript-eslint.io)",
       "WebFetch(domain:vite.dev)",
       "WebFetch(domain:www.npmjs.com)",
-      "WebSearch"
+      "WebSearch",
+      "Read(//Users/*/.claude/standards/**)"
     ],
     "deny": []
   },
