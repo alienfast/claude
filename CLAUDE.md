@@ -52,6 +52,10 @@ Standards do not override:
 
 Standards are automatically applied based on the precedence rules above. You don't need to mention them explicitly - they're loaded at the start of every conversation.
 
+## Process Management
+
+**Storybook Cleanup**: If Claude starts Storybook (`yarn storybook`) for testing or development purposes, Claude MUST stop the process when done. Do not leave Storybook running in the background unless the user explicitly requests it to remain running.
+
 ## Important Instruction Reminders
 
 Do what has been asked; nothing more, nothing less.
