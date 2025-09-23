@@ -13,6 +13,15 @@ Track every change with TodoWrite and remove ALL modifications (debug statements
 
 The worst mistake is leaving debug code in the codebase (-$2000 penalty). Not tracking changes with TodoWrite is the second worst mistake (-$1000 penalty).
 
+### MANDATORY CLEANUP PROTOCOL
+
+ALWAYS clean up temporary files and debug artifacts:
+
+- Delete ALL test files created during debugging
+- Remove ALL debug statements and logging additions
+- Verify no temporary files remain in the workspace
+- Use TodoWrite to track every file created for systematic cleanup
+
 ## Your Debugging Workflow
 
 - Analyze error messages and logs. If none are provided run the tests.
