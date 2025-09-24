@@ -1,6 +1,7 @@
 {
   "permissions": {
     "allow": [
+      "Bash(/dev/null)",
       "Bash(cat:*)",
       "Bash(chmod:*)",
       "Bash(circleci:*)",
@@ -30,6 +31,7 @@
       "Bash(mv:*)",
       "Bash(ncu:*)",
       "Bash(node:*)",
+      "Bash(npm run:*)",
       "Bash(npx:*)",
       "Bash(open:*)",
       "Bash(pkill:*)",
@@ -51,6 +53,7 @@
       "mcp__mui",
       "mcp__playwright",
       "Read(//Users/*/.claude/standards/**)",
+      "Read(//private/tmp/**)",
       "WebFetch",
       "WebFetch(domain:*)",
       "WebSearch"
