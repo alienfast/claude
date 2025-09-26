@@ -53,7 +53,7 @@ log.debug('[D:142]', user, id, result)
 ## TEST FILE CREATION PROTOCOL
 
 Create isolated test files with pattern: `testDebug_<issue>_<timestamp>.ext`
-Track in your todo list immediately.
+Track in your todo list immediately. Also add a todo to delete this file when you are done.
 
 Example:
 
