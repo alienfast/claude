@@ -5,9 +5,10 @@
 - **Components**: Function components only (class components deprecated)
 - **State**: `useState` (local), `useReducer` (complex state), `useActionState` (form actions)
 - **Data fetching**: `use()` hook for promises (React 19+), custom hooks for data fetching
-- **Performance**: `React.memo()`, `useMemo()`, `useCallback()` when needed
+- **Performance**: `memo()`, `useMemo()`, `useCallback()` when needed
 - **Composition**: Prefer over inheritance, compound patterns (Card.Header, Card.Body)
 - **Imports**: Named imports only - `import { useState, useEffect } from 'react'`
+- **Legacy imports**: ALWAYS replace `import * as React from 'react'` and `import React from 'react'` with named imports when encountered
 
 ## Custom Hooks Best Practices
 
@@ -87,7 +88,7 @@ useEffect(() => {
 
 ## Performance & Code Splitting
 
-- **Code splitting**: `React.lazy()` + `Suspense` for route-based splitting
+- **Code splitting**: `lazy()` + `Suspense` for route-based splitting
 - **Lists**: Virtual scrolling for 1000+ items (react-window)
 - **Cleanup**: Always cleanup subscriptions, timers, and event listeners
 - **Bundle optimization**: Dynamic imports for heavy components
@@ -101,6 +102,7 @@ useEffect(() => {
 - 🔴 Chaining effects to update interdependent state
 - 🔴 Creating objects/functions in dependency arrays without memoization
 - 🔴 `forwardRef` (deprecated in React 19+, use `ref` prop directly)
+- 🔴 Legacy React imports (`import * as React` or `import React`) - use named imports
 
 ## Code Quality Checklist
 
