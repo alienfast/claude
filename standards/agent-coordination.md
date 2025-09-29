@@ -4,14 +4,14 @@ This document defines coordination patterns for parallel and sequential agent ex
 
 ## Parallel vs Sequential Execution Decision Matrix
 
-### Use Parallel Execution When:
+### Use Parallel Execution When
 
 - Tasks are **independent** - results don't depend on each other
 - Tasks can be **validated separately**
 - No **shared resources** or potential conflicts
 - **Time-sensitive** - parallel execution provides significant speed benefits
 
-### Use Sequential Execution When:
+### Use Sequential Execution When
 
 - Tasks are **dependent** - later tasks need earlier results
 - Tasks **share resources** that could cause conflicts

@@ -31,11 +31,13 @@ Before any planning, research, or definitive statements about capabilities:
 ### Search Query Patterns
 
 **Good Examples:**
+
 - "biome v2 configuration inheritance"
 - "React 18.3 concurrent features"
 - "TypeScript 5.4 new syntax"
 
 **Bad Examples:**
+
 - "biome configuration" (version-agnostic)
 - "React hooks" (could apply to any version)
 - "latest TypeScript features" (ambiguous)
@@ -58,16 +60,19 @@ Before any planning, research, or definitive statements about capabilities:
 ## Common Version-Sensitive Areas
 
 ### Configuration Files
+
 - Biome, ESLint, Prettier config schemas change between major versions
 - Build tools (Vite, Webpack, Rollup) have version-specific features
 - TypeScript compiler options evolve across versions
 
 ### API Capabilities
+
 - Framework features (React hooks, Vue composition API)
 - Library methods and their signatures
 - CLI commands and flags
 
 ### Deprecation Awareness
+
 - Reference [Deprecation Standards](~/.claude/standards/deprecations.md) for handling outdated APIs
 - Proactively check for deprecation notices in version-specific docs
 - Update deprecated usage even when not directly related to main task
@@ -75,22 +80,26 @@ Before any planning, research, or definitive statements about capabilities:
 ## Integration with Existing Standards
 
 ### Package Manager Standards
+
 - Build on existing dependency checking requirements
 - Add version-specific API validation to debugging workflows
 
 ### Deprecation Standards
+
 - Use version detection to identify deprecated features more accurately
 - Apply deprecation fixes based on current version capabilities
 
 ## Error Prevention
 
 ### Red Flags (Immediate Version Check Required)
+
 - User contradicts previous advice (may indicate outdated information)
 - Configuration not working as expected
 - API or CLI commands failing unexpectedly
 - Documentation seems to conflict with actual behavior
 
 ### Recovery Actions
+
 - Acknowledge the outdated information
 - Re-research with correct version context
 - Provide corrected guidance
@@ -99,12 +108,14 @@ Before any planning, research, or definitive statements about capabilities:
 ## Examples
 
 ### Good Version-Aware Response
+
 ```
 Let me check your package.json to see which version of Biome you're using...
 I see you're using Biome v2.1.0. Let me look up the v2 configuration documentation to see the latest options for reducing duplication...
 ```
 
 ### Bad Version-Agnostic Response
+
 ```
 Biome doesn't support configuration inheritance, so you can't reduce duplication.
 ```
@@ -112,6 +123,7 @@ Biome doesn't support configuration inheritance, so you can't reduce duplication
 ## Compliance
 
 This standard applies to:
+
 - All planning and research activities
 - Tool and library capability assessments
 - Configuration and setup guidance

@@ -1,7 +1,0 @@
-node_modules
-packages/*/node_modules
-packages/*/dist
-.pnp*
-.yarn
-.vscode
-storybook-static

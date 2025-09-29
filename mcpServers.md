@@ -26,6 +26,7 @@ View, edit, create github content (this is used in place of command line `gh`)
 - Create the token and add to your lastpass. Add to your `~/.zshrc` as `GITHUB_MCP`
 - `source ~/.zshrc`
 - Run
+
   ```sh
   claude mcp add \
     -s user \
@@ -42,6 +43,7 @@ MCP for most up to date libraries (not delayed based on LLM training date) as we
 - Create an api key at context7.com and save it in your lastpass. Add to your `~/.zshrc` as `CONTEXT7_API_KEY`
 - `source ~/.zshrc`
 - Run
+
   ```sh
   claude mcp add \
     -s user \
