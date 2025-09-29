@@ -47,6 +47,7 @@ Standards do not override:
 - [React](~/.claude/standards/react.md) - Component patterns, hooks, styling
 - [Semantic Versioning](~/.claude/standards/semver.md) - Version classification, compatibility rules, update strategies
 - [TypeScript](~/.claude/standards/typescript.md) - Types, interfaces, configuration
+- [Version-Aware Planning](~/.claude/standards/version-aware-planning.md) - Research and planning based on actual dependency versions
 
 ## Usage
 

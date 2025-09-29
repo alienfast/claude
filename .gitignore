@@ -21,3 +21,4 @@ packages/*/.npmignore
 .env.local
 /.playwright-mcp
 /volumes
+/history.jsonl
