@@ -1,7 +1,7 @@
 ---
 name: architect
 description: Use this agent when you need architectural analysis, solution design, or technical recommendations without implementation. Examples: <example>Context: User needs to design a new authentication system for their React app. user: 'I need to add OAuth2 authentication to our app with role-based access control' assistant: 'I'll use the architect agent to analyze the requirements and design a comprehensive authentication solution' <commentary>Since this requires architectural design and technical recommendations, use the architect agent to provide detailed analysis and design specifications.</commentary></example> <example>Context: User wants to understand performance bottlenecks in their GraphQL implementation. user: 'Our GraphQL queries are slow and I need to understand why' assistant: 'Let me use the architect agent to analyze the current GraphQL architecture and identify performance issues' <commentary>This requires technical analysis of existing architecture, so the architect agent should analyze the codebase and provide recommendations.</commentary></example> <example>Context: User needs an ADR for a major architectural decision. user: 'Write an ADR for switching from REST to GraphQL' assistant: 'I'll use the architect agent to create a comprehensive Architecture Decision Record for this migration' <commentary>ADR creation is specifically mentioned as a core responsibility of the architect agent.</commentary></example>
-model: opus
+model: sonnet
 color: purple
 ---
 
