@@ -66,3 +66,4 @@ NEVER proactively create documentation files (\*.md) or README files. Only creat
 NEVER leave temporary files behind, always clean up.
 NEVER modify generated or build artifact files such as `src/generated/` or `dist` directories - these will be regenerated with build or gen commands.
 ALWAYS apply deprecation standards when writing or modifying code - avoid deprecated APIs and proactively update them when encountered.
+ALWAYS check markdown files after writing them - look for a `check-markdown` command in the project and run it to address any linting errors.
