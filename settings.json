@@ -47,6 +47,7 @@
       "Bash(uv:*)",
       "Bash(xargs:*)",
       "Bash(yarn:*)",
+      "mcp__circleci",
       "mcp__codeIndexer",
       "mcp__context7",
       "mcp__ide__getDiagnostics",
