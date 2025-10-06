@@ -53,6 +53,17 @@ Standards do not override:
 
 Standards are automatically applied based on the precedence rules above. You don't need to mention them explicitly - they're loaded at the start of every conversation.
 
+## CircleCI
+
+### Organization Details
+
+**alienfast**:
+
+- Organization ID: `738dd131-6ace-4b96-8073-a4a724175e69`
+- Slug: `github/alienfast`
+
+When working with CircleCI tools for alienfast projects, use these identifiers as needed.
+
 ## Process Management
 
 **Storybook Cleanup**: If Claude starts Storybook (`yarn storybook`) for testing or development purposes, Claude MUST stop the process when done. Do not leave Storybook running in the background unless the user explicitly requests it to remain running.
