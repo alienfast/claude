@@ -58,6 +58,8 @@
       "WebFetch(domain:*)",
       "WebSearch"
     ],
-    "deny": []
+    "deny": [
+    ]
   }
 }
+

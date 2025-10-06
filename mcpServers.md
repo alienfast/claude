@@ -6,35 +6,17 @@ Note: at any time, you can check the status of your MCP servers with `claude mcp
 
 Generally applicable MCP servers for any kind of coding project.
 
-### AVOID Github ([doc](https://github.com/github/github-mcp-server/blob/main/docs/installation-guides/install-claude.md))
+### CircleCI ([docs](https://circleci.com/mcp))
 
-WARNING: unnecessary context bloat!!! This can be accomplished by `brew install gh`
+[Create a token](https://app.circleci.com/settings/user/tokens)
 
-DO the following ONLY if `gh` can't do what you want.
-
-View, edit, create github content (this is used in place of command line `gh`)
-
-- Generate a (classic) PAT with the specific permissions you want. NOTE that a fine grained one, created properly failed to work on personal repos, even though all permissions and org policies were verified (see pics dir)
-
-  <details>
-  <summary>Show permissions</summary>
-
-  ![GitHub Permissions](pics/gh-classic.png)
-
-  </details>
-
-- Create the token and add to your lastpass. Add to your `~/.zshrc` as `GITHUB_MCP`
-- `source ~/.zshrc`
-- Run
-
-  ```sh
-  claude mcp add \
-    -s user \
-    --transport http \
-    github \
-    https://api.githubcopilot.com/mcp \
-    --header "Authorization: Bearer \${GITHUB_MCP}"
-  ```
+```sh
+claude mcp add \
+  -s user \
+  circleci \
+  -e CIRCLECI_TOKEN=\${CIRCLECI_TOKEN} \
+  -- npx -y @circleci/mcp-server-circleci@latest
+```
 
 ### Context7 ([docs](https://github.com/upstash/context7))
 
@@ -95,9 +77,41 @@ Note: verified that that this is deeper/more useful information that adds to the
 
 `claude mcp add gcloud -s user -- npx @google-cloud/gcloud-mcp@latest`
 
-### Pulumi ([docs](https://www.pulumi.com/docs/iac/using-pulumi/mcp-server/))
+### AVOID ~~Pulumi~~ ([docs](https://www.pulumi.com/docs/iac/using-pulumi/mcp-server/))
+
+NOTE: not currently more useful than just invoking bash pulumi.
 
 `claude mcp add pulumi -s user -- npx @pulumi/mcp-server@latest stdio`
+
+### AVOID ~~Github~~ ([doc](https://github.com/github/github-mcp-server/blob/main/docs/installation-guides/install-claude.md))
+
+WARNING: unnecessary context bloat!!! This can be accomplished by `brew install gh`
+
+DO the following ONLY if `gh` can't do what you want.
+
+View, edit, create github content (this is used in place of command line `gh`)
+
+- Generate a (classic) PAT with the specific permissions you want. NOTE that a fine grained one, created properly failed to work on personal repos, even though all permissions and org policies were verified (see pics dir)
+
+  <details>
+  <summary>Show permissions</summary>
+
+  ![GitHub Permissions](pics/gh-classic.png)
+
+  </details>
+
+- Create the token and add to your lastpass. Add to your `~/.zshrc` as `GITHUB_MCP`
+- `source ~/.zshrc`
+- Run
+
+  ```sh
+  claude mcp add \
+    -s user \
+    --transport http \
+    github \
+    https://api.githubcopilot.com/mcp \
+    --header "Authorization: Bearer \${GITHUB_MCP}"
+  ```
 
 ## Project scoped
 
