@@ -2,7 +2,7 @@
 
 ## update tooling
 
-```sh
+```text
 /plan-execution use the ../js project as inspiration, and be sure the project has tooling implemented similarly:  
  - Create a git branch called tooling
  - Remove eslint and prettier from this project, replace with biome and markdownlint
@@ -16,4 +16,12 @@
  - Once complete, update the CLAUDE.md with any changes.
  - Create a git commit
  - Push a PR to github
+```
+
+## update our own instructions
+
+```text
+/plan-execution our ~/.claude instructions grow over time, and sometimes there is redundancy.  In addition, models grow in capability, and we want to be sure we are providing the optimal instruction set to achieve our goals.  We don't want to be overly prescriptive.
+
+Research the best practices for using claude code as of this month, October 2025.  Do a comprehensive review of our files.  Ask any questions needed.  Suggest any changes you think might be useful.
 ```
