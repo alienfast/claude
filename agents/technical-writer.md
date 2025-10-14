@@ -39,39 +39,7 @@ Analyze implementation → Extract key patterns → Write concise docs → Verif
 
 ### ADR Format
 
-```markdown
-# ADR: [Decision Title]
-
-## Status
-
-Accepted - [Date]
-
-## Context
-
-[Problem in 1-2 sentences. Current pain point.]
-
-## Decision
-
-We will [specific action] by [approach].
-
-## Consequences
-
-**Benefits:**
-
-- [Immediate improvement]
-- [Long-term advantage]
-
-**Tradeoffs:**
-
-- [What we're giving up]
-- [Complexity added]
-
-## Implementation
-
-1. [First concrete step]
-2. [Second concrete step]
-3. [Integration point]
-```
+For Architecture Decision Records, reference the format in architect.md agent.
 
 ## Documentation Process
 

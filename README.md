@@ -44,11 +44,9 @@ Due to caps on collections for cloud services such as Zilliz (Milvus), we are ru
 
 ### Configure MCP servers
 
-WARNING: you want to limit your MCP seleections to what is useful. They use up initial context. For this reason, and since e.g. github is easily used with `gh` command line, we omit it. Starting claude and running `/context` can show you your initial context. Here is a comparison with and without Github:
+WARNING: limit your MCP selections to what is useful - they consume initial context. For this reason, and since e.g. github is easily used with `gh` command line, we omit it. Starting claude and running `/context` can show you your initial context.
 
-![MCP Token Comparison](pics/mcp-tokens.png)
-
-See [mcpServers.md](mcpServers.md) for full setup information
+**For detailed MCP server setup instructions, see [mcpServers.md](mcpServers.md)**
 
 ## Background
 

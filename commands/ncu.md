@@ -119,36 +119,12 @@ Run quality checks concurrently:
 
 2. **Technical-writer**: Generate comprehensive commit message
 3. **Technical-writer**: Create or update PR description including:
-   - **Package update summary grouped by semver classification using markdown tables**:
-     - Major Version Updates (X.y.z → X+1.y.z): Use table format with columns: Package, Current, Target, Breaking Changes
-     - Minor Version Updates (x.Y.z → x.Y+1.z): Use table format with columns: Package, Current, Target, New Features
-     - Patch Version Updates (x.y.Z → x.y.Z+1): Use table format with columns: Package, Current, Target, Fixes
-   - Breaking change impact analysis with special emphasis on ACTUAL major version updates
-   - Migration steps performed for major version changes only
+   - Package update summary grouped by semver classification in markdown tables
+   - Table columns: Package, Current, Target, and relevant details (Breaking Changes/New Features/Fixes)
+   - Breaking change impact analysis for major version updates
+   - Migration steps performed for major version changes
    - Quality validation results
    - Links to changelogs and release notes
-
-   **Table Format Example**:
-
-   ```markdown
-   ## Major Version Updates
-
-   | Package | Current | Target  | Breaking Changes                       |
-   | ------- | ------- | ------- | -------------------------------------- |
-   | react   | ^17.0.2 | ^18.2.0 | New JSX Transform, Strict Mode changes |
-
-   ## Minor Version Updates
-
-   | Package | Current | Target  | New Features            |
-   | ------- | ------- | ------- | ----------------------- |
-   | eslint  | ^8.45.0 | ^8.46.0 | New rule configurations |
-
-   ## Patch Version Updates
-
-   | Package | Current  | Target   | Fixes                        |
-   | ------- | -------- | -------- | ---------------------------- |
-   | lodash  | ^4.17.20 | ^4.17.21 | Security vulnerability fixes |
-   ```
 
 4. **Push and handle PR**:
    - If existing PR: Push commits to existing branch, update PR description via `gh pr edit`

@@ -2,20 +2,13 @@
 
 ## Linting
 
-- **ALWAYS** run the project's markdown linting command after creating or modifying ANY markdown file
-- Common commands to check for:
-  - `yarn check-markdown`
-  - `npm run check-markdown`
-  - `markdownlint`
-- Fix ALL linting errors before considering the task complete
-- Never leave markdown files with linting errors
+Check for project-specific markdown linting commands after creating or modifying markdown files:
 
-## Process
+1. Look for `check-markdown` or similar in package.json scripts
+2. Run the project's linting command if available
+3. Address any linting errors before completing the task
 
-1. Create or modify markdown file
-2. Immediately run the linting command
-3. Fix any errors reported
-4. Verify the linting passes with no errors
+See [Project Commands Standard](./project-commands.md) for command discovery process.
 
 ## Common Linting Rules
 
@@ -29,6 +22,3 @@
 - Creating new `.md` files
 - Editing existing `.md` files
 - Before committing markdown changes
-- As part of code review
-
-This is a critical step that must not be skipped or forgotten.

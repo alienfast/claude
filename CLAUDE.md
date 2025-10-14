@@ -45,6 +45,7 @@ Standards do not override:
 - [Git](~/.claude/standards/git.md) - Commit messages, PR descriptions, CI considerations
 - [Markdown](~/.claude/standards/markdown.md) - Linting requirements, code block formatting
 - [Package Manager](~/.claude/standards/package-manager.md) - Dependencies, scripts, lockfiles
+- [Project Commands](~/.claude/standards/project-commands.md) - Command discovery and usage
 - [React](~/.claude/standards/react.md) - Component patterns, hooks, styling
 - [Semantic Versioning](~/.claude/standards/semver.md) - Version classification, compatibility rules, update strategies
 - [TypeScript](~/.claude/standards/typescript.md) - Types, interfaces, configuration
@@ -69,13 +70,10 @@ When working with CircleCI tools for alienfast projects, use these identifiers a
 
 **Storybook Cleanup**: If Claude starts Storybook (`yarn storybook`) for testing or development purposes, Claude MUST stop the process when done. Do not leave Storybook running in the background unless the user explicitly requests it to remain running.
 
-## Important Instruction Reminders
+## Guidelines
 
-Do what has been asked; nothing more, nothing less.
-NEVER create files unless they're absolutely necessary for achieving your goal.
-ALWAYS prefer editing an existing file to creating a new one.
-NEVER proactively create documentation files (\*.md) or README files. Only create documentation files if explicitly requested by the User.
-NEVER leave temporary files behind, always clean up.
-NEVER modify generated or build artifact files such as `src/generated/` or `dist` directories - these will be regenerated with build or gen commands.
-ALWAYS apply deprecation standards when writing or modifying code - avoid deprecated APIs and proactively update them when encountered.
-ALWAYS check markdown files after writing them - look for a `check-markdown` command in the project and run it to address any linting errors.
+- Prefer editing existing files over creating new ones
+- Create documentation only when explicitly requested
+- Do not modify generated or build artifact files (e.g., `src/generated/`, `dist/`)
+- Follow deprecation standards when writing or modifying code
+- Run project-specific linting commands (see [Project Commands](~/.claude/standards/project-commands.md))

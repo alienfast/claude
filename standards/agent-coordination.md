@@ -159,4 +159,36 @@ Task for developer: Build onboarding flow per architecture specifications
 - Clear rollback procedures if validation fails
 - Maintain audit trail of decisions and changes
 
+## Model Capabilities (Sonnet 4.5)
+
+Modern models handle many coordination tasks autonomously:
+
+- **Parallel tool execution**: Model fires parallel searches and operations automatically
+- **Context building**: Reads multiple files simultaneously when beneficial
+- **Error recovery**: Self-corrects tool usage errors without explicit instructions
+- **State tracking**: Maintains task progress across extended sessions
+- **Token awareness**: Tracks token usage throughout conversations
+
+### When to Specify Coordination
+
+Only specify execution patterns when:
+
+1. **Dependencies exist** - Task A must complete before Task B can start
+2. **Resource constraints** - Rate limits, memory, or system resources require sequencing
+3. **Quality gates** - Validation checkpoints are critical before proceeding
+
+Otherwise, trust the model to optimize execution autonomously.
+
+### What No Longer Needs Explicit Coordination
+
+With Sonnet 4.5, these areas handle coordination automatically:
+
+- Tool selection and ordering
+- Parallel file reads for context building
+- Search parallelization
+- Basic error correction and retry logic
+- Context management and token optimization
+
+Focus coordination instructions on business logic dependencies and quality requirements, not technical execution details.
+
 This coordination framework ensures optimal performance while maintaining code quality and system reliability.
