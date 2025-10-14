@@ -12,16 +12,16 @@ For a great overview, read the [ClaudeLog](https://claudelog.com/mechanics/you-a
 
 ## Usage
 
-Initially, using is triggered through `/plan-execution`, with something like the following:
+Initially, using is triggered through `/do`, with something like the following:
 
 ```sh
-/plan-execution I want to update Traefik.  Search traefik documents, compare the version we are currently on, and what we might need to change to be up to date.  Implement the changes.
+/do I want to update Traefik.  Search traefik documents, compare the version we are currently on, and what we might need to change to be up to date.  Implement the changes.
 ```
 
 or
 
 ```sh
-/plan-execution this code was originally written for react 16.  While some files have been updated for react 19, I want you
+/do this code was originally written for react 16.  While some files have been updated for react 19, I want you
  to take a look at a comprehensive review of all react code, and implement the best practices for react 19.
 ```
 
