@@ -43,6 +43,7 @@ Standards do not override:
 - [Agent Coordination](~/.claude/standards/agent-coordination.md) - Parallel vs sequential execution patterns
 - [Deprecations](~/.claude/standards/deprecations.md) - Handling deprecated APIs, types, and modules
 - [Git](~/.claude/standards/git.md) - Commit messages, PR descriptions, CI considerations
+- [Markdown](~/.claude/standards/markdown.md) - Linting requirements, code block formatting
 - [Package Manager](~/.claude/standards/package-manager.md) - Dependencies, scripts, lockfiles
 - [React](~/.claude/standards/react.md) - Component patterns, hooks, styling
 - [Semantic Versioning](~/.claude/standards/semver.md) - Version classification, compatibility rules, update strategies
