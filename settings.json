@@ -1,4 +1,17 @@
 {
+  "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "~/.claude/hooks/lint.sh",
+            "type": "command"
+          }
+        ],
+        "matcher": "Write|Edit"
+      }
+    ]
+  },
   "permissions": {
     "allow": [
       "Bash(/dev/null)",
@@ -59,8 +72,6 @@
       "WebFetch(domain:*)",
       "WebSearch"
     ],
-    "deny": [
-    ]
+    "deny": []
   }
 }
-

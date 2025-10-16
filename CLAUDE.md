@@ -70,10 +70,20 @@ When working with CircleCI tools for alienfast projects, use these identifiers a
 
 **Storybook Cleanup**: If Claude starts Storybook (`yarn storybook`) for testing or development purposes, Claude MUST stop the process when done. Do not leave Storybook running in the background unless the user explicitly requests it to remain running.
 
+## Hooks
+
+### Automatic Linting
+
+A global PostToolUse hook (`~/.claude/hooks/lint.sh`) automatically runs linters after Write/Edit operations:
+- **Markdown files** (`.md`): Runs `markdownlint --fix` when `.markdownlint.jsonc`, `.markdownlint.json`, or `.markdownlintrc` exists
+- **Code files** (`.json`, `.jsonc`, `.gql`, `.ts`, `.tsx`, `.js`, `.mjs`, `.cjs`): Runs `biome check --write` when `biome.jsonc` or `biome.json` exists
+
+The hook only runs if the appropriate config file exists in the project, making it portable across all projects.
+
 ## Guidelines
 
 - Prefer editing existing files over creating new ones
 - Create documentation only when explicitly requested
 - Do not modify generated or build artifact files (e.g., `src/generated/`, `dist/`)
 - Follow deprecation standards when writing or modifying code
-- Run project-specific linting commands (see [Project Commands](~/.claude/standards/project-commands.md))
+- Linting is automatic via the global hook (see Hooks section above)
