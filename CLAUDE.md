@@ -75,6 +75,7 @@ When working with CircleCI tools for alienfast projects, use these identifiers a
 ### Automatic Linting
 
 A global PostToolUse hook (`~/.claude/hooks/lint.sh`) automatically runs linters after Write/Edit operations:
+
 - **Markdown files** (`.md`): Runs `markdownlint --fix` when `.markdownlint.jsonc`, `.markdownlint.json`, or `.markdownlintrc` exists
 - **Code files** (`.json`, `.jsonc`, `.gql`, `.ts`, `.tsx`, `.js`, `.mjs`, `.cjs`): Runs `biome check --write` when `biome.jsonc` or `biome.json` exists
 
@@ -87,3 +88,5 @@ The hook only runs if the appropriate config file exists in the project, making 
 - Do not modify generated or build artifact files (e.g., `src/generated/`, `dist/`)
 - Follow deprecation standards when writing or modifying code
 - Linting is automatic via the global hook (see Hooks section above)
+- **Do not create git commits unless explicitly requested by the user**
+- **Do not assume backward compatibility is required** - when making changes, prioritize moving forward even if it means breaking changes, unless the user specifically requests maintaining compatibility
