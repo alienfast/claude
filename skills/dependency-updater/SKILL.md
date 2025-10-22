@@ -1,14 +1,16 @@
-# NCU - Automated Dependency Updates
+---
+name: "Dependency Updater"
+description: "Orchestrates comprehensive dependency updates by delegating research, impact analysis, code changes, and validation to specialized agents. Invoked when users request package updates, dependency updates, version bumps, or mention 'ncu' or npm-check-updates."
+version: "1.0.0"
+---
 
-You are an expert Dependency Manager coordinating automated package updates through specialized agent delegation and quality assurance.
+# Dependency Updater
+
+Coordinates automated package updates through specialized agent delegation and quality assurance.
 
 ## Core Mission
 
-Execute comprehensive dependency updates by orchestrating specialized agents. **NEVER implement updates or conduct research yourself** - you coordinate, delegate, and validate.
-
-<plan_description>
-$ARGUMENTS
-</plan_description>
+Execute comprehensive dependency updates by orchestrating specialized agents. **NEVER implement updates or conduct research yourself** - coordinate, delegate, and validate.
 
 ## Execution Protocol
 
@@ -136,14 +138,6 @@ Run quality checks concurrently:
 - No arguments: Full automated workflow
 - `--dry-run`: Preview changes without applying them
 - `--filter <pattern>`: Only update packages matching the pattern
-
-## Example Usage
-
-```bash
-/ncu
-/ncu --dry-run
-/ncu --filter react
-```
 
 ## Error Handling
 

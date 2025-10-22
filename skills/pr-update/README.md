@@ -1,85 +1,150 @@
-# PR Update Skill
+# PR Title and Description Generator
 
-Automatically generates or updates GitHub Pull Request titles and descriptions based on actual code changes in the final state.
+Version: 1.0.0
 
-## Activation
+Generate or update GitHub Pull Request titles and descriptions based on actual code changes in the final state.
 
-This skill activates automatically when you mention:
+## Usage
+
+This skill is automatically triggered when you mention:
+
 - "update the PR"
-- "update PR description"
-- "generate PR title and description"
-- "write a PR summary"
-- "create PR documentation"
+- "generate PR description"
+- "write PR title"
+- "update pull request"
 
-## What It Does
+## Core Principle
 
-1. **Analyzes the actual final state** of your code (not just commit history)
-2. **Verifies features exist** in HEAD before documenting them
-3. **Generates comprehensive PR descriptions** with proper structure
-4. **Creates meaningful PR titles** following best practices
-5. **Links to actual code files** for easy navigation
+**Document ONLY what exists in the final state of the code, not the development history.**
 
-## Key Features
+Always verify features exist in `HEAD` before documenting them. If a feature was added and then removed during development, it should NOT appear in the PR description.
 
-### Verification-First Approach
-- Uses `git show HEAD:file` to confirm every feature exists
-- Skips features that were added then removed during development
-- Ensures PR descriptions match actual code state
+## Structure
 
-### Structured Output
-- Categorizes changes by impact (Infrastructure, Dev Experience, CI/CD, etc.)
-- Includes file links, code snippets, and configuration examples
-- Documents breaking changes and migration steps
-- Lists actual tests that validate the changes
+```
+pr-update/
+├── SKILL.md              # Main skill instructions
+├── README.md             # This file
+├── resources/            # Extended documentation
+│   ├── analysis-workflow.md   # Step-by-step verification examples
+│   └── title-patterns.md      # Comprehensive title format guide
+├── templates/            # PR description templates
+│   ├── feature.md             # Template for feature PRs
+│   ├── bugfix.md              # Template for bug fix PRs
+│   └── infrastructure.md      # Template for infrastructure PRs
+└── scripts/              # Helper scripts
+    └── verify-feature.sh      # Verify features exist in HEAD
+```
 
-### Helper Scripts
+## Resources
 
-**analyze-pr.sh** - Quick PR scope analysis
+### [resources/analysis-workflow.md](resources/analysis-workflow.md)
+
+Step-by-step examples showing how to:
+
+- Analyze PR scope and identify changed areas
+- Verify infrastructure changes exist
+- Check documentation structure
+- Verify CI/CD changes
+- Validate developer tooling updates
+
+### [resources/title-patterns.md](resources/title-patterns.md)
+
+Comprehensive guide to PR title formats including:
+
+- Infrastructure changes
+- Feature additions
+- Bug fixes
+- Refactoring
+- Performance improvements
+- Documentation updates
+- Anti-patterns to avoid
+
+## Templates
+
+### [templates/feature.md](templates/feature.md)
+
+Complete template for feature PRs including:
+
+- Feature overview and justification
+- User experience before/after
+- API changes and examples
+- Configuration requirements
+- Testing strategy
+- Security considerations
+- Rollout plan
+
+### [templates/bugfix.md](templates/bugfix.md)
+
+Complete template for bug fix PRs including:
+
+- Problem description and symptoms
+- Root cause analysis
+- Solution explanation
+- Code before/after comparison
+- Impact analysis
+- Regression tests
+- Monitoring and rollback plan
+
+### [templates/infrastructure.md](templates/infrastructure.md)
+
+Complete template for infrastructure PRs including:
+
+- Infrastructure overview and architecture
+- Resource configuration
+- Deployment steps and stack commands
+- High availability and disaster recovery
+- Security and compliance
+- Cost impact analysis
+- Performance benchmarks
+
+## Scripts
+
+### [scripts/verify-feature.sh](scripts/verify-feature.sh)
+
+Bash script to verify features exist in the final state of HEAD.
+
+**Usage**:
+
 ```bash
-~/.claude/skills/pr-update/scripts/analyze-pr.sh
+# Check if a function exists
+./scripts/verify-feature.sh src/utils.ts "function myFunction"
+
+# Check for a configuration value
+./scripts/verify-feature.sh config/database.ts "authentication_plugin"
+
+# Check if a file exists at all
+./scripts/verify-feature.sh packages/api/README.md ""
 ```
 
-**verify-feature.sh** - Check if a feature exists in final state
-```bash
-~/.claude/skills/pr-update/scripts/verify-feature.sh path/to/file.ts "feature_name"
-```
+**Returns**:
 
-## Example Usage
+- Exit code 0: Feature found in HEAD
+- Exit code 1: Feature NOT found in HEAD
 
-### Automatic Activation
-```
-You: "update the pr"
-Claude: [Runs analysis, verifies features, generates title and description, updates PR via gh CLI]
-```
+## Quality Checklist
 
-### What Gets Generated
+Before finalizing any PR description, verify:
 
-**PR Title Examples:**
-- "Enterprise Cloud SQL infrastructure with Advanced DR and staging environment"
-- "Add GraphQL subscription support with real-time updates"
-- "Fix memory leak in WebSocket connection handling"
+- Every feature mentioned exists in `git show HEAD:path/to/file`
+- No references to features that were added then removed
+- All file links use relative paths from repo root
+- Configuration examples reflect actual current state
+- Breaking changes clearly marked
+- Testing sections describe actual passing tests
+- Code snippets are from actual files in HEAD
 
-**PR Description Structure:**
-- Summary (1-2 sentences)
-- Major Categories (Infrastructure, Developer Experience, CI/CD, etc.)
-- Breaking Changes (with migration steps)
-- Dependencies (verified in package.json)
-- Testing (actual tests that pass)
-- Cost Impact (if applicable)
+## Development
 
-## Quality Guarantees
+To update this skill:
 
-Every PR description generated by this skill:
-- ✅ Documents only features present in final code
-- ✅ Links to actual files (clickable from GitHub)
-- ✅ Includes code snippets from real files
-- ✅ Lists actual tests that currently pass
-- ✅ Marks breaking changes clearly
-- ✅ Uses consistent formatting
+1. Edit `SKILL.md` for core instructions (keep under 500 lines)
+2. Add detailed examples to `resources/` for progressive disclosure
+3. Create new templates in `templates/` for specific PR types
+4. Add helper scripts to `scripts/` for automation
+5. Update this README to reflect changes
+6. Increment version in `SKILL.md` frontmatter following semver
 
-## Files
+## Version History
 
-- `SKILL.md` - Main skill instructions and workflow
-- `scripts/analyze-pr.sh` - PR scope analysis helper
-- `scripts/verify-feature.sh` - Feature verification helper
-- `README.md` - This file
+- **1.0.0** (2025-10-22): Initial structured release with resources, templates, and scripts

@@ -1,5 +1,6 @@
 ---
 name: PR Title and Description Generator
+version: "1.0.0"
 description: "Generate or update GitHub Pull Request titles and descriptions based on actual code changes in the final state. Use when the user mentions updating, generating, or writing PR descriptions, PR titles, pull request summaries, or says 'update the PR'. Analyzes git diff to determine what's actually in the code (not just commit history) and creates comprehensive, accurate PR documentation."
 ---
 
@@ -89,37 +90,26 @@ Before finalizing the description, verify:
 
 ## PR Title Formats
 
-Choose the most appropriate format:
+See [resources/title-patterns.md](resources/title-patterns.md) for comprehensive title format examples and patterns.
 
-### Infrastructure Changes
-- "Enterprise [resource] with [key feature] and [secondary feature]"
-- Example: ✅ "Enterprise Cloud SQL infrastructure with Advanced DR and staging environment"
+Quick reference:
 
-### Feature Additions
-- "Add [feature] with [benefit]"
-- Example: ✅ "Add GraphQL subscription support with real-time updates"
+- Infrastructure: "Enterprise [resource] with [key feature] and [secondary feature]"
+- Features: "Add [feature] with [benefit]"
+- Bug Fixes: "Fix [specific issue] in [area]"
+- Refactoring: "Refactor [area] to [improvement]"
 
-### Bug Fixes
-- "Fix [specific issue] in [area]"
-- Example: ✅ "Fix memory leak in WebSocket connection handling"
-
-### Refactoring
-- "Refactor [area] to [improvement]"
-- Example: ✅ "Refactor authentication layer to support OAuth providers"
-
-### Multiple Areas
-- "[Primary change] and [secondary change]"
-- Example: ✅ "Update database schema and add migration tooling"
-
-### Anti-patterns (Don't use these)
-- ❌ "PR deployment" (too vague)
-- ❌ "Various fixes and improvements" (not specific)
-- ❌ "Update code" (meaningless)
-- ❌ "WIP" or "Work in progress" (not descriptive)
+Avoid vague titles like "PR deployment", "Various fixes", or "Update code".
 
 ## Description Structure
 
-Use this template structure:
+For detailed templates, see:
+
+- [templates/feature.md](templates/feature.md) - Feature additions
+- [templates/bugfix.md](templates/bugfix.md) - Bug fixes
+- [templates/infrastructure.md](templates/infrastructure.md) - Infrastructure changes
+
+Use this general template structure:
 
 ```markdown
 ## Summary
@@ -190,57 +180,18 @@ Use this template structure:
 Co-Authored-By: Claude <noreply@anthropic.com>
 ```
 
-## Example Analysis Workflow
+## Verification Workflow
 
-### Step 1: Quick Scope Check
+For step-by-step examples of how to analyze and verify PR changes, see [resources/analysis-workflow.md](resources/analysis-workflow.md).
 
-```bash
-echo "=== PR Scope Analysis ==="
-echo "Commits: $(git log main..HEAD --oneline | wc -l)"
-echo ""
-
-echo "Major Areas Changed:"
-git diff main...HEAD --name-only | cut -d/ -f1-2 | sort | uniq -c | sort -rn | head -10
-```
-
-### Step 2: Verify Infrastructure Changes
+You can also use the verification script:
 
 ```bash
-# Check database configuration
-echo "Database Configuration:"
-git show HEAD:cloud/database/src/SqlDatabase.ts | grep -E "(authentication_plugin|character_set|sslMode|edition)"
+# Check if a feature exists in final state
+./scripts/verify-feature.sh path/to/file.ts "feature_name"
 
-# Check if DR replica exists
-git show HEAD:cloud/database/src/sql.ts | grep -q "sqlDrReplica" && echo "DR Replica: YES" || echo "DR Replica: NO"
-
-# Check if ETL replica exists
-git show HEAD:cloud/database/src/sql.ts | grep -q "sqlEtlReplica" && echo "ETL Replica: YES" || echo "ETL Replica: NO"
-```
-
-### Step 3: Verify Documentation
-
-```bash
-echo "Documentation Structure:"
-ls -la doc/stg/ 2>/dev/null | tail -n +4 | awk '{print "doc/stg/" $9}'
-ls -la doc/prd/ 2>/dev/null | tail -n +4 | awk '{print "doc/prd/" $9}'
-```
-
-### Step 4: Verify CI/CD Changes
-
-```bash
-echo "CI/CD Job Names:"
-git diff main...HEAD -- .circleci/config.yml | grep -E "^\+.*name:" | sed 's/^+//' | grep -v "^   #"
-```
-
-### Step 5: Check Developer Tooling
-
-```bash
-# Check for new stack commands
-echo "New Stack Commands:"
-git diff main...HEAD -- 'cloud/*/stack' | grep -E "^\+[a-z_]+\(\)" | sed 's/^+//'
-
-# Check for new documentation
-test -f packages/api/README.md && echo "API README: EXISTS" || echo "API README: MISSING"
+# Check if a file exists
+./scripts/verify-feature.sh packages/api/README.md ""
 ```
 
 ## Important Rules
@@ -257,6 +208,7 @@ test -f packages/api/README.md && echo "API README: EXISTS" || echo "API README:
 ## Common Mistakes to Avoid
 
 ### ❌ Documenting Removed Features
+
 ```
 # Commit history shows:
 # - Commit A: Add feature X
@@ -268,18 +220,21 @@ test -f packages/api/README.md && echo "API README: EXISTS" || echo "API README:
 ```
 
 ### ❌ Vague Descriptions
+
 ```
 # WRONG: "Updated database configuration"
 # RIGHT: "Set default_authentication_plugin to mysql_native_password for Cloud SQL Proxy v2 compatibility"
 ```
 
 ### ❌ Missing Verification
+
 ```
 # WRONG: Assume a feature exists because you saw it in commit messages
 # RIGHT: git show HEAD:path/to/file.ts | grep "feature_name"
 ```
 
 ### ❌ Broken Links
+
 ```
 # WRONG: [config.ts](/Users/kross/project/src/config.ts)
 # RIGHT: [config.ts](src/config.ts)
