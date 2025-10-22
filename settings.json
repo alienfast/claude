@@ -16,6 +16,7 @@
 		"allow": [
 			"Bash(/dev/null)",
 			"Bash(awk:*)",
+			"Bash(bash:*)",
 			"Bash(brew list:*)",
 			"Bash(brew search:*)",
 			"Bash(cat:*)",
