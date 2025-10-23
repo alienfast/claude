@@ -29,9 +29,6 @@ Invoke this skill when:
 # TypeScript compiler warnings
 npx tsc --noEmit
 
-# ESLint deprecation rules
-npx eslint . --ext .ts,.tsx,.js,.jsx
-
 # Dependency audit
 npm outdated
 yarn outdated
