@@ -188,19 +188,29 @@ type NonEmptyArray<T> = [T, ...T[]]
 ### Project Commands
 
 - NEVER use global `tsc` command
-- Always use project's designated package manager
+- Always use project's designated package manager for manual type checks
 - Use project-specific TypeScript version
 
 ```bash
-# ✅ Good
+# ✅ Good - manual checks
 yarn build
 yarn typecheck
 yarn tsc
 
-# ❌ Bad
+# ❌ Bad - global tsc
 tsc
-npx tsc
 ```
+
+### Automatic Type Checking
+
+Type checking is automatically handled by the global Stop hook (`~/.claude/hooks/typecheck.sh`):
+
+- Runs `npx tsc -b` (for projects with references) or `npx tsc` (standard projects)
+- Triggers after all edits in a response are complete
+- Only runs when TypeScript files are edited
+- Provides immediate type feedback
+
+**Note**: The hook uses `npx tsc` to ensure it uses the project's TypeScript version from `node_modules`. Manual checks should still use project scripts (e.g., `yarn typecheck`) when you need the full suite including circular dependency detection.
 
 ## Code Quality Checklist
 

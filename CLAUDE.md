@@ -73,7 +73,7 @@ When working with CircleCI tools for alienfast projects, use these identifiers a
 
 ## Hooks
 
-### Automatic Linting
+### Automatic Linting (PostToolUse)
 
 A global PostToolUse hook (`~/.claude/hooks/lint.sh`) automatically runs linters after Write/Edit operations:
 
@@ -82,13 +82,31 @@ A global PostToolUse hook (`~/.claude/hooks/lint.sh`) automatically runs linters
 
 The hook only runs if the appropriate config file exists in the project, making it portable across all projects.
 
+### Automatic Type Checking (Stop)
+
+A global Stop hook (`~/.claude/hooks/typecheck.sh`) automatically runs batch type checking after all edits are complete:
+
+- **Triggers**: After Claude finishes a response (Stop event)
+- **Smart detection**: Only runs when TypeScript files (`.ts`, `.tsx`) were edited in that response
+- **Project-aware**: Automatically detects project references and runs `npx tsc -b` or `npx tsc` as appropriate
+- **Batched**: Runs once per response, not per file (efficient for multi-file edits)
+- **Conditional**: Only runs if `tsconfig.json` exists in the project
+
+**Benefits**:
+
+- Immediate type feedback without manual commands
+- Efficient batching for multi-file changes
+- Complements per-file linting (Biome runs fast per-file, type check runs once at the end)
+
+**Note**: Full project checks (e.g., `yarn check` with circular dependency detection and all linting) can still be run manually when needed.
+
 ## Guidelines
 
 - Prefer editing existing files over creating new ones
 - Create documentation only when explicitly requested
 - Do not modify generated or build artifact files (e.g., `src/generated/`, `dist/`)
 - Follow deprecation standards when writing or modifying code
-- Linting is automatic via the global hook (see Hooks section above)
+- Linting and type checking are automatic via global hooks (see Hooks section above)
 - **Do not create git commits unless explicitly requested by the user**
 - **Do not assume backward compatibility is required** - when making changes, prioritize moving forward even if it means breaking changes, unless the user specifically requests maintaining compatibility
 - **Always move the codebase forward** - when facing obstacles, prefer proper solutions over workarounds, even if they require more work. Present options but recommend the path that improves code quality and maintainability
