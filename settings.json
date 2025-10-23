@@ -1,96 +1,106 @@
 {
-	"hooks": {
-		"PostToolUse": [
-			{
-				"hooks": [
-					{
-						"command": "~/.claude/hooks/lint.sh",
-						"type": "command"
-					}
-				],
-				"matcher": "Write|Edit"
-			}
-		]
-	},
-	"permissions": {
-		"allow": [
-			"Bash(/dev/null)",
-			"Bash(awk:*)",
-			"Bash(bash:*)",
-			"Bash(brew list:*)",
-			"Bash(brew search:*)",
-			"Bash(cat:*)",
-			"Bash(chmod:*)",
-			"Bash(circleci:*)",
-			"Bash(cp:*)",
-			"Bash(curl:*)",
-			"Bash(cut:*)",
-			"Bash(do)",
-			"Bash(docker:*)",
-			"Bash(done)",
-			"Bash(echo:*)",
-			"Bash(elif:*)",
-			"Bash(else:*)",
-			"Bash(env)",
-			"Bash(export:*)",
-			"Bash(fi)",
-			"Bash(find:*)",
-			"Bash(for:*)",
-			"Bash(gcloud iam roles describe:*)",
-			"Bash(gcloud iam roles list:*)",
-			"Bash(gcloud projects get-iam-policy:*)",
-			"Bash(gcloud sql flags list:*)",
-			"Bash(gcloud sql users describe:*)",
-			"Bash(gcloud sql users list:*)",
-			"Bash(gh:*)",
-			"Bash(git:*)",
-			"Bash(grep:*)",
-			"Bash(if:*)",
-			"Bash(jq:*)",
-			"Bash(kill:*)",
-			"Bash(kubectl get:*)",
-			"Bash(kubectl logs:*)",
-			"Bash(ls:*)",
-			"Bash(lsof:*)",
-			"Bash(make:*)",
-			"Bash(mkdir:*)",
-			"Bash(mv:*)",
-			"Bash(ncu:*)",
-			"Bash(node:*)",
-			"Bash(npm run:*)",
-			"Bash(npx:*)",
-			"Bash(open:*)",
-			"Bash(pkill:*)",
-			"Bash(rg:*)",
-			"Bash(rm:*)",
-			"Bash(rvm list:*)",
-			"Bash(rvm use:*)",
-			"Bash(tee:*)",
-			"Bash(test:*)",
-			"Bash(then:*)",
-			"Bash(time:*)",
-			"Bash(timeout:*)",
-			"Bash(touch:*)",
-			"Bash(tree:*)",
-			"Bash(unset:*)",
-			"Bash(uv:*)",
-			"Bash(xargs:*)",
-			"Bash(yarn:*)",
-			"Bash(~/.claude/skills/pr-update/scripts/analyze-pr.sh:*)",
-			"Bash(~/.claude/skills/pr-update/scripts/verify-feature.sh:*)",
-			"mcp__circleci",
-			"mcp__codeIndexer",
-			"mcp__context7",
-			"mcp__ide__getDiagnostics",
-			"mcp__mui",
-			"mcp__playwright",
-			"Read(//Users/*/.claude/**)",
-			"Read(//private/tmp/**)",
-			"Read(//Users/*/projects/**)",
-			"WebFetch",
-			"WebFetch(domain:*)",
-			"WebSearch"
-		],
-		"deny": []
-	}
+  "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "~/.claude/hooks/lint.sh",
+            "type": "command"
+          }
+        ],
+        "matcher": "Write|Edit"
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "command": "~/.claude/hooks/typecheck.sh",
+            "type": "command"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(/dev/null)",
+      "Bash(awk:*)",
+      "Bash(bash:*)",
+      "Bash(brew list:*)",
+      "Bash(brew search:*)",
+      "Bash(cat:*)",
+      "Bash(chmod:*)",
+      "Bash(circleci:*)",
+      "Bash(cp:*)",
+      "Bash(curl:*)",
+      "Bash(cut:*)",
+      "Bash(do)",
+      "Bash(docker:*)",
+      "Bash(done)",
+      "Bash(echo:*)",
+      "Bash(elif:*)",
+      "Bash(else:*)",
+      "Bash(env)",
+      "Bash(export:*)",
+      "Bash(fi)",
+      "Bash(find:*)",
+      "Bash(for:*)",
+      "Bash(gcloud iam roles describe:*)",
+      "Bash(gcloud iam roles list:*)",
+      "Bash(gcloud projects get-iam-policy:*)",
+      "Bash(gcloud sql flags list:*)",
+      "Bash(gcloud sql users describe:*)",
+      "Bash(gcloud sql users list:*)",
+      "Bash(gh:*)",
+      "Bash(git:*)",
+      "Bash(grep:*)",
+      "Bash(if:*)",
+      "Bash(jq:*)",
+      "Bash(kill:*)",
+      "Bash(kubectl get:*)",
+      "Bash(kubectl logs:*)",
+      "Bash(ls:*)",
+      "Bash(lsof:*)",
+      "Bash(make:*)",
+      "Bash(mkdir:*)",
+      "Bash(mv:*)",
+      "Bash(ncu:*)",
+      "Bash(node:*)",
+      "Bash(npm run:*)",
+      "Bash(npx:*)",
+      "Bash(open:*)",
+      "Bash(pkill:*)",
+      "Bash(rg:*)",
+      "Bash(rm:*)",
+      "Bash(rvm list:*)",
+      "Bash(rvm use:*)",
+      "Bash(tee:*)",
+      "Bash(test:*)",
+      "Bash(then:*)",
+      "Bash(time:*)",
+      "Bash(timeout:*)",
+      "Bash(touch:*)",
+      "Bash(tree:*)",
+      "Bash(unset:*)",
+      "Bash(uv:*)",
+      "Bash(xargs:*)",
+      "Bash(yarn:*)",
+      "Bash(~/.claude/skills/pr-update/scripts/analyze-pr.sh:*)",
+      "Bash(~/.claude/skills/pr-update/scripts/verify-feature.sh:*)",
+      "mcp__circleci",
+      "mcp__codeIndexer",
+      "mcp__context7",
+      "mcp__ide__getDiagnostics",
+      "mcp__mui",
+      "mcp__playwright",
+      "Read(//Users/*/.claude/**)",
+      "Read(//private/tmp/**)",
+      "Read(//Users/*/projects/**)",
+      "WebFetch",
+      "WebFetch(domain:*)",
+      "WebSearch"
+    ],
+    "deny": []
+  }
 }
