@@ -218,7 +218,127 @@ Before submitting TypeScript code, ensure:
 - ✅ No unused imports or variables
 - ✅ Generic types parameterized appropriately
 
-## Common Anti-Patterns to Avoid
+## Anti-Patterns to Avoid
+
+### ❌ Type Safety Compromises
+
+These workarounds undermine TypeScript's value and should never be suggested without explicit justification:
+
+1. **Excessive `any` Usage**
+
+   ```typescript
+   // DON'T: Use 'any' to bypass type errors
+   const data: any = fetchData()
+   const result: any = data.someMethod()
+   ```
+
+   ✅ Instead: Define proper types or use `unknown` with type guards
+
+   ```typescript
+   const data: unknown = fetchData()
+   if (isValidData(data)) {
+     const result = data.someMethod()
+   }
+   ```
+
+2. **Non-null Assertions Without Verification**
+
+   ```typescript
+   // DON'T: Assert non-null without checking
+   user.profile!.email // Might be undefined
+   config.apiKey! // Might not exist
+   ```
+
+   ✅ Instead: Use optional chaining or proper guards
+
+   ```typescript
+   user.profile?.email ?? 'default@example.com'
+
+   if (!config.apiKey) {
+     throw new Error('API key required')
+   }
+   const apiKey = config.apiKey
+   ```
+
+3. **Type Casting to Resolve Errors**
+
+   ```typescript
+   // DON'T: Cast to bypass incompatible types
+   const result = (badType as GoodType).method()
+   const data = response as ExpectedFormat
+   ```
+
+   ✅ Instead: Fix the type definitions or data structure
+
+   ```typescript
+   // Option 1: Fix the source types
+   function processData(data: GoodType) {
+     return data.method()
+   }
+
+   // Option 2: Use type guards for runtime validation
+   function isExpectedFormat(data: unknown): data is ExpectedFormat {
+     return typeof data === 'object' && /* validation */
+   }
+
+   if (isExpectedFormat(response)) {
+     const data = response
+   }
+   ```
+
+4. **Suppressing TypeScript Errors**
+
+   ```typescript
+   // DON'T: Hide errors without fixing
+   // @ts-ignore
+   problematicCode()
+
+   // @ts-expect-error
+   anotherIssue()
+   ```
+
+   ✅ Instead: Fix the underlying type issue
+
+   ```typescript
+   // Properly type the function or fix the types
+   properlyTypedCode()
+   ```
+
+   Exception: Third-party library has broken types (must document and report upstream)
+
+   ```typescript
+   // @ts-expect-error - Bug in @types/library-name v1.2.3
+   // Reported: https://github.com/DefinitelyTyped/issues/12345
+   libraryFunctionWithBrokenTypes()
+   ```
+
+5. **Overly Permissive Function Signatures**
+
+   ```typescript
+   // DON'T: Use Function type or loose signatures
+   function execute(callback: Function) {
+     callback()
+   }
+   ```
+
+   ✅ Instead: Define specific function signatures
+
+   ```typescript
+   function execute(callback: (data: string) => void) {
+     callback('data')
+   }
+   ```
+
+### When You Encounter Type Errors
+
+If you face TypeScript errors:
+
+1. **Understand the error** - Read the full error message
+2. **Fix the types** - Update type definitions to match reality
+3. **Add type guards** - Validate runtime data properly
+4. **Never use workarounds** - No `any`, no `as`, no `@ts-ignore` without justification
+
+### Common Patterns
 
 - ❌ Using `any` without justification
 - ❌ Disabling TypeScript errors with `@ts-ignore`

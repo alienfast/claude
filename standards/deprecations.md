@@ -140,3 +140,49 @@ legacyApi.deprecatedMethod()
 // eslint-disable-next-line deprecation/deprecation
 deprecatedFunction() // No explanation or plan for migration
 ```
+
+## Anti-Patterns for Deprecation Handling
+
+### ❌ NEVER Do These
+
+1. **Dependency Version Pinning to Avoid Deprecations**
+
+   ```json
+   // DON'T: Pin to old version to avoid dealing with deprecation
+   "react": "16.8.0"  // Pinned to avoid hooks migration
+   ```
+
+   ✅ Instead: Migrate to hooks properly, use current React version
+
+2. **Suppressing Deprecation Warnings**
+
+   ```typescript
+   // DON'T: Hide the warning without fixing
+   // @ts-ignore
+   deprecatedFunction()
+   ```
+
+   ✅ Instead: Use the replacement function
+
+3. **Conditional Imports to Delay Migration**
+
+   ```typescript
+   // DON'T: Use old API in some cases to avoid full migration
+   const api = isNewFeature ? newApi : deprecatedApi
+   ```
+
+   ✅ Instead: Migrate fully to new API across all use cases
+
+4. **"It Still Works" Justification**
+
+   - ❌ "The deprecated method still works, so we'll leave it"
+   - ✅ "The deprecated method still works, but I'll migrate now to avoid future breakage"
+
+### When You Encounter Deprecations
+
+If you find deprecated code:
+
+1. **Fix it immediately** if the change is straightforward
+2. **Research the replacement** if unfamiliar with the new API
+3. **Complete the migration** rather than partial updates
+4. **Never downgrade dependencies** to avoid dealing with deprecations

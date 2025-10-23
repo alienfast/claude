@@ -40,6 +40,7 @@ Standards do not override:
 
 ### Available Standards
 
+- [Problem-Solving](~/.claude/standards/problem-solving.md) - When to ask vs. proceed, anti-patterns for workarounds
 - [Agent Coordination](~/.claude/standards/agent-coordination.md) - Parallel vs sequential execution patterns
 - [Deprecations](~/.claude/standards/deprecations.md) - Handling deprecated APIs, types, and modules
 - [Git](~/.claude/standards/git.md) - Commit messages, PR descriptions, CI considerations
@@ -90,3 +91,131 @@ The hook only runs if the appropriate config file exists in the project, making 
 - Linting is automatic via the global hook (see Hooks section above)
 - **Do not create git commits unless explicitly requested by the user**
 - **Do not assume backward compatibility is required** - when making changes, prioritize moving forward even if it means breaking changes, unless the user specifically requests maintaining compatibility
+- **Always move the codebase forward** - when facing obstacles, prefer proper solutions over workarounds, even if they require more work. Present options but recommend the path that improves code quality and maintainability
+- **Avoid technical debt** - do not suggest shortcuts, hacks, or temporary fixes without explicit approval. When complexity is encountered, investigate deeper or ask for direction rather than compromising on quality
+
+## Complexity & Decision Thresholds
+
+Claude should stop and ask for direction when encountering **genuine uncertainty**, not based on mechanical rules about file counts or scope.
+
+### Stop and Ask When
+
+#### Uncertainty After Investigation
+
+- Root cause unclear after thorough investigation
+- Multiple valid solutions exist with significant trade-offs
+- Solution requires choosing between competing design philosophies
+- Technical approach would deviate significantly from existing codebase patterns (when unclear if deviation is desired)
+
+#### Stuck After Multiple Attempts
+
+- 2+ attempted solutions have failed
+- Each attempt reveals new unexpected complexity
+- Problem appears to have deeper architectural issues than initially visible
+
+#### Trade-off Decisions Beyond Technical Scope
+
+- Business logic decisions needed (e.g., how to handle edge cases with user impact)
+- Performance vs. maintainability trade-offs with no clear winner
+- Security vs. usability decisions
+- Cost/infrastructure implications
+
+### Proceed With Confidence When
+
+#### Clear Path Forward Exists
+
+- Solution is obvious from investigation
+- Pattern exists in codebase to follow
+- Change improves code quality (better abstractions, removes tech debt)
+- Error messages provide clear guidance
+- Standards explicitly cover the scenario
+
+#### Improvements Are Welcome
+
+- New abstractions/patterns that improve code quality
+- Database schema changes that are necessary
+- API/interface updates (you have autonomy to evolve these)
+- Build/deployment configuration improvements
+- Refactoring that enhances maintainability
+- Multi-file changes that follow a clear pattern
+
+#### Architectural Changes Are Fine If
+
+- They solve the problem properly
+- They improve the codebase
+- They follow or establish good patterns
+- You can explain the rationale
+
+### Response Format for Complex Situations
+
+When stopping to ask, provide:
+
+1. **What I've tried**: List approaches and outcomes
+2. **Why I'm uncertain**: Explain the specific decision point or ambiguity
+3. **Options available**:
+   - Option A (Proper Solution): [Description] - [Effort estimate] - [Trade-offs]
+   - Option B (Alternative): [Description] - [Effort estimate] - [Trade-offs]
+4. **Recommendation**: Explicitly state which option moves the codebase forward
+5. **Question**: What would you like me to do?
+
+### Key Principle
+
+**Don't ask permission for good engineering decisions.**
+
+If the solution:
+
+- Improves code quality
+- Fixes the root cause
+- Follows good practices
+- Can be clearly explained
+
+Then proceed with confidence, even if it means:
+
+- Touching many files
+- Creating new abstractions
+- Changing schemas
+- Updating interfaces
+- Refactoring configurations
+
+## Delegation and Planning
+
+### When to Use `/do` Command Pattern
+
+For complex, multi-step tasks, Claude should adopt the `/do` command pattern even without explicit user invocation:
+
+**Use delegation pattern when:**
+
+- Task involves >5 distinct steps
+- Multiple domains (research + architecture + implementation)
+- High context window usage expected (>50k tokens)
+- Task will take >10 minutes of work
+- Quality review across multiple components needed
+
+**Benefits of delegation:**
+
+- Reduces context window exhaustion
+- Maintains focus and quality per subtask
+- Enables parallel work streams
+- Provides clear progress tracking
+
+**Implementation:**
+
+When recognizing a complex task, say:
+"This task has multiple complex steps. I'll use a delegation approach similar to `/do` to manage this efficiently."
+
+Then proceed with TodoWrite and agent delegation pattern from the `/do` command.
+
+## Configuration Maintenance
+
+This configuration is reviewed periodically to ensure it remains current with Claude Code capabilities and best practices.
+
+**Last Review**: October 2025
+**Next Review**: April 2026 (or when major Claude Code updates occur)
+
+**Review Checklist**:
+
+- Remove outdated patterns as model capabilities improve
+- Update standards based on ecosystem changes
+- Consolidate redundant instructions
+- Add anti-patterns based on observed issues
+- Verify all file references are current
