@@ -6,6 +6,50 @@ This file provides global (user-level) guidance to Claude Code (claude.ai/code) 
 
 The year is 2025. Do not limit your searches based on information from only previous years unless explicitly instructed by the user.
 
+## Skill Usage Enforcement
+
+**CRITICAL**: Skills are MANDATORY tools, not optional helpers. Before responding to ANY user request, verify if it matches a skill trigger.
+
+### Mandatory Skill Triggers
+
+| User Request Contains | Required Skill | Examples |
+|-----------------------|----------------|----------|
+| "update pr", "update the pr", "pr description", "pr title", "pr summary", "write pr" | `pr-update` | "update the pr", "generate pr description" |
+| "update deps", "update dependencies", "bump", "ncu", "npm-check-updates" | `dependency-updater` | "update dependencies", "run ncu" |
+| "deprecated", "deprecation", "migrate from", "migration" | `deprecation-handler` | "handle deprecated API", "migrate to new version" |
+| "version bump", "semver", "breaking change", "what version" | `semver-advisor` | "what version should this be?", "is this breaking?" |
+
+### Enforcement Protocol
+
+**BEFORE any response:**
+
+1. **Check**: Does the user's request match ANY trigger phrase above?
+2. **If YES**: Use the Skill tool FIRST with the appropriate skill name
+3. **If NO**: Proceed with normal tool usage
+
+**If you proceed without using the required skill:**
+
+- You have violated the enforcement protocol
+- The user may reject your response
+- You must acknowledge the oversight and restart using the correct skill
+
+**No Exceptions**: When triggers match, skills are MANDATORY. Do not:
+
+- Write PR descriptions manually when `pr-update` should be used
+- Update dependencies manually when `dependency-updater` should be used
+- Handle deprecations manually when `deprecation-handler` should be used
+- Analyze versions manually when `semver-advisor` should be used
+
+### Response Validation Checklist
+
+Before EVERY response, mentally verify:
+
+- [ ] Does user request match ANY skill trigger phrase?
+- [ ] If YES → Have I invoked that skill FIRST?
+- [ ] If NO skill match → Proceed with normal tools
+
+**This is not optional. This is enforcement.**
+
 ## Standards
 
 Standards are conventions or guidelines in a specific area, this could be a programming language e.g. Typescript, or a tool e.g. package manager like yarn. Always apply standards according to the rules in this section.
@@ -100,6 +144,8 @@ A global Stop hook (`~/.claude/hooks/typecheck.sh`) automatically runs batch typ
 
 **Note**: Full project checks (e.g., `yarn check` with circular dependency detection and all linting) can still be run manually when needed.
 
+**IMPORTANT**: Do NOT manually run `yarn check-types`, `yarn check-biome`, `npx tsc`, or `biome check` after making changes. The hooks handle this automatically and efficiently. Only run manual checks if explicitly requested by the user or when hooks are disabled.
+
 ## Guidelines
 
 - Prefer editing existing files over creating new ones
@@ -107,6 +153,7 @@ A global Stop hook (`~/.claude/hooks/typecheck.sh`) automatically runs batch typ
 - Do not modify generated or build artifact files (e.g., `src/generated/`, `dist/`)
 - Follow deprecation standards when writing or modifying code
 - Linting and type checking are automatic via global hooks (see Hooks section above)
+- **Never manually verify linting or type checking** - hooks run automatically after edits
 - **Do not create git commits unless explicitly requested by the user**
 - **Do not assume backward compatibility is required** - when making changes, prioritize moving forward even if it means breaking changes, unless the user specifically requests maintaining compatibility
 - **Always move the codebase forward** - when facing obstacles, prefer proper solutions over workarounds, even if they require more work. Present options but recommend the path that improves code quality and maintainability
