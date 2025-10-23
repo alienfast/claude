@@ -1,19 +1,12 @@
 {
   "hooks": {
-    "PostToolUse": [
+    "Stop": [
       {
         "hooks": [
           {
             "command": "~/.claude/hooks/lint.sh",
             "type": "command"
-          }
-        ],
-        "matcher": "Write|Edit"
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
+          },
           {
             "command": "~/.claude/hooks/typecheck.sh",
             "type": "command"
