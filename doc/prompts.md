@@ -25,3 +25,7 @@
 
 Research the best practices for using claude code as of this month, October 2025.  Do a comprehensive review of our files.  Ask any questions needed.  Suggest any changes you think might be useful.
 ```
+
+```text
+/do research the new capabilities of claude skills.  Do a comprehensive review of this repository (which is my user level .claude) and consider of any commands, standards, or agents should be changed in this regard.
+```
