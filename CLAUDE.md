@@ -117,14 +117,16 @@ When working with CircleCI tools for alienfast projects, use these identifiers a
 
 ## Hooks
 
-### Automatic Linting (PostToolUse)
+### Automatic Linting (Stop)
 
-A global PostToolUse hook (`~/.claude/hooks/lint.sh`) automatically runs linters after Write/Edit operations:
+A global Stop hook (`~/.claude/hooks/lint.sh`) automatically runs batch linting after all edits are complete:
 
+- **Triggers**: After Claude finishes a response (Stop event)
+- **Smart detection**: Only runs on files that were edited in that response
 - **Markdown files** (`.md`): Runs `markdownlint --fix` when `.markdownlint.jsonc`, `.markdownlint.json`, or `.markdownlintrc` exists
 - **Code files** (`.json`, `.jsonc`, `.gql`, `.ts`, `.tsx`, `.js`, `.mjs`, `.cjs`): Runs `biome check --write` when `biome.jsonc` or `biome.json` exists
-
-The hook only runs if the appropriate config file exists in the project, making it portable across all projects.
+- **Batched**: Runs once per response on all modified files (efficient for multi-file edits)
+- **Conditional**: Only runs if the appropriate config file exists in the project
 
 ### Automatic Type Checking (Stop)
 
@@ -138,9 +140,9 @@ A global Stop hook (`~/.claude/hooks/typecheck.sh`) automatically runs batch typ
 
 **Benefits**:
 
-- Immediate type feedback without manual commands
-- Efficient batching for multi-file changes
-- Complements per-file linting (Biome runs fast per-file, type check runs once at the end)
+- Immediate feedback without manual commands
+- Efficient batching for multi-file changes (both linting and type checking run once at the end)
+- No interruptions during incremental edits (unused imports won't be removed until all changes are complete)
 
 **Note**: Full project checks (e.g., `yarn check` with circular dependency detection and all linting) can still be run manually when needed.
 
