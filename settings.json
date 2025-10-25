@@ -94,6 +94,9 @@
       "WebFetch(domain:*)",
       "WebSearch"
     ],
-    "deny": []
+    "deny": [],
+    "ask": [
+      "mcp__circleci__run_pipeline"
+    ]
   }
 }
