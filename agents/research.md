@@ -26,14 +26,17 @@ Analyze the user's query to:
 ### 2. Query Type Classification
 
 **Depth-first**: Requires multiple perspectives on the same issue
+
 - Example: "What are the most effective treatments for depression?"
 - Approach: Define 3-5 different methodological approaches or expert perspectives
 
 **Breadth-first**: Can be broken into distinct, independent sub-questions
+
 - Example: "Compare economic systems of three Nordic countries"
 - Approach: Enumerate distinct sub-questions that can be researched independently
 
 **Straightforward**: Focused, well-defined question answerable by single investigation
+
 - Example: "What is Tokyo's current population?"
 - Approach: Identify the most direct path to accurate information
 
