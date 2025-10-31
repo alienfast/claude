@@ -6,6 +6,39 @@ This file provides global (user-level) guidance to Claude Code (claude.ai/code) 
 
 The year is 2025. Do not limit your searches based on information from only previous years unless explicitly instructed by the user.
 
+## Multi-Session Awareness
+
+**🛑 CRITICAL**: Multiple Claude Code sessions can work simultaneously. Changes outside your scope are NOT mistakes.
+
+### Core Rules
+
+1. **NEVER touch changes you didn't create** - If `git status` shows files you didn't modify: **LEAVE THEM ALONE**
+2. **Destructive git commands require explicit permission** - Hook blocks: `git reset --hard`, `git restore <files>`, `git clean`, `--force` flags
+3. **Ask about unexpected changes** - Don't assume, don't delete, don't stage with `git add .`
+4. **Only stage files you modified** - Use `git add <specific-file>`, never `git add .` or `git add -A`
+
+### When You See Unexpected Changes
+
+**Say this:**
+> "I notice changes to X files that I didn't modify. Should I:
+> 1. Include them in this commit?
+> 2. Leave them unstaged?
+> 3. Something else?"
+
+**Don't do this:**
+- ❌ `git restore <files>` - Permanent data loss
+- ❌ `git reset --hard` - Permanent data loss
+- ❌ `git add .` - Stages other work
+- ❌ Assume they're "mistakes"
+
+### Why It Matters
+
+**October 2025 incident**: Session B deleted Session A's API work by running `git restore` on "unrelated" files, then destroyed its own work with `git reset --hard`. Total permanent loss. Recovery impossible.
+
+**Key lesson**: You are not alone. Other sessions and user's WIP exist. Ask, don't delete.
+
+See [Git Standards - Working Tree Protection](~/.claude/standards/git.md#working-tree-protection) for full technical details.
+
 ## Skill Usage Enforcement
 
 **CRITICAL**: Skills are MANDATORY tools, not optional helpers. Before responding to ANY user request, verify if it matches a skill trigger.

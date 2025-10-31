@@ -1,5 +1,16 @@
 {
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash(git *)",
+        "hooks": [
+          {
+            "command": "~/.claude/hooks/git-permissions.sh \"$ARGUMENTS\"",
+            "type": "command"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "hooks": [
