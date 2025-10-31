@@ -18,6 +18,32 @@ code here
 
 **Default to `text` if unsure about the language.**
 
+### Code Block Closing Syntax
+
+**IMPORTANT**: Code blocks ALWAYS close with just three backticks (` ``` `), NOT with the language specifier repeated.
+
+````markdown
+<!-- Wrong -->
+```text
+some content
+```text
+
+<!-- Correct -->
+```text
+some content
+```
+
+<!-- Wrong -->
+```javascript
+const x = 1;
+```javascript
+
+<!-- Correct -->
+```javascript
+const x = 1;
+```
+````
+
 ### Use Proper Headings (Not Bold Text)
 
 ```markdown
