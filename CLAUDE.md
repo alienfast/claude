@@ -84,6 +84,7 @@ Standards do not override:
 
 ### Available Standards
 
+- [Technical Debt Prevention](~/.claude/standards/technical-debt-prevention.md) - **CRITICAL: No backups, no duplicates, modify in place**
 - [Problem-Solving](~/.claude/standards/problem-solving.md) - When to ask vs. proceed, anti-patterns for workarounds
 - [Agent Coordination](~/.claude/standards/agent-coordination.md) - Parallel vs sequential execution patterns
 - [Deprecations](~/.claude/standards/deprecations.md) - Handling deprecated APIs, types, and modules
@@ -117,15 +118,15 @@ When working with CircleCI tools for alienfast projects, use these identifiers a
 
 ## Hooks
 
-### Automatic Linting (Stop)
+### Automatic Linting (PostToolUse)
 
-A global Stop hook (`~/.claude/hooks/lint.sh`) automatically runs batch linting after all edits are complete:
+A global PostToolUse hook (`~/.claude/hooks/lint-post-tool.sh`) automatically runs linting immediately after file modifications:
 
-- **Triggers**: After Claude finishes a response (Stop event)
-- **Smart detection**: Only runs on files that were edited in that response
+- **Triggers**: After each file modification (Edit, Write, NotebookEdit tools)
+- **Smart detection**: Only runs on the specific file that was just modified
 - **Markdown files** (`.md`): Runs `markdownlint --fix` when `.markdownlint.jsonc`, `.markdownlint.json`, or `.markdownlintrc` exists
 - **Code files** (`.json`, `.jsonc`, `.gql`, `.ts`, `.tsx`, `.js`, `.mjs`, `.cjs`): Runs `biome check --write` when `biome.jsonc` or `biome.json` exists
-- **Batched**: Runs once per response on all modified files (efficient for multi-file edits)
+- **Immediate feedback**: Works in multi-agent scenarios where Stop doesn't fire
 - **Conditional**: Only runs if the appropriate config file exists in the project
 
 ### Automatic Type Checking (Stop)
@@ -150,16 +151,18 @@ A global Stop hook (`~/.claude/hooks/typecheck.sh`) automatically runs batch typ
 
 ## Guidelines
 
-- Prefer editing existing files over creating new ones
+- **NEVER create backup files** (.backup, .old, .v2, etc.) - Git is the only backup needed
+- **ALWAYS modify existing files** rather than creating duplicates with similar names
+- **DELETE aggressively** - Remove unused code, old implementations, empty directories immediately
 - Create documentation only when explicitly requested
 - Do not modify generated or build artifact files (e.g., `src/generated/`, `dist/`)
-- Follow deprecation standards when writing or modifying code
+- Follow Technical Debt Prevention standards strictly (see [Technical Debt Prevention](~/.claude/standards/technical-debt-prevention.md))
 - Linting and type checking are automatic via global hooks (see Hooks section above)
 - **Never manually verify linting or type checking** - hooks run automatically after edits
 - **Do not create git commits unless explicitly requested by the user**
-- **Do not assume backward compatibility is required** - when making changes, prioritize moving forward even if it means breaking changes, unless the user specifically requests maintaining compatibility
-- **Always move the codebase forward** - when facing obstacles, prefer proper solutions over workarounds, even if they require more work. Present options but recommend the path that improves code quality and maintainability
-- **Avoid technical debt** - do not suggest shortcuts, hacks, or temporary fixes without explicit approval. When complexity is encountered, investigate deeper or ask for direction rather than compromising on quality
+- **Embrace breaking changes** - This is private code. Break it, then fix it. No compatibility layers.
+- **Always move the codebase forward** - when facing obstacles, prefer proper solutions over workarounds, even if they require more work
+- **Zero tolerance for technical debt** - No shortcuts, no "temporary" solutions, no duplicated code
 
 ## Complexity & Decision Thresholds
 
