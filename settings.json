@@ -1,12 +1,18 @@
 {
   "hooks": {
-    "Stop": [
+    "PostToolUse": [
       {
         "hooks": [
           {
-            "command": "~/.claude/hooks/lint.sh",
+            "command": "~/.claude/hooks/lint-post-tool.sh",
             "type": "command"
-          },
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
           {
             "command": "~/.claude/hooks/typecheck.sh",
             "type": "command"

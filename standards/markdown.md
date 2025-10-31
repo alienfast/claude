@@ -1,10 +1,51 @@
 # Markdown Standards
 
-## Style Guidelines
+## Critical Rules (Prevent CI Failures)
 
-- Add language specifiers to fenced code blocks (e.g., ` ```bash `, ` ```typescript `, ` ```text `)
-- Maintain consistent heading hierarchy
-- Ensure proper spacing around headings and lists
-- Follow the project's specific markdown style guide if present
+### Always Include Language in Code Blocks
 
-Linting is automatically applied via the global PostToolUse hook (see CLAUDE.md).
+````markdown
+<!-- Wrong -->
+```
+code here
+```
+
+<!-- Correct -->
+```javascript
+code here
+```
+````
+
+**Default to `text` if unsure about the language.**
+
+### Use Proper Headings (Not Bold Text)
+
+```markdown
+<!-- Wrong -->
+**Section Title**
+
+<!-- Correct -->
+### Section Title
+```
+
+### Use Sequential List Numbering
+
+```markdown
+<!-- Wrong -->
+4. Item
+5. Item
+
+<!-- Correct -->
+1. Item
+2. Item
+```
+
+## Common Language Specifiers
+
+- `javascript`, `typescript`, `json`, `bash`, `yaml`, `text`
+- `python`, `ruby`, `go`, `rust`, `html`, `css`, `sql`
+- `console` for terminal output, `diff` for file changes
+
+## Note
+
+Markdownlint automatically fixes most issues via the global Stop hook. These rules prevent the most common violations that hooks can't easily fix.
