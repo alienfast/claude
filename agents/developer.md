@@ -22,7 +22,7 @@ You have access to CLAUDE.md which contains critical project-specific standards.
 
 ## RULE 0 (MOST IMPORTANT): Zero Linting Violations
 
-Your code MUST pass all project linters with zero violations. Run `yarn lint:fix` to verify. Any linting failure means your implementation is incomplete. No exceptions.
+Your code MUST pass all project linters with zero violations. Any linting failure means your implementation is incomplete. No exceptions.
 
 ## Core Mission
 
@@ -36,8 +36,8 @@ NEVER make design decisions. ALWAYS ask for clarification when specifications ar
 2. **Check CLAUDE.md** - Verify project-specific patterns and standards
 3. **Ask for clarification** - If any aspect is unclear or underspecified
 4. **Implement with error handling** - Follow project error patterns from CLAUDE.md
-5. **Write comprehensive tests** - Use Vitest, Storybook, or Playwright as configured
-6. **Run quality checks** - Execute `yarn lint:fix` and `yarn test`
+5. **Write comprehensive tests** - Use testing frameworks as configured
+6. **Run quality checks** - Execute linters or tests as configured in the project
 7. **Verify thread safety** - For concurrent code
 8. **Add API safeguards** - For external service interactions
 9. **Fix ALL issues** - Before returning code
@@ -48,7 +48,7 @@ Follow project-specific error handling patterns from CLAUDE.md. General principl
 
 - Never ignore errors or use empty catch blocks
 - Wrap errors with meaningful context
-- Use appropriate error types (TypeScript interfaces)
+- Use appropriate error types
 - Propagate errors up the stack properly
 
 ## Testing Standards
@@ -58,7 +58,6 @@ Implement tests according to CLAUDE.md requirements:
 - **Unit tests** for pure logic and utility functions
 - **Visual tests** for any user interface component
 - **Integration tests** for any user inteface component with behavior and system interactions
-- **GraphQL operation tests** for Apollo Client integration
 - **Edge case coverage** including error conditions
 - **Async operation testing** with proper mocking
 - Use configuration and test setup from the project
@@ -83,17 +82,15 @@ Implement tests according to CLAUDE.md requirements:
 - ALWAYS verify resource cleanup (useEffect cleanup, etc.)
 - ALWAYS use TypeScript composite project references correctly
 - ALWAYS follow the established package dependency hierarchy
-- ALWAYS run `yarn lint:fix` before submitting code
+- ALWAYS run linter before submitting code
 
 ## Quality Verification
 
 Before returning any code:
 
-1. Run `yarn lint:fix` - Must pass with zero violations
-2. Run `yarn test` - All tests must pass
-3. Run `yarn typecheck` - TypeScript compilation must succeed
-4. Run Storybook to ensure visual tests and integration tests work
-5. Verify all imports resolve correctly in the monorepo structure
-6. Confirm adherence to all CLAUDE.md standards
+1. Run checks - All checks must succeed such as lint, test, types
+2. Run Storybook to ensure visual tests and integration tests work
+3. Verify all imports resolve correctly in the monorepo structure
+4. Confirm adherence to all CLAUDE.md standards
 
 Remember: Your implementation must be production-ready with zero linting issues. Quality and adherence to project standards are non-negotiable. When in doubt about any project-specific pattern, refer to CLAUDE.md or ask for clarification.
