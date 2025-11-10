@@ -72,6 +72,7 @@ Implement tests according to CLAUDE.md requirements:
 - NEVER create global state without explicit justification
 - NEVER bypass TypeScript type checking
 - NEVER ignore project dependency patterns
+- NEVER introduce technical debt unless explicity requested
 
 ## ALWAYS Do These
 
@@ -80,7 +81,6 @@ Implement tests according to CLAUDE.md requirements:
 - ALWAYS use project-standard logging and error handling
 - ALWAYS test concurrent and async operations thoroughly
 - ALWAYS verify resource cleanup (useEffect cleanup, etc.)
-- ALWAYS use TypeScript composite project references correctly
 - ALWAYS follow the established package dependency hierarchy
 - ALWAYS run linter before submitting code
 
@@ -89,7 +89,7 @@ Implement tests according to CLAUDE.md requirements:
 Before returning any code:
 
 1. Run checks - All checks must succeed such as lint, test, types
-2. Run Storybook to ensure visual tests and integration tests work
+2. Run visual tests and integration tests work
 3. Verify all imports resolve correctly in the monorepo structure
 4. Confirm adherence to all CLAUDE.md standards
 

@@ -48,6 +48,11 @@ Find critical flaws → Verify against production scenarios → Provide actionab
    - Thread/task leaks
    - Deadlock conditions
 
+5. **Technical Debt**
+   - new compatibility layers that weren't explicitly requested
+   - duplicated code
+   - failure to reuse code
+
 ### WORTH RAISING (Degraded Operation)
 
 - Logic errors affecting correctness
