@@ -20,8 +20,153 @@ If a feature was added in one commit and removed in another, it should NOT be in
 
 ```bash
 git branch --show-current
-gh pr view --json number,title,url
+
+# Fetch PR information including state for validation
+pr_info=$(gh pr view --json number,title,state,mergedAt,headRefName,baseRefName 2>/dev/null)
+
+if [[ -n "$pr_info" ]]; then
+  # PR exists - extract state and metadata for validation
+  pr_state=$(echo "$pr_info" | jq -r '.state // "UNKNOWN"')
+  pr_merged_at=$(echo "$pr_info" | jq -r '.mergedAt // "null"')
+  pr_number=$(echo "$pr_info" | jq -r '.number')
+  pr_title=$(echo "$pr_info" | jq -r '.title')
+  pr_head=$(echo "$pr_info" | jq -r '.headRefName')
+  pr_base=$(echo "$pr_info" | jq -r '.baseRefName')
+
+  # Security Fix #4: Validate pr_state is a known GitHub PR state (prevent injection)
+  case "$pr_state" in
+    OPEN|CLOSED|MERGED|UNKNOWN)
+      # Valid state, proceed
+      ;;
+    *)
+      echo "WARNING: Unexpected PR state from GitHub API: $pr_state" >&2
+      pr_state="UNKNOWN"
+      ;;
+  esac
+
+  # Security Fix #4: Validate pr_merged_at is either "null" or valid ISO 8601 timestamp
+  if [[ "$pr_merged_at" != "null" ]] && [[ ! "$pr_merged_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]]; then
+    echo "WARNING: Unexpected mergedAt format from GitHub API: $pr_merged_at" >&2
+    pr_merged_at="null"
+  fi
+
+  # Security Fix #5: Validate pr_number is present and is a positive integer
+  if [[ -z "$pr_number" ]] || [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
+    if [[ -n "$pr_info" ]]; then
+      echo "ERROR: PR data incomplete (missing or invalid PR number)" >&2
+    fi
+    pr_info=""  # Treat as no PR exists
+  fi
+fi
 ```
+
+### 1.1. PR State Validation
+
+**CRITICAL SAFEGUARD**: Before updating any PR, verify it is in a safe state to modify.
+
+**When PR exists (pr_info is not empty):**
+
+**Step 1: Check if PR is OPEN** - safe to proceed immediately:
+
+```bash
+if [[ "$pr_state" == "OPEN" ]]; then
+  # Safe to proceed with normal update workflow
+  # Continue to Step 2
+fi
+```
+
+**Step 2: If PR is NOT OPEN** - stop and ask user for confirmation:
+
+Determine the specific non-open state:
+
+```bash
+if [[ "$pr_state" == "MERGED" || "$pr_merged_at" != "null" ]]; then
+  pr_status_type="MERGED"
+  pr_status_detail="merged"
+  pr_status_note="Note: Updating a merged PR only changes its historical record, not the code."
+elif [[ "$pr_state" == "CLOSED" ]]; then
+  pr_status_type="CLOSED"
+  pr_status_detail="closed without merging"
+  pr_status_note="Updating a closed PR is unusual. Most cases should create a new PR instead."
+else
+  pr_status_type="UNKNOWN"
+  pr_status_detail="in an unclear state ($pr_state)"
+  pr_status_note="Cannot verify PR state safely. Manual investigation recommended."
+fi
+```
+
+**Step 3: Present confirmation prompt to user**:
+
+Stop execution and display this message (substitute variables with actual values):
+
+```text
+⚠️ **PR State Warning**
+
+The detected pull request is **{pr_status_type}**:
+
+- **PR**: #{pr_number} - {pr_title}
+- **Branch**: {pr_head} → {pr_base}
+- **State**: {pr_status_detail}
+
+**Options:**
+1. **Create new PR** - Open a fresh pull request for these changes (recommended for most cases)
+2. **Update {pr_status_type} PR anyway** - Modify the PR's title/description (rarely needed)
+3. **Cancel** - Stop without making changes
+
+{pr_status_note}
+
+**What would you like to do?**
+```
+
+**Step 4: Wait for explicit user response and validate input**:
+
+```bash
+# Read user choice
+read -p "Enter your choice (1, 2, or 3): " user_choice
+
+# Security Fix #2: Validate input is exactly 1, 2, or 3
+if [[ ! "$user_choice" =~ ^[123]$ ]]; then
+  echo "Invalid choice. Please enter 1, 2, or 3." >&2
+  exit 1
+fi
+```
+
+**Step 5: Handle user choice based on validated input**:
+
+```bash
+case "$user_choice" in
+  1)
+    # Option 1: Create new PR
+    pr_info=""
+    echo "Creating new PR instead..."
+    ;;
+  2)
+    # Option 2: Update anyway
+    user_confirmed_update="true"
+    echo "Proceeding with update to $pr_status_type PR..."
+    ;;
+  3)
+    # Option 3: Cancel
+    user_cancelled="true"
+    echo "PR update cancelled by user. No changes made."
+    exit 0
+    ;;
+esac
+```
+
+**Note on Interactive vs Non-Interactive Handling**:
+
+If implementing this skill as a non-interactive script, Claude should directly handle the user's verbal choice without prompting:
+
+- If user says "create new PR": Set `pr_info=""`
+- If user says "update anyway": Set `user_confirmed_update="true"`
+- If user says "cancel": Exit gracefully
+
+**When no PR exists (pr_info is empty):**
+Skip validation entirely - the skill will create a new PR (normal workflow).
+
+**API Failure Handling:**
+If `gh pr view` returns an error OTHER than "no pull requests found", treat as UNKNOWN state and ask user before proceeding.
 
 ### 2. Analyze Final State Changes
 
@@ -242,9 +387,58 @@ You can also use the verification script:
 
 ## After Generating Description
 
+**Security Fix #1 - Command Injection Prevention**: When generating `title` and `description` variables, ensure they are assigned using proper quoting to prevent command injection:
+
+```bash
+# Safe assignment (use quotes):
+title="Generated title text"
+description="$(cat <<'EOF'
+Multi-line description
+EOF
+)"
+
+# UNSAFE - never do this:
+# title=$(some_command)  # Without quotes, could execute commands in title
+```
+
 Update the PR using GitHub CLI:
 
 ```bash
+# Security Fix #3: Pre-Update State Verification (prevent TOCTOU race condition)
+# Re-check PR state immediately before update to prevent time-of-check-time-of-use race
+if [[ -n "$pr_number" ]]; then
+  current_pr_info=$(gh pr view "$pr_number" --json state 2>/dev/null)
+
+  if [[ -n "$current_pr_info" ]]; then
+    current_state=$(echo "$current_pr_info" | jq -r '.state // "UNKNOWN"')
+
+    # Verify state hasn't changed since initial check
+    if [[ "$current_state" != "$pr_state" ]]; then
+      echo "ERROR: PR state changed during processing" >&2
+      echo "  Initial state: $pr_state" >&2
+      echo "  Current state: $current_state" >&2
+      echo "  Aborting update to prevent unintended modification" >&2
+      exit 1
+    fi
+  else
+    echo "ERROR: PR no longer exists (may have been deleted)" >&2
+    exit 1
+  fi
+fi
+
+# Security Fix #7: Safety assertion with user_cancelled flag check
+if [[ "$user_cancelled" == "true" ]]; then
+  echo "ERROR: Attempted to continue after user cancellation" >&2
+  exit 1
+fi
+
+# Safety assertion - should never trigger if validation worked correctly
+if [[ "$pr_state" != "OPEN" ]] && [[ "$user_confirmed_update" != "true" ]]; then
+  echo "ERROR: Attempted to update non-open PR #$pr_number (state: $pr_state) without user confirmation."
+  echo "This indicates a bug in the PR state validation logic."
+  exit 1
+fi
+
 gh pr edit <number> --title "Your Title Here" --body "$(cat <<'EOF'
 [Your full description here]
 EOF

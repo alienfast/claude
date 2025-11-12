@@ -16,12 +16,53 @@ echo ""
 
 # Get PR info if it exists
 if command -v gh &> /dev/null; then
-  if gh pr view --json number,title,url &> /dev/null; then
-    PR_NUMBER=$(gh pr view --json number -q .number)
-    PR_TITLE=$(gh pr view --json title -q .title)
-    PR_URL=$(gh pr view --json url -q .url)
-    echo "🔗 PR #$PR_NUMBER: $PR_TITLE"
-    echo "   $PR_URL"
+  # Fetch PR with state information for validation
+  pr_info=$(gh pr view --json number,title,state,mergedAt,headRefName,baseRefName 2>/dev/null)
+
+  if [[ -n "$pr_info" ]]; then
+    pr_state=$(echo "$pr_info" | jq -r '.state // "UNKNOWN"')
+    pr_merged_at=$(echo "$pr_info" | jq -r '.mergedAt // "null"')
+    pr_number=$(echo "$pr_info" | jq -r '.number')
+    PR_TITLE=$(echo "$pr_info" | jq -r '.title')
+
+    # Security Fix #6: Validate pr_state is a known value
+    case "$pr_state" in
+      OPEN|CLOSED|MERGED|UNKNOWN) ;;
+      *)
+        echo "WARNING: Unexpected PR state: $pr_state" >&2
+        pr_state="UNKNOWN"
+        ;;
+    esac
+
+    # Security Fix #6: Validate pr_number is a positive integer
+    if [[ -z "$pr_number" ]] || [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
+      echo "ERROR: Invalid or missing PR number" >&2
+      exit 1
+    fi
+
+    # Validate PR state before analysis (non-blocking, warning only)
+    if [[ "$pr_state" != "OPEN" ]]; then
+      echo "⚠️  Warning: PR #$pr_number is $pr_state" >&2
+
+      if [[ "$pr_state" == "MERGED" || "$pr_merged_at" != "null" ]]; then
+        echo "⚠️  This PR was merged. Analysis will show historical changes only." >&2
+      elif [[ "$pr_state" == "CLOSED" ]]; then
+        echo "⚠️  This PR was closed without merging." >&2
+      else
+        echo "⚠️  PR state is unclear: $pr_state" >&2
+      fi
+
+      echo "" >&2
+      echo "Continue with analysis? (y/N): " >&2
+      read -r response
+
+      if [[ ! "$response" =~ ^[Yy]$ ]]; then
+        echo "Analysis cancelled." >&2
+        exit 1
+      fi
+    fi
+
+    echo "🔗 PR #$pr_number: $PR_TITLE"
     echo ""
   else
     echo "ℹ️  No PR found for this branch"
