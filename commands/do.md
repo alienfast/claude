@@ -25,7 +25,7 @@ Available agents:
 - `research-lead`: Conducts comprehensive research on complex topics requiring multiple perspectives and strategic planning
 - `architect`: Analyzes architecture, designs solutions, makes technical recommendations
 - `developer`: Implements code, writes tests, fixes bugs
-- `debugger`: Investigates errors, analyzes root causes
+- `debugger`: Investigates errors, analyzes root causes (may return with pending debug code requiring user action)
 - `quality-reviewer`: Reviews for security, performance, best practices
 - `technical-writer`: Creates documentation
 
@@ -60,6 +60,16 @@ When encountering errors:
 3. **Plan Adherence**: Minor fixes okay, architectural changes need justification
 4. **Quality Gates**: All tests must pass before proceeding
 
+### Debugger Iteration
+
+When the debugger returns a progress report (not a final report):
+
+1. **Pause execution** - Do not proceed to next todo
+2. **Present to user** - Show the progress report with instructions
+3. **Await user input** - User compiles, runs, and provides new log output
+4. **Re-delegate** - Launch debugger again with new evidence
+5. **Track cleanup** - Ensure enumerated debug code is removed before plan completion
+
 ## Quality Standards
 
 Each phase must meet:
@@ -84,6 +94,7 @@ Plan execution succeeds when:
 - [ ] Documentation complete
 - [ ] Tests passing
 - [ ] Plan requirements met
+- [ ] All debug code removed (if debugger was used)
 
 ## Key Principles
 
