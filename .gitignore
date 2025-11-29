@@ -24,3 +24,4 @@ packages/*/.npmignore
 /history.jsonl
 /file-history
 /debug
+/plans
