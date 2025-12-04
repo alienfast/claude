@@ -83,14 +83,16 @@ These are signals to either investigate deeper or ask for direction.
 
 ## Available Standards
 
-- [Problem-Solving](problem-solving.md) - When to ask vs. proceed, anti-patterns for workarounds
 - [Agent Coordination](agent-coordination.md) - Parallel vs sequential execution patterns
 - [Deprecations](deprecations.md) - Handling deprecated APIs, types, and modules
 - [Git](git.md) - Commit messages, PR descriptions, CI considerations
 - [Markdown](markdown.md) - Linting requirements, code block formatting
+- [Multi-Session Safety](multi-session-safety.md) - Working with concurrent Claude sessions
 - [Package Manager](package-manager.md) - Dependencies, scripts, lockfiles
+- [Problem-Solving](problem-solving.md) - When to ask vs. proceed, anti-patterns for workarounds
 - [Project Commands](project-commands.md) - Command discovery and usage
 - [React](react.md) - Component patterns, hooks, styling
 - [Semantic Versioning](semver.md) - Version classification, compatibility rules, update strategies
+- [Technical Debt Prevention](technical-debt-prevention.md) - No backups, no duplicates, modify in place
 - [TypeScript](typescript.md) - Types, interfaces, configuration
 - [Version-Aware Planning](version-aware-planning.md) - Research and planning based on actual dependency versions
