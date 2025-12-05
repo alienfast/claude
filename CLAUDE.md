@@ -45,6 +45,19 @@ Do not run these manually; they're handled automatically.
 - Embrace breaking changes - this is private code, no compatibility layers needed
 - Prefer proper solutions over workarounds, even if they require more work
 
+## Anti-Pattern Red Flags
+
+Before suggesting ANY of these, stop and investigate the root cause:
+
+- Version pins or downgrades to avoid compatibility issues
+- Error/warning suppression
+- Type casting to `any` to bypass checks
+- Disabling linter rules
+- Partial migrations
+- Workarounds instead of proper fixes
+
+These are signals to dig deeper, not shortcuts to take.
+
 ## Complexity & Decision Thresholds
 
 Stop and ask for direction when encountering genuine uncertainty, not based on mechanical rules.
