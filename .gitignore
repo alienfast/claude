@@ -25,3 +25,4 @@ packages/*/.npmignore
 /file-history
 /debug
 /plans
+/stats-cache.json
