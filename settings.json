@@ -82,6 +82,7 @@
       "Bash(npx:*)",
       "Bash(open:*)",
       "Bash(pkill:*)",
+      "Bash(pnpm:*)",
       "Bash(rg:*)",
       "Bash(rm:*)",
       "Bash(rvm list:*)",
@@ -110,7 +111,8 @@
       "Read(//Users/*/projects/**)",
       "WebFetch",
       "WebFetch(domain:*)",
-      "WebSearch"
+      "WebSearch",
+      "Skill"
     ],
     "deny": [],
     "ask": [
