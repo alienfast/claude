@@ -27,6 +27,14 @@ or
 
 ## Setup
 
+### Install Claude Chrome
+
+`curl -fsSL <https://claude.ai/install.sh> | bash`
+
+### Update Claude Code
+
+`claude update`
+
 ### Add this repo to your user directory
 
 ```sh
@@ -38,9 +46,9 @@ git checkout -b main origin/main
 git pull
 ```
 
-### Run MCP resources
+### Setup Claude in Chrome
 
-Due to caps on collections for cloud services such as Zilliz (Milvus), we are running some services locally via `docker compose`. See `start.sh` and `stop.sh` commands, and be sure these are running.
+[Extension](https://chromewebstore.google.com/detail/claude/fcoeoabgfenejglbffodgkkbkcdhcgfn)
 
 ### Configure MCP servers
 

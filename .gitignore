@@ -26,3 +26,4 @@ packages/*/.npmignore
 /debug
 /plans
 /stats-cache.json
+/chrome

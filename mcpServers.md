@@ -4,6 +4,8 @@ Note: at any time, you can check the status of your MCP servers with `claude mcp
 
 **NOTE** I have since removed most of these and am trying more skills because they are more context efficient.  I do stil have `mui` as it has proven useful. I'll leave these instructions in case I want to try and add them back.
 
+e.g. instead of playwright, trying <https://github.com/SawyerHood/dev-browser>
+
 ## User scoped
 
 Generally applicable MCP servers for any kind of coding project.
