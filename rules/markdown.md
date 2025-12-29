@@ -1,4 +1,10 @@
-# Markdown Standards
+---
+paths:
+  - "**/*.md"
+  - "**/*.mdx"
+---
+
+# Markdown Rules
 
 ## Critical Rules (Prevent CI Failures)
 
@@ -31,16 +37,6 @@ some content
 <!-- Correct -->
 ```text
 some content
-```
-
-<!-- Wrong -->
-```javascript
-const x = 1;
-```javascript
-
-<!-- Correct -->
-```javascript
-const x = 1;
 ```
 ````
 

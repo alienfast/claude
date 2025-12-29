@@ -1,7 +1,22 @@
 ---
 name: "Dependency Updater"
 description: "Orchestrates comprehensive dependency updates by delegating research, impact analysis, code changes, and validation to specialized agents. Invoked when users request package updates, dependency updates, version bumps, or mention 'ncu' or npm-check-updates."
-version: "1.0.0"
+version: "1.1.0"
+model: sonnet
+allowed-tools:
+  - Read
+  - Edit
+  - Write
+  - Grep
+  - Glob
+  - Bash(npm:*)
+  - Bash(yarn:*)
+  - Bash(pnpm:*)
+  - Bash(ncu:*)
+  - Bash(npx:*)
+  - Task
+  - WebSearch
+  - WebFetch
 ---
 
 # Dependency Updater

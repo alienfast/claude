@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Global user-level guidance for Claude Code. This directory (`~/.claude/`) contains agents, commands, and standards that apply to all projects unless overridden by project-specific configurations.
+Global user-level guidance for Claude Code. This directory (`~/.claude/`) contains rules, skills, commands, and standards that apply to all projects unless overridden by project-specific configurations.
 
 ## Date
 
@@ -12,18 +12,35 @@ Multiple Claude Code sessions can work simultaneously. Never touch changes you d
 
 See [Multi-Session Safety](standards/multi-session-safety.md) for detailed rules and examples.
 
+## Path-Specific Rules
+
+Rules in `~/.claude/rules/` are automatically applied based on file type:
+
+- `typescript.md` - Applied to `**/*.ts`, `**/*.tsx` files
+- `react.md` - Applied to `**/*.tsx`, `**/*.jsx` files
+- `markdown.md` - Applied to `**/*.md`, `**/*.mdx` files
+- `package-manager.md` - Applied to `**/package.json` and lockfiles
+
 ## Available Skills
 
 Skills activate automatically based on context. See [Skills README](skills/README.md) for details.
 
-- `dependency-updater` - Package updates, ncu, version bumps
-- `pr-update` - PR titles and descriptions from code changes
-- `deprecation-handler` - Deprecated APIs and migrations
-- `semver-advisor` - Version bump classification
+- `dependency-updater` - Package updates, ncu, version bumps (model: sonnet)
+- `pr-update` - PR titles and descriptions from code changes (model: sonnet)
+- `deprecation-handler` - Deprecated APIs and migrations (model: haiku)
+- `semver-advisor` - Version bump classification (model: haiku)
 
 ## Standards
 
-Apply standards from `~/.claude/standards/` based on context. See [Standards README](standards/README.md) for core principles and precedence rules.
+Universal standards in `~/.claude/standards/` apply across all contexts. See [Standards README](standards/README.md) for core principles.
+
+Key standards:
+
+- `agent-coordination.md` - Parallel vs sequential execution patterns
+- `git.md` - Commit messages, PR descriptions
+- `multi-session-safety.md` - Working with concurrent sessions
+- `problem-solving.md` - When to ask vs proceed
+- `technical-debt-prevention.md` - No backups, no duplicates
 
 ## Automatic Quality Checks
 

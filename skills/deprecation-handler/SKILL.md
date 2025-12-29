@@ -1,7 +1,15 @@
 ---
 name: "Deprecation Handler"
 description: "Handles deprecated APIs, types, and modules by applying safe migration patterns. Use when encountering deprecation warnings, migrating from deprecated code, updating dependencies with breaking changes, or modernizing legacy code to use current APIs."
-version: "1.0.0"
+version: "1.1.0"
+model: haiku
+allowed-tools:
+  - Read
+  - Grep
+  - Glob
+  - Bash(npx:*)
+  - Bash(npm:*)
+  - Bash(yarn:*)
 ---
 
 # Deprecation Handler
@@ -293,15 +301,15 @@ legacyPattern.stillInUse();
 
 ## Resources
 
-- `resources/migration-patterns.md` - Common deprecation patterns and solutions
-- `resources/framework-guides.md` - Framework-specific migration guides
-- `resources/testing-strategies.md` - Testing approaches for migration validation
+- [resources/standards.md](resources/standards.md) - Full deprecation handling rules and anti-patterns
+- [resources/migration-patterns.md](resources/migration-patterns.md) - Common deprecation patterns and solutions
+- [resources/framework-guides.md](resources/framework-guides.md) - Framework-specific migration guides
+- [resources/testing-strategies.md](resources/testing-strategies.md) - Testing approaches for migration validation
 
 ## Related Standards
 
 This skill implements patterns from:
 
-- `/Users/kross/.claude/standards/deprecations.md` - Full deprecation handling rules
-- TypeScript standard - Type safety during migration
-- Git standard - Commit practices for deprecation fixes
-- React standard - Component migration patterns
+- TypeScript rules - Type safety during migration
+- Git standards - Commit practices for deprecation fixes
+- React rules - Component migration patterns

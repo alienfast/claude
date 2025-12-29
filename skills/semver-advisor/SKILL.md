@@ -1,7 +1,14 @@
 ---
 name: Semantic Version Advisor
 description: Advises on semantic version bumps and classifies version changes according to semver rules. Use when determining version numbers, analyzing dependency updates, or classifying version changes as MAJOR, MINOR, or PATCH.
-version: 1.0.0
+version: 1.1.0
+model: haiku
+allowed-tools:
+  - Read
+  - Grep
+  - Glob
+  - WebSearch
+  - WebFetch
 ---
 
 # Semantic Version Advisor
