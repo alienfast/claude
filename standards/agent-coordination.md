@@ -159,7 +159,7 @@ Task for developer: Build onboarding flow per architecture specifications
 - Clear rollback procedures if validation fails
 - Maintain audit trail of decisions and changes
 
-## Model Capabilities (Sonnet 4.5)
+## Model Capabilities (Opus 4.5)
 
 Modern models handle many coordination tasks autonomously:
 
@@ -181,7 +181,7 @@ Otherwise, trust the model to optimize execution autonomously.
 
 ### What No Longer Needs Explicit Coordination
 
-With Sonnet 4.5, these areas handle coordination automatically:
+With Opus 4.5, these areas handle coordination automatically:
 
 - Tool selection and ordering
 - Parallel file reads for context building

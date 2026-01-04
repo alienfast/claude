@@ -1,7 +1,6 @@
 ---
 name: quality-reviewer
 description: Use this agent when you need to review code for critical production issues like security vulnerabilities, data loss risks, performance problems, or concurrency bugs. This agent focuses on real issues that would cause actual failures rather than style preferences or theoretical problems. Examples: <example>Context: User has just implemented a new API endpoint that handles user data and wants to ensure it's production-ready. user: "I've just finished implementing the user profile update endpoint. Here's the code: [code snippet]. Can you review it for any critical issues?" assistant: "I'll use the quality-reviewer agent to examine this code for security vulnerabilities, data loss risks, and other critical production issues."</example> <example>Context: User has written concurrent code and wants to verify it's safe for production. user: "I've implemented a worker pool system for processing background jobs. Could you check if there are any race conditions or concurrency issues?" assistant: "Let me use the quality-reviewer agent to analyze this concurrent code for thread safety, race conditions, and resource management issues."</example>
-model: sonnet
 color: orange
 ---
 

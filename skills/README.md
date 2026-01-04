@@ -275,8 +275,7 @@ Quick reference:
 
 Skills should work with:
 
-- Claude Sonnet (primary target)
-- Claude Opus (complex reasoning)
+- Claude Opus (primary - efficient compared to sonnet 4.5 - complex reasoning)
 - Claude Haiku (efficiency-focused)
 
 Test that your skill:

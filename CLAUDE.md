@@ -25,8 +25,8 @@ Rules in `~/.claude/rules/` are automatically applied based on file type:
 
 Skills activate automatically based on context. See [Skills README](skills/README.md) for details.
 
-- `dependency-updater` - Package updates, ncu, version bumps (model: sonnet)
-- `pr-update` - PR titles and descriptions from code changes (model: sonnet)
+- `dependency-updater` - Package updates, ncu, version bumps
+- `pr-update` - PR titles and descriptions from code changes
 - `deprecation-handler` - Deprecated APIs and migrations (model: haiku)
 - `semver-advisor` - Version bump classification (model: haiku)
 

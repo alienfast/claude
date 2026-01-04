@@ -1,38 +1,5 @@
 {
   "includeCoAuthoredBy": false,
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash(git *)",
-        "hooks": [
-          {
-            "command": "~/.claude/hooks/git-permissions.sh \"$ARGUMENTS\"",
-            "type": "command"
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "hooks": [
-          {
-            "command": "~/.claude/hooks/lint-post-tool.sh",
-            "type": "command"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "command": "~/.claude/hooks/typecheck.sh",
-            "type": "command"
-          }
-        ]
-      }
-    ]
-  },
   "permissions": {
     "allow": [
       "Bash(/dev/null)",
@@ -118,5 +85,41 @@
     "ask": [
       "mcp__circleci__run_pipeline"
     ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash(git *)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/git-permissions.sh \"$ARGUMENTS\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/lint-post-tool.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/typecheck.sh"
+          }
+        ]
+      }
+    ]
+  },
+  "enabledPlugins": {
+    "dev-browser@dev-browser-marketplace": true
   }
 }

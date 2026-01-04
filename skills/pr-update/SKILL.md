@@ -2,7 +2,6 @@
 name: PR Title and Description Generator
 version: "1.1.0"
 description: "Generate or update GitHub Pull Request titles and descriptions based on actual code changes in the final state. Use when the user mentions updating, generating, or writing PR descriptions, PR titles, pull request summaries, or says 'update the PR'. Analyzes git diff to determine what's actually in the code (not just commit history) and creates comprehensive, accurate PR documentation."
-model: sonnet
 allowed-tools:
   - Read
   - Grep

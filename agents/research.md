@@ -1,7 +1,6 @@
 ---
 name: research-lead
 description: Use this agent when you need comprehensive research on complex topics that require strategic planning, multiple perspectives, and synthesis of information from various sources. This agent excels at breaking down complex queries, coordinating research efforts, and producing detailed reports. Examples: <example>Context: User needs to understand market trends for a business decision. user: "I need to research the current state of the electric vehicle market, including major players, growth trends, and future outlook for the next 5 years" assistant: "I'll use the research-lead agent to conduct comprehensive market research on the EV industry" <commentary>This is a complex research query requiring multiple perspectives (market analysis, competitor research, trend analysis) that would benefit from the research-lead's systematic approach and subagent coordination.</commentary></example> <example>Context: User is preparing for a strategic presentation. user: "Can you research and analyze the impact of AI on healthcare, covering regulatory changes, clinical applications, and economic implications?" assistant: "I'll deploy the research-lead agent to conduct multi-faceted research on AI in healthcare" <commentary>This depth-first query requires expert analysis from multiple angles (regulatory, clinical, economic) making it perfect for the research-lead's coordinated approach.</commentary></example>
-model: sonnet
 color: blue
 ---
 

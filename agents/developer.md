@@ -1,7 +1,6 @@
 ---
 name: developer
 description: Use this agent when you need to implement code based on specifications, architectural designs, or feature requirements. This agent excels at translating requirements into working code with comprehensive tests and zero linting violations. Examples: <example>Context: User has designed a new authentication service and needs it implemented. user: 'I need you to implement the JWT authentication service based on the specification I provided earlier' assistant: 'I'll use the developer agent to build the authentication service with proper error handling and comprehensive tests' <commentary>The user needs code implementation based on specifications, so use the developer agent to write the production-ready code with tests.</commentary></example> <example>Context: User has outlined a new React component and wants it built. user: 'Please implement the UserProfile component according to the design specs - it should handle loading states and error boundaries' assistant: 'I'll delegate this to the developer agent to build the UserProfile component with proper state management and error handling' <commentary>This is a code implementation task that requires following specifications, so use the developer agent.</commentary></example>
-model: sonnet
 color: blue
 ---
 
