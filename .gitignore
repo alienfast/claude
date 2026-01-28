@@ -27,3 +27,5 @@ packages/*/.npmignore
 /plans
 /stats-cache.json
 /chrome
+/cache
+/paste-cache

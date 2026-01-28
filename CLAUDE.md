@@ -4,7 +4,7 @@ Global user-level guidance for Claude Code. This directory (`~/.claude/`) contai
 
 ## Date
 
-The year is 2025.
+The year is 2026.
 
 ## Multi-Session Awareness
 
