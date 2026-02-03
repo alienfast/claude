@@ -8,6 +8,9 @@ allowed-tools:
   - Glob
   - Bash(git:*)
   - Bash(gh:*)
+  - Bash(echo:*)
+  - Bash(wc:*)
+  - Bash(test:*)
 ---
 
 # PR Title and Description Generator
@@ -60,7 +63,7 @@ if [[ -n "$pr_info" ]]; then
     pr_merged_at="null"
   fi
 
-  # Security Fix #5: Validate pr_number is present and is a positive integer
+# Security Fix #5: Validate pr_number is present and is a positive integer
   if [[ -z "$pr_number" ]] || [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
     if [[ -n "$pr_info" ]]; then
       echo "ERROR: PR data incomplete (missing or invalid PR number)" >&2
