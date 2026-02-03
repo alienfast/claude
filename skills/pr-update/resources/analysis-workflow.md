@@ -15,15 +15,17 @@ git diff main...HEAD --name-only | cut -d/ -f1-2 | sort | uniq -c | sort -rn | h
 
 ## Step 2: Verify Infrastructure Changes
 
+Check database configuration:
+
 ```bash
-# Check database configuration
 echo "Database Configuration:"
 git show HEAD:cloud/database/src/SqlDatabase.ts | grep -E "(authentication_plugin|character_set|sslMode|edition)"
+```
 
-# Check if DR replica exists
+Check if DR/ETL replicas exist:
+
+```bash
 git show HEAD:cloud/database/src/sql.ts | grep -q "sqlDrReplica" && echo "DR Replica: YES" || echo "DR Replica: NO"
-
-# Check if ETL replica exists
 git show HEAD:cloud/database/src/sql.ts | grep -q "sqlEtlReplica" && echo "ETL Replica: YES" || echo "ETL Replica: NO"
 ```
 
@@ -44,12 +46,16 @@ git diff main...HEAD -- .circleci/config.yml | grep -E "^\+.*name:" | sed 's/^+/
 
 ## Step 5: Check Developer Tooling
 
+Check for new stack commands:
+
 ```bash
-# Check for new stack commands
 echo "New Stack Commands:"
 git diff main...HEAD -- 'cloud/*/stack' | grep -E "^\+[a-z_]+\(\)" | sed 's/^+//'
+```
 
-# Check for new documentation
+Check for new documentation:
+
+```bash
 test -f packages/api/README.md && echo "API README: EXISTS" || echo "API README: MISSING"
 ```
 

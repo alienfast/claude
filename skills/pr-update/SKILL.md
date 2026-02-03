@@ -18,6 +18,10 @@ Generate or update a PR title and description based on the actual changes in the
 
 **Document ONLY what exists in the final state of the code, not the development history.**
 
+## Bash Command Rule
+
+**NEVER prefix bash commands with comment lines.** The allowed-tools patterns (`Bash(git:*)`, `Bash(gh:*)`) match against the start of the command. A leading `# comment` breaks the match and triggers a manual permission check. Put descriptions in the Bash tool's `description` parameter instead.
+
 If a feature was added in one commit and removed in another, it should NOT be in the PR description. Always verify features exist in `HEAD` before documenting them.
 
 ## Analysis Process
@@ -176,14 +180,21 @@ If `gh pr view` returns an error OTHER than "no pull requests found", treat as U
 
 ### 2. Analyze Final State Changes
 
+Get commit count:
+
 ```bash
-# Get commit count
 git log main..HEAD --oneline | wc -l
+```
 
-# Get file change summary
+Get file change summary:
+
+```bash
 git diff main...HEAD --stat
+```
 
-# Identify major areas of change
+Identify major areas of change:
+
+```bash
 git diff main...HEAD --name-only | cut -d/ -f1 | sort | uniq -c | sort -rn
 ```
 
@@ -191,14 +202,21 @@ git diff main...HEAD --name-only | cut -d/ -f1 | sort | uniq -c | sort -rn
 
 **CRITICAL**: For each area of apparent change, verify if it's in the final state:
 
+Check if a feature is in final code:
+
 ```bash
-# Check if a feature is in final code
 git show HEAD:path/to/file.ts | grep -q "feature_name" && echo "PRESENT" || echo "REMOVED"
+```
 
-# Example: Check for authentication plugin
+Example — check for authentication plugin:
+
+```bash
 git show HEAD:cloud/database/src/SqlDatabase.ts | grep "authentication_plugin"
+```
 
-# Example: Check if a function exists
+Example — check if a function exists:
+
+```bash
 git show HEAD:src/utils.ts | grep -A10 "function myFunction"
 ```
 
@@ -337,11 +355,15 @@ For step-by-step examples of how to analyze and verify PR changes, see [resource
 
 You can also use the verification script:
 
-```bash
-# Check if a feature exists in final state
-./scripts/verify-feature.sh path/to/file.ts "feature_name"
+Check if a feature exists in final state:
 
-# Check if a file exists
+```bash
+./scripts/verify-feature.sh path/to/file.ts "feature_name"
+```
+
+Check if a file exists:
+
+```bash
 ./scripts/verify-feature.sh packages/api/README.md ""
 ```
 
@@ -395,23 +417,23 @@ You can also use the verification script:
 
 **Security Fix #1 - Command Injection Prevention**: When generating `title` and `description` variables, ensure they are assigned using proper quoting to prevent command injection:
 
+Safe assignment (use quotes):
+
 ```bash
-# Safe assignment (use quotes):
 title="Generated title text"
 description="$(cat <<'EOF'
 Multi-line description
 EOF
 )"
-
-# UNSAFE - never do this:
-# title=$(some_command)  # Without quotes, could execute commands in title
 ```
 
-Update the PR using GitHub CLI:
+UNSAFE — never do this: `title=$(some_command)` without quotes could execute commands in the title.
+
+Update the PR using GitHub CLI.
+
+**Pre-Update State Verification** (prevent TOCTOU race condition) — re-check PR state immediately before update:
 
 ```bash
-# Security Fix #3: Pre-Update State Verification (prevent TOCTOU race condition)
-# Re-check PR state immediately before update to prevent time-of-check-time-of-use race
 if [[ -n "$pr_number" ]]; then
   current_pr_info=$(gh pr view "$pr_number" --json state 2>/dev/null)
 
@@ -432,13 +454,11 @@ if [[ -n "$pr_number" ]]; then
   fi
 fi
 
-# Security Fix #7: Safety assertion with user_cancelled flag check
 if [[ "$user_cancelled" == "true" ]]; then
   echo "ERROR: Attempted to continue after user cancellation" >&2
   exit 1
 fi
 
-# Safety assertion - should never trigger if validation worked correctly
 if [[ "$pr_state" != "OPEN" ]] && [[ "$user_confirmed_update" != "true" ]]; then
   echo "ERROR: Attempted to update non-open PR #$pr_number (state: $pr_state) without user confirmation."
   echo "This indicates a bug in the PR state validation logic."
