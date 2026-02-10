@@ -1,16 +1,6 @@
 ---
 name: PR Title and Description Generator
-version: "1.1.0"
 description: "Generate or update GitHub Pull Request titles and descriptions based on actual code changes in the final state. Use when the user mentions updating, generating, or writing PR descriptions, PR titles, pull request summaries, or says 'update the PR'. Analyzes git diff to determine what's actually in the code (not just commit history) and creates comprehensive, accurate PR documentation."
-allowed-tools:
-  - Read
-  - Grep
-  - Glob
-  - Bash(git:*)
-  - Bash(gh:*)
-  - Bash(echo:*)
-  - Bash(wc:*)
-  - Bash(test:*)
 ---
 
 # PR Title and Description Generator
@@ -23,7 +13,7 @@ Generate or update a PR title and description based on the actual changes in the
 
 ## Bash Command Rule
 
-**NEVER prefix bash commands with comment lines.** The allowed-tools patterns (`Bash(git:*)`, `Bash(gh:*)`) match against the start of the command. A leading `# comment` breaks the match and triggers a manual permission check. Put descriptions in the Bash tool's `description` parameter instead.
+**NEVER prefix bash commands with comment lines.** Permission patterns in `~/.claude/settings.json` match against the start of the command. A leading `# comment` breaks the match and triggers a manual permission check. Put descriptions in the Bash tool's `description` parameter instead.
 
 If a feature was added in one commit and removed in another, it should NOT be in the PR description. Always verify features exist in `HEAD` before documenting them.
 
@@ -201,7 +191,38 @@ Identify major areas of change:
 git diff main...HEAD --name-only | cut -d/ -f1 | sort | uniq -c | sort -rn
 ```
 
-### 3. Verify What's Actually in the Code
+### 3. Code Impact Summary
+
+Generate a categorized line-count breakdown to quantify the PR's impact. This section helps reviewers quickly understand the scope and nature of changes.
+
+**Step 1: Get the raw totals** (with rename detection):
+
+```bash
+git diff --shortstat -M main...HEAD
+```
+
+**Step 2: Categorize by purpose** using `git diff --numstat`:
+
+```bash
+git diff --numstat -M main...HEAD | awk '{if ($3 ~ /lock\.yaml$|lock\.json$|\.lock$/) next; added+=$1; removed+=$2; file=$3; if (file ~ /\.stories\./) {sa+=$1; sr+=$2} else if (file ~ /mock|Mock/) {ma+=$1; mr+=$2} else if (file ~ /generated|packages\/graphql\//) {ga+=$1; gr+=$2} else if (file ~ /ops\//) {oa+=$1; or+=$2} else if (file ~ /\.(yml|yaml|json|css|scss|svg|md)$/) {la+=$1; lr+=$2} else {ca+=$1; cr+=$2}} END {printf "%-20s %8s %8s %8s\n", "Category", "Added", "Removed", "Net"; printf "%-20s %8d %8d %8d\n", "App code", ca, cr, ca-cr; printf "%-20s %8d %8d %8d\n", "Stories", sa, sr, sa-sr; printf "%-20s %8d %8d %8d\n", "Mocks", ma, mr, ma-mr; printf "%-20s %8d %8d %8d\n", "Generated", ga, gr, ga-gr; printf "%-20s %8d %8d %8d\n", "Ops/Infra", oa, or, oa-or; printf "%-20s %8d %8d %8d\n", "Config/Assets", la, lr, la-lr; printf "%-20s %8d %8d %8d\n", "TOTAL", added, removed, added-removed}'
+```
+
+**Notes:**
+- Use `-M` flag for rename detection (prevents inflated counts from file renames)
+- "App code" captures source code files (ts, tsx, rb, etc.) — config/asset files (yml, json, css, lock, svg, md) are separated into "Config/Assets" to keep the signal clean
+- Adjust category patterns to match project structure:
+  - `\.stories\.` — Storybook story files
+  - `mock|Mock` — Test mocks
+  - `generated|packages\/graphql\/` — Generated code (GraphQL codegen, etc.)
+  - `ops\/` — Infrastructure/operations
+  - `lock\.yaml$|lock\.json$|\.lock$` — Lock files (skipped entirely)
+  - `\.(yml|yaml|json|css|scss|svg|md)$` — Config, locales, styles, assets
+- The categorized breakdown often reveals a different story than raw totals (e.g., production code reduced while test coverage increased)
+- If `cloc` is available, `cloc --diff main HEAD --git` provides an alternative per-language breakdown, but lacks categorization and doesn't handle renames
+
+Include the resulting table in the PR description under a **Code Impact** section.
+
+### 4. Verify What's Actually in the Code
 
 **CRITICAL**: For each area of apparent change, verify if it's in the final state:
 
@@ -225,7 +246,7 @@ git show HEAD:src/utils.ts | grep -A10 "function myFunction"
 
 **If a feature doesn't appear in the final state, DO NOT include it in the PR description.**
 
-### 4. Categorize Changes by Impact
+### 5. Categorize Changes by Impact
 
 Organize changes into categories based on what's actually present:
 
@@ -236,7 +257,7 @@ Organize changes into categories based on what's actually present:
 - **Dependencies**: Package updates that remain in final package.json/lock files
 - **Documentation**: New or updated docs (verify files exist)
 
-### 5. Document Only Present Changes
+### 6. Document Only Present Changes
 
 For each change area:
 
@@ -308,6 +329,20 @@ Use this general template structure:
 - [Link to relevant docs](doc/path/to/doc.md)
 
 [Repeat structure for each major category]
+
+## Code Impact
+
+| Category | Added | Removed | Net |
+|---|---|---|---|
+| App code | X | X | X |
+| Stories | X | X | X |
+| Mocks | X | X | X |
+| Generated | X | X | X |
+| Ops/Infra | X | X | X |
+| Config/Assets | X | X | X |
+| **Total** | **X** | **X** | **X** |
+
+[1-2 sentence interpretation of what the numbers mean — e.g., "Production code reduced by X lines through Y. Net increase driven by new test coverage."]
 
 ## Breaking Changes
 
