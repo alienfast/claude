@@ -122,5 +122,5 @@ If the information is a discovered fact, pattern, or quirk → memory/.
 Memory files follow the same principles as git working tree protection:
 
 - Only write memory entries relevant to your current work
-- Do not overwrite or delete entries from other sessions
-- When updating MEMORY.md, append or modify your own entries
+- Do not overwrite or delete entries another session is actively writing
+- Correct outdated or inaccurate entries when discovered
