@@ -103,3 +103,24 @@ Provide: what you tried, why you're uncertain, options with trade-offs, your rec
 ## Delegation
 
 For complex multi-step tasks (>5 steps, multiple domains, high context usage), use the `/do` command pattern with TodoWrite and agent delegation.
+
+## Memory
+
+Auto memory persists learned context across sessions in `~/.claude/projects/<project>/memory/`.
+
+- **MEMORY.md** = Descriptive knowledge (what has been discovered). First 200 lines auto-loaded.
+- **CLAUDE.md** = Prescriptive rules (what to do). This file.
+- **Topic files** = Detailed notes in memory/ for specific domains.
+
+### Boundary Rule
+
+If the information is an instruction or rule → CLAUDE.md or standards/.
+If the information is a discovered fact, pattern, or quirk → memory/.
+
+### Multi-Session Safety
+
+Memory files follow the same principles as git working tree protection:
+
+- Only write memory entries relevant to your current work
+- Do not overwrite or delete entries from other sessions
+- When updating MEMORY.md, append or modify your own entries
