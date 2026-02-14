@@ -10,7 +10,7 @@ The year is 2026.
 
 Multiple Claude Code sessions can work simultaneously. Never touch changes you didn't create. The git-permissions.sh hook blocks destructive commands automatically.
 
-See [Multi-Session Safety](standards/multi-session-safety.md) for detailed rules and examples.
+See [Git Standards](standards/git.md) for detailed rules and examples.
 
 ## Path-Specific Rules
 
@@ -37,8 +37,7 @@ Universal standards in `~/.claude/standards/` apply across all contexts. See [St
 Key standards:
 
 - `agent-coordination.md` - Parallel vs sequential execution patterns
-- `git.md` - Commit messages, PR descriptions
-- `multi-session-safety.md` - Working with concurrent sessions
+- `git.md` - Commit messages, PR descriptions, multi-session safety
 - `problem-solving.md` - When to ask vs proceed
 - `technical-debt-prevention.md` - No backups, no duplicates
 
@@ -61,6 +60,7 @@ Do not run these manually; they're handled automatically.
 - Do not create git commits unless explicitly requested
 - Embrace breaking changes - this is private code, no compatibility layers needed
 - Prefer proper solutions over workarounds, even if they require more work
+- Always Read a file before using Write or Edit on it. Write rejects writes to existing files that haven't been Read first. If Write fails, do NOT work around it with Bash (`cat`, `tee`, `echo >`, `sed`, `awk`) — Read the file first, then retry. Never create duplicate/debug files as workarounds.
 
 ## Anti-Pattern Red Flags
 

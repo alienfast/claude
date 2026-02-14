@@ -54,22 +54,14 @@ Stop when diminishing returns are reached - when you're no longer finding new re
 
 **Priority Order**:
 
-1. **Internal tools first** (when available and relevant):
-   - Google Drive (internal docs)
-   - Gmail (emails)
-   - Calendar (schedules)
-   - Slack (conversations)
-   - Other internal tools
-
-2. **Web research**:
+1. **Web research**:
    - `web_search` for discovering sources
    - `web_fetch` for complete webpage content
    - Always fetch full pages, don't rely only on snippets
 
-3. **Specialized tools**:
-   - `context7` for code APIs and documentation
-   - `codeIndexer` for local codebase search
-   - `repl` only for complex calculations (not simple math)
+2. **Codebase tools** (when researching code):
+   - Grep, Glob, Read for local codebase search
+   - MCP servers for documentation (if available)
 
 **Tool Usage Guidelines**:
 

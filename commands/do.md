@@ -10,7 +10,17 @@ Execute the plan faithfully by coordinating specialized agents. **NEVER implemen
 $ARGUMENTS
 </plan_description>
 
-## Execution Protocol
+## Execution Mode Selection
+
+Before beginning execution, ask the user which execution mode to use:
+
+**Subagent delegation (default)**: You orchestrate by delegating focused tasks to subagents and reviewing each result. Best for sequential/focused work, tasks with dependencies between steps, or when tight quality control is needed.
+
+**Agent team**: Spawn independent teammates that work in parallel with clear file ownership. Best for large multi-domain work, parallel investigation across separate files, or when tasks have minimal interdependencies.
+
+If the user doesn't specify, default to subagent delegation.
+
+## Execution Protocol (Subagent Mode)
 
 ### 1. Initialize with TodoWrite
 
@@ -95,6 +105,28 @@ Plan execution succeeds when:
 - [ ] Tests passing
 - [ ] Plan requirements met
 - [ ] All debug code removed (if debugger was used)
+
+## Execution Protocol (Team Mode)
+
+When the user selects agent team mode:
+
+### Plan and Assign Ownership
+
+- Break plan into independent tasks with clear file ownership boundaries
+- Each task should be self-contained with specific deliverables
+- Avoid assigning multiple teammates to the same files
+
+### Spawn Teammates
+
+- Provide full plan context and specific task assignment in each spawn prompt
+- One domain per teammate (e.g., "backend API", "frontend components", "tests")
+- Teammates self-coordinate via the shared task list and direct messaging
+
+### Monitor and Integrate
+
+- Steer teammates whose approach isn't working
+- Run integration validation after all teammates complete
+- Apply the same quality standards as subagent mode
 
 ## Key Principles
 

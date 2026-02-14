@@ -60,11 +60,11 @@ interface ComponentNameProps {
   // Props interface here
 }
 
-export function ComponentName({
+export const ComponentName = ({
   requiredProp,
   optionalProp = defaultValue,
   onAction,
-}: ComponentNameProps) {
+}: ComponentNameProps) => {
   // State declarations
   const [state, setState] = useState<StateType>(initialValue)
 
@@ -102,7 +102,7 @@ interface GreetingProps {
   greeting?: string
 }
 
-export function Greeting({ name, greeting = 'Hello' }: GreetingProps) {
+export const Greeting = ({ name, greeting = 'Hello' }: GreetingProps) => {
   return <div>{greeting}, {name}!</div>
 }
 ```
@@ -117,7 +117,7 @@ interface CounterProps {
   onCountChange?: (count: number) => void
 }
 
-export function Counter({ initialValue = 0, onCountChange }: CounterProps) {
+export const Counter = ({ initialValue = 0, onCountChange }: CounterProps) => {
   const [count, setCount] = useState(initialValue)
 
   const increment = () => {
@@ -167,7 +167,7 @@ function formReducer(state: FormState, action: FormAction): FormState {
   }
 }
 
-export function ContactForm() {
+export const ContactForm = () => {
   const [state, dispatch] = useReducer(formReducer, {
     name: '',
     email: '',
@@ -197,7 +197,7 @@ interface User {
   email: string
 }
 
-export function UserData({ userId }: UserDataProps) {
+export const UserData = ({ userId }: UserDataProps) => {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<Error | null>(null)
@@ -261,7 +261,7 @@ interface UseDataOptions {
   onError?: (error: Error) => void
 }
 
-export function useData(url: string, options: UseDataOptions = {}) {
+export const useData = (url: string, options: UseDataOptions = {}) => {
   const [data, setData] = useState<DataType | null>(options.initialValue ?? null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
@@ -413,18 +413,9 @@ Before completing component generation, verify:
 - ✅ **Optional chaining** used for optional callbacks (`onAction?.()`)
 - ✅ **No suppressed linter warnings** (especially `exhaustive-deps`)
 
-## Anti-Patterns to Avoid
+## Anti-Patterns
 
-When generating components, NEVER:
-
-- 🔴 Create class components (use function components)
-- 🔴 Use generic lifecycle hooks (`useMount`, `useUnmount`)
-- 🔴 Create higher-order hooks or pass hooks as props
-- 🔴 Suppress `exhaustive-deps` linter warnings
-- 🔴 Chain effects to update interdependent state (use reducer instead)
-- 🔴 Create objects/functions in dependency arrays without memoization
-- 🔴 Use `forwardRef` (deprecated in React 19+, use `ref` prop directly)
-- 🔴 Use legacy React imports (`import * as React` or `import React`)
+See [React Rules](../../rules/react.md) for the complete anti-patterns list. All rules apply when generating components.
 
 ## Common Patterns
 
@@ -436,7 +427,7 @@ interface CardProps {
   className?: string
 }
 
-function Card({ children, className }: CardProps) {
+const Card = ({ children, className }: CardProps) => {
   return <div className={className}>{children}</div>
 }
 
@@ -444,7 +435,7 @@ interface CardHeaderProps {
   children: React.ReactNode
 }
 
-function CardHeader({ children }: CardHeaderProps) {
+const CardHeader = ({ children }: CardHeaderProps) => {
   return <div className="card-header">{children}</div>
 }
 
@@ -452,7 +443,7 @@ interface CardBodyProps {
   children: React.ReactNode
 }
 
-function CardBody({ children }: CardBodyProps) {
+const CardBody = ({ children }: CardBodyProps) => {
   return <div className="card-body">{children}</div>
 }
 

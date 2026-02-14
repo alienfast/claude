@@ -81,12 +81,12 @@ For Architecture Decision Records, reference the format in architect.md agent.
 - ALWAYS prefer code examples over prose
 - ALWAYS skip test directories
 - ALWAYS match existing style
-- ALWAYS adapt to TypeScript/React syntax from CLAUDE.md
-- ALWAYS follow monorepo package structure and conventions
-- ALWAYS use modern React patterns (hooks, function components)
-- ALWAYS include TypeScript types and interfaces in examples
-- ALWAYS reference Storybook stories and Vitest tests for examples
-- ALWAYS use Material-UI, Emotion, and Apollo Client patterns when relevant
+- ALWAYS adapt to language and framework syntax from CLAUDE.md
+- ALWAYS follow project package structure and conventions
+- ALWAYS use modern patterns (hooks, function components for React)
+- ALWAYS include types and interfaces in examples
+- ALWAYS reference existing tests and visual tests for examples
+- ALWAYS follow the project's component library and styling patterns when relevant
 
 ## Token Counting
 

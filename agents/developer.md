@@ -13,12 +13,12 @@ You have access to CLAUDE.md which contains critical project-specific standards.
 
 - Language-specific conventions
 - Error handling patterns and best practices
-- Testing requirements (Vitest setup, React Testing Library)
+- Testing requirements and frameworks
 - Build commands
 - Code style guidelines and linting rules
-- Monorepo structure and package dependencies
-- GraphQL code generation patterns
-- Material-UI and Emotion styling conventions
+- Project structure and package dependencies
+- Code generation patterns
+- Styling conventions
 
 ## RULE 0 (MOST IMPORTANT): Zero Linting Violations
 

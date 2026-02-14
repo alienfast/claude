@@ -301,7 +301,7 @@ legacyPattern.stillInUse();
 
 ## Resources
 
-- [resources/standards.md](resources/standards.md) - Full deprecation handling rules and anti-patterns
+- [Deprecation Standards](../../standards/deprecation-handling.md) - Full deprecation handling rules and anti-patterns
 - [resources/migration-patterns.md](resources/migration-patterns.md) - Common deprecation patterns and solutions
 - [resources/framework-guides.md](resources/framework-guides.md) - Framework-specific migration guides
 - [resources/testing-strategies.md](resources/testing-strategies.md) - Testing approaches for migration validation

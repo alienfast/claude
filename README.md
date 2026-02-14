@@ -4,7 +4,7 @@ Assuming you have already used claude, there will already be a `~/.claude` direc
 
 ## Rationale
 
-I’ve selected several MCP servers targeting development context and tooling to provide to the LLM. I have created a team of agents including an `architect`, `debugger`, `developer`, `quality reviewer`, and a `technical-writer`. The top level orchestration and the `architect` run on the more expensive Opus 4.1, while the other agents are pinned to a cheaper model Sonnet that works fine for focused tasks. The top level orchestration may run each of the agents many times to accomplish an objective.
+I’ve selected several MCP servers targeting development context and tooling to provide to the LLM. I have created a team of agents including an `architect`, `debugger`, `developer`, `quality reviewer`, and a `technical-writer`. The top level orchestration and the `architect` run on the more expensive Opus 4.6, while the other agents are pinned to a cheaper model Sonnet that works fine for focused tasks. The top level orchestration may run each of the agents many times to accomplish an objective.
 
 A lot of the agent architecture is aimed at limitations in current LLMs: context rot and context poisoning. Too much information in the context can send the LLM way off track. With the agent model, agents get their own context, while the architect orchestrates from above, creating a plan and handing down assignments. Each agent reports back after success, so both the the top level context and the agent contexts stay smaller and smarter.
 

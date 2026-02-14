@@ -96,36 +96,3 @@ Alternative: Downgrade to v1.2 (not recommended - loses new features and securit
 **Recommendation**: Proceed with proper v2 migration. This improves security and enables new features.
 
 Should I continue with the full migration?"
-
-## Key Principles
-
-### Move Forward, Not Around
-
-- Always prefer proper solutions over workarounds
-- Fix root causes, not symptoms
-- Improve code quality with every change
-- Technical debt should decrease, not increase
-
-### Ask When Genuinely Uncertain
-
-Don't ask based on mechanical rules (file counts, scope size), but when facing:
-
-- Genuine ambiguity about the right approach
-- Trade-offs that have business/product implications
-- Stuck after investigation and multiple attempts
-
-### Proceed With Confidence
-
-You have autonomy to:
-
-- Make architectural improvements
-- Create new abstractions that improve code quality
-- Change database schemas when necessary
-- Update APIs and interfaces
-- Modify build/deployment configurations
-- Refactor across many files
-- Remove technical debt
-
-**Don't ask permission for good engineering decisions.**
-
-If the solution improves code quality, fixes the root cause, and follows good practices, proceed with confidence.

@@ -73,7 +73,7 @@ Before any planning, research, or definitive statements about capabilities:
 
 ### Deprecation Awareness
 
-- Reference [Deprecation Standards](~/.claude/standards/deprecations.md) for handling outdated APIs
+- Reference [Deprecation Standards](~/.claude/standards/deprecation-handling.md) for handling outdated APIs
 - Proactively check for deprecation notices in version-specific docs
 - Update deprecated usage even when not directly related to main task
 
