@@ -13,9 +13,6 @@ tmp*
 node_modules
 .eslintcache
 
-.yarn/*
-!.yarn/patches
-!.yarn/releases
 packages/*/.npmignore
 
 .env.local

@@ -10,9 +10,9 @@ paths:
 
 ## Tool Selection
 
-- Follow existing project's package manager (check for `yarn.lock`, `package-lock.json`, `pnpm-lock.yaml`)
-- Default to Yarn (modern) for new projects
-- Never commit `package-lock.json` if project uses Yarn
+- Follow existing project's package manager (check for `pnpm-lock.yaml`, `yarn.lock`, `package-lock.json`)
+- Default to pnpm for new projects
+- Never commit `package-lock.json` or `yarn.lock` if project uses pnpm
 
 ## Dependencies
 
@@ -24,8 +24,8 @@ paths:
 ## Command Usage
 
 - Use project scripts over direct tool invocation
-- Prefer `yarn typecheck` over `npx tsc --noEmit`
-- Use `yarn npm audit` instead of `npm audit`
+- Prefer `pnpm typecheck` over `npx tsc --noEmit`
+- Use `pnpm audit` instead of `npm audit`
 
 ## Version Management
 

@@ -15,27 +15,27 @@ Before running generic commands, check for project-specific scripts:
 
 ### Type Checking
 
-- ✓ PREFER: `yarn check-types` (if available)
+- ✓ PREFER: `pnpm check-types` (if available)
 - ✗ AVOID: `tsc` directly
 
 ### Linting
 
-- ✓ PREFER: `yarn check` or `yarn lint` (if available)
+- ✓ PREFER: `pnpm check` or `pnpm lint` (if available)
 - ✗ AVOID: `eslint` directly
 
 ### Markdown Linting
 
-- ✓ PREFER: `yarn check-markdown` (if available)
+- ✓ PREFER: `pnpm check-markdown` (if available)
 - ✗ AVOID: `markdownlint` directly
 
 ### Testing
 
-- ✓ PREFER: `yarn test` or project-specific test scripts
+- ✓ PREFER: `pnpm test` or project-specific test scripts
 - ✗ AVOID: `jest` or test runners directly
 
 ### Build
 
-- ✓ PREFER: `yarn build`
+- ✓ PREFER: `pnpm build`
 - ✗ AVOID: Tool-specific build commands
 
 ## Discovery Process

@@ -70,7 +70,7 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 
 ### Keep as a Command (Don't Convert to Skill)
 
-- Simple tool wrappers (e.g., `yarn lint`)
+- Simple tool wrappers (e.g., `pnpm lint`)
 - Single-file operations
 - Tasks that don't benefit from progressive disclosure
 - Operations that work well as slash commands

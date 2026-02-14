@@ -9,7 +9,7 @@ allowed-tools:
   - Glob
   - Bash(npx:*)
   - Bash(npm:*)
-  - Bash(yarn:*)
+  - Bash(pnpm:*)
 ---
 
 # Deprecation Handler
@@ -39,7 +39,7 @@ npx tsc --noEmit
 
 # Dependency audit
 npm outdated
-yarn outdated
+pnpm outdated
 
 # Check for deprecated packages
 npm deprecate-check
@@ -166,11 +166,11 @@ npx eslint . --ext .ts,.tsx,.js,.jsx
 
 # Run test suite
 npm test
-yarn test
+pnpm test
 
 # Build verification
 npm run build
-yarn build
+pnpm build
 ```
 
 **Manual Validation**:

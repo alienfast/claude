@@ -127,11 +127,11 @@ Semantic versions follow the format: `MAJOR.MINOR.PATCH`
 
 ## Tools and Commands
 
-### NPM/Yarn Commands
+### NPM/pnpm Commands
 
 - `npm outdated` - shows current vs wanted vs latest
 - `ncu --jsonUpgraded` - machine-readable upgrade info
-- `yarn outdated` - Yarn's version of outdated check
+- `pnpm outdated` - pnpm's version of outdated check
 
 ### Semver Utilities
 

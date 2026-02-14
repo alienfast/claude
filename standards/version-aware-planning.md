@@ -9,7 +9,7 @@ This standard ensures that all planning and research activities are based on the
 Before any planning, research, or definitive statements about capabilities:
 
 1. **Check Project Dependencies**: Always examine `package.json`, `Cargo.toml`, `pyproject.toml`, or equivalent dependency files
-2. **Verify Lockfile Versions**: Check `yarn.lock`, `package-lock.json`, `Cargo.lock`, or equivalent for exact versions
+2. **Verify Lockfile Versions**: Check `pnpm-lock.yaml`, `yarn.lock`, `package-lock.json`, `Cargo.lock`, or equivalent for exact versions
 3. **Identify Configuration Versions**: Look for version-specific config files (e.g., `biome.json` with `$schema` indicating v2)
 4. **Note Framework/Runtime Versions**: Check Node.js, Python, Rust versions from `.nvmrc`, `pyproject.toml`, etc.
 

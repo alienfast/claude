@@ -9,7 +9,7 @@ allowed-tools:
   - Grep
   - Glob
   - Bash(npm:*)
-  - Bash(yarn:*)
+  - Bash(pnpm:*)
   - Bash(pnpm:*)
   - Bash(ncu:*)
   - Bash(npx:*)
@@ -113,7 +113,7 @@ Research each package concurrently based on **semver classification from Phase 1
 #### Phase 4: Apply Updates (Sequential)
 
 1. **Developer**: Update package.json files (`ncu -u`)
-2. **Developer**: Install dependencies (`yarn install`)
+2. **Developer**: Install dependencies (`pnpm install`)
 3. **Developer**: Implement required code changes for breaking changes
 4. Handle dependency conflicts and version mismatches
 
@@ -121,9 +121,9 @@ Research each package concurrently based on **semver classification from Phase 1
 
 Run quality checks concurrently:
 
-- TypeScript compilation (`yarn typecheck`)
-- Linting with fixes (`yarn lint:fix`)
-- Test suite execution (`yarn test`)
+- TypeScript compilation (`pnpm typecheck`)
+- Linting with fixes (`pnpm lint:fix`)
+- Test suite execution (`pnpm test`)
 - **Quality-reviewer**: Security and performance validation
 
 #### Phase 6: PR Creation (Sequential)

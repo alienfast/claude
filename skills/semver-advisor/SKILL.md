@@ -255,7 +255,7 @@ Return highest level encountered
 
 ## Integration with Other Tools
 
-### NPM/Yarn Commands
+### NPM/pnpm Commands
 
 ```bash
 # View outdated packages with version info
@@ -264,8 +264,8 @@ npm outdated
 # Machine-readable upgrade information
 npx ncu --jsonUpgraded
 
-# Yarn version check
-yarn outdated
+# pnpm version check
+pnpm outdated
 ```
 
 ### Semver Utility Commands
