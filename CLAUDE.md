@@ -23,12 +23,26 @@ Rules in `~/.claude/rules/` are automatically applied based on file type:
 
 ## Available Skills
 
-Skills activate automatically based on context. See [Skills README](skills/README.md) for details.
+Skills activate automatically based on context. See [Skills README](skills/README.md) for the full list and creation guide.
+
+Linear workflow:
+
+- `linear` - Issue tracking CLI with semantic search
+- `start` / `finish` - Start and complete Linear issues end-to-end
+- `prd` - Create agent-friendly tickets with PRDs and sub-issues
+- `triage` - Backlog analysis and prioritization
+- `cycle-plan` / `retro` - Cycle planning and retrospectives
+- `deps` / `link-deps` - Dependency visualization and linking
+
+Development workflow:
 
 - `dependency-updater` - Package updates, ncu, version bumps
 - `pr-update` - PR titles and descriptions from code changes
 - `deprecation-handler` - Deprecated APIs and migrations (model: haiku)
 - `semver-advisor` - Version bump classification (model: haiku)
+- `react-component-generator` - React 19+ components with TypeScript
+
+External skills installed via `update.sh`: `agent-browser`, `skill-creator`, `vercel-react-best-practices`, `vercel-composition-patterns`
 
 ## Standards
 
