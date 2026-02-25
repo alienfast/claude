@@ -29,3 +29,5 @@ packages/*/.npmignore
 /tasks
 /teams
 /telemetry
+/backups
+/mcp-needs-auth-cache.json
