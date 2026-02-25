@@ -3,6 +3,8 @@
 # set -x
 set -e
 
+source "$HOME/.claude/lib/lint.sh"
+
 echo "Updating Claude Code..."
 claude update
 
@@ -73,26 +75,7 @@ if ! (cd "$HOME" && linear skills install --all); then
 fi
 
 
-echo "Linting files, if there are any errors..."
-LINT_ATTEMPTS=0
-MAX_LINT_ATTEMPTS=3
-while true; do
-  LINT_OUTPUT=$(pnpm check-markdown 2>&1) && break
-  LINT_ATTEMPTS=$((LINT_ATTEMPTS + 1))
-  if [ "$LINT_ATTEMPTS" -ge "$MAX_LINT_ATTEMPTS" ]; then
-    echo ""
-    echo "  ❌ Lint errors remain after ${MAX_LINT_ATTEMPTS} attempts. Please fix manually."
-    echo ""
-    echo "$LINT_OUTPUT"
-    exit 1
-  fi
-  echo ""
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "  ⚠️  Lint errors detected (attempt ${LINT_ATTEMPTS}/${MAX_LINT_ATTEMPTS}) — spawning Claude to fix..."
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo ""
-  echo "Fix the following lint errors. Do not ask questions, just fix them:\n\n${LINT_OUTPUT}" | claude -p --allowedTools Edit,Read
-done
+lint_and_fix "pnpm check-markdown"
 
 echo ""
 echo ""
