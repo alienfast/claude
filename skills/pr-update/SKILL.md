@@ -208,6 +208,7 @@ git diff --numstat -M main...HEAD | awk '{if ($3 ~ /lock\.yaml$|lock\.json$|\.lo
 ```
 
 **Notes:**
+
 - Use `-M` flag for rename detection (prevents inflated counts from file renames)
 - "App code" captures source code files (ts, tsx, rb, etc.) — config/asset files (yml, json, css, lock, svg, md) are separated into "Config/Assets" to keep the signal clean
 - Adjust category patterns to match project structure:

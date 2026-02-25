@@ -109,14 +109,14 @@ Before any planning, research, or definitive statements about capabilities:
 
 ### Good Version-Aware Response
 
-```
+```text
 Let me check your package.json to see which version of Biome you're using...
 I see you're using Biome v2.1.0. Let me look up the v2 configuration documentation to see the latest options for reducing duplication...
 ```
 
 ### Bad Version-Agnostic Response
 
-```
+```text
 Biome doesn't support configuration inheritance, so you can't reduce duplication.
 ```
 

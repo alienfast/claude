@@ -97,8 +97,10 @@ View, edit, create github content (this is used in place of command line `gh`)
 
 - Generate a (classic) PAT with the specific permissions you want. NOTE that a fine grained one, created properly failed to work on personal repos, even though all permissions and org policies were verified (see pics dir)
 
+  <!-- markdownlint-disable MD033 -->
   <details>
   <summary>Show permissions</summary>
+  <!-- markdownlint-enable MD033 -->
 
   ![GitHub Permissions](pics/gh-classic.png)
 

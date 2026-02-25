@@ -83,11 +83,13 @@ function doThing(param: string) {
 ### 3. No Parallel Implementations
 
 **NEVER** have:
+
 - `utils.js` and `utils-new.js`
 - `v1/` and `v2/` directories (unless explicitly versioned APIs)
 - `processData()` and `processDataImproved()`
 
 **ALWAYS** have:
+
 - One implementation
 - One truth
 - One place
@@ -96,7 +98,7 @@ function doThing(param: string) {
 
 When asked to modify code:
 
-```
+```text
 Is there an existing file that does this?
 ├─ YES → MODIFY that file
 │   ├─ Will changes break other code?

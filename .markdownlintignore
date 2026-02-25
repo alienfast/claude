@@ -1,2 +1,8 @@
 node_modules/
 **/CHANGELOG.md
+.agents/skills/**
+.claude/skills/**
+skills/**
+skills/**
+plugins/**
+plans/**

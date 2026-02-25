@@ -115,13 +115,15 @@ git add packages/  # Unless you explicitly worked on ALL of packages/
 ### When You See Unexpected Changes
 
 **STOP. DO NOT:**
+
 - Run `git restore` on those files
 - Run `git reset` to "clean up"
 - Assume they are "unrelated" or "mistakes"
 - Stage them with `git add .`
 
 **INSTEAD, ASK:**
-```
+
+```text
 "I see changes to <files> that I didn't modify. Should I:
 1. Include them in my commit?
 2. Leave them unstaged?
