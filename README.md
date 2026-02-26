@@ -12,20 +12,22 @@ For a deeper overview of this pattern, read [ClaudeLog: You Are the Main Thread]
 
 ## TL;DR developer workflow
 
-Here is a research augmented workflow to implement something large.
+Research-augmented workflow for implementing something large:
 
-1. cc `/do research foo bar baz, write your analysis to doc/analysis-foo.md`
-2. cc [plan mode] `Read @doc/analysis-foo.md and create an implementation plan as doc/plan-foo.md` - be sure to consider workstreams and agent teams unless single threaded
-3. Double check the correct project/team default in `.linear.yml` in your project
-4. cc `/prd @doc/plan-foo.md` - should be performed by developer, they need to review stages of implementation and accuracy.  Approval at this level will blow in a bunch of issues into linear.
-5. cc `/triage` will look over what you have, check dependencies/identify blockers and may have suggestions.
-6. cc `move stage 1 into 'Planned', move stage 2 into 'Backlog'
-7. cc `/start PL-12`
-8. Review
-9. cc `/finish` (commits, will end with a call to `/next` to suggest next issue to work on)
-10. goto 7
+| Step | Command | Notes |
+| ---- | ------- | ----- |
+| Research | `/do research foo bar baz, write your analysis to doc/analysis-foo.md` | |
+| Plan | `Read @doc/analysis-foo.md and create an implementation plan as doc/plan-foo.md` | Use plan mode. Consider workstreams and agent teams unless single-threaded |
+| Linear setup | Check `.linear.yml` has the correct project/team default | |
+| Create tickets | `/prd @doc/plan-foo.md` | Should be done by Developer - need to review stages and accuracy. Approval creates issues in Linear |
+| Triage | `/triage` | Reviews dependencies, identifies blockers, suggests priorities |
+| Prioritize | Move stage 1 to "Planned", stage 2 to "Backlog" | |
+| **Build loop** | `/start PL-12` | Assigns, creates branch, plans, implements |
+| | Review | |
+| | `/finish` | Commits, pushes, marks Ready For Release, calls `/next` |
+| | Repeat from `/start` | |
 
-If starting a new day/week, just run `/next` for a suggestion.
+Starting a new day/week? Just run `/next` for a suggestion.
 
 ## What's Included
 
