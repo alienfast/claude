@@ -49,6 +49,7 @@
       "Bash(kubectl describe:*)",
       "Bash(kubectl get:*)",
       "Bash(kubectl logs:*)",
+      "Bash(linear *)",
       "Bash(linear:*)",
       "Bash(ls:*)",
       "Bash(lsof:*)",
