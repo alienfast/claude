@@ -95,7 +95,7 @@
       "WebFetch",
       "WebFetch(domain:*)",
       "WebSearch",
-      "Write(/tmp/**)",
+      "Write(/private/tmp/**)",
       "mcp__circleci",
       "mcp__codeIndexer",
       "mcp__context7",

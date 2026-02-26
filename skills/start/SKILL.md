@@ -135,11 +135,11 @@ linear issues get PL-13 --output json
 
 Update completed checkboxes (`- [ ]` → `- [x]`) and push the update:
 
-1. Use the `Write` tool to save the full updated description to `/tmp/linear-description.md`
+1. Use the `Write` tool to save the full updated description to `/tmp/linear-description-<issue-id>.md` (e.g., `/tmp/linear-description-pl-13.md`)
 2. Run:
 
 ```bash
-linear issues update PL-13 --description - < /tmp/linear-description.md
+linear issues update PL-13 --description - < /tmp/linear-description-pl-13.md
 ```
 
 **Important**: Preserve the entire description — only change `- [ ]` to `- [x]` for completed items. Do not rewrite or reformat the description.
@@ -151,11 +151,11 @@ As implementation progresses:
 - Check off `- [ ]` → `- [x]` in the issue description after completing each requirement
 - Add brief comments on significant design decisions or unexpected blockers:
 
-1. Use the `Write` tool to save the comment to `/tmp/linear-comment.md`
+1. Use the `Write` tool to save the comment to `/tmp/linear-comment-<issue-id>.md` (e.g., `/tmp/linear-comment-pl-13.md`)
 2. Run:
 
 ```bash
-linear issues comment PL-13 --body - < /tmp/linear-comment.md
+linear issues comment PL-13 --body - < /tmp/linear-comment-pl-13.md
 ```
 
 This ensures progress is visible in Linear even if the session is interrupted, and enables picking up where we left off.
