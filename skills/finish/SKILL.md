@@ -60,7 +60,7 @@ Update the description:
 3. Run:
 
 ```bash
-linear issues update PL-12 --description - < tmp/linear-description-pl-12.md
+~/.claude/scripts/linear-stdin.sh tmp/linear-description-pl-12.md issues update PL-12 --description -
 ```
 
 **Important**: Preserve the entire description — only change `- [ ]` to `- [x]` for completed items. Do not rewrite or reformat the description.
@@ -97,7 +97,7 @@ Omit sections that have no content (e.g., skip "Notes" if everything was complet
 3. Run:
 
 ```bash
-linear issues comment PL-12 --body - < tmp/linear-comment-pl-12.md
+~/.claude/scripts/linear-stdin.sh tmp/linear-comment-pl-12.md issues comment PL-12 --body -
 ```
 
 ### Step 6: Git Commit & Push

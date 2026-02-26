@@ -141,7 +141,7 @@ Update completed checkboxes (`- [ ]` → `- [x]`) and push the update:
 3. Run:
 
 ```bash
-linear issues update PL-13 --description - < tmp/linear-description-pl-13.md
+~/.claude/scripts/linear-stdin.sh tmp/linear-description-pl-13.md issues update PL-13 --description -
 ```
 
 **Important**: Preserve the entire description — only change `- [ ]` to `- [x]` for completed items. Do not rewrite or reformat the description.
@@ -158,7 +158,7 @@ As implementation progresses:
 3. Run:
 
 ```bash
-linear issues comment PL-13 --body - < tmp/linear-comment-pl-13.md
+~/.claude/scripts/linear-stdin.sh tmp/linear-comment-pl-13.md issues comment PL-13 --body -
 ```
 
 This ensures progress is visible in Linear even if the session is interrupted, and enables picking up where we left off.

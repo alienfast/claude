@@ -19,7 +19,7 @@ Research-augmented workflow for implementing something large:
 | Research | `/do research foo bar baz, write your analysis to doc/analysis-foo.md` | |
 | Plan | `Read @doc/analysis-foo.md and create an implementation plan as doc/plan-foo.md` | Use plan mode. Consider workstreams and agent teams unless single-threaded |
 | Linear setup | Check `.linear.yml` has the correct project/team default | |
-| Create tickets | `/prd @doc/plan-foo.md` | Should be done by Developer - need to review stages and accuracy. Approval creates issues in Linear |
+| Create issues | `/prd @doc/plan-foo.md` | Should be done by Developer - need to review stages and accuracy. Approval creates issues in Linear |
 | Triage | `/triage` | Reviews dependencies, identifies blockers, suggests priorities |
 | Prioritize | Move stage 1 to "Planned", stage 2 to "Backlog" | |
 | **Build loop** | `/start PL-12` | Assigns, creates branch, plans, implements |

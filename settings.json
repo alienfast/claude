@@ -87,6 +87,7 @@
       "Bash(wc -l:*)",
       "Bash(xargs:*)",
       "Bash(yarn:*)",
+      "Bash(~/.claude/scripts/linear-stdin.sh *)",
       "Bash(~/.claude/skills/pr-update/scripts/analyze-pr.sh:*)",
       "Bash(~/.claude/skills/pr-update/scripts/verify-feature.sh:*)",
       "Read(//Users/*/.claude/**)",
