@@ -64,20 +64,14 @@ Then `Read` the downloaded file path to view the image.
 linear issues update PL-13 --assignee me --state "In Progress"
 ```
 
-### Step 5: Create or Switch to Git Branch
+### Step 5: Ensure Correct Git Branch
 
-Generate a branch name from the issue key and title:
-
-```
-kevinross/pl-13-short-kebab-title
+```bash
+git branch --show-current
 ```
 
-**Rules:**
-
-- Prefix with `kevinross/`
-- Issue key in lowercase (e.g., `pl-13`)
-- Kebab-case title, truncated to keep the branch name reasonable
-- Check if a branch for this issue already exists before creating one
+- **If already on a non-`main` branch**: stay on it and skip to Step 6.
+- **If on `main`**: create or switch to a feature branch:
 
 ```bash
 # Check for existing branch
@@ -86,9 +80,16 @@ git branch --list "*pl-13*"
 # If found, switch to it
 git checkout <existing-branch>
 
-# If not found, create from current branch
-git checkout -b kevinross/pl-13-short-kebab-title
+# If not found, get GitHub username and create branch
+gh api user --jq .login
+git checkout -b <username>/pl-13-short-kebab-title
 ```
+
+**Branch naming rules:**
+
+- Prefix with your GitHub username (from `gh api user --jq .login`)
+- Issue key in lowercase (e.g., `pl-13`)
+- Kebab-case title, truncated to keep the branch name reasonable
 
 ### Step 6: Enter Plan Mode
 
