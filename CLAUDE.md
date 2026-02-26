@@ -53,6 +53,7 @@ Key standards:
 - `agent-coordination.md` - Parallel vs sequential execution patterns
 - `git.md` - Commit messages, PR descriptions, multi-session safety
 - `problem-solving.md` - When to ask vs proceed
+- `linear-workflow.md` - Terminal states, dependency resolution rules
 - `technical-debt-prevention.md` - No backups, no duplicates
 
 ## Automatic Quality Checks

@@ -12,6 +12,7 @@ These standards apply universally across all contexts:
 - [Project Commands](project-commands.md) - Command discovery and usage
 - [Semantic Versioning](semver.md) - Version classification, compatibility rules, update strategies
 - [Technical Debt Prevention](technical-debt-prevention.md) - No backups, no duplicates, modify in place
+- [Linear Workflow](linear-workflow.md) - Terminal states, dependency resolution rules
 - [Version-Aware Planning](version-aware-planning.md) - Research and planning based on actual dependency versions
 
 ## Migrated to Path-Specific Rules
