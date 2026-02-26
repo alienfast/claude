@@ -37,10 +37,29 @@ If unresolved blocking issues exist:
 
 ### Step 3: Gather Full Context
 
-**Read parent issue** (if one exists) for epic-level goals and sibling context:
+**Visualize the dependency graph** to understand the full picture:
 
 ```bash
+linear deps PL-13
+```
+
+**Traverse the parent chain** — issues can be nested (issue → parent → grandparent → epic). Read each ancestor for goals, constraints, and sibling context:
+
+```bash
+# Get parent ID from issue details (Step 1 output)
 linear issues get <parent-id> --format full
+
+# If that parent also has a parent, keep climbing
+linear issues get <grandparent-id> --format full
+# Continue until there is no parent
+```
+
+Collect context from every level — higher-level issues often contain architectural decisions and scope boundaries that inform implementation.
+
+**Get project description** — if the issue belongs to a project, read the project for roadmap context:
+
+```bash
+linear search "<project-name>" --type projects
 ```
 
 **Read existing comments** for prior discussion, decisions, or partial work:
