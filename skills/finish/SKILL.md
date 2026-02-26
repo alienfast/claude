@@ -1,7 +1,6 @@
 ---
 name: finish
 description: Finish a Linear issue — check off requirements, add completion comment, commit/push, mark Ready For Release, suggest next issue. Use when the user says 'finish issue', 'done with this issue', 'complete PL-XX', or invokes /finish.
-version: 1.0.0
 ---
 
 # Finish Issue
@@ -52,10 +51,11 @@ For each `- [ ]` checkbox in the description:
 
 Update the description:
 
+1. Use the `Write` tool to save the full updated description to `/tmp/linear-description.md`
+2. Run:
+
 ```bash
-cat <<'EOF' | linear issues update PL-12 --description -
-<updated description with checked boxes>
-EOF
+linear issues update PL-12 --description - < /tmp/linear-description.md
 ```
 
 **Important**: Preserve the entire description — only change `- [ ]` to `- [x]` for completed items. Do not rewrite or reformat the description.
@@ -87,10 +87,11 @@ Omit sections that have no content (e.g., skip "Notes" if everything was complet
 
 ### Step 5: Add Comment to Issue
 
+1. Use the `Write` tool to save the comment to `/tmp/linear-comment.md`
+2. Run:
+
 ```bash
-cat <<'EOF' | linear issues comment PL-12 --body -
-<completion comment>
-EOF
+linear issues comment PL-12 --body - < /tmp/linear-comment.md
 ```
 
 ### Step 6: Git Commit & Push

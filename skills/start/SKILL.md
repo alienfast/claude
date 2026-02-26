@@ -1,7 +1,6 @@
 ---
 name: start
 description: Start working on a Linear issue — check blockers, assign, move to In Progress, create branch, plan implementation, execute with checkpoint updates. Use when the user says 'start issue', 'work on PL-XX', 'begin PL-XX', or invokes /start.
-version: 1.0.0
 ---
 
 # Start Issue
@@ -116,10 +115,11 @@ linear issues get PL-13 --output json
 
 Update completed checkboxes (`- [ ]` → `- [x]`) and push the update:
 
+1. Use the `Write` tool to save the full updated description to `/tmp/linear-description.md`
+2. Run:
+
 ```bash
-cat <<'EOF' | linear issues update PL-13 --description -
-<updated description with newly checked boxes>
-EOF
+linear issues update PL-13 --description - < /tmp/linear-description.md
 ```
 
 **Important**: Preserve the entire description — only change `- [ ]` to `- [x]` for completed items. Do not rewrite or reformat the description.
@@ -131,10 +131,11 @@ As implementation progresses:
 - Check off `- [ ]` → `- [x]` in the issue description after completing each requirement
 - Add brief comments on significant design decisions or unexpected blockers:
 
+1. Use the `Write` tool to save the comment to `/tmp/linear-comment.md`
+2. Run:
+
 ```bash
-cat <<'EOF' | linear issues comment PL-13 --body -
-<checkpoint comment>
-EOF
+linear issues comment PL-13 --body - < /tmp/linear-comment.md
 ```
 
 This ensures progress is visible in Linear even if the session is interrupted, and enables picking up where we left off.
