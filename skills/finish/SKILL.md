@@ -11,17 +11,21 @@ Automates the post-completion workflow for a Linear issue using the `linear` CLI
 
 ### Step 1: Identify the Issue
 
-Determine the issue identifier from:
+Determine the issue identifier from (in priority order):
 
 1. **User input** — e.g., `/finish PL-12`
-2. **Git branch name** — extract from branch (e.g., `kevinross/pl-12-scaffold-nextjs-16-app-in-monorepo` → `PL-12`)
+2. **Git branch name** — extract from branch (e.g., `pl-12-scaffold-nextjs-16-app-in-monorepo` → `PL-12`)
+3. **Latest commit message** — extract issue key from the most recent commit (only reliable if there are no unstaged changes; if the working tree is dirty, the latest commit may not relate to the current work)
 
 ```bash
 # Get current branch name
 git branch --show-current
+
+# Get latest commit message
+git log --oneline -1
 ```
 
-If the identifier can't be determined, ask the user.
+If the identifier can't be determined from any of the above, ask the user.
 
 ### Step 2: Get Issue Details
 
