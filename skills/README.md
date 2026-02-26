@@ -134,6 +134,28 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 - `scripts/verify-feature.sh` - Feature verification script
 - `scripts/analyze-pr.sh` - PR analysis automation
 
+### next
+
+**Description**: Suggest the best next issue to work on. Considers current cycle, dependency graph, triage status, and what's unblocked.
+
+**When Invoked**:
+
+- User says "what's next" or "next issue"
+- User invokes `/next`
+- Delegated from `/finish` after completing an issue
+
+**Key Features**:
+
+- 5-tier candidate ranking: cycle + unblocked > cycle + ready > unblocked + priority > sibling > backlog
+- Works standalone (fresh day/week) or post-finish (with just-completed context)
+- Respects triage/cycle-plan decisions as highest-signal indicators
+- Analyzes transitive unblocking from dependency graph, not just direct blockers
+
+**Structure**:
+
+- Self-contained workflow in `SKILL.md`
+- Uses `linear deps`, `linear i list --cycle current`, `linear search --blocked-by`
+
 ## Creating New Skills
 
 ### Directory Structure

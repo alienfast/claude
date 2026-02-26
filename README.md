@@ -10,6 +10,23 @@ The top-level orchestration and the architect run on Opus, while focused task ag
 
 For a deeper overview of this pattern, read [ClaudeLog: You Are the Main Thread](https://claudelog.com/mechanics/you-are-the-main-thread/).
 
+## TL;DR developer workflow
+
+Here is a research augmented workflow to implement something large.
+
+1. cc `/do research foo bar baz, write your analysis to doc/analysis-foo.md`
+2. cc [plan mode] `Read @doc/analysis-foo.md and create an implementation plan as doc/plan-foo.md` - be sure to consider workstreams and agent teams unless single threaded
+3. Double check the correct project/team default in `.linear.yml` in your project
+4. cc `/prd @doc/plan-foo.md` - should be performed by developer, they need to review stages of implementation and accuracy.  Approval at this level will blow in a bunch of issues into linear.
+5. cc `/triage` will look over what you have, check dependencies/identify blockers and may have suggestions.
+6. cc `move stage 1 into 'Planned', move stage 2 into 'Backlog'
+7. cc `/start PL-12`
+8. Review
+9. cc `/finish` (commits, will end with a call to `/next` to suggest next issue to work on)
+10. goto 7
+
+If starting a new day/week, just run `/next` for a suggestion.
+
 ## What's Included
 
 ### Agents
@@ -36,6 +53,7 @@ Automated multi-step workflows invoked by trigger phrases or slash commands.
 | [linear](skills/linear/) | Issue tracking CLI with semantic search and velocity analytics |
 | [start](skills/start/) | Start a Linear issue — check blockers, assign, create branch, plan, execute |
 | [finish](skills/finish/) | Finish an issue — check requirements, commit/push, mark Ready For Release |
+| [next](skills/next/) | Suggest best next issue using cycle, dependency, and triage signals |
 | [triage](skills/triage/) | Analyze backlog for staleness, blockers, and priority suggestions |
 | [prd](skills/prd/) | Create agent-friendly tickets with PRDs and success criteria |
 | [cycle-plan](skills/cycle-plan/) | Plan cycles using velocity analytics and historical capacity |
@@ -43,7 +61,7 @@ Automated multi-step workflows invoked by trigger phrases or slash commands.
 | [deps](skills/deps/) | Visualize issue dependency chains and circular dependencies |
 | [link-deps](skills/link-deps/) | Discover and link related issues as dependencies |
 
-**Development Workflow:**
+**Development skills:**
 
 | Skill | Description |
 |-------|-------------|

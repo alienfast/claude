@@ -121,32 +121,7 @@ linear issues update PL-12 --state "Ready For Release"
 
 ### Step 8: Suggest Next Issue
 
-Find the most logical next issue to work on:
-
-**First, check what's now unblocked:**
-
-```bash
-linear issues blocking PL-12
-```
-
-If there are issues that were blocked by this one, they're now candidates — prioritize by priority level.
-
-**Then, check for siblings under the same parent:**
-
-```bash
-# Get parent ID from the issue details (from step 2)
-linear issues get <parent-id> --format full
-```
-
-Look for child issues in Todo/Backlog/In Progress state. The next sibling in dependency order is the best candidate.
-
-**Present the suggestion:**
-
-> **Suggested next issue:** PL-13 — "Auth proxy and cookie session utilities"
-> Priority: High | Estimate: 3 points
-> **Why**: Was blocked by PL-12 (now unblocked), next in dependency chain under parent epic.
-
-If no clear next issue exists, say so — don't force a suggestion.
+Use the `/next` skill to suggest the best next issue, passing the just-completed issue ID as context. The `/next` skill will check the current cycle, dependency graph, and newly unblocked work to find the highest-signal candidate.
 
 ## Error Handling
 
