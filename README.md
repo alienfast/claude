@@ -29,7 +29,7 @@ Specialized personas delegated to by the `/do` orchestrator.
 
 Automated multi-step workflows invoked by trigger phrases or slash commands.
 
-**Linear Integration:**
+**Linear Integration:** ([see CLI](https://github.com/joa23/linear-cli?))
 
 | Skill | Description |
 |-------|-------------|
