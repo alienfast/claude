@@ -71,8 +71,9 @@ linear issues list-comments PL-13
 **Download any images** from the description. `uploads.linear.app` URLs require authentication — do NOT use `WebFetch` or `curl`:
 
 ```bash
-linear attachments download "https://uploads.linear.app/..."
-# → /tmp/linear-img-<hash>.png
+mkdir -p tmp
+linear attachments download "https://uploads.linear.app/..." --output tmp/
+# → tmp/linear-img-<hash>.png
 ```
 
 Then `Read` the downloaded file path to view the image.
@@ -135,11 +136,12 @@ linear issues get PL-13 --output json
 
 Update completed checkboxes (`- [ ]` → `- [x]`) and push the update:
 
-1. Use the `Write` tool to save the full updated description to `/tmp/linear-description-<issue-id>.md` (e.g., `/tmp/linear-description-pl-13.md`)
-2. Run:
+1. Run `mkdir -p tmp` if not already created this session
+2. Use the `Write` tool to save the full updated description to `tmp/linear-description-<issue-id>.md` (e.g., `tmp/linear-description-pl-13.md`)
+3. Run:
 
 ```bash
-linear issues update PL-13 --description - < /tmp/linear-description-pl-13.md
+linear issues update PL-13 --description - < tmp/linear-description-pl-13.md
 ```
 
 **Important**: Preserve the entire description — only change `- [ ]` to `- [x]` for completed items. Do not rewrite or reformat the description.
@@ -151,11 +153,12 @@ As implementation progresses:
 - Check off `- [ ]` → `- [x]` in the issue description after completing each requirement
 - Add brief comments on significant design decisions or unexpected blockers:
 
-1. Use the `Write` tool to save the comment to `/tmp/linear-comment-<issue-id>.md` (e.g., `/tmp/linear-comment-pl-13.md`)
-2. Run:
+1. Run `mkdir -p tmp` if not already created this session
+2. Use the `Write` tool to save the comment to `tmp/linear-comment-<issue-id>.md` (e.g., `tmp/linear-comment-pl-13.md`)
+3. Run:
 
 ```bash
-linear issues comment PL-13 --body - < /tmp/linear-comment-pl-13.md
+linear issues comment PL-13 --body - < tmp/linear-comment-pl-13.md
 ```
 
 This ensures progress is visible in Linear even if the session is interrupted, and enables picking up where we left off.
