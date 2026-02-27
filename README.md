@@ -162,7 +162,7 @@ This installs:
 
 ### 4. Configure MCP servers (optional)
 
-See [mcpServers.md](mcpServers.md) for available MCP server configurations. The current approach favors skills over MCP servers for context efficiency — most MCP servers have been removed in favor of CLI tools and skills.
+See [mcpServers.md](mcpServers.md) for _some_ available MCP server configurations. The current approach favors skills over MCP servers for context efficiency — most MCP servers have been removed in favor of CLI tools and skills.
 
 ## Usage
 
