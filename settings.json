@@ -55,6 +55,7 @@
       "Bash(lsof:*)",
       "Bash(make:*)",
       "Bash(markdownlint:*)",
+      "Bash(mkdir *)",
       "Bash(mkdir:*)",
       "Bash(moon run:*)",
       "Bash(mv:*)",
