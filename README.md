@@ -182,17 +182,6 @@ updated for react 19, I want you to take a look at a comprehensive review of
 all react code, and implement the best practices for react 19.
 ```
 
-### Skill invocations
-
-Skills activate by trigger phrase or slash command:
-
-- `/prd` for interactive linear issues creation with dependencies, subtasks etc or use existing research like `/prd @doc/my-research.md`
-- `/start PL-123` — Start working on a Linear issue
-- `/finish` — Complete the current issue
-- `update the PR` — Generate/update PR title and description
-- `update dependencies` — Run the dependency updater workflow
-- `/triage` — Analyze and prioritize backlog
-
 ### Automatic hooks
 
 No manual intervention needed — hooks run behind the scenes:
