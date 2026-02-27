@@ -1,7 +1,6 @@
 ---
-skill: linear
+name: linear
 description: Linear issue tracking - MUST READ before using Linear commands
-version: 1.0.0
 ---
 
 # Linear Issue Tracking - Complete Reference
@@ -220,55 +219,44 @@ linear i create "Add OAuth integration" \
   --project "Auth Revamp" \
   --due 2026-02-01
 
-# With description from file
-cat spec.md | linear i create "Feature title" --team CEN -d -
+# With description from file (use linear-stdin.sh to avoid permission prompts)
+~/.claude/scripts/linear-stdin.sh spec.md i create "Feature title" --team CEN -d -
 ```
 
-## Piping Support (Powerful!)
+## Passing File Content to Linear CLI
 
-**All description and body flags support stdin via `-`:**
+**All description and body flags support stdin via `-`.** Use `~/.claude/scripts/linear-stdin.sh` to pass file content — it wraps the stdin redirect so Bash permission wildcards match correctly.
 
 ```bash
-# Pipe Claude plan into ticket description
-cat .claude/plans/auth-refactor.md | linear i create "Refactor authentication" \
+# Usage: ~/.claude/scripts/linear-stdin.sh <file> <linear-args...>
+
+# Create issue with description from file
+~/.claude/scripts/linear-stdin.sh tmp/description.md i create "Feature title" \
   --team CEN \
   --priority 1 \
   -d -
 
-# Pipe multi-file content
-cat design.md implementation.md | linear i create "Feature implementation" \
-  --team CEN \
-  -d -
-
-# Pipe command output
-gh issue view 123 --json body -q .body | linear i create "Port GH issue" \
-  --team CEN \
-  -d -
-
-# Update issue description from file
-cat updated-spec.md | linear i update CEN-123 -d -
+# Update issue description
+~/.claude/scripts/linear-stdin.sh tmp/linear-description-cen-123.md i update CEN-123 -d -
 
 # Add comment from file
-cat findings.md | linear i comment CEN-123 -b -
-
-# Reply to comment with piped content
-cat response.md | linear i reply CEN-123 comment-id -b -
+~/.claude/scripts/linear-stdin.sh tmp/linear-comment-cen-123.md i comment CEN-123 -b -
 ```
 
-**Common Patterns:**
+**Standard workflow** for any command that passes file content:
+
+1. Run `mkdir -p tmp` if not already created this session
+2. Use the `Write` tool to save content to `tmp/<descriptive-name>.md`
+3. Run `~/.claude/scripts/linear-stdin.sh tmp/<file>.md <linear-args> -d -` (or `-b -` for comments)
+
+**Why not use shell redirects directly?** Claude Code's Bash permission wildcards don't match through shell operators (`<`, `|`, `$()`). The helper script wraps the redirect internally so permissions work.
+
+**For short inline values** (no file needed):
 
 ```bash
-# Claude Code plans → Linear tickets
-cat .claude/plans/*.md | linear i create "Implementation plan" -d -
-
-# PRD → Parent ticket
-cat prd.md | linear i create "Feature: OAuth" --team CEN -d -
-
-# Changelog → Release ticket
-git log --oneline v1.0.0..HEAD | linear i create "v1.1.0 Release" -d -
-
-# Test results → Bug report
-pytest --verbose | linear i create "Test failures" -d -
+# Short descriptions/comments can be passed directly as arguments
+linear i create "Fix login bug" --team CEN --priority 1 -d "Brief description here"
+linear i comment CEN-123 -b "Quick status update"
 ```
 
 ## Output Formats (Token Efficiency)

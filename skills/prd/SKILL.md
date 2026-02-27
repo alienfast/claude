@@ -73,21 +73,29 @@ npm run lint
 ## Example Commands
 
 ```bash
-# Create parent issue
-linear issues create "User Authentication System" \
+# Create parent issue with description from file
+~/.claude/scripts/linear-stdin.sh tmp/prd-description.md issues create "User Authentication System" \
   --team ENG \
-  --description "$(cat prd.md)" \
-  --priority 2
+  --priority 2 \
+  -d -
 
-# Create sub-issue
+# Create sub-issue with inline description (short enough for a flag)
 linear issues create "Implement OAuth2 login flow" \
   --team ENG \
   --parent ENG-100 \
   --description "Implement OAuth2 with Google provider..."
 
+# Create sub-issue with longer description from file
+~/.claude/scripts/linear-stdin.sh tmp/sub-issue-description.md issues create "Add JWT refresh tokens" \
+  --team ENG \
+  --parent ENG-100 \
+  -d -
+
 # Set dependencies
 linear issues update ENG-102 --blocked-by ENG-101
 ```
+
+**Important:** For any description or body content longer than a single line, write it to `tmp/` first and use `~/.claude/scripts/linear-stdin.sh` to pass it via stdin. Do NOT use shell operators (`<`, `|`, `$()`) in Bash commands — they trigger permission prompts regardless of allow-list rules.
 
 ## Discovering Related Work
 
