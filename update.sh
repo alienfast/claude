@@ -10,6 +10,10 @@ claude update
 
 echo "Updating plugin marketplaces..."
 claude plugin marketplace update
+claude plugin marketplace update claude-plugins-official
+
+echo "Installing lsp servers..."
+claude plugin install typescript-lsp
 
 # Ensure pnpm global bin directory is configured
 if [ -z "$PNPM_HOME" ]; then
@@ -73,6 +77,7 @@ if ! (cd "$HOME" && linear skills install --all); then
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   exit 1
 fi
+
 
 
 lint_and_fix "pnpm check-markdown"
