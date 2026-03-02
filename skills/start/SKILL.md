@@ -118,16 +118,41 @@ Switch to plan mode to design the implementation:
 1. Use the issue description, checkboxes, and parent context as requirements
 2. Explore the codebase to understand relevant files, patterns, and dependencies
 3. Design a step-by-step implementation plan
-4. Present the plan and get user feedback before proceeding
+4. Identify which tasks are independent (parallelizable) vs dependent (sequential)
+5. Present the plan and get user feedback before proceeding
 
 Do not start implementation until the user approves the plan.
 
-### Step 7: Implement
+### Step 7: Implement via Delegation
 
-Execute the approved plan. After completing each logical chunk of work:
+Execute the approved plan by **delegating to specialized subagents** — do not implement code yourself. Use the Task tool to dispatch work.
 
-1. Verify the change (type checks, tests, dev server — whatever is appropriate)
-2. Check off the corresponding checkbox(es) in the issue description:
+**Available agents:**
+
+- `developer` — Implements code, writes tests, fixes bugs
+- `quality-reviewer` — Reviews for security, performance, best practices
+- `debugger` — Investigates errors, analyzes root causes
+- `architect` — Designs solutions when implementation reveals architectural questions
+
+**Parallel execution** — launch independent tasks simultaneously in a single message with multiple Task calls. Refer to [Agent Coordination Standards](~/.claude/standards/agent-coordination.md) for the parallel vs sequential decision matrix.
+
+**Delegation format:**
+
+```md
+Task for [agent]: [Specific, focused task]
+Context: [Why this task matters, relevant issue context]
+Files: [Exact paths and lines]
+Requirements:
+- [Specific requirement 1]
+- [Specific requirement 2]
+Acceptance: [How to verify success]
+```
+
+**After each delegation completes:**
+
+1. Verify the result (type checks, tests, dev server — whatever is appropriate)
+2. If validation fails, delegate investigation to `debugger` or corrections to `developer`
+3. Check off the corresponding checkbox(es) in the issue description:
 
 ```bash
 # Get current description
