@@ -133,9 +133,11 @@ Switch to plan mode to design the implementation:
 4. Identify which tasks are independent (parallelizable) vs dependent (sequential)
 5. Present the plan and get user feedback before proceeding
 
-Do not start implementation until the user approves the plan. After approval, proceed to Step 7 to post the plan to Linear.
+Do not start implementation until the user approves the plan. After approval, proceed **immediately** to Step 7 — do not read files, grep, or do any implementation research until the plan is posted to Linear.
 
 ### Step 7: Post Approved Plan to Linear
+
+**This step MUST complete before any implementation work begins — no exceptions.** No file reads, no grep, no dependency research. Post first, then stop.
 
 Record the approved plan as a comment on the issue before starting work. This creates a permanent record so that if the session is interrupted, anyone (including a future session) can reconstruct intent from Linear.
 
@@ -163,7 +165,6 @@ _Approved before implementation started._
 ~/.claude/scripts/linear-stdin.sh tmp/linear-comment-pl-13.md issues comment PL-13 --body -
 ```
 
-**STOP: Suggest `/compact` to the user** before proceeding to Step 8. The plan is safely persisted in Linear, so context can be freed. Do not continue to implementation until after compaction or the user declines.
 
 ### Step 8: Implement via Delegation
 
