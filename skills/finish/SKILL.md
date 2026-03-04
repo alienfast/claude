@@ -55,9 +55,8 @@ For each `- [ ]` checkbox in the description:
 
 Update the description:
 
-1. Run `mkdir -p tmp` if not already created this session
-2. Use the `Write` tool to save the full updated description to `tmp/linear-description-<issue-id>.md` (e.g., `tmp/linear-description-pl-12.md`)
-3. Run:
+1. Use the `Write` tool to save the full updated description to `tmp/linear-description-<issue-id>.md` (e.g., `tmp/linear-description-pl-12.md`)
+2. Run:
 
 ```bash
 ~/.claude/scripts/linear-stdin.sh tmp/linear-description-pl-12.md issues update PL-12 --description -
@@ -92,9 +91,8 @@ Omit sections that have no content (e.g., skip "Notes" if everything was complet
 
 ### Step 5: Add Comment to Issue
 
-1. Run `mkdir -p tmp` if not already created this session
-2. Use the `Write` tool to save the comment to `tmp/linear-comment-<issue-id>.md` (e.g., `tmp/linear-comment-pl-12.md`)
-3. Run:
+1. Use the `Write` tool to save the comment to `tmp/linear-comment-<issue-id>.md` (e.g., `tmp/linear-comment-pl-12.md`)
+2. Run:
 
 ```bash
 ~/.claude/scripts/linear-stdin.sh tmp/linear-comment-pl-12.md issues comment PL-12 --body -

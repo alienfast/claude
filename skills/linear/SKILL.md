@@ -245,9 +245,8 @@ linear i create "Add OAuth integration" \
 
 **Standard workflow** for any command that passes file content:
 
-1. Run `mkdir -p tmp` if not already created this session
-2. Use the `Write` tool to save content to `tmp/<descriptive-name>.md`
-3. Run `~/.claude/scripts/linear-stdin.sh tmp/<file>.md <linear-args> -d -` (or `-b -` for comments)
+1. Use the `Write` tool to save content to `tmp/<descriptive-name>.md`
+2. Run `~/.claude/scripts/linear-stdin.sh tmp/<file>.md <linear-args> -d -` (or `-b -` for comments)
 
 **Why not use shell redirects directly?** Claude Code's Bash permission wildcards don't match through shell operators (`<`, `|`, `$()`). The helper script wraps the redirect internally so permissions work.
 

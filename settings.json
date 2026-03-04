@@ -80,7 +80,6 @@
       "Bash(then:*)",
       "Bash(time:*)",
       "Bash(timeout:*)",
-      "Bash(touch:*)",
       "Bash(tree:*)",
       "Bash(unset:*)",
       "Bash(uv:*)",
@@ -114,7 +113,8 @@
       "Bash(cat:*)",
       "Bash(ls:*)",
       "Bash(head:*)",
-      "Bash(tail:*)"
+      "Bash(tail:*)",
+      "Bash(touch:*)"
     ],
     "ask": [
       "mcp__circleci__run_pipeline"

@@ -1,6 +1,6 @@
 ---
 name: start
-description: Start working on a Linear issue — check blockers, assign, move to In Progress, create branch, plan implementation, execute with checkpoint updates. Use when the user says 'start issue', 'work on PL-XX', 'begin PL-XX', or invokes /start.
+description: Start working on a Linear issue — check blockers, assign, move to In Progress, create branch, plan implementation, execute with checkpoint updates, review and triage findings. Use when the user says 'start issue', 'work on PL-XX', 'begin PL-XX', or invokes /start.
 ---
 
 # Start Issue
@@ -71,7 +71,6 @@ linear issues list-comments PL-13
 **Download any images** from the description. `uploads.linear.app` URLs require authentication — do NOT use `WebFetch` or `curl`:
 
 ```bash
-mkdir -p tmp
 linear attachments download "https://uploads.linear.app/..." --output tmp/
 # → tmp/linear-img-<hash>.png
 ```
@@ -121,9 +120,39 @@ Switch to plan mode to design the implementation:
 4. Identify which tasks are independent (parallelizable) vs dependent (sequential)
 5. Present the plan and get user feedback before proceeding
 
-Do not start implementation until the user approves the plan.
+Do not start implementation until the user approves the plan. After approval, proceed to Step 7 to post the plan to Linear.
 
-### Step 7: Implement via Delegation
+### Step 7: Post Approved Plan to Linear
+
+Record the approved plan as a comment on the issue before starting work. This creates a permanent record so that if the session is interrupted, anyone (including a future session) can reconstruct intent from Linear.
+
+1. Use the `Write` tool to save the plan as a structured comment to `tmp/linear-comment-<issue-id>.md`:
+
+```markdown
+## Implementation Plan
+
+_Approved before implementation started._
+
+### Approach
+[1–3 sentence summary of the overall strategy]
+
+### Steps
+1. [Step — what will be done and why]
+2. ...
+
+### Key Files
+- [File paths identified during planning]
+```
+
+3. Run:
+
+```bash
+~/.claude/scripts/linear-stdin.sh tmp/linear-comment-pl-13.md issues comment PL-13 --body -
+```
+
+After posting, suggest the user run `/compact` to free context before implementation begins — the plan is safely persisted in Linear.
+
+### Step 8: Implement via Delegation
 
 Execute the approved plan by **delegating to specialized subagents** — do not implement code yourself. Use the Task tool to dispatch work.
 
@@ -161,8 +190,7 @@ linear issues get PL-13 --output json
 
 Update completed checkboxes (`- [ ]` → `- [x]`) and push the update:
 
-1. Run `mkdir -p tmp` if not already created this session
-2. Use the `Write` tool to save the full updated description to `tmp/linear-description-<issue-id>.md` (e.g., `tmp/linear-description-pl-13.md`)
+1. Use the `Write` tool to save the full updated description to `tmp/linear-description-<issue-id>.md` (e.g., `tmp/linear-description-pl-13.md`)
 3. Run:
 
 ```bash
@@ -171,15 +199,9 @@ Update completed checkboxes (`- [ ]` → `- [x]`) and push the update:
 
 **Important**: Preserve the entire description — only change `- [ ]` to `- [x]` for completed items. Do not rewrite or reformat the description.
 
-### Step 8: Checkpoint Updates
+**Progress Checkpoints** — As implementation progresses, add brief comments on significant design decisions or unexpected blockers:
 
-As implementation progresses:
-
-- Check off `- [ ]` → `- [x]` in the issue description after completing each requirement
-- Add brief comments on significant design decisions or unexpected blockers:
-
-1. Run `mkdir -p tmp` if not already created this session
-2. Use the `Write` tool to save the comment to `tmp/linear-comment-<issue-id>.md` (e.g., `tmp/linear-comment-pl-13.md`)
+1. Use the `Write` tool to save the comment to `tmp/linear-comment-<issue-id>.md` (e.g., `tmp/linear-comment-pl-13.md`)
 3. Run:
 
 ```bash
@@ -187,6 +209,100 @@ As implementation progresses:
 ```
 
 This ensures progress is visible in Linear even if the session is interrupted, and enables picking up where we left off.
+
+### Step 9: Review Implementation
+
+After all implementation tasks from Step 8 are complete, spawn `quality-reviewer` subagent(s) for a dedicated full review of the entire implementation.
+
+**Delegate the review:**
+
+```md
+Task for quality-reviewer: Full implementation review for PL-13
+Context: Implementation of [issue title] is complete. Review all changes.
+Files: [List every file created or modified during Step 8]
+Requirements:
+- Correctness: does the implementation satisfy all issue requirements?
+- Code quality: naming, structure, readability, maintainability
+- Security: injection, auth, data exposure, input validation
+- Performance: unnecessary re-renders, N+1 queries, unindexed lookups
+- Test coverage: are new paths tested?
+Acceptance: Produce a categorized findings report.
+```
+
+For large issues spanning multiple domains, spawn parallel reviewers scoped by domain in a single message (e.g., one for backend, one for frontend). Consolidate findings before proceeding.
+
+**Required findings format:**
+
+```markdown
+## Review Findings
+
+### Critical (must fix before done)
+- [Finding]: [File:line] — [explanation]
+
+### High (should fix)
+- [Finding]: [File:line] — [explanation]
+
+### Nice-to-Have / Out-of-Scope
+- [Finding]: [rationale for deferring]
+
+### Approved
+- [What looks good and why]
+```
+
+If no Critical or High findings → review passes, implementation is done. Otherwise proceed to Step 10.
+
+### Step 10: Triage & Fix Loop
+
+If Critical or High findings exist, triage, fix, and re-review until the implementation passes cleanly.
+
+**1. Triage Nice-to-Have / Out-of-Scope items** — present each to the user:
+
+- If large scope (new files, new abstractions, estimated >30 min) → urge creating a new Linear issue
+- If small scope (one-line fix, trivial rename, missing guard) → suggest fixing now without a new issue
+- Never silently defer or implement — always present to the user
+
+For items where the user selects "create a new issue":
+
+```bash
+linear issues create --title "<title>" --description "<one-line summary>" --team <team>
+linear issues relate PL-13 <new-issue-id>
+```
+
+**2. Fix Critical/High items** — delegate to `developer`:
+
+```md
+Task for developer: Fix review findings for PL-13
+Context: Quality reviewer identified the following issues.
+Findings:
+- [Finding 1]: [File:line] — [explanation]
+- [Finding 2]: [File:line] — [explanation]
+Requirements:
+- Address each finding precisely — no unrelated changes
+- Verify with type checks or tests as appropriate
+Acceptance: All listed findings resolved, no regressions.
+```
+
+**3. Re-review** — spawn `quality-reviewer` scoped to only the changed files:
+
+```md
+Task for quality-reviewer: Re-review fixes for PL-13
+Context: Previous review findings were addressed. Review only changed files for regressions and confirm fixes are correct.
+Changed files: [list]
+Previous findings addressed: [list]
+Acceptance: Confirm findings resolved. Flag any new Critical or High issues.
+```
+
+**4. Loop** — if the re-review surfaces new Critical or High issues, return to the top of this step (triage → fix → re-review).
+
+**Termination**: Maximum 3 review cycles total (initial review + up to 2 re-reviews). If Critical/High issues persist after 3 cycles, surface them to the user:
+
+> The implementation has gone through 3 review cycles and still has unresolved findings:
+> [list findings]
+>
+> Options:
+> - Continue fixing (another round)
+> - Accept current state and create follow-up issues
+> - Revisit the approach with the architect agent
 
 ## Error Handling
 

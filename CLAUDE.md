@@ -67,11 +67,12 @@ Do not run these manually; they're handled automatically.
 
 ## Mandatory Tool Usage
 
-**NEVER use `grep`, `rg`, `find`, `cat`, `ls`, `head`, or `tail` via the Bash tool.** These are denied in settings and will be rejected. Always use:
+**NEVER use `grep`, `rg`, `find`, `cat`, `ls`, `head`, `tail`, or `touch` via the Bash tool.** These are denied in settings and will be rejected. Always use:
 
 - **Grep tool** instead of `grep` or `rg` — for all content searching
 - **Glob tool** instead of `find` or `ls` — for all file finding
 - **Read tool** instead of `cat`, `head`, `tail` — for reading file contents
+- **Write tool** instead of `touch` — for creating files
 
 This applies to all contexts: direct calls, piped commands, subagents, and delegated tasks. No exceptions.
 
