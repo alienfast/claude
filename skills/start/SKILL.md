@@ -226,9 +226,11 @@ Update completed checkboxes (`- [ ]` → `- [x]`) and push the update:
 
 This ensures progress is visible in Linear even if the session is interrupted, and enables picking up where we left off.
 
-### Step 9: Review Implementation
+**After all implementation tasks are complete, proceed to Step 9.** Implementation is not finished until the review passes.
 
-After all implementation tasks from Step 8 are complete, run `pnpm check` as a hard gate before review:
+### Step 9: Review Implementation (MANDATORY)
+
+**Do NOT skip this step.** The issue is not complete until the review passes. After all implementation tasks from Step 8 are complete, run `pnpm check` as a hard gate before review:
 
 ```bash
 pnpm check
