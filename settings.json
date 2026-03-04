@@ -110,7 +110,6 @@
       "Bash(grep:*)",
       "Bash(find:*)",
       "Bash(rg:*)",
-      "Bash(cat:*)",
       "Bash(ls:*)",
       "Bash(head:*)",
       "Bash(tail:*)",
