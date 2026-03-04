@@ -212,6 +212,8 @@ Update completed checkboxes (`- [ ]` → `- [x]`) and push the update:
 
 **Important**: Preserve the entire description — only change `- [ ]` to `- [x]` for completed items. Do not rewrite or reformat the description.
 
+**Do NOT change the issue state** during implementation. The issue stays "In Progress" throughout this entire skill. Moving to "Ready For Release" is handled exclusively by the `/finish` skill after commit and push. Even if all checkboxes are checked, do not transition the state.
+
 **Progress Checkpoints** — As implementation progresses, add brief comments on significant design decisions or unexpected blockers:
 
 1. Use the `Write` tool to save the comment to `tmp/linear-comment-<issue-id>.md` (e.g., `tmp/linear-comment-pl-13.md`)
