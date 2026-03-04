@@ -59,24 +59,25 @@ echo "Installing linear CLI and skills..."
 brew tap joa23/linear-cli https://github.com/joa23/linear-cli
 brew install linear-cli
 
-echo ""
-echo "Installing linear skills..."
-if ! (cd "$HOME" && linear skills install --all); then
-  echo ""
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "  ❌ Linear skills installation failed."
-  echo ""
-  echo "  Run the following to set up Linear CLI (https://github.com/joa23/linear-cli/tree/main?tab=readme-ov-file#authentication),"
-  echo "   then re-run this script:"
-  echo ""
-  echo "    # 1. Authenticate (as Personal, not a Agent, accept the default port, do not set your GitHub username)"
-  echo "    linear auth login"
-  echo ""
-  echo "    # 2. Initialize your project (select default team)"
-  echo "    linear init"
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  exit 1
-fi
+# these are already part of this repo and will not be overwritten by the command.  Further, we have done some optimizations to prevent permission prompts etc.
+# echo ""
+# echo "Installing linear skills..."
+# if ! (cd "$HOME" && linear skills install --all); then
+#   echo ""
+#   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+#   echo "  ❌ Linear skills installation failed."
+#   echo ""
+#   echo "  Run the following to set up Linear CLI (https://github.com/joa23/linear-cli/tree/main?tab=readme-ov-file#authentication),"
+#   echo "   then re-run this script:"
+#   echo ""
+#   echo "    # 1. Authenticate (as Personal, not a Agent, accept the default port, do not set your GitHub username)"
+#   echo "    linear auth login"
+#   echo ""
+#   echo "    # 2. Initialize your project (select default team)"
+#   echo "    linear init"
+#   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+#   exit 1
+# fi
 
 
 
