@@ -67,7 +67,7 @@ Do not run these manually; they're handled automatically.
 
 ## Mandatory Tool Usage
 
-**NEVER use `grep`, `rg`, `find`, or `cat` via the Bash tool.** These are denied in settings and will be rejected. Always use:
+**NEVER use `grep`, `rg`, `find`, `cat`, `ls`, `head`, or `tail` via the Bash tool.** These are denied in settings and will be rejected. Always use:
 
 - **Grep tool** instead of `grep` or `rg` — for all content searching
 - **Glob tool** instead of `find` or `ls` — for all file finding
