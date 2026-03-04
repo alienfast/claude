@@ -7,6 +7,10 @@ description: Start working on a Linear issue — check blockers, assign, move to
 
 Automates the full workflow for starting and implementing a Linear issue using the `linear` CLI.
 
+## Invariant
+
+**`pnpm check` must pass at all times.** Check failures are always CRITICAL — never "pre-existing", never "out of scope", never deferred. Fix them before proceeding. Turborepo caching makes repeated runs cheap.
+
 ## Workflow
 
 ### Step 1: Get Issue Details
@@ -110,6 +114,15 @@ git checkout -b <username>/pl-13-short-kebab-title
 - Issue key in lowercase (e.g., `pl-13`)
 - Kebab-case title, truncated to keep the branch name reasonable
 
+**Baseline check** — run `pnpm check` to establish a clean baseline before planning:
+
+```bash
+pnpm check
+```
+
+- If it **passes**: baseline is clean. Any post-implementation failure is unambiguously caused by the implementation.
+- If it **fails**: note the failures. These are not exempt — factor them into the implementation plan in Step 6.
+
 ### Step 6: Enter Plan Mode
 
 Switch to plan mode to design the implementation:
@@ -212,7 +225,15 @@ This ensures progress is visible in Linear even if the session is interrupted, a
 
 ### Step 9: Review Implementation
 
-After all implementation tasks from Step 8 are complete, spawn `quality-reviewer` subagent(s) for a dedicated full review of the entire implementation.
+After all implementation tasks from Step 8 are complete, run `pnpm check` as a hard gate before review:
+
+```bash
+pnpm check
+```
+
+If it **fails**: this is CRITICAL. Do not proceed to review. Delegate fixes to `developer` immediately, then re-run `pnpm check`. Repeat until it passes.
+
+If it **passes**: proceed to the quality review below.
 
 **Delegate the review:**
 
@@ -282,7 +303,9 @@ Requirements:
 Acceptance: All listed findings resolved, no regressions.
 ```
 
-**3. Re-review** — spawn `quality-reviewer` scoped to only the changed files:
+**3. Verify check passes** — after fixes, re-run `pnpm check`. If it fails, delegate further fixes before proceeding.
+
+**4. Re-review** — spawn `quality-reviewer` scoped to only the changed files:
 
 ```md
 Task for quality-reviewer: Re-review fixes for PL-13
@@ -292,7 +315,7 @@ Previous findings addressed: [list]
 Acceptance: Confirm findings resolved. Flag any new Critical or High issues.
 ```
 
-**4. Loop** — if the re-review surfaces new Critical or High issues, return to the top of this step (triage → fix → re-review).
+**5. Loop** — if the re-review surfaces new Critical or High issues, return to the top of this step (triage → fix → check → re-review).
 
 **Termination**: Maximum 3 review cycles total (initial review + up to 2 re-reviews). If Critical/High issues persist after 3 cycles, surface them to the user:
 

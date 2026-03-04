@@ -7,6 +7,10 @@ description: Finish a Linear issue — check off requirements, add completion co
 
 Automates the post-completion workflow for a Linear issue using the `linear` CLI.
 
+## Invariant
+
+**`pnpm check` must pass before committing or pushing code.** Check failures are always CRITICAL — never "pre-existing", never "out of scope", never deferred. Fix them before proceeding. Turborepo caching makes repeated runs cheap.
+
 ## Workflow
 
 ### Step 1: Identify the Issue
@@ -98,7 +102,19 @@ Omit sections that have no content (e.g., skip "Notes" if everything was complet
 ~/.claude/scripts/linear-stdin.sh tmp/linear-comment-pl-12.md issues comment PL-12 --body -
 ```
 
-### Step 6: Git Commit & Push
+### Step 6: Verify Check Passes
+
+Run `pnpm check` as a hard gate before committing:
+
+```bash
+pnpm check
+```
+
+If it **fails**: this is CRITICAL. Do not commit or push. Fix the failures first, then re-run until it passes.
+
+If it **passes**: proceed to commit.
+
+### Step 7: Git Commit & Push
 
 Check the current git state and act accordingly:
 
@@ -113,13 +129,13 @@ git log --oneline -1
 
 Always push to the current branch. Do not create PRs (that's a separate workflow).
 
-### Step 7: Mark Issue as Ready For Release
+### Step 8: Mark Issue as Ready For Release
 
 ```bash
 linear issues update PL-12 --state "Ready For Release"
 ```
 
-### Step 8: Suggest Next Issue
+### Step 9: Suggest Next Issue
 
 Use the `/next` skill to suggest the best next issue, passing the just-completed issue ID as context. The `/next` skill will check the current cycle, dependency graph, and newly unblocked work to find the highest-signal candidate.
 
