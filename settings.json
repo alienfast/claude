@@ -15,7 +15,6 @@
       "Bash(brew search:*)",
       "Bash(bun x tsx:*)",
       "Bash(bundle exec rspec:*)",
-      "Bash(cat:*)",
       "Bash(chmod:*)",
       "Bash(circleci:*)",
       "Bash(cloc --diff:*)",
@@ -26,6 +25,7 @@
       "Bash(do)",
       "Bash(docker:*)",
       "Bash(done)",
+      "Bash(diff:*)",
       "Bash(du:*)",
       "Bash(echo:*)",
       "Bash(elif:*)",
@@ -33,7 +33,6 @@
       "Bash(env)",
       "Bash(export:*)",
       "Bash(fi)",
-      "Bash(find:*)",
       "Bash(for:*)",
       "Bash(gcloud iam roles describe:*)",
       "Bash(gcloud iam roles list:*)",
@@ -45,7 +44,6 @@
       "Bash(git:*)",
       "Bash(gpg --version:*)",
       "Bash(gpgconf --list-dirs:*)",
-      "Bash(grep:*)",
       "Bash(if:*)",
       "Bash(jq:*)",
       "Bash(kill:*)",
@@ -74,7 +72,6 @@
       "Bash(pkill:*)",
       "Bash(pnpm:*)",
       "Bash(python3:*)",
-      "Bash(rg:*)",
       "Bash(rm:*)",
       "Bash(rvm list:*)",
       "Bash(rvm use:*)",
@@ -111,7 +108,12 @@
       "mcp__ide__getDiagnostics",
       "mcp__mui"
     ],
-    "deny": [],
+    "deny": [
+      "Bash(grep:*)",
+      "Bash(find:*)",
+      "Bash(rg:*)",
+      "Bash(cat:*)"
+    ],
     "ask": [
       "mcp__circleci__run_pipeline"
     ]
