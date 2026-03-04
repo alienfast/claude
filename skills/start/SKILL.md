@@ -163,7 +163,7 @@ _Approved before implementation started._
 ~/.claude/scripts/linear-stdin.sh tmp/linear-comment-pl-13.md issues comment PL-13 --body -
 ```
 
-After posting, suggest the user run `/compact` to free context before implementation begins — the plan is safely persisted in Linear.
+**STOP: Suggest `/compact` to the user** before proceeding to Step 8. The plan is safely persisted in Linear, so context can be freed. Do not continue to implementation until after compaction or the user declines.
 
 ### Step 8: Implement via Delegation
 
