@@ -168,7 +168,14 @@ _Approved before implementation started._
 
 ### Step 8: Implement via Delegation
 
-Execute the approved plan by **delegating to specialized subagents** — do not implement code yourself. Use the Task tool to dispatch work.
+**Your role is orchestrator only.** Do not read source files, write code, run grep, or make edits yourself. Every implementation action must be delegated to a subagent. You only:
+
+- Dispatch tasks to subagents (via the Agent tool)
+- Verify results by running `pnpm check`
+- Update Linear (checkboxes, comments)
+- Decide what to delegate next based on results
+
+If you catch yourself reading a source file or editing code, stop — delegate it instead.
 
 **Available agents:**
 
@@ -177,7 +184,7 @@ Execute the approved plan by **delegating to specialized subagents** — do not 
 - `debugger` — Investigates errors, analyzes root causes
 - `architect` — Designs solutions when implementation reveals architectural questions
 
-**Parallel execution** — launch independent tasks simultaneously in a single message with multiple Task calls. Refer to [Agent Coordination Standards](~/.claude/standards/agent-coordination.md) for the parallel vs sequential decision matrix.
+**Parallel execution** — launch independent tasks simultaneously in a single message with multiple Agent calls. Refer to [Agent Coordination Standards](~/.claude/standards/agent-coordination.md) for the parallel vs sequential decision matrix.
 
 **Delegation format:**
 
