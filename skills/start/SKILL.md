@@ -195,6 +195,7 @@ Files: [Exact paths and lines]
 Requirements:
 - [Specific requirement 1]
 - [Specific requirement 2]
+- Use dedicated tools: Read (not cat/head/tail), Glob (not find/ls), Grep (not grep/rg). Never use cat, ls, find, grep, or rg via Bash.
 Acceptance: [How to verify success]
 ```
 
