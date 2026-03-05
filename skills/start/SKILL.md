@@ -308,9 +308,11 @@ Requirements:
 Acceptance: All listed findings resolved, no regressions.
 ```
 
+After fixes are applied, you MUST continue through items 3→4→5 below. Do not stop after fixing.
+
 **3. Verify check passes** — after fixes, re-run `pnpm check`. If it fails, delegate further fixes before proceeding.
 
-**4. Re-review** — spawn `quality-reviewer` scoped to only the changed files:
+**4. Re-review (MANDATORY)** — fixes are not complete until re-reviewed. Spawn `quality-reviewer` scoped to only the changed files:
 
 ```md
 Task for quality-reviewer: Re-review fixes for PL-13
