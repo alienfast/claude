@@ -62,6 +62,15 @@ fi
   echo "Working directory: $CWD"
 } >> "$DEBUG_LOG" 2>&1
 
+# Skip files in local tmp/ directory
+if [[ "$FILE_PATH" == tmp/* ]]; then
+  {
+    echo "Skipping tmp path: $FILE_PATH"
+    echo ""
+  } >> "$DEBUG_LOG" 2>&1
+  exit 0
+fi
+
 # Check if file exists
 if [[ ! -f "$FILE_PATH" ]]; then
   {
