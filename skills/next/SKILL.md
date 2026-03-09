@@ -55,6 +55,15 @@ From the cycle list and dependency graph, build a candidate set of issues that a
 
 If a just-completed issue exists, also identify **transitively unblocked** issues — not just direct dependents, but issues further down the dependency chain whose last remaining blocker was the completed issue (or was itself unblocked by it).
 
+**Verify blockers on top candidates** — the dependency graph from Step 1 shows relationships, but may not show all blockers or their current states. Before presenting any suggestion, verify its blockers are actually resolved:
+
+```bash
+# Run for each top candidate (parallel calls, one per candidate)
+linear i blocked-by <CANDIDATE-ID>
+```
+
+If any blocker is not in Done or Ready For Release, the candidate is **not workable** — remove it from the candidate set.
+
 ### Step 3: Rank Candidates
 
 Ranking uses two key signals: **parent/epic status** and **assignment to you**.
