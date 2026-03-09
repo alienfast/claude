@@ -283,17 +283,18 @@ For large issues spanning multiple domains, spawn parallel reviewers scoped by d
 - [What looks good and why]
 ```
 
-If no Critical or High findings → review passes, implementation is done. Otherwise proceed to Step 10.
+If **no findings at all** → review passes, implementation is done. If **any** findings exist (any severity, including pre-existing or out-of-scope notes) → proceed to Step 10.
 
 ### Step 10: Triage & Fix Loop
 
 If Critical or High findings exist, triage, fix, and re-review until the implementation passes cleanly.
 
-**1. Triage Nice-to-Have / Out-of-Scope items** — present each to the user:
+**1. Triage all non-implementation findings** — for any finding (any severity) that is **pre-existing** or **out of scope** for this issue, you **MUST** ask the user whether to create a new Linear issue. Do not silently defer these.
 
-- If large scope (new files, new abstractions, estimated >30 min) → urge creating a new Linear issue
-- If small scope (one-line fix, trivial rename, missing guard) → suggest fixing now without a new issue
-- Never silently defer or implement — always present to the user
+Present each such finding and ask:
+
+- If large scope (new files, new abstractions, estimated >30 min) → **strongly recommend** creating a new Linear issue
+- If small scope (one-line fix, trivial rename, missing guard) → suggest fixing now without a new issue, but still ask
 
 For items where the user selects "create a new issue":
 
@@ -302,7 +303,7 @@ linear issues create --title "<title>" --description "<one-line summary>" --team
 linear issues relate PL-13 <new-issue-id>
 ```
 
-**2. Fix Critical/High items** — delegate to `developer`:
+**2. Fix Critical/High items caused by this implementation** — delegate to `developer`:
 
 ```md
 Task for developer: Fix review findings for PL-13
