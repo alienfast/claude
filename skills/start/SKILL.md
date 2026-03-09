@@ -296,11 +296,11 @@ Present each such finding and ask:
 - If large scope (new files, new abstractions, estimated >30 min) → **strongly recommend** creating a new Linear issue
 - If small scope (one-line fix, trivial rename, missing guard) → suggest fixing now without a new issue, but still ask
 
-For items where the user selects "create a new issue":
+For items where the user selects "create a new issue", create it **and** link it back to the current issue. Both steps are required — an unlinked issue is a failure:
 
 ```bash
 linear issues create --title "<title>" --description "<one-line summary>" --team <team>
-linear issues relate PL-13 <new-issue-id>
+linear issues update <new-issue-id> --depends-on PL-13
 ```
 
 **2. Fix Critical/High items caused by this implementation** — delegate to `developer`:
