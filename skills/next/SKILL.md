@@ -21,20 +21,27 @@ Determine if there's a just-completed issue providing context (e.g., invoked fro
 
 Determine the team key from `.linear.yaml` or the issue prefix.
 
-**Run these commands:**
+**Run all commands as parallel Bash calls — one command per call, never chained with `&&` or `;`:**
 
 ```bash
-# Current cycle — what's been planned and triaged
+# Parallel call 1: Current cycle
 linear i list --cycle current --team <TEAM> --format compact
+```
 
-# Team dependency graph — full picture of blocking relationships
+```bash
+# Parallel call 2: Team dependency graph
 linear deps --team <TEAM>
 ```
 
-**If a just-completed issue exists, also run:**
+```bash
+# Parallel call 3: Issues assigned to me
+linear i list --team <TEAM> --format compact
+```
+
+**If a just-completed issue exists, add this as a fourth parallel call:**
 
 ```bash
-# What was directly blocked by the completed issue (now unblocked)
+# Parallel call 4: What the completed issue was blocking
 linear search --blocked-by <COMPLETED-ID>
 ```
 
@@ -50,17 +57,30 @@ If a just-completed issue exists, also identify **transitively unblocked** issue
 
 ### Step 3: Rank Candidates
 
-Apply this priority order:
+Ranking uses two key signals: **parent/epic status** and **assignment to you**.
 
-1. **Current cycle + newly unblocked** — Issues in the active cycle that were blocked by the just-completed issue (directly or transitively). Highest signal: planned work that was waiting on you.
-2. **Current cycle + ready** — Other cycle issues with no remaining blockers. The cycle plan already determined these should happen now.
-3. **Newly unblocked + highest priority** — Issues directly unblocked by the completed issue, ranked by priority (Urgent > High > Normal > Low). Even if not in the cycle, unblocking work has momentum value.
-4. **Sibling under same parent** — If the completed issue has a parent, look for sibling issues that are workable. Prefer the next one in dependency order within the parent.
-5. **Highest priority workable** — Any remaining workable issue from the backlog, ranked by priority then estimate.
+**Parent status weight** — when a candidate has a parent (or grandparent) issue, that ancestor's state determines urgency:
 
-**Tiebreakers within a tier:** higher priority > in current cycle > fewer remaining blockers > lower estimate (quick wins maintain momentum).
+- Parent **In Progress** → highest weight (active epic, finish it first)
+- Parent **Planned** → second highest (committed to, up next)
+- Parent **Backlog** → third (accepted work, not yet scheduled)
+- Parent **Triage** → lowest weight (but not zero — Triage does not mean unimportant, just not yet categorized)
+- No parent → neutral (ranked on its own merits)
 
-**Note:** If there is no just-completed issue (standalone mode), tiers 1, 3, and 4 don't apply — start directly at tier 2 (current cycle, ready) and fall through to tier 5.
+Climb the full parent chain — if an issue's parent is a sub-issue of an In Progress epic, it inherits that weight.
+
+**Apply this priority order:**
+
+1. **Already assigned to you + unblocked** — Issues assigned to the current user with no remaining blockers. You've already committed to these — finish what you started. Rank by parent status weight, then priority.
+2. **Current cycle + newly unblocked** — Issues in the active cycle that were blocked by the just-completed issue (directly or transitively). Rank by parent status weight, then priority.
+3. **Current cycle + ready** — Other cycle issues with no remaining blockers. Rank by parent status weight, then priority.
+4. **Newly unblocked + highest priority** — Issues directly unblocked by the completed issue, ranked by parent status weight, then priority.
+5. **Sibling under same parent** — If the completed issue has a parent, look for sibling issues that are workable. Prefer the next one in dependency order within the parent.
+6. **Highest priority workable** — Any remaining workable issue, ranked by parent status weight, then priority, then estimate.
+
+**Tiebreakers within a tier:** parent status weight > priority (Urgent > High > Normal > Low) > in current cycle > fewer remaining blockers > lower estimate (quick wins maintain momentum).
+
+**Note:** If there is no just-completed issue (standalone mode), tiers 2, 4, and 5 don't apply — start at tier 1 (assigned to you), then tier 3 (current cycle, ready), then tier 6.
 
 ### Step 4: Present Suggestion
 
