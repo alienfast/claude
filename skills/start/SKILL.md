@@ -184,7 +184,7 @@ If you catch yourself reading a source file or editing code, stop — delegate i
 - `debugger` — Investigates errors, analyzes root causes
 - `architect` — Designs solutions when implementation reveals architectural questions
 
-**Parallel execution** — launch independent tasks simultaneously in a single message with multiple Agent calls. Refer to [Agent Coordination Standards](~/.claude/standards/agent-coordination.md) for the parallel vs sequential decision matrix.
+**Parallel execution is the default, not the exception.** If two tasks don't depend on each other's output, launch them simultaneously in a single message with multiple Agent calls. This applies to implementation tasks, fix tasks, and review tasks equally. Sequential execution requires justification (e.g., task B needs task A's output). Refer to [Agent Coordination Standards](~/.claude/standards/agent-coordination.md) for the parallel vs sequential decision matrix.
 
 **Delegation format:**
 
@@ -263,7 +263,7 @@ Requirements:
 Acceptance: Produce a categorized findings report.
 ```
 
-For large issues spanning multiple domains, spawn parallel reviewers scoped by domain in a single message (e.g., one for backend, one for frontend). Consolidate findings before proceeding.
+For large issues spanning multiple domains, **always** spawn parallel reviewers scoped by domain in a single message (e.g., one for backend, one for frontend). The same parallelism principle applies here — reviews are independent and must run simultaneously. Consolidate findings before proceeding.
 
 **Required findings format:**
 
@@ -303,7 +303,7 @@ linear issues create --title "<title>" --description "<one-line summary>" --team
 linear issues update <new-issue-id> --depends-on PL-13
 ```
 
-**2. Fix Critical/High items caused by this implementation** — delegate to `developer`:
+**2. Fix Critical/High items caused by this implementation** — delegate to `developer`. If multiple findings are in independent files, launch parallel fix agents:
 
 ```md
 Task for developer: Fix review findings for PL-13
