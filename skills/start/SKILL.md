@@ -343,6 +343,21 @@ Acceptance: Confirm findings resolved. Flag any new Critical or High issues.
 > - Accept current state and create follow-up issues
 > - Revisit the approach with the architect agent
 
+### Step 11: Completion Summary
+
+When implementation and review are complete, present a summary to the user that includes:
+
+1. **Issue**: ID and title
+2. **What was implemented**: Brief description of changes made
+3. **Files changed**: List of created/modified files
+4. **Quality review**: Confirm the quality reviewer ran, and include their summary:
+   - Number of review cycles (initial + re-reviews)
+   - Critical/High findings found and resolved
+   - Any issues created for deferred findings (with issue IDs)
+   - Final review verdict (passed clean / passed after fixes / terminated with open items)
+5. **Checks**: Confirm `pnpm check` passes
+6. **Next steps**: Suggest running `/finish` to commit, push, and mark Ready For Release
+
 ## Error Handling
 
 - If the issue is already In Progress assigned to someone else, warn the user and ask whether to reassign
