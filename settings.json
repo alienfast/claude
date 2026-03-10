@@ -113,7 +113,9 @@
       "Bash(ls:*)",
       "Bash(head:*)",
       "Bash(tail:*)",
-      "Bash(touch:*)"
+      "Bash(touch:*)",
+      "Bash(cd:*)",
+      "Bash(realpath:*)"
     ],
     "ask": [
       "mcp__circleci__run_pipeline"
