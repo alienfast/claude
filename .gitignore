@@ -31,3 +31,4 @@ packages/*/.npmignore
 /telemetry
 /backups
 /mcp-needs-auth-cache.json
+/usage-data
