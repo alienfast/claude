@@ -78,6 +78,7 @@ This applies to all contexts: direct calls, piped commands, subagents, and deleg
 
 ## Guidelines
 
+- Save screenshots to `tmp/screenshots/` relative to the project root. Never save to `/tmp` or `/private/tmp`.
 - Never create backup files (.backup, .old, .v2) - Git is the only backup needed
 - Modify existing files rather than creating duplicates
 - Delete unused code, old implementations, empty directories immediately
