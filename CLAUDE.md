@@ -63,7 +63,7 @@ Hooks run automatically after edits:
 - Linting (biome, markdownlint) after each file modification
 - Type checking (tsc) after TypeScript changes
 
-Do not run these manually; they're handled automatically.
+**NEVER run biome, markdownlint, or tsc manually.** No `pnpm exec biome`, no `npx biome`, no `biome check`, no `markdownlint` — not for single files, not for auto-fixing, not for any reason. The hooks handle all linting and formatting automatically after every edit. Running them manually wastes time and triggers unnecessary permission prompts.
 
 ## Mandatory Tool Usage
 
