@@ -251,16 +251,20 @@ If it **passes**: proceed to the quality review below.
 **Delegate the review:**
 
 ```md
-Task for quality-reviewer: Full implementation review for PL-13
-Context: Implementation of [issue title] is complete. Review all changes.
+Task for quality-reviewer: Adversarial implementation review for PL-13
+Context: Implementation of [issue title] is complete. Your job is to try to break it.
+Issue requirements: [Paste requirement checkboxes from the issue]
 Files: [List every file created or modified during Step 8]
 Requirements:
-- Correctness: does the implementation satisfy all issue requirements?
-- Code quality: naming, structure, readability, maintainability
-- Security: injection, auth, data exposure, input validation
-- Performance: unnecessary re-renders, N+1 queries, unindexed lookups
-- Test coverage: are new paths tested?
-Acceptance: Produce a categorized findings report.
+- Verify every issue requirement is actually satisfied, not just approximately
+- Find edge cases with concrete triggering scenarios
+- Trace error paths for completeness (including partial failure)
+- Check implicit assumptions about inputs, state, and ordering
+- Identify concurrency/timing issues under load
+- Assess security surface beyond obvious vulnerabilities
+- Check integration boundaries with existing code
+- Verify conformance against user-level and project-level conventions
+Acceptance: Produce a categorized findings report with concrete scenarios for each finding.
 ```
 
 For large issues spanning multiple domains, **always** spawn parallel reviewers scoped by domain in a single message (e.g., one for backend, one for frontend). The same parallelism principle applies here — reviews are independent and must run simultaneously. Consolidate findings before proceeding.
@@ -271,23 +275,26 @@ For large issues spanning multiple domains, **always** spawn parallel reviewers 
 ## Review Findings
 
 ### Critical (must fix before done)
-- [Finding]: [File:line] — [explanation]
+- [Finding]: [File:line] — [concrete scenario that triggers it]
 
 ### High (should fix)
-- [Finding]: [File:line] — [explanation]
+- [Finding]: [File:line] — [concrete scenario that triggers it]
+
+### Medium (real risk, lower probability)
+- [Finding]: [File:line] — [scenario and likelihood assessment]
 
 ### Nice-to-Have / Out-of-Scope
 - [Finding]: [rationale for deferring]
 
 ### Approved
-- [What looks good and why]
+- [What survived adversarial review and why]
 ```
 
-If **no findings at all** → review passes, implementation is done. If **any** findings exist (any severity, including pre-existing or out-of-scope notes) → proceed to Step 10.
+If findings contain **no Critical, High, or Medium items** → review passes, implementation is done. If **any** Critical, High, or Medium findings exist → proceed to Step 10.
 
 ### Step 10: Triage & Fix Loop
 
-If Critical or High findings exist, triage, fix, and re-review until the implementation passes cleanly.
+If Critical, High, or Medium findings exist, triage, fix, and re-review until the implementation passes cleanly.
 
 **1. Triage all non-implementation findings** — for any finding (any severity) that is **pre-existing** or **out of scope** for this issue, you **MUST** ask the user whether to create a new Linear issue. Do not silently defer these.
 
@@ -303,7 +310,7 @@ linear issues create --title "<title>" --description "<one-line summary>" --team
 linear issues update <new-issue-id> --depends-on PL-13
 ```
 
-**2. Fix Critical/High items caused by this implementation** — delegate to `developer`. If multiple findings are in independent files, launch parallel fix agents:
+**2. Fix Critical/High/Medium items caused by this implementation** — delegate to `developer`. If multiple findings are in independent files, launch parallel fix agents:
 
 ```md
 Task for developer: Fix review findings for PL-13
@@ -324,16 +331,16 @@ After fixes are applied, you MUST continue through items 3→4→5 below. Do not
 **4. Re-review (MANDATORY)** — fixes are not complete until re-reviewed. Spawn `quality-reviewer` scoped to only the changed files:
 
 ```md
-Task for quality-reviewer: Re-review fixes for PL-13
-Context: Previous review findings were addressed. Review only changed files for regressions and confirm fixes are correct.
+Task for quality-reviewer: Adversarial re-review of fixes for PL-13
+Context: Previous adversarial review findings were addressed. Your job is to verify fixes are correct and try to break them again.
 Changed files: [list]
 Previous findings addressed: [list]
-Acceptance: Confirm findings resolved. Flag any new Critical or High issues.
+Acceptance: Confirm findings resolved. Flag any new Critical, High, or Medium issues with concrete scenarios.
 ```
 
-**5. Loop** — if the re-review surfaces new Critical or High issues, return to the top of this step (triage → fix → check → re-review).
+**5. Loop** — if the re-review surfaces new Critical, High, or Medium issues, return to the top of this step (triage → fix → check → re-review).
 
-**Termination**: Maximum 3 review cycles total (initial review + up to 2 re-reviews). If Critical/High issues persist after 3 cycles, surface them to the user:
+**Termination**: Maximum 3 review cycles total (initial review + up to 2 re-reviews). If Critical/High/Medium issues persist after 3 cycles, surface them to the user:
 
 > The implementation has gone through 3 review cycles and still has unresolved findings:
 > [list findings]
@@ -350,9 +357,9 @@ When implementation and review are complete, present a summary to the user that 
 1. **Issue**: ID and title
 2. **What was implemented**: Brief description of changes made
 3. **Files changed**: List of created/modified files
-4. **Quality review**: Confirm the quality reviewer ran, and include their summary:
+4. **Adversarial review**: Confirm the adversarial quality review ran, and include their summary:
    - Number of review cycles (initial + re-reviews)
-   - Critical/High findings found and resolved
+   - Critical/High/Medium findings found and resolved
    - Any issues created for deferred findings (with issue IDs)
    - Final review verdict (passed clean / passed after fixes / terminated with open items)
 5. **Checks**: Confirm `pnpm check` passes
