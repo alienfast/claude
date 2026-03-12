@@ -296,21 +296,19 @@ If findings contain **no Critical, High, or Medium items** → review passes, im
 
 If Critical, High, or Medium findings exist, triage, fix, and re-review until the implementation passes cleanly.
 
-**1. Triage all non-implementation findings** — for any finding (any severity) that is **pre-existing** or **out of scope** for this issue, you **MUST** ask the user whether to create a new Linear issue. Do not silently defer these.
+**1. Fix all findings in touched files — including pre-existing issues.** Leave code better than you found it. If the reviewer found it in a file this implementation touched, fix it. Do not defer pre-existing issues to new Linear tickets unless the fix is genuinely large scope (new files, new abstractions, estimated >30 min).
 
-Present each such finding and ask:
+For large-scope pre-existing findings only, ask the user:
 
-- If large scope (new files, new abstractions, estimated >30 min) → **strongly recommend** creating a new Linear issue
-- If small scope (one-line fix, trivial rename, missing guard) → suggest fixing now without a new issue, but still ask
-
-For items where the user selects "create a new issue", create it **and** link it back to the current issue. Both steps are required — an unlinked issue is a failure:
+- **Default: fix it now** — even if pre-existing, the code is already open and the context is fresh
+- If the user chooses to defer, create a Linear issue **and** link it back to the current issue. Both steps are required:
 
 ```bash
 linear issues create --title "<title>" --description "<one-line summary>" --team <team>
 linear issues update <new-issue-id> --depends-on PL-13
 ```
 
-**2. Fix Critical/High/Medium items caused by this implementation** — delegate to `developer`. If multiple findings are in independent files, launch parallel fix agents:
+**2. Fix all Critical/High/Medium items** — delegate to `developer`. If multiple findings are in independent files, launch parallel fix agents:
 
 ```md
 Task for developer: Fix review findings for PL-13
