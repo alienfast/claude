@@ -7,6 +7,13 @@ description: Finish a Linear issue — check off requirements, add completion co
 
 Automates the post-completion workflow for a Linear issue using the `linear` CLI.
 
+## Arguments
+
+- Issue identifier (e.g., `PL-12`) — optional, auto-detected from branch/commit
+- `no push` / `don't push` / `skip push` — optional, skips the git push step (commit still happens)
+
+Examples: `/finish`, `/finish PL-12`, `/finish no push`, `/finish PL-12 no push`
+
 ## Invariant
 
 **`pnpm check` must pass before committing or pushing code.** Check failures are always CRITICAL — never "pre-existing", never "out of scope", never deferred. Fix them before proceeding. Turborepo caching makes repeated runs cheap.
@@ -123,11 +130,13 @@ git status
 git log --oneline -1
 ```
 
-- **Uncommitted changes**: Stage relevant files, commit with a descriptive message, then push
-- **Committed but not pushed**: Push to remote
+- **Uncommitted changes**: Stage relevant files, commit with a descriptive message
+- **Committed but not pushed**: Push to remote (unless `no push` was requested)
 - **Already pushed**: Skip — confirm to user that code is already on remote
 
-Always push to the current branch. Do not create PRs (that's a separate workflow).
+If the user requested **no push** (e.g., `/finish no push`, `/finish don't push`), skip pushing after commit. Inform the user: "Skipping push as requested. Push manually when ready: `git push`"
+
+Otherwise, always push to the current branch. Do not create PRs (that's a separate workflow).
 
 ### Step 8: Mark Issue as Ready For Release
 
