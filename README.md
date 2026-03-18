@@ -23,6 +23,7 @@ Research-augmented workflow for implementing something large:
 | Triage | `/triage` | Reviews dependencies, identifies blockers, suggests priorities |
 | Prioritize | Move stage 1 to "Planned", stage 2 to "Backlog" | |
 | **Build loop** | `/start PL-12` | Assigns, creates branch, plans, implements |
+| | `/checkpoint` _(optional)_ | Commits WIP, posts progress to Linear |
 | | Review | |
 | | `/finish` | Commits, pushes, marks Ready For Release, calls `/next` |
 | | Repeat from `/start` | |
@@ -54,6 +55,7 @@ Automated multi-step workflows invoked by trigger phrases or slash commands.
 |-------|-------------|
 | [linear](skills/linear/) | Issue tracking CLI with semantic search and velocity analytics |
 | [start](skills/start/) | Start a Linear issue — check blockers, assign, create branch, plan, execute |
+| [checkpoint](skills/checkpoint/) | Save progress — commit WIP and post progress update to Linear |
 | [finish](skills/finish/) | Finish an issue — check requirements, commit/push, mark Ready For Release |
 | [next](skills/next/) | Suggest best next issue using cycle, dependency, and triage signals |
 | [triage](skills/triage/) | Analyze backlog for staleness, blockers, and priority suggestions |

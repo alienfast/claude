@@ -28,7 +28,7 @@ Skills activate automatically based on context. See [Skills README](skills/READM
 Linear workflow:
 
 - `linear` - Issue tracking CLI with semantic search
-- `start` / `finish` / `next` - Start, complete, and find next Linear issues
+- `start` / `checkpoint` / `finish` / `next` - Start, save progress, complete, and find next Linear issues
 - `prd` - Create agent-friendly tickets with PRDs and sub-issues
 - `triage` - Backlog analysis and prioritization
 - `cycle-plan` / `retro` - Cycle planning and retrospectives
