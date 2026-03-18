@@ -67,14 +67,13 @@ Hooks run automatically after edits:
 
 ## Mandatory Tool Usage
 
-**NEVER use `grep`, `rg`, `find`, `cat`, `ls`, `head`, `tail`, or `touch` via the Bash tool.** These are denied in settings and will be rejected. Always use:
+**NEVER use `grep`, `rg`, `find`, or `cat` via the Bash tool.** These are denied in settings and will be rejected. Always use:
 
 - **Grep tool** instead of `grep` or `rg` — for all content searching
-- **Glob tool** instead of `find` or `ls` — for all file finding
-- **Read tool** instead of `cat`, `head`, `tail` — for reading file contents
-- **Write tool** instead of `touch` — for creating files
+- **Glob tool** instead of `find` — for all file finding
+- **Read tool** instead of `cat` — for reading file contents
 
-This applies to all contexts: direct calls, piped commands, subagents, and delegated tasks. No exceptions.
+Prefer built-in tools over bash equivalents when possible, but `ls`, `head`, `tail`, and `touch` are allowed in pipelines and compound commands where they're the natural choice.
 
 ## Guidelines
 

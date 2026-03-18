@@ -107,21 +107,28 @@
       "Write(//tmp/**)",
       "mcp__circleci",
       "mcp__ide__getDiagnostics",
-      "mcp__mui"
+      "mcp__mui",
+      "Bash(mkdir -p \"apps/app/src/app/[tenant]/\\(default\\)/account\")",
+      "Bash(mkdir -p \"apps/app/src/app/[tenant]/\\(default\\)/admin\")",
+      "Bash(git mv:*)",
+      "Bash(mkdir -p '/Users/kross/projects/baseFund/apps/app/src/app/[tenant]/\\(default\\)/debt/_components')",
+      "Bash(git -C /Users/kross/projects/baseFund mv 'apps/app/src/domains/state-aid' 'apps/app/src/app/[tenant]/\\(default\\)/debt/_components/state-aid')",
+      "Bash(git -C /Users/kross/projects/baseFund mv apps/app/src/domains/client 'apps/app/src/app/[tenant]/\\(default\\)/debt/_components/client')",
+      "Bash(git add:*)"
     ],
     "deny": [
       "Bash(grep:*)",
       "Bash(find:*)",
       "Bash(rg:*)",
-      "Bash(ls:*)",
-      "Bash(head:*)",
-      "Bash(tail:*)",
-      "Bash(touch:*)",
-      "Bash(cd:*)",
-      "Bash(realpath:*)"
+      "Bash(cat:*)"
     ],
     "ask": [
       "mcp__circleci__run_pipeline"
+    ],
+    "additionalDirectories": [
+      "/Users/kross/projects/baseFund/apps/app/src/app/[tenant]/(default)/debt/_components",
+      "/Users/kross/projects/baseFund/apps/app/src/app/[tenant]/(default)/admin/_components",
+      "/Users/kross/projects/baseFund/apps/app/src/app/[tenant]/(default)/debt/_components/transparency"
     ]
   },
   "hooks": {
