@@ -115,10 +115,17 @@
     ],
     "deny": [
       "Bash(grep:*)",
+      "Bash(grep *)",
       "Bash(find:*)",
+      "Bash(find *)",
       "Bash(ls:*)",
+      "Bash(ls *)",
+      "Bash(ls -la:*)",
+      "Bash(ls -la *)",
       "Bash(rg:*)",
-      "Bash(cat:*)"
+      "Bash(rg *)",
+      "Bash(cat:*)",
+      "Bash(cat *)"
     ],
     "ask": [
       "mcp__circleci__run_pipeline"
