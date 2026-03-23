@@ -108,17 +108,15 @@
       "mcp__circleci",
       "mcp__ide__getDiagnostics",
       "mcp__mui",
-      "Bash(mkdir -p \"apps/app/src/app/[tenant]/\\(default\\)/account\")",
-      "Bash(mkdir -p \"apps/app/src/app/[tenant]/\\(default\\)/admin\")",
+      "Bash(mkdir -p:*)",
       "Bash(git mv:*)",
-      "Bash(mkdir -p '/Users/kross/projects/baseFund/apps/app/src/app/[tenant]/\\(default\\)/debt/_components')",
-      "Bash(git -C /Users/kross/projects/baseFund mv 'apps/app/src/domains/state-aid' 'apps/app/src/app/[tenant]/\\(default\\)/debt/_components/state-aid')",
-      "Bash(git -C /Users/kross/projects/baseFund mv apps/app/src/domains/client 'apps/app/src/app/[tenant]/\\(default\\)/debt/_components/client')",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(npm ls:*)"
     ],
     "deny": [
       "Bash(grep:*)",
       "Bash(find:*)",
+      "Bash(ls:*)",
       "Bash(rg:*)",
       "Bash(cat:*)"
     ],
