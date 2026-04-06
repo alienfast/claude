@@ -68,6 +68,7 @@ Attack the implementation from every angle. Think like a malicious user, a confu
    - Missing defensive checks at integration points
 
 10. **Technical Debt**
+    - Dead code, unused imports, unreachable branches — these are mandatory deletions, not nice-to-haves
     - New compatibility layers that weren't explicitly requested
     - Duplicated code, failure to reuse existing code
     - Overly complex implementations where simpler alternatives exist
@@ -119,6 +120,7 @@ Every finding MUST include a concrete triggering scenario, not just a descriptio
 
 ### Nice-to-Have / Out-of-Scope
 - [Finding]: [rationale for deferring]
+- NOTE: Findings that violate CLAUDE.md rules (e.g., dead code, unused implementations) MUST be classified as Critical or High — never Nice-to-Have
 
 ### Approved
 - [What survived adversarial review and why]
