@@ -7,9 +7,23 @@ description: Start working on a Linear issue — check blockers, assign, move to
 
 Automates the full workflow for starting and implementing a Linear issue using the `linear` CLI.
 
-## Invariant
+## Working Application Contract
 
-**`pnpm check` must pass at all times.** Check failures are always CRITICAL — never "pre-existing", never "out of scope", never deferred. Fix them before proceeding. Turborepo caching makes repeated runs cheap.
+This is the non-negotiable rule that governs everything in this workflow:
+
+**We are modifying a WORKING application. If the application stops working, that is OUR failure. Period.**
+
+There is no such thing as a "pre-existing" failure during implementation. The baseline check in Step 5 establishes a clean starting point. From that moment forward, every failure in `pnpm check` is caused by our changes and is our responsibility to fix. If we go from a working application to a non-working application, we broke it — no excuses, no deflection, no deferral.
+
+Rules that flow from this contract:
+
+1. **`pnpm check` must pass at all times.** Turborepo caching makes repeated runs cheap. Run it early, run it often.
+2. **Failures are never "pre-existing."** The baseline passed. Any failure after that is ours.
+3. **Failures are never "out of scope."** If our changes cause a check to fail, fixing it IS our scope.
+4. **Failures are never deferred.** We do not proceed with a broken application. We stop and fix.
+5. **Every subagent inherits this contract.** When delegating to developer, debugger, quality-reviewer, or architect, include this contract in the delegation. They operate under the same rule.
+
+Violating this contract — by shipping broken code, by claiming failures were pre-existing, by deferring breakage to a follow-up ticket — is the single worst outcome of this workflow. A partially-implemented feature on a working application is infinitely better than a "complete" feature on a broken one.
 
 ## Workflow
 
@@ -114,14 +128,14 @@ git checkout -b <username>/pl-13-short-kebab-title
 - Issue key in lowercase (e.g., `pl-13`)
 - Kebab-case title, truncated to keep the branch name reasonable
 
-**Baseline check** — run `pnpm check` to establish a clean baseline before planning:
+**Baseline check — THIS ESTABLISHES THE CONTRACT.** Run `pnpm check` to prove the application works before we touch anything:
 
 ```bash
 pnpm check
 ```
 
-- If it **passes**: baseline is clean. Any post-implementation failure is unambiguously caused by the implementation.
-- If it **fails**: note the failures. These are not exempt — factor them into the implementation plan in Step 6.
+- If it **passes**: the Working Application Contract is now in effect. The application works. From this moment forward, any failure in `pnpm check` is caused by our implementation and is our responsibility to fix. No exceptions.
+- If it **fails**: STOP. Do NOT proceed with planning. The application must be working before we begin. Investigate and fix the failures first — delegate to `developer` or `debugger` as needed. Re-run until the baseline is clean. The contract cannot be established on a broken baseline.
 
 ### Step 6: Enter Plan Mode
 
@@ -188,21 +202,27 @@ If you catch yourself reading a source file or editing code, stop — delegate i
 
 **Delegation format:**
 
+Every delegation MUST include the Working Application Contract. Subagents do not get to claim ignorance of it.
+
 ```md
 Task for [agent]: [Specific, focused task]
 Context: [Why this task matters, relevant issue context]
 Files: [Exact paths and lines]
+
+WORKING APPLICATION CONTRACT: We are modifying a working application. The baseline `pnpm check` passed before this work began. If your changes cause `pnpm check` to fail, that is your failure — not a pre-existing issue, not out of scope, not someone else's problem. You must leave the application in a working state. Run `pnpm check` before reporting your task as complete. If it fails, fix it.
+
 Requirements:
 - [Specific requirement 1]
 - [Specific requirement 2]
 - Use dedicated tools: Read (not cat/head/tail), Glob (not find/ls), Grep (not grep/rg). Never use cat, ls, find, grep, or rg via Bash.
-Acceptance: [How to verify success]
+- Run `pnpm check` before reporting completion. If it fails, fix the failures. Do not report success with a failing check.
+Acceptance: [How to verify success — MUST include "pnpm check passes"]
 ```
 
 **After each delegation completes:**
 
 1. Verify the result (type checks, tests, dev server — whatever is appropriate)
-2. If validation fails, delegate investigation to `debugger` or corrections to `developer`
+2. If validation fails: the subagent broke the working application. Delegate the fix back to `developer` or `debugger` with this framing: "The application was working before our changes. Your changes broke it. Fix it." Do not accept "pre-existing" as an explanation — the baseline passed.
 3. Check off the corresponding checkbox(es) in the issue description:
 
 ```bash
@@ -238,15 +258,17 @@ This ensures progress is visible in Linear even if the session is interrupted, a
 
 ### Step 9: Review Implementation (MANDATORY)
 
-**Do NOT skip this step.** The issue is not complete until the review passes. After all implementation tasks from Step 8 are complete, run `pnpm check` as a hard gate before review:
+**Do NOT skip this step.** The issue is not complete until the review passes.
+
+**Working Application Contract enforcement — final gate.** Run `pnpm check`:
 
 ```bash
 pnpm check
 ```
 
-If it **fails**: this is CRITICAL. Do not proceed to review. Delegate fixes to `developer` immediately, then re-run `pnpm check`. Repeat until it passes.
+If it **fails**: we took a working application and broke it. That is our failure. This is not a "pre-existing issue." This is not "out of scope." The baseline passed in Step 5. We broke it. Do not proceed to review. Do not rationalize. Delegate fixes to `developer` immediately with the explicit instruction: "The application was working before our changes. It is now broken. Fix it." Re-run `pnpm check`. Repeat until it passes. There is no path forward through a broken application.
 
-If it **passes**: proceed to the quality review below.
+If it **passes**: the Working Application Contract holds. Proceed to the quality review below.
 
 **Delegate the review:**
 
