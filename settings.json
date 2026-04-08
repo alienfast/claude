@@ -108,10 +108,15 @@
       "mcp__circleci",
       "mcp__ide__getDiagnostics",
       "mcp__mui",
+      "mcp__agent-browser__frame",
       "Bash(mkdir -p:*)",
       "Bash(git mv:*)",
       "Bash(git add:*)",
-      "Bash(npm ls:*)"
+      "Bash(npm ls:*)",
+      "Read(//Users/*/.rvm/gems/**)",
+      "Bash(bundle show:*)",
+      "Bash(less -X)",
+      "Edit(~/.claude/skills/start/**)"
     ],
     "deny": [
       "Bash(grep:*)",
@@ -171,5 +176,6 @@
   },
   "enabledPlugins": {
     "typescript-lsp@claude-plugins-official": true
-  }
+  },
+  "effortLevel": "high"
 }

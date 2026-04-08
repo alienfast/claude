@@ -138,10 +138,10 @@ If the user requested **no push** (e.g., `/finish no push`, `/finish don't push`
 
 Otherwise, always push to the current branch. Do not create PRs (that's a separate workflow).
 
-### Step 8: Mark Issue as Ready For Release
+### Step 8: Mark Issue as Ready For Release and Unassign
 
 ```bash
-linear issues update PL-12 --state "Ready For Release"
+linear issues update PL-12 --state "Ready For Release" --no-assignee
 ```
 
 ### Step 9: Suggest Next Issue
