@@ -116,7 +116,8 @@
       "Read(//Users/*/.rvm/gems/**)",
       "Bash(bundle show:*)",
       "Bash(less -X)",
-      "Edit(~/.claude/skills/start/**)"
+      "Edit(~/.claude/skills/start/**)",
+      "Bash(./tools/dev schema_gen)"
     ],
     "deny": [
       "Bash(grep:*)",

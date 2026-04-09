@@ -141,7 +141,8 @@ Otherwise, always push to the current branch. Do not create PRs (that's a separa
 ### Step 8: Mark Issue as Ready For Release and Unassign
 
 ```bash
-linear issues update PL-12 --state "Ready For Release" --no-assignee
+linear issues update PL-12 --state "Ready For Release"
+linear issues update PL-12 --assignee none
 ```
 
 ### Step 9: Suggest Next Issue
