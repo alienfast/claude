@@ -117,7 +117,9 @@
       "Bash(bundle show:*)",
       "Bash(less -X)",
       "Edit(~/.claude/skills/start/**)",
-      "Bash(./tools/dev schema_gen)"
+      "Bash(./tools/dev schema_gen)",
+      "Bash(RAILS_ENV=test bundle exec rails zeitwerk:check)",
+      "Bash(RAILS_ENV=test bundle exec rake -T)"
     ],
     "deny": [
       "Bash(grep:*)",
