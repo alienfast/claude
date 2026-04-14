@@ -32,3 +32,4 @@ packages/*/.npmignore
 /backups
 /mcp-needs-auth-cache.json
 /usage-data
+/sessions
