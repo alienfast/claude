@@ -147,20 +147,20 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash(git *)",
+        "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/git-permissions.sh \"$ARGUMENTS\""
+            "command": "~/.claude/hooks/git-permissions.sh"
           }
         ]
       },
       {
-        "matcher": "Bash(cd *)",
+        "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/no-cd-before-git.sh \"$ARGUMENTS\""
+            "command": "~/.claude/hooks/no-cd-before-git.sh"
           }
         ]
       }

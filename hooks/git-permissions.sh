@@ -10,8 +10,9 @@
 # Triggered: Pre-Tool hook for Bash commands
 # Blocks: Destructive git commands that can permanently delete work
 
-# Get the command that Claude is about to execute
-COMMAND="$1"
+# Read the tool input from stdin (current Claude Code hook format).
+INPUT=$(cat)
+COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 
 # Skip if not a git command
 if [[ ! "$COMMAND" =~ ^git[[:space:]] ]]; then
@@ -30,7 +31,7 @@ fi
 
 # BLOCK: git reset --hard (destroys all working tree and staged changes)
 if [[ "$COMMAND" =~ ^git[[:space:]]+reset[[:space:]]+--hard ]]; then
-  cat <<EOF
+  cat >&2 <<EOF
 🛑 BLOCKED: Destructive git command requires explicit user approval
 
 Command: $COMMAND
@@ -44,12 +45,12 @@ tree and staging area. This cannot be undone.
 To proceed: Explicitly tell Claude "yes, run git reset --hard"
             (Only do this if you are absolutely certain!)
 EOF
-  exit 1
+  exit 2
 fi
 
 # BLOCK: git reset --mixed (destroys staged changes, keeps working tree)
 if [[ "$COMMAND" =~ ^git[[:space:]]+reset[[:space:]]+--mixed ]]; then
-  cat <<EOF
+  cat >&2 <<EOF
 🛑 BLOCKED: Destructive git command requires explicit user approval
 
 Command: $COMMAND
@@ -59,13 +60,13 @@ it may interfere with other Claude sessions' staged changes.
 
 To proceed: Explicitly tell Claude "yes, run git reset --mixed"
 EOF
-  exit 1
+  exit 2
 fi
 
 # BLOCK: git restore <files> (destroys working tree changes for specific files)
 # Allow ONLY: git restore --staged
 if [[ "$COMMAND" =~ ^git[[:space:]]+restore[[:space:]] ]] && [[ ! "$COMMAND" =~ --staged ]]; then
-  cat <<EOF
+  cat >&2 <<EOF
 🛑 BLOCKED: Destructive git command requires explicit user approval
 
 Command: $COMMAND
@@ -79,12 +80,12 @@ This cannot be undone - the changes will be lost forever.
 To proceed: Explicitly tell Claude "yes, run this git restore command"
             (Only do this if you are absolutely certain these changes should be discarded!)
 EOF
-  exit 1
+  exit 2
 fi
 
 # BLOCK: git checkout <files> (old way to restore files)
 if [[ "$COMMAND" =~ ^git[[:space:]]+checkout[[:space:]] ]] && [[ "$COMMAND" =~ [[:space:]]--[[:space:]] ]]; then
-  cat <<EOF
+  cat >&2 <<EOF
 🛑 BLOCKED: Destructive git command requires explicit user approval
 
 Command: $COMMAND
@@ -95,12 +96,12 @@ This command will PERMANENTLY DELETE uncommitted changes to the specified files.
 
 To proceed: Explicitly tell Claude "yes, run this git checkout command"
 EOF
-  exit 1
+  exit 2
 fi
 
 # BLOCK: git clean -f or -fd (deletes untracked files)
 if [[ "$COMMAND" =~ ^git[[:space:]]+clean[[:space:]].*-[fd] ]]; then
-  cat <<EOF
+  cat >&2 <<EOF
 🛑 BLOCKED: Destructive git command requires explicit user approval
 
 Command: $COMMAND
@@ -112,12 +113,12 @@ This cannot be undone.
 
 To proceed: Explicitly tell Claude "yes, run git clean"
 EOF
-  exit 1
+  exit 2
 fi
 
 # BLOCK: Any git command with --force flag
 if [[ "$COMMAND" =~ --force ]]; then
-  cat <<EOF
+  cat >&2 <<EOF
 🛑 BLOCKED: Git command with --force flag requires explicit user approval
 
 Command: $COMMAND
@@ -127,7 +128,7 @@ destructive changes to your repository.
 
 To proceed: Explicitly tell Claude "yes, use --force"
 EOF
-  exit 1
+  exit 2
 fi
 
 # Allow other git commands (push, pull, fetch, etc.)

@@ -3,12 +3,13 @@
 # These bypass the Bash(git:*) allowlist and trigger permission prompts.
 # Use `git -C <dir> <subcommand>` instead.
 
-COMMAND="$1"
+INPUT=$(cat)
+COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 
 # Match: optional leading whitespace, `cd`, path, any separator (&&, ;, ||),
-# then `git` as a word. `git-foo` will not match because of the word boundary.
+# then `git` as a word. `git-foo` / `gitk` will not match (word boundary).
 if [[ "$COMMAND" =~ ^[[:space:]]*cd[[:space:]]+[^[:space:]]+[[:space:]]*(\&\&|\;|\|\|)[[:space:]]*git([[:space:]]|$) ]]; then
-  cat <<'EOF'
+  cat >&2 <<'EOF'
 🛑 BLOCKED: `cd` before a git command
 
 NEVER `cd` before a git command — use `git -C <dir>` instead to avoid permission prompts.
@@ -24,7 +25,7 @@ Rewrite:
   BAD:  cd /path/to/repo && git log --oneline -5
   GOOD: git -C /path/to/repo log --oneline -5
 EOF
-  exit 1
+  exit 2
 fi
 
 exit 0
