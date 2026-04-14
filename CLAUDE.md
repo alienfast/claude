@@ -65,16 +65,6 @@ Hooks run automatically after edits:
 
 **NEVER run biome, markdownlint, or tsc manually.** No `pnpm exec biome`, no `npx biome`, no `biome check`, no `markdownlint` — not for single files, not for auto-fixing, not for any reason. The hooks handle all linting and formatting automatically after every edit. Running them manually wastes time and triggers unnecessary permission prompts.
 
-## Mandatory Tool Usage
-
-**NEVER use `grep`, `rg`, `find`, `ls`, or `cat` via the Bash tool.** These are denied in settings and will be rejected. Always use:
-
-- **Grep tool** instead of `grep` or `rg` — for all content searching
-- **Glob tool** instead of `find` or `ls` — for all file finding and directory listing
-- **Read tool** instead of `cat` — for reading file contents
-
-Prefer built-in tools over bash equivalents when possible, but `head`, `tail`, and `touch` are allowed in pipelines and compound commands where they're the natural choice.
-
 ## Guidelines
 
 - Save screenshots to `tmp/screenshots/` relative to the project root. Never save to `/tmp` or `/private/tmp`.
