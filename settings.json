@@ -163,6 +163,15 @@
             "command": "~/.claude/hooks/no-cd-before-git.sh"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/mandatory-tool-usage.sh"
+          }
+        ]
       }
     ],
     "PostToolUse": [
