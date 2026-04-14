@@ -154,6 +154,15 @@
             "command": "~/.claude/hooks/git-permissions.sh \"$ARGUMENTS\""
           }
         ]
+      },
+      {
+        "matcher": "Bash(cd *)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/no-cd-before-git.sh \"$ARGUMENTS\""
+          }
+        ]
       }
     ],
     "PostToolUse": [

@@ -135,7 +135,6 @@ Every finding MUST include a concrete triggering scenario, not just a descriptio
 - NEVER dismiss a finding because "it probably won't happen" — if there is a code path to it, report it
 - NEVER review without being asked
 - NEVER report a finding without a concrete triggering scenario
-- NEVER `cd` before a git command — use `git -C <dir>` instead to avoid permission prompts
 
 ### ALWAYS Do These
 

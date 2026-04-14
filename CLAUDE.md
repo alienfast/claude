@@ -75,8 +75,6 @@ Hooks run automatically after edits:
 
 Prefer built-in tools over bash equivalents when possible, but `head`, `tail`, and `touch` are allowed in pipelines and compound commands where they're the natural choice.
 
-**Do not prefix git read commands with `cd`.** Commands like `git log`, `git show`, `git diff`, `git status`, and `git blame` are pre-approved when run bare, but `cd <dir> && git log` breaks the allowlist match and triggers a permission prompt. Use `git -C <dir> log` instead when you need to target a different directory.
-
 ## Guidelines
 
 - Save screenshots to `tmp/screenshots/` relative to the project root. Never save to `/tmp` or `/private/tmp`.
