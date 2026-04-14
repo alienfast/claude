@@ -121,20 +121,7 @@
       "Bash(RAILS_ENV=test bundle exec rails zeitwerk:check)",
       "Bash(RAILS_ENV=test bundle exec rake -T)"
     ],
-    "deny": [
-      "Bash(grep:*)",
-      "Bash(grep *)",
-      "Bash(find:*)",
-      "Bash(find *)",
-      "Bash(ls:*)",
-      "Bash(ls *)",
-      "Bash(ls -la:*)",
-      "Bash(ls -la *)",
-      "Bash(rg:*)",
-      "Bash(rg *)",
-      "Bash(cat:*)",
-      "Bash(cat *)"
-    ],
+    "deny": [],
     "ask": [
       "mcp__circleci__run_pipeline"
     ],
