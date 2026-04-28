@@ -24,6 +24,7 @@
       "Bash(bundle exec:*)",
       "Bash(bundle install:*)",
       "Bash(bundle show:*)",
+      "Bash(cat:*)",
       "Bash(chmod:*)",
       "Bash(circleci:*)",
       "Bash(cloc --diff:*)",
@@ -42,6 +43,7 @@
       "Bash(env)",
       "Bash(export:*)",
       "Bash(fi)",
+      "Bash(find:*)",
       "Bash(for:*)",
       "Bash(gcloud iam roles describe:*)",
       "Bash(gcloud iam roles list:*)",
@@ -55,6 +57,7 @@
       "Bash(git:*)",
       "Bash(gpg --version:*)",
       "Bash(gpgconf --list-dirs:*)",
+      "Bash(grep:*)",
       "Bash(if:*)",
       "Bash(jq:*)",
       "Bash(kill:*)",
@@ -70,6 +73,7 @@
       "Bash(linear issues list *)",
       "Bash(linear search *)",
       "Bash(linear:*)",
+      "Bash(ls:*)",
       "Bash(lsof:*)",
       "Bash(make:*)",
       "Bash(markdownlint:*)",
@@ -90,6 +94,7 @@
       "Bash(pnpm:*)",
       "Bash(python3:*)",
       "Bash(rm:*)",
+      "Bash(rg:*)",
       "Bash(rspec apps/api/spec --format progress)",
       "Bash(rvm list:*)",
       "Bash(rvm use:*)",
@@ -154,15 +159,6 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/no-cd-before-git.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/mandatory-tool-usage.sh"
           }
         ]
       }
