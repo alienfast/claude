@@ -7,6 +7,7 @@ Core principles (anti-patterns, decision thresholds, autonomy) are defined in [C
 These standards apply universally across all contexts:
 
 - [Agent Coordination](agent-coordination.md) - Parallel vs sequential execution patterns
+- [Commenting](commenting.md) - Default to no comments; new files get a WHY docblock
 - [Git](git.md) - Commit messages, PR descriptions, multi-session safety
 - [Problem-Solving](problem-solving.md) - When to ask vs. proceed, anti-patterns for workarounds
 - [Project Commands](project-commands.md) - Command discovery and usage

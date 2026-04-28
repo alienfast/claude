@@ -55,6 +55,7 @@ Key standards:
 - `problem-solving.md` - When to ask vs proceed
 - `linear-workflow.md` - Terminal states, dependency resolution rules
 - `technical-debt-prevention.md` - No backups, no duplicates
+- `commenting.md` - Default to no comments; new files get a WHY docblock
 
 ## Automatic Quality Checks
 
