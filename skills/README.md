@@ -156,6 +156,31 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 - Self-contained workflow in `SKILL.md`
 - Uses `linear deps`, `linear i list --cycle current`, `linear search --blocked-by`
 
+### quality-review
+
+**Description**: Adversarial implementation review with triage and fix loop. Hard-gates on `pnpm check`, delegates to the quality-reviewer agent for categorized findings, then loops triage/fix/re-review up to 3 cycles before escalating.
+
+**When Invoked**:
+
+- User says "review my work", "check this implementation", "adversarial review"
+- User invokes `/quality-review`
+- Delegated from `/start` after implementation completes
+
+**Key Features**:
+
+- Working Application Contract enforcement (`pnpm check` gate)
+- Categorized findings (Critical/High/Medium/Nice-to-Have/Approved)
+- Parallel domain-scoped reviewers for large changes
+- Mandatory re-review after fixes; 3-cycle termination cap
+- Standalone or delegated invocation; auto-detects scope from `git diff`
+- Optional Linear issue context for requirement-conformance checks
+
+**Structure**:
+
+- Self-contained workflow in `SKILL.md`
+- Delegates to `quality-reviewer` and `developer` agents
+- Uses `linear issues get` for requirement context when an issue is resolvable
+
 ## Creating New Skills
 
 ### Directory Structure

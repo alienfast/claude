@@ -29,6 +29,7 @@ Linear workflow:
 
 - `linear` - Issue tracking CLI with semantic search
 - `start` / `checkpoint` / `finish` / `next` - Start, save progress, complete, and find next Linear issues
+- `quality-review` - Adversarial review + triage/fix loop (delegated from `/start`, also standalone)
 - `prd` - Create agent-friendly tickets with PRDs and sub-issues
 - `triage` - Backlog analysis and prioritization
 - `cycle-plan` / `retro` - Cycle planning and retrospectives
