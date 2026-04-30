@@ -267,11 +267,14 @@ When implementation and review are complete, present a summary to the user that 
 1. **Issue**: ID and title
 2. **What was implemented**: Brief description of changes made
 3. **Files changed**: List of created/modified files
-4. **Adversarial review**: Confirm the adversarial quality review ran, and include their summary:
+4. **Adversarial review**: Confirm the adversarial quality review ran. Reproduce the verdict block from `/quality-review` verbatim — its field order is the canonical order:
+   - Final review verdict (`passed-clean` / `passed-after-fixes` / `terminated-with-open-items`)
    - Number of review cycles (initial + re-reviews)
-   - Critical/High/Medium findings found and resolved
-   - Any issues created for deferred findings (with issue IDs)
-   - Final review verdict (passed clean / passed after fixes / terminated with open items)
+   - Critical/High/Medium findings resolved
+   - Deferred (Nice-to-Have) items fixed in-session
+   - Deferred items filed as Linear issues (with issue IDs)
+   - Deferred items dropped (user declined to fix and declined to file)
+   - Open items (only on `terminated-with-open-items`; includes any deferred items not handled above)
 5. **Checks**: Confirm `pnpm check` passes
 6. **Next steps**: Suggest running `/finish` to commit, push, and mark Ready For Release
 

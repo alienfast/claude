@@ -1,6 +1,6 @@
 ---
 name: quality-review
-description: Adversarial implementation review with triage and fix loop. Hard-gates on `pnpm check`, delegates to the quality-reviewer agent for categorized findings (Critical/High/Medium/Nice-to-Have/Approved), then triages and fixes findings via the developer agent, looping up to 3 review cycles before escalating. Use when the user says 'review my work', 'check this implementation', 'adversarial review', 'quality review', or invokes /quality-review.
+description: Adversarial implementation review with triage and fix loop. Hard-gates on `pnpm check`, delegates to the quality-reviewer agent for categorized findings (Critical/High/Medium/Nice-to-Have/Approved), then triages and fixes findings via the developer agent. Loops until a re-review surfaces no new Critical/High/Medium findings (convergence), with a soft ceiling of 5 cycles before asking the user how to proceed. Use when the user says 'review my work', 'check this implementation', 'adversarial review', 'quality review', or invokes /quality-review.
 ---
 
 # Quality Review
@@ -100,7 +100,7 @@ For large changes spanning multiple domains, **always** spawn parallel reviewers
 - [Finding]: [File:line] — [scenario and likelihood assessment]
 
 ### Nice-to-Have / Out-of-Scope
-- [Finding]: [rationale for deferring]
+- [Finding]: [file:line] — [rationale for deferring]
 
 ### Approved
 - [What survived adversarial review and why]
@@ -108,27 +108,17 @@ For large changes spanning multiple domains, **always** spawn parallel reviewers
 
 ### Step 4: Evaluate Verdict
 
-If findings contain **no Critical, High, or Medium items** → review passes. Skip to the Output section with verdict `passed-clean` (cycle 1) or `passed-after-fixes` (later cycles).
+If findings contain **no Critical, High, or Medium items** → review passes. Proceed to Step 6 with verdict `passed-clean` (cycle 1) or `passed-after-fixes` (later cycles).
 
 If **any** Critical, High, or Medium findings exist → proceed to Step 5.
+
+Nice-to-Have / Out-of-Scope findings do not affect the verdict; they are handled in Step 6 once the loop terminates cleanly.
 
 ### Step 5: Triage & Fix Loop
 
 If Critical, High, or Medium findings exist, triage, fix, and re-review until the implementation passes cleanly.
 
-**1. Fix all findings in touched files — including pre-existing issues.** Leave code better than you found it. If the reviewer found it in a file this skill is reviewing, fix it. Do not defer pre-existing issues to new Linear tickets unless the fix is genuinely large scope (new files, new abstractions, estimated >30 min).
-
-For large-scope pre-existing findings only, ask the user:
-
-- **Default: fix it now** — even if pre-existing, the code is already open and the context is fresh
-- If the user chooses to defer, create a Linear issue **and** link it back to the current issue (when one was resolved in Step 1). Both steps are required:
-
-```bash
-linear issues create --title "<title>" --description "<one-line summary>" --team <team>
-linear issues update <new-issue-id> --depends-on PL-13
-```
-
-If no issue was resolved in Step 1, just create the deferred ticket — the dependency link is skipped.
+**1. Fix every Critical/High/Medium finding in scope, including pre-existing ones in touched files.** Leave code better than you found it. If the reviewer flagged it at this severity, it is not deferrable — Step 6 handles deferrable items via the Nice-to-Have category.
 
 **2. Fix all Critical/High/Medium items** — delegate to `developer`. If multiple findings are in independent files, launch parallel fix agents:
 
@@ -160,15 +150,94 @@ Acceptance: Confirm findings resolved. Flag any new Critical, High, or Medium is
 
 **5. Loop** — if the re-review surfaces new Critical, High, or Medium issues, return to the top of this step (triage → fix → check → re-review).
 
-**Termination**: Maximum 3 review cycles total (initial review + up to 2 re-reviews). If Critical/High/Medium issues persist after 3 cycles, surface them to the user with verdict `terminated-with-open-items`:
+**Termination**: The loop terminates by **convergence** — when a re-review surfaces no new Critical, High, or Medium findings, exit Step 5 with verdict `passed-after-fixes` and proceed to Step 6.
 
-> The implementation has gone through 3 review cycles and still has unresolved findings:
-> [list findings]
->
-> Options:
-> - Continue fixing (another round)
-> - Accept current state and create follow-up issues
-> - Revisit the approach with the architect agent
+**Soft ceiling**: After **5 review cycles** (initial review + up to 4 re-reviews), pause and ask the user how to proceed instead of looping silently. Reviewers tend to find *something* on every cycle, so an unbounded loop can run away even when the implementation is materially improving. The ceiling is not a hard cap — the user can extend it.
+
+```text
+The implementation has gone through 5 review cycles and still has unresolved findings:
+[list current findings]
+
+Cycle-by-cycle trend: [e.g., "5 → 3 → 2 → 2 → 2" so the user can see whether progress is stalling or converging]
+
+Options:
+1. Continue fixing — run another N cycles, default N=3
+2. Accept current state — terminate with verdict `terminated-with-open-items` and treat surviving findings as Open items
+3. Revisit the approach with the architect agent
+
+Reply with `1` (optionally `1 5` for a custom N), `2`, or `3`.
+```
+
+If the user picks option 1, resume the loop with the new ceiling raised by N. If `2`, terminate with `terminated-with-open-items`. If `3`, terminate and surface to architect — the architect's recommendation supersedes anything in the verdict block.
+
+### Step 6: Deferred Items Triage
+
+Runs once, only after the fix loop terminates with `passed-clean` or `passed-after-fixes`. On `terminated-with-open-items` this step is skipped, but the consolidated list from sub-step 1 is still appended to the verdict block under `Open items` so deferred findings are not silently lost.
+
+**Substitution token.** `<ISSUE-ID>` in the templates below means the issue ID resolved in Step 1. If no issue was resolved, replace `for <ISSUE-ID>` with `for the current change set` and skip the dependency-link command in sub-step 5.
+
+**Malformed user replies.** If the user replies to any prompt below with input you cannot parse (e.g., `1-3`, `the first three`, `sure`), re-prompt once with the exact accepted syntax and a literal example. After a second malformed reply, fall back to a *safe default*: for sub-step 3, default to `none` (do not start unrequested work); for sub-step 5, default to `all` (filing extra Linear issues is recoverable, silently dropping findings is not).
+
+**Verdict downgrade.** Step 6 can transition the run state from `passed-after-fixes` back to `terminated-with-open-items` (see sub-step 4 regression-cap path). When that happens, the new verdict overrides the verdict assigned at Step 4.
+
+**1. Consolidate.** Collect every Nice-to-Have / Out-of-Scope finding reported across all review cycles. Deduplicate by `file:line + finding text`; if a finding was emitted without a file:line (a malformed-but-recoverable reviewer output, see Error Handling), fall back to deduplicating by finding text alone (trim, casefold, and collapse internal whitespace before comparison to absorb cosmetic differences). If the consolidated list is empty, skip the rest of this step.
+
+**2. Present a numbered list:**
+
+```text
+Deferred items surfaced during review:
+1. [Finding] — [file:line] — [rationale]
+2. [Finding] — [file:line] — [rationale]
+...
+```
+
+**3. Offer in-session fixes.** Ask:
+
+> Which of these would you like to fix now? Reply with comma-separated numbers (e.g., `1, 3`), `all`, or `none`.
+
+**4. Fix selected items.** If the user picked any:
+
+- Delegate to `developer` with the chosen findings (parallel agents if findings are in independent files, same pattern as Step 5).
+- Re-run `pnpm check`. If it fails after a single corrective `developer` delegation, surface the failure via the Error Handling path and stop — do not loop indefinitely.
+- Spawn a single `quality-reviewer` re-review scoped to **only** the files touched by the deferred fixes:
+
+  ```md
+  Task for quality-reviewer: Adversarial re-review of deferred-item fixes for <ISSUE-ID>
+  Context: Previously deferred Nice-to-Have items were just fixed. Verify correctness; try to break them.
+  Changed files: [list]
+  Previous deferred findings addressed: [list]
+  Acceptance: Confirm fixes are correct. Flag any new findings (any severity) with concrete scenarios.
+  ```
+
+- If the re-review surfaces new **Nice-to-Have** findings, append them to the remaining unfixed list for sub-step 5.
+- If the re-review surfaces new **Critical/High/Medium** findings (regressions caused by the deferred-item fixes), make exactly **one** corrective pass: delegate to `developer` to fix the regressions, then re-run `pnpm check`. Do **not** spawn another `quality-reviewer` cycle and do **not** re-enter the Step 5 loop. If `pnpm check` still fails or any of those findings remain unaddressed in the diff, terminate Step 6 immediately. On termination, populate the verdict block as follows:
+  - **Verdict:** `terminated-with-open-items` (overriding the Step 4 verdict).
+  - **Deferred fixed in-session:** deferred items whose fixes are not implicated in the regression. If causation cannot be cleanly attributed (the developer landed multiple fixes in one delegation and the re-review surfaced regressions from "this delta"), list **none** of them as fixed and route every chosen item to `Open items` — readers should not see "fixed" labels on changes that broke the application.
+  - **Open items:** the surviving Critical/High/Medium regressions, **plus** the implicated deferred-item fixes per the rule above, **plus** any not-yet-offered unfixed Nice-to-Have items (the user never reached sub-step 5, so those items are not "dropped" — they are surfaced for manual follow-up).
+  - **Deferred dropped:** `none` (this field is reserved for items the user explicitly declined to fix and declined to file in sub-step 5).
+  - Skip sub-step 5.
+
+**5. Offer Linear issues for unfixed items.** Present the remaining unfixed items as a single numbered list and ask:
+
+> For which of the unfixed items should I create Linear issues? Reply with comma-separated numbers (e.g., `1, 2`), `all`, or `none`.
+
+For each chosen item, create and link the issue. Use `linear-stdin.sh` to safely pass the description (which contains backticks, colons, and other shell-significant characters from file:line refs and rationale). Use `mktemp` for the body file so concurrent `/quality-review` runs in different sessions or worktrees do not race on a shared path. **macOS BSD `mktemp` does not replace `XXXXXX` if a suffix follows it**, so omit the extension on the template; Linear accepts the body without one. Ensure `tmp/` exists first:
+
+```bash
+mkdir -p tmp
+# 1. Write description to a unique tmp file. Body shape:
+#    "<finding>\n\nLocation: <file:line>\n\nRationale: <rationale>"
+body_file=$(mktemp tmp/deferred-XXXXXX)
+# ...write body to "$body_file" via the Write tool...
+
+# 2. Create the issue and capture the new ID from stdout.
+new_id=$(~/.claude/scripts/linear-stdin.sh "$body_file" i create "<short title>" --team <team> -d - | grep -oE '[A-Z]+-[0-9]+' | head -1)
+
+# 3. Link the new issue back to the originating issue (skip when none was resolved in Step 1).
+linear i update "$new_id" --depends-on <ISSUE-ID>
+```
+
+Items the user explicitly declined to file in this prompt go to `Deferred dropped` — record them as a list for the verdict block. (Items that never reached this prompt because Step 6 terminated early in sub-step 4 are routed to `Open items` instead — see sub-step 4.)
 
 ## Output
 
@@ -178,15 +247,18 @@ When the skill returns to its caller (or to the user, when standalone), present 
 Verdict: passed-clean | passed-after-fixes | terminated-with-open-items
 Cycles: N (initial + N-1 re-reviews)
 Findings resolved: [list, or "none" if passed-clean]
-Deferred issues: [PL-XX, PL-YY, or "none"]
-Open items: [list, only when terminated-with-open-items]
+Deferred fixed in-session: [list, or "none"]
+Deferred filed as issues: [PL-XX, PL-YY, or "none"]
+Deferred dropped: [list, or "none"]
+Open items: [list, or "none" — populated only on terminated-with-open-items; includes any deferred items not handled above]
 ```
 
 When delegated from `/start`, this block becomes the "Adversarial review" section of the completion summary verbatim.
 
 ## Error Handling
 
-- **`pnpm check` repeatedly fails** after multiple `developer` delegations: surface to the user with the failing output. Do not proceed to review.
+- **`pnpm check` repeatedly fails** after multiple `developer` delegations (Step 2 gate): surface to the user with the failing output. Do not proceed to review.
+- **Sub-step 4 corrective pass leaves `pnpm check` failing or regressions unaddressed**: the deferred-item fixes broke the application and the single corrective `developer` pass did not restore it. Set the run verdict to `terminated-with-open-items`, route per sub-step 4's verdict-population rules, and surface the failing output to the user along with the `Open items` list. Do not loop further or roll back automatically — let the user decide whether to revert, re-run `/quality-review`, or escalate to architect.
 - **No changed files detected**: warn the user and exit. Nothing to review.
 - **Issue ID provided but `linear` CLI not authenticated**: prompt `linear auth login`, then continue without issue context if the user skips.
 - **`quality-reviewer` agent unavailable or returns malformed findings**: surface the raw output to the user; do not silently proceed.
