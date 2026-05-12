@@ -192,3 +192,28 @@ The hook provides enforcement, but you must **understand why**:
 - **Clean up is not worth data loss** - Leave working tree alone
 - **When in doubt, ASK** - User decides what to keep/discard
 - **Recovery is usually impossible** - Prevention is the only solution
+
+## Commit and Push Authorization
+
+Commits and pushes are **separate, explicit grants**. Neither is implied by implementation verbs.
+
+### Authorization Rules
+
+- "implement", "do it", "fix it", "make the change" → does NOT authorize a commit
+- "commit" → applies only to current set of changes; NOT a standing grant for the session; does NOT include push
+- "push" → applies only to currently-committed state; does NOT include future commits; does NOT imply commit
+- "commit and push" / "commit, push, and create a PR" → explicit multi-action grant; honor as written
+
+### Default Behavior
+
+Stage nothing, commit nothing, push nothing. Make edits, run hooks/tests, report what changed, wait for explicit direction.
+
+Pre-commit hooks (lint, typecheck) running automatically is fine — those aren't commits.
+
+### When Unsure
+
+Ask: "Want me to commit this, or leave it staged for review?" or "Want me to push, or leave the commit local?"
+
+### Why
+
+Review IS the workflow. Each commit is a recorded artifact the user wants to inspect before it's written to history. Each push is visible to others and triggers CI — both gates exist for the same reason: nothing leaves the user's control without explicit say-so.

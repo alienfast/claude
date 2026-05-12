@@ -62,6 +62,10 @@
    - ✅ Instead: Complete the migration or use feature flags
    - Exception: Incremental migration is the documented strategy
 
+7. **Silent Defaults for Required Config**: "Let's default to X if the env var isn't set"
+   - ✅ Instead: Keep the throw/error. Required means required — silent fallbacks mask misconfiguration.
+   - Exception: The value is genuinely optional with a documented default (rare for required-by-name config)
+
 ### Complexity Response Pattern
 
 When encountering complexity after 2+ attempts:
