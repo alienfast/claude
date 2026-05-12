@@ -31,5 +31,9 @@ file's purpose has materially changed and its absence has caused confusion.
 - References to the current task, fix, or callers ("used by X", "added for
   the Y flow", "handles issue #123") — those belong in the PR description
   and rot as the codebase evolves
+- References to `tmp/` paths (investigations, screenshots, scratch notes) —
+  `tmp/` is transient and regularly cleaned, so the link will dangle. If the
+  WHY needs more than the comment can hold, capture it in a Linear issue or
+  commit message body — don't point readers at a path that may not exist.
 - Multi-paragraph docstrings on internal functions
 - Comments to flag removed code (`// removed XYZ`) — git is the history

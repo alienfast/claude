@@ -132,7 +132,8 @@
       "mcp__agent-browser__frame",
       "mcp__circleci",
       "mcp__ide__getDiagnostics",
-      "mcp__mui"
+      "mcp__mui",
+      "Bash(.claude/skills/investigate/scripts/preflight.sh --need kubectl,gcloud,pulumi,jq,curl)"
     ],
     "deny": [],
     "ask": [
@@ -187,5 +188,5 @@
   "enabledPlugins": {
     "typescript-lsp@claude-plugins-official": true
   },
-  "effortLevel": "high"
+  "effortLevel": "xhigh"
 }
