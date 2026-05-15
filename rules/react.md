@@ -20,6 +20,27 @@ paths:
 - **Handler naming**: `handleX` for internal event handlers, `onX` for callback prop names
 - **Hook naming**: Always prefix with `use` if calling other hooks
 - **Purpose-specific hooks**: Name after purpose (e.g., `useChatRoom`, `useAuth`), not lifecycle (`useMount`)
+- **Exported prop interfaces**: Name `<ComponentName>Props`, NOT a bare `Props`. A bare `Props` pollutes the importing file's namespace and collides when multiple component prop interfaces are imported. Internal (non-exported) prop interfaces may use `Props` for brevity since they don't cross file boundaries.
+
+```typescript
+// ❌ WRONG - bare Props pollutes importing files
+export interface Props {
+  open: boolean
+  onClose: () => void
+}
+
+// ✅ CORRECT - prefixed with component name
+export interface ChangeNameDialogProps {
+  open: boolean
+  onClose: () => void
+}
+
+// ✅ OK - non-exported interface can stay bare
+interface Props {
+  open: boolean
+}
+const ChangeNameDialog = ({ open }: Props) => { ... }
+```
 
 ## Memoization
 
