@@ -25,6 +25,14 @@ sight.
 Editing an existing file does not require adding a header — only do so if the
 file's purpose has materially changed and its absence has caused confusion.
 
+## Line length
+
+Wrap comments at ~160 characters, not ~80. Modern editors are wide; the
+old 80-column convention produces stubby, multi-line comments that are
+harder to read than one long line. Let the comment breathe — break only
+when the line genuinely exceeds the soft limit, or at a natural sentence
+boundary inside a long block.
+
 ## What NOT to write
 
 - WHAT the code does — well-named identifiers already do that
