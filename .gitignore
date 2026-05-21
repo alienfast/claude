@@ -34,3 +34,6 @@ packages/*/.npmignore
 /usage-data
 /sessions
 /.last-cleanup
+/daemon
+/daemon.*
+/jobs
