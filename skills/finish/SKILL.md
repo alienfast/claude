@@ -1,6 +1,6 @@
 ---
 name: finish
-description: Finish a Linear issue — check off requirements, add completion comment, commit/push, mark Ready For Release, suggest next issue. Use when the user says 'finish issue', 'done with this issue', 'complete PL-XX', or invokes /finish.
+description: Finish a Linear issue — check off requirements, add completion comment, commit/push, mark Ready For Release. Use when the user says 'finish issue', 'done with this issue', 'complete PL-XX', or invokes /finish.
 ---
 
 # Finish Issue
@@ -143,10 +143,6 @@ Otherwise, always push to the current branch. Do not create PRs (that's a separa
 ```bash
 linear issues update PL-12 --state "Ready For Release"
 ```
-
-### Step 9: Suggest Next Issue
-
-Use the `/next` skill to suggest the best next issue, passing the just-completed issue ID as context. The `/next` skill will check the current cycle, dependency graph, and newly unblocked work to find the highest-signal candidate.
 
 ## Error Handling
 
