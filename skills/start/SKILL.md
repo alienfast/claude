@@ -139,15 +139,19 @@ pnpm check
 
 ### Step 6: Enter Plan Mode
 
-Switch to plan mode to design the implementation:
+**Call the `EnterPlanMode` tool** to transition into plan mode. Do not write the plan inline in chat — plan mode has a dedicated tool flow that surfaces an approval UI (in VSCode: a side pane that supports annotation), and the inline-text path bypasses it.
+
+While in plan mode:
 
 1. Use the issue description, checkboxes, and parent context as requirements
 2. Explore the codebase to understand relevant files, patterns, and dependencies
 3. Design a step-by-step implementation plan
 4. Identify which tasks are independent (parallelizable) vs dependent (sequential)
-5. Present the plan and get user feedback before proceeding
+5. Write the plan to the plan file specified in the plan-mode system message
 
-Do not start implementation until the user approves the plan. After approval, proceed **immediately** to Step 7 — do not read files, grep, or do any implementation research until the plan is posted to Linear.
+**When the plan is complete, call the `ExitPlanMode` tool.** This is what requests user approval and surfaces the annotation pane. If the user annotates or pushes back, incorporate the feedback, update the plan file, and call `ExitPlanMode` again — repeat until approved. Do NOT use `AskUserQuestion` to ask "is this plan okay?" — `ExitPlanMode` is the approval mechanism.
+
+Do not start implementation until the user approves the plan via `ExitPlanMode`. After approval, proceed **immediately** to Step 7 — do not read files, grep, or do any implementation research until the plan is posted to Linear.
 
 ### Step 7: Post Approved Plan to Linear
 
