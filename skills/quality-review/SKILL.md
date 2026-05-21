@@ -233,8 +233,8 @@ body_file=$(mktemp tmp/deferred-XXXXXX)
 # 2. Create the issue and capture the new ID from stdout.
 new_id=$(~/.claude/scripts/linear-stdin.sh "$body_file" i create "<short title>" --team <team> -d - | grep -oE '[A-Z]+-[0-9]+' | head -1)
 
-# 3. Link the new issue back to the originating issue (skip when none was resolved in Step 1).
-linear i update "$new_id" --depends-on <ISSUE-ID>
+# 3. Link the new issue as a sub-issue of the originating issue (skip when none was resolved in Step 1).
+linear i update "$new_id" --parent <ISSUE-ID>
 ```
 
 Items the user explicitly declined to file in this prompt go to `Deferred dropped` — record them as a list for the verdict block. (Items that never reached this prompt because Step 6 terminated early in sub-step 4 are routed to `Open items` instead — see sub-step 4.)
