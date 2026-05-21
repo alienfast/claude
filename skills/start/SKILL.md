@@ -29,139 +29,67 @@ Violating this contract — by shipping broken code, by claiming failures were p
 
 ### Step 0: Worktree Mode (only when `wt` in args)
 
-**Argument parsing.** Tokens are case-insensitive (`wt`, `WT`, `Wt` all match) and position-agnostic (`/start wt PL-123` and `/start PL-123 wt` both work). After stripping `wt`, the remaining must be exactly one non-token argument matching `^[A-Z]+-\d+$` (case-normalized to upper) — a Linear issue ID. If zero or multiple candidate IDs are found (e.g., `/start wt PL-123 PL-456` or `/start wt PL-123 wt`), error and stop.
+**Argument parsing.** Tokens are case-insensitive (`wt`, `WT`, `Wt`) and position-agnostic. After stripping `wt`, the remaining must be exactly one non-token argument matching `^[A-Z]+-\d+$` (case-normalized to upper) — a Linear issue ID. Multiple IDs or duplicated `wt` tokens are errors.
 
-If the args contain the token `wt`:
+If the args contain `wt`:
 
-1. **Parse and validate args.** Strip the `wt` token; uppercase the remainder; verify it matches the issue-ID regex.
-
-2. **Enable per-worktree git config (idempotent).** Required so the source-branch setting we write in step 7 is scoped to the new worktree, not shared across the whole repo. Without this, `git config start.source-branch ...` writes to `.git/config` (common) and every other checkout of the repo sees the value:
+1. **Run the worktree setup script.** It encapsulates all the procedural setup that used to live inline here: argument validation, source-branch capture, per-worktree config enable, issue title fetch + branch name composition, worktree create/attach/reuse with branch-collision detection, source-branch recording, and digest pre-fetch into the worktree's `tmp/`.
 
    ```bash
-   git config extensions.worktreeConfig true
+   ~/.claude/scripts/start-wt-setup.sh PL-123
    ```
 
-   **Foot-gun warning.** Do not manually set `start.source-branch` at common (`--global` / non-`--worktree`) scope. The Step 5 short-circuit (further down) treats *any* value as evidence of a `/start wt` worktree, so a stray manual config would silently bypass branch creation in a regular `/start` session.
+   **Read the tool output carefully.** Stdout contains five `KEY=value` lines you must carry forward into sub-step 2:
 
-3. **Capture the source branch.** This is the branch the worktree will be merged back into by `/finish merge` (or used as PR base by `/finish pr`):
-
-   ```bash
-   SOURCE_BRANCH=$(git branch --show-current)
+   ```text
+   WT_ABS=<absolute worktree path>
+   BRANCH=<the worktree branch name>
+   SOURCE_BRANCH=<the branch the worktree forks from>
+   ISSUE_ID=<normalized (uppercased) issue ID>
+   DIGEST_FILE=<absolute path to pre-fetched digest, or empty if fetch failed>
    ```
 
-4. **Fetch the issue title and compose the branch name.**
+   Stderr contains diagnostics (drift warnings, progress, errors). **If the script's exit code is non-zero, stop.** Do not construct the Agent prompt below — the worktree is in an indeterminate state and the script has already cleaned up via its EXIT trap.
 
-   **Token substitution.** The block below contains `__ISSUE_ID__`. Before running it, replace that token with the actual parsed-and-uppercased issue ID from sub-step 1. **The executed bash must contain zero such tokens** — scan with the regex `/__(WT_ABS|ISSUE_ID|REPO_ROOT|WT_DIR|SOURCE_BRANCH|WORKTREE_BRANCH)__/`; if any match, do not execute.
+   **Foot-gun warning.** Do not manually set `start.source-branch` at common (non-`--worktree`) scope. The Step 5 short-circuit treats any value as evidence of a `/start wt` worktree, so a stray manual config would silently bypass branch creation in a regular `/start` session. The setup script writes only at per-worktree scope.
 
-   ```bash
-   ISSUE_ID="__ISSUE_ID__"
-   ISSUE_LOWER=$(printf '%s' "$ISSUE_ID" | tr '[:upper:]' '[:lower:]')
-   ISSUE_TITLE=$(linear issues get "$ISSUE_ID" --output json | jq -r .title)
-   GH_USER=$(gh api user --jq .login)
-   # Kebab-case the title: lowercase, replace non-alphanum with `-`, collapse runs, trim.
-   KEBAB=$(printf '%s' "$ISSUE_TITLE" \
-     | tr '[:upper:]' '[:lower:]' \
-     | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' \
-     | cut -c1-40 | sed -E 's/-+$//')
-   # If KEBAB is empty (title was all-punctuation/emoji), omit the trailing
-   # dash so we get user/pl-123 instead of user/pl-123-.
-   BRANCH="${GH_USER}/${ISSUE_LOWER}${KEBAB:+-$KEBAB}"
-   ```
+2. **Delegate the rest of the workflow** to a subagent running inside the worktree. Do **not** pass the harness `isolation` parameter — the worktree is already prepared by the setup script.
 
-5. **Compute the worktree path.** Convention: `.claude/worktrees/${ISSUE_LOWER}` (e.g., `.claude/worktrees/pl-123`). Local to the project, gitignored per Claude Code's bgIsolation convention:
-
-   ```bash
-   WT_DIR=".claude/worktrees/${ISSUE_LOWER}"
-   ```
-
-6. **Create, attach, or reuse the worktree.** Handle three cases — fresh creation, existing branch without worktree (prior aborted session), and full reuse (true resume):
-
-   ```bash
-   mkdir -p .claude/worktrees
-   if [ -d "$WT_DIR" ]; then
-     # Reuse. Verify it's a worktree on the expected branch — otherwise stop.
-     CURRENT_WT_BRANCH=$(git -C "$WT_DIR" branch --show-current 2>/dev/null || true)
-     if [ "$CURRENT_WT_BRANCH" != "$BRANCH" ]; then
-       echo "ERROR: $WT_DIR exists but is on '$CURRENT_WT_BRANCH' (expected '$BRANCH'). Investigate manually."
-       exit 1
-     fi
-     # Warn about base drift since the worktree was created. Compare against the LOCAL source branch.
-     BEHIND=$(git -C "$WT_DIR" rev-list --count "$BRANCH..$SOURCE_BRANCH" 2>/dev/null || echo "?")
-     AHEAD=$(git -C "$WT_DIR" rev-list --count "$SOURCE_BRANCH..$BRANCH" 2>/dev/null || echo "?")
-     if [ "$BEHIND" != "0" ] && [ "$BEHIND" != "?" ]; then
-       if [ "$AHEAD" != "0" ] && [ "$AHEAD" != "?" ]; then
-         echo "NOTE: worktree branch has DIVERGED from $SOURCE_BRANCH: $AHEAD ahead, $BEHIND behind."
-       else
-         echo "NOTE: worktree branch is $BEHIND commit(s) behind $SOURCE_BRANCH."
-       fi
-       echo "  Consider: git -C \"$WT_DIR\" rebase $SOURCE_BRANCH"
-     fi
-     echo "Resuming worktree: $WT_DIR"
-   elif git rev-parse --verify "$BRANCH" >/dev/null 2>&1; then
-     # Branch exists but no worktree directory. Could be: (a) prior aborted
-     # session left a dangling branch; (b) branch is checked out in main or
-     # another worktree. Case (b) is fatal — `git worktree add` refuses.
-     EXISTING_WT=$(git worktree list --porcelain | awk -v b="refs/heads/$BRANCH" '
-       /^worktree / { sub(/^worktree /, ""); wt = $0 }
-       /^branch / && $2 == b { print wt; exit }
-     ')
-     if [ -n "$EXISTING_WT" ]; then
-       echo "ERROR: branch '$BRANCH' is already checked out at '$EXISTING_WT'."
-       echo "Either work from that location, or rename / remove that checkout first:"
-       echo "  git worktree remove '$EXISTING_WT'      # if it's a worktree we no longer need"
-       echo "  git -C '$EXISTING_WT' switch <other>    # if main checkout, switch off the branch"
-       exit 1
-     fi
-     # Dangling branch — safe to attach.
-     git worktree add "$WT_DIR" "$BRANCH"
-   else
-     # Fresh: create both worktree dir and branch off current HEAD.
-     git worktree add "$WT_DIR" -b "$BRANCH" HEAD
-   fi
-   ```
-
-   If `git worktree add` fails because a concurrent session won the race (directory or branch was just created by another process), the explicit `[ -d "$WT_DIR" ]` / `git rev-parse --verify "$BRANCH"` checks on retry will pick up the new state and route to the reuse / attach paths. Do not proceed past this step until the worktree is successfully prepared.
-
-7. **Record the source branch inside the worktree** at per-worktree scope so `/finish` can locate it without leaking the value into the shared repo config:
-
-   ```bash
-   git -C "$WT_DIR" config --worktree start.source-branch "$SOURCE_BRANCH"
-   ```
-
-8. **Compute the absolute path** for the subagent's `cd`:
-
-   ```bash
-   WT_ABS=$(cd "$WT_DIR" && pwd)
-   ```
-
-9. **Delegate the rest of the workflow** to a subagent running inside the worktree. Do **not** pass the harness `isolation` parameter — we have already created the worktree manually and naming/source-branch control is the entire point.
-
-   **Token substitution.** The prompt template below contains `__WT_ABS__` and `__ISSUE_ID__`. Before calling the Agent tool, replace each token with the bash-evaluated value of the corresponding variable. **The dispatched prompt must contain zero such tokens** — verify by scanning the constructed prompt with the regex `/__(WT_ABS|ISSUE_ID|REPO_ROOT|WT_DIR|SOURCE_BRANCH|WORKTREE_BRANCH)__/`; if any match, do not dispatch.
+   Read the actual `WT_ABS` and `ISSUE_ID` values from sub-step 1's stdout, then construct the Agent prompt by substituting those values into the template below. Wrap path/branch values in single quotes inside the prompt so a path containing spaces is preserved as one bash argument:
 
    ```text
    Agent({
      subagent_type: "claude",
      prompt: "
-       First cd into the worktree:
-         cd __WT_ABS__
-       Then invoke /start __ISSUE_ID__ end-to-end (without the wt arg).
-       The worktree and branch are already set up — Step 5 will short-circuit
-       via the recorded per-worktree git config. On completion, report the
-       worktree path and the final branch name.
+       cd '<value of WT_ABS from sub-step 1>'
+       Then invoke /start <value of ISSUE_ID from sub-step 1> end-to-end (without the wt arg).
+       The worktree, branch, source-branch config, and pre-fetched digest at
+       tmp/linear-context-<issue-lower>.md are all set up. Step 1 will read
+       the cached digest (or fall back to a live fetch if it is missing).
+       Step 5 will short-circuit via the recorded per-worktree git config.
+       On completion, report the worktree path and final branch.
      "
    })
    ```
 
-10. **Stop.** The subagent owns the remainder of Steps 1–10. This session's role ends here — do not run further commands.
+3. **Stop.** The subagent owns the remainder of Steps 1–10. This session's role ends here — do not run further commands.
 
 If `wt` is **not** in args, proceed to Step 1 as today.
 
 ### Step 1: Gather Issue Context
 
-Run the context script — it collapses ~5–7 separate Linear CLI calls (issue details, dependency graph, parent chain, comments summary, attachment URLs) into one markdown digest:
+The issue digest is a markdown summary of the issue, parent chain, dependency graph, comments summary, and attachment URLs. Generate or read it:
 
 ```bash
-~/.claude/scripts/linear-context.sh PL-13
+mkdir -p tmp
+DIGEST=tmp/linear-context-pl-13.md   # use the actual lowercased issue ID
+# Use the parent session's pre-fetched digest if it exists and is non-empty;
+# otherwise (regular /start, or a wt session where pre-fetch failed) generate.
+if [ -s "$DIGEST" ]; then
+  cat "$DIGEST"
+else
+  ~/.claude/scripts/linear-context.sh PL-13 | tee "$DIGEST"
+fi
 ```
 
 Read the digest carefully. Note:
@@ -191,17 +119,12 @@ The digest covers most context. Reach for these only when its summary is insuffi
 linear i comments PL-13
 ```
 
-**Project description** (digest does not include the project body; the digest's `**Project ID:**` line is the project UUID). Use the project ID directly from the Step 1 digest — no extra round-trip.
-
-**Token substitution.** The block below uses `__PROJECT_ID__`. Replace it with the value of `**Project ID:**` from the Step 1 digest, or with an empty string if that line was absent (issue has no project). Scan with the regex `/__(WT_ABS|ISSUE_ID|REPO_ROOT|WT_DIR|SOURCE_BRANCH|WORKTREE_BRANCH|PROJECT_ID)__/`; if any match, do not run.
+**Project description** (digest does not include the project body; the digest's `**Project ID:**` line is the project UUID). Use the project ID directly from the Step 1 digest:
 
 ```bash
-PROJECT_ID='__PROJECT_ID__'
-if [ -n "$PROJECT_ID" ]; then
-  linear p get "$PROJECT_ID"
-else
-  echo "(issue has no project)"
-fi
+# Read the **Project ID:** value from the digest you printed in Step 1.
+# If the digest had no Project ID line, the issue has no project — skip.
+linear p get <project-uuid-from-digest>
 ```
 
 **Inline images** — `uploads.linear.app` URLs from the digest's Attachments section require authentication; do NOT use `WebFetch` or `curl`:
@@ -221,10 +144,14 @@ linear issues update PL-13 --assignee me --state "In Progress"
 
 ### Step 5: Ensure Correct Git Branch
 
-**Worktree mode short-circuit.** If `git config --get start.source-branch` returns a value, you are inside a worktree set up by Step 0 — the branch is already correct and the source branch is recorded for `/finish`. Skip the branch-selection logic below and jump directly to the **Baseline check** at the end of this step.
+**Worktree mode short-circuit.** Check at per-worktree scope (`--worktree`) so a manual `start.source-branch` at common scope can't false-trigger this from outside a `/start wt` worktree. If `git config --worktree --get start.source-branch` returns a value, the branch is already correct and the source branch is recorded for `/finish`. Skip the branch-selection logic below and jump directly to the **Baseline check** at the end of this step.
 
 ```bash
-git config --get start.source-branch
+# Probe only — interpret the printed value, not the exit code. `|| true` is
+# unnecessary here (unlike the capture-assignment sites in /finish) because
+# this isn't being captured into a variable; a non-zero exit from the lookup
+# is fine for the orchestrator to read as "no value set".
+git config --worktree --get start.source-branch 2>/dev/null
 ```
 
 ```bash
@@ -304,7 +231,7 @@ _Approved before implementation started._
 2. Run:
 
 ```bash
-~/.claude/scripts/linear-stdin.sh tmp/linear-comment-pl-13.md issues comment PL-13 --body -
+~/.claude/scripts/linear-post.sh comment PL-13 tmp/linear-comment-pl-13.md
 ```
 
 
@@ -364,7 +291,7 @@ Update completed checkboxes (`- [ ]` → `- [x]`) and push the update:
 2. Run:
 
 ```bash
-~/.claude/scripts/linear-stdin.sh tmp/linear-description-pl-13.md issues update PL-13 --description -
+~/.claude/scripts/linear-post.sh description PL-13 tmp/linear-description-pl-13.md
 ```
 
 **Important**: Preserve the entire description — only change `- [ ]` to `- [x]` for completed items. Do not rewrite or reformat the description.
@@ -377,7 +304,7 @@ Update completed checkboxes (`- [ ]` → `- [x]`) and push the update:
 2. Run:
 
 ```bash
-~/.claude/scripts/linear-stdin.sh tmp/linear-comment-pl-13.md issues comment PL-13 --body -
+~/.claude/scripts/linear-post.sh comment PL-13 tmp/linear-comment-pl-13.md
 ```
 
 This ensures progress is visible in Linear even if the session is interrupted, and enables picking up where we left off.

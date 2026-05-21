@@ -77,7 +77,7 @@ If any checkboxes changed, update the description:
 2. Run:
 
 ```bash
-~/.claude/scripts/linear-stdin.sh tmp/linear-description-pl-42.md issues update PL-42 --description -
+~/.claude/scripts/linear-post.sh description PL-42 tmp/linear-description-pl-42.md
 ```
 
 **Important**: Preserve the entire description — only change `- [ ]` to `- [x]` for completed items. Do not rewrite or reformat.
@@ -144,7 +144,7 @@ Omit empty sections. Keep it concise — this is a status update, not a report.
 2. Run:
 
 ```bash
-~/.claude/scripts/linear-stdin.sh tmp/linear-checkpoint-pl-42.md issues comment PL-42 --body -
+~/.claude/scripts/linear-post.sh comment PL-42 tmp/linear-checkpoint-pl-42.md
 ```
 
 ## Key Differences from /finish

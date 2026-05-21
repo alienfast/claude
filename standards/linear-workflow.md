@@ -4,26 +4,31 @@
 
 **Never use shell operators (`<`, `|`, `$()`, heredocs) in Bash commands with the `linear` CLI.** Claude Code's permission wildcards don't match through shell operators, so these commands always trigger permission prompts regardless of allow-list rules.
 
-Instead, use the `~/.claude/scripts/linear-stdin.sh` helper:
+For the two most common operations — updating a description or adding a comment — prefer `~/.claude/scripts/linear-post.sh`, which wraps the stdin plumbing and picks the right flag for each kind:
+
+```bash
+# Update issue description
+~/.claude/scripts/linear-post.sh description PL-13 tmp/linear-description-pl-13.md
+
+# Add comment from file
+~/.claude/scripts/linear-post.sh comment PL-13 tmp/linear-comment-pl-13.md
+```
+
+For other operations (most notably `i create` with a file body), use the underlying `~/.claude/scripts/linear-stdin.sh` helper directly:
 
 ```bash
 # Usage: ~/.claude/scripts/linear-stdin.sh <file> <linear-args...>
 
 # Create issue with description from file
 ~/.claude/scripts/linear-stdin.sh tmp/description.md i create "Title" --team PL -d -
-
-# Update issue description
-~/.claude/scripts/linear-stdin.sh tmp/linear-description-pl-13.md i update PL-13 -d -
-
-# Add comment from file
-~/.claude/scripts/linear-stdin.sh tmp/linear-comment-pl-13.md i comment PL-13 -b -
 ```
 
 **Workflow** for any command that passes file content:
 
 1. `mkdir -p tmp` (once per session)
 2. `Write` content to `tmp/<descriptive-name>.md`
-3. `~/.claude/scripts/linear-stdin.sh tmp/<file>.md <linear-args> -d -` (or `-b -` for comments)
+3. `~/.claude/scripts/linear-post.sh <comment|description> <issue-id> tmp/<file>.md`
+   (or `~/.claude/scripts/linear-stdin.sh tmp/<file>.md <linear-args> -d -` for non-comment/description ops)
 
 Short inline values can be passed directly: `linear i create "Bug" --team PL -d "Brief description"`
 
