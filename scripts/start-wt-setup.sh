@@ -97,7 +97,7 @@ kebab=$(printf '%s' "$issue_title" \
   | cut -c1-40 | sed -E 's/-+$//')
 
 # If kebab is empty (e.g., title was all punctuation/emoji), omit the
-# trailing dash so we get user/pl-123 instead of user/pl-123-.
+# trailing dash so we get user/pl-13 instead of user/pl-13-.
 branch="${gh_user}/${issue_lower}${kebab:+-$kebab}"
 
 wt_dir=".claude/worktrees/${issue_lower}"

@@ -21,7 +21,7 @@ Rules that flow from this contract:
 2. **Failures are never "pre-existing."** The baseline passed. Any failure after that is ours.
 3. **Failures are never "out of scope."** If our changes cause a check to fail, fixing it IS our scope.
 4. **Failures are never deferred.** We do not proceed with a broken application. We stop and fix.
-5. **Every subagent inherits this contract.** When delegating to developer, debugger, quality-reviewer, or architect, include this contract in the delegation. They operate under the same rule.
+5. **The contract is in effect from Step 5's baseline through Step 9's review.** Steps 1–4 gather context, Step 6 runs plan mode (read-only by definition), Step 7 posts the plan, Step 10 summarizes — none modify code. Steps 5, 8, and 9 are the ones that can break the application; they run in-session and must keep `pnpm check` green. Step 8's `developer` / `debugger` / `quality-reviewer` / `architect` delegations must include this contract verbatim in the delegation prompt.
 
 Violating this contract — by shipping broken code, by claiming failures were pre-existing, by deferring breakage to a follow-up ticket — is the single worst outcome of this workflow. A partially-implemented feature on a working application is infinitely better than a "complete" feature on a broken one.
 
@@ -36,7 +36,7 @@ If the args contain `wt`:
 1. **Run the worktree setup script.** It encapsulates all the procedural setup that used to live inline here: argument validation, source-branch capture, per-worktree config enable, issue title fetch + branch name composition, worktree create/attach/reuse with branch-collision detection, source-branch recording, and digest pre-fetch into the worktree's `tmp/`.
 
    ```bash
-   ~/.claude/scripts/start-wt-setup.sh PL-123
+   ~/.claude/scripts/start-wt-setup.sh PL-13
    ```
 
    **Read the tool output carefully.** Stdout contains five `KEY=value` lines you must carry forward into sub-step 2:
@@ -49,32 +49,26 @@ If the args contain `wt`:
    DIGEST_FILE=<absolute path to pre-fetched digest, or empty if fetch failed>
    ```
 
-   Stderr contains diagnostics (drift warnings, progress, errors). **If the script's exit code is non-zero, stop.** Do not construct the Agent prompt below — the worktree is in an indeterminate state and the script has already cleaned up via its EXIT trap.
+   Stderr contains diagnostics (drift warnings, progress, errors). **If the script's exit code is non-zero, stop.** Do not proceed to sub-step 2 — the worktree is in an indeterminate state and the script has already cleaned up via its EXIT trap. Surface the script's stderr to the user.
 
    **Foot-gun warning.** Do not manually set `start.source-branch` at common (non-`--worktree`) scope. The Step 5 short-circuit treats any value as evidence of a `/start wt` worktree, so a stray manual config would silently bypass branch creation in a regular `/start` session. The setup script writes only at per-worktree scope.
 
-2. **Delegate the rest of the workflow** to a subagent running inside the worktree. Do **not** pass the harness `isolation` parameter — the worktree is already prepared by the setup script.
+2. **`cd` into the worktree.** The Bash tool's cwd persists across calls, so a single `cd` here scopes every subsequent bash command (Steps 1–10) to the worktree. Read `WT_ABS` from sub-step 1's stdout and substitute it; single-quote the path so spaces or shell metacharacters survive:
 
-   Read the actual `WT_ABS` and `ISSUE_ID` values from sub-step 1's stdout, then construct the Agent prompt by substituting those values into the template below. Wrap path/branch values in single quotes inside the prompt so a path containing spaces is preserved as one bash argument:
-
-   ```text
-   Agent({
-     subagent_type: "claude",
-     prompt: "
-       cd '<value of WT_ABS from sub-step 1>'
-       Then invoke /start <value of ISSUE_ID from sub-step 1> end-to-end (without the wt arg).
-       The worktree, branch, source-branch config, and pre-fetched digest at
-       tmp/linear-context-<issue-lower>.md are all set up. Step 1 will read
-       the cached digest (or fall back to a live fetch if it is missing).
-       Step 5 will short-circuit via the recorded per-worktree git config.
-       On completion, report the worktree path and final branch.
-     "
-   })
+   ```bash
+   cd '<value of WT_ABS from sub-step 1>'
+   pwd   # confirm
    ```
 
-3. **Stop.** The subagent owns the remainder of Steps 1–10. This session's role ends here — do not run further commands.
+3. **Continue to Step 1 in this same session — no subagent.** The user is already in an isolated agent-view session; the worktree provides git-level isolation. Stacking subagent isolation on top would only hide plan-mode prompts and `/quality-review` output from the user. Steps 1–10 run unchanged:
 
-If `wt` is **not** in args, proceed to Step 1 as today.
+   - Step 1 reads the pre-fetched digest at `tmp/linear-context-<issue-lower>.md`.
+   - Step 5 short-circuits via the recorded per-worktree git config.
+   - Step 6 (`EnterPlanMode`) surfaces the approval UI to the user.
+   - Step 8 delegates implementation to `developer` subagents (those are appropriate — they're scoped tasks, not whole-workflow dispatch).
+   - Step 9 (`/quality-review`) runs with visible findings, fix loop, and deferred-items triage.
+
+If `wt` is **not** in args, proceed to Step 1 as today (in-place on the current branch).
 
 ### Step 1: Gather Issue Context
 
@@ -83,8 +77,8 @@ The issue digest is a markdown summary of the issue, parent chain, dependency gr
 ```bash
 mkdir -p tmp
 DIGEST=tmp/linear-context-pl-13.md   # use the actual lowercased issue ID
-# Use the parent session's pre-fetched digest if it exists and is non-empty;
-# otherwise (regular /start, or a wt session where pre-fetch failed) generate.
+# In `/start wt` mode, Step 0's setup script already cached the digest here.
+# In plain `/start` mode (or if the pre-fetch failed), generate it now.
 if [ -s "$DIGEST" ]; then
   cat "$DIGEST"
 else

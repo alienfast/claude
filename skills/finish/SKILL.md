@@ -64,7 +64,7 @@ Examples: `/finish`, `/finish PL-12`, `/finish no push`, `/finish PL-12 no push`
    ERROR: `/finish pr` requires pushing the branch. Remove `no push` or use `/finish merge`.
    ```
 
-5. Carry `$SOURCE_BRANCH`, `$WORKTREE_BRANCH`, `$WT_DIR`, `$REPO_ROOT`, and `$ACTION` forward; they drive Step 8 (state transition) and Step 9 (worktree finalization).
+5. `$ACTION` informs the downstream branching (Step 8 skips when `pr`; Step 9 picks merge vs PR mode). The four shell variables (`$SOURCE_BRANCH`, `$WORKTREE_BRANCH`, `$WT_DIR`, `$REPO_ROOT`) do **not** persist across Bash tool calls — Step 9 re-derives them from the same git probes when it needs them. The printf above is informational only.
 
 ### Step 1: Identify the Issue
 
@@ -176,9 +176,19 @@ git status
 git log --oneline -1
 ```
 
-- **Uncommitted changes**: Stage relevant files, commit with a descriptive message
-- **Committed but not pushed**: Push to remote (unless `no push` was requested)
-- **Already pushed**: Skip — confirm to user that code is already on remote
+- **Uncommitted changes**: Stage relevant files, commit with a descriptive message.
+- **Committed but not pushed**: Push to remote (unless `no push` was requested).
+- **Already pushed**: Skip — confirm to user that code is already on remote.
+
+**Commit-message requirement.** The issue ID resolved in Step 1 (e.g., `PL-13`) **must** appear in the commit message. Linear auto-links commits referencing an issue ID, so this is how the issue's "Linked branches/commits" panel populates. Prefer a leading-reference convention:
+
+```text
+PL-13: <short imperative summary>
+
+<optional body explaining the why>
+```
+
+If the issue ID could not be resolved in Step 1 (no input, no branch hint, no commit hint) and the user did not supply one, ask before committing — do not silently commit without the reference.
 
 If the user requested **no push** (e.g., `/finish no push`, `/finish don't push`), skip pushing after commit. Inform the user: "Skipping push as requested. Push manually when ready: `git push`"
 
@@ -198,40 +208,55 @@ linear issues update PL-12 --state "Ready For Release"
 
 Runs only if Step 0 detected a worktree. Skip entirely otherwise.
 
-**Step 9 is the terminal step of this session.** After dispatching the subagent below (merge mode) or running the `gh pr create` (pr mode), do not run any further bash commands from this session — in merge mode the current cwd ceases to exist, and in pr mode the lifecycle now belongs to the PR. Report the subagent / `gh` output and end.
+**Step 9 is the terminal step of this session** — for both modes. After the merge (or `gh pr create`) completes, present the closing message and stop. Don't run further bash commands.
 
-**If `$ACTION == "merge"`:**
+**If `$ACTION == "merge"`: the merge runs in this session — no subagent.**
 
-The current session lives inside the worktree, so it cannot remove the directory it is running in. Delegate the merge + cleanup to a subagent running from the main repo checkout. All the procedural logic — preconditions, merge, conflict-abort, worktree removal, branch deletion — lives in `~/.claude/scripts/finish-merge.sh`, which the subagent invokes with concrete positional arguments.
+The merge produces a real `--no-ff` commit on the source branch. The commit's message must include the Linear issue ID (for auto-linking) and a meaningful summary + body — not the default `Merge <branch> into <source>` boilerplate.
 
-**Re-emit Step 0's values.** Step 0 ran many tool calls ago; the values may have been summarized out of working memory. Re-derive them in a fresh Bash call so they appear in tool output immediately above the Agent dispatch:
+1. **Write the merge-commit message** to `<WT_ABS>/tmp/git-merge-msg-pl-13.md` (use the actual absolute worktree path from Step 0 and the lowercased issue ID) via the `Write` tool. The `Write` tool requires an absolute path; using the absolute form here also guarantees the file lands where `MSG_FILE` (computed in sub-step 2) expects it, regardless of cwd. Shape — first line is the subject (≤72 chars), one blank line, then a body that summarizes what was done:
 
-```bash
-SOURCE_BRANCH=$(git config --worktree --get start.source-branch 2>/dev/null || true)
-WORKTREE_BRANCH=$(git branch --show-current)
-WT_DIR=$(git rev-parse --show-toplevel)
-REPO_ROOT=$(cd "$(git rev-parse --git-common-dir)/.." && pwd)
-printf 'SOURCE_BRANCH=%s\nWORKTREE_BRANCH=%s\nWT_DIR=%s\nREPO_ROOT=%s\n' \
-  "$SOURCE_BRANCH" "$WORKTREE_BRANCH" "$WT_DIR" "$REPO_ROOT"
-```
+   ```text
+   PL-13: <short imperative summary of what shipped>
 
-Construct the Agent prompt by substituting the four values into the template below. Wrap each value in single quotes so paths/branches containing spaces or shell metacharacters survive as one positional argument:
+   <2–5 lines describing what was implemented, key design choices, and any
+   notable verification (e.g., "pnpm check green; 15/15 specs pass"). Mirror
+   Step 4's completion-comment content — but tighter, for git history.>
+
+   Merges kross/pl-13-<kebab> into <source-branch>.
+   ```
+
+2. **Run the merge in a single Bash tool call** — each Bash invocation is a fresh shell, so the re-derive, `cd`, and script call must share one shell (otherwise `$REPO_ROOT`/`$WT_DIR`/etc. are empty in the script-call shell and `finish-merge.sh` errors out):
+
+   ```bash
+   # Re-derive Step 0's values from the current worktree.
+   SOURCE_BRANCH=$(git config --worktree --get start.source-branch 2>/dev/null || true)
+   WORKTREE_BRANCH=$(git branch --show-current)
+   WT_DIR=$(git rev-parse --show-toplevel)
+   REPO_ROOT=$(cd "$(git rev-parse --git-common-dir)/.." && pwd)
+   MSG_FILE="$WT_DIR/tmp/git-merge-msg-pl-13.md"   # absolute path; survives cd
+   printf 'SOURCE_BRANCH=%s\nWORKTREE_BRANCH=%s\nWT_DIR=%s\nREPO_ROOT=%s\nMSG_FILE=%s\n' \
+     "$SOURCE_BRANCH" "$WORKTREE_BRANCH" "$WT_DIR" "$REPO_ROOT" "$MSG_FILE"
+
+   # cd out of the worktree to the main checkout (the script removes the worktree
+   # on success — cwd must not be inside it).
+   cd "$REPO_ROOT"
+
+   # Run the merge. Script handles preconditions, merge (--no-ff -F MSG_FILE),
+   # conflict-abort, and cleanup.
+   ~/.claude/scripts/finish-merge.sh "$WT_DIR" "$SOURCE_BRANCH" "$WORKTREE_BRANCH" "$MSG_FILE"
+   ```
+
+If the script returns 0, surface its output and present the closing message:
 
 ```text
-Agent({
-  subagent_type: "claude",
-  prompt: "
-    cd '<value of REPO_ROOT from Step 0>'
-    ~/.claude/scripts/finish-merge.sh '<value of WT_DIR>' '<value of SOURCE_BRANCH>' '<value of WORKTREE_BRANCH>'
-    Report back the script's stdout/stderr verbatim. The script exits 0 on
-    success, non-zero on any precondition failure or merge conflict (in which
-    case it has already restored the main checkout to a clean state and left
-    the worktree intact for manual resolution).
-  "
-})
+✓ <WORKTREE_BRANCH> merged into <SOURCE_BRANCH>. Worktree removed.
+This agent-view session is done — close it and dispatch a new session for the next issue.
 ```
 
-If the subagent reports a non-zero exit: surface the script's output to the user and stop. The script's conflict-abort path has already restored the main checkout; do not attempt any recovery from this session.
+Do not run further bash commands.
+
+If the script exits non-zero (precondition failure or merge conflict), surface its output verbatim and stop. The script's conflict-abort path has already restored the main checkout; the worktree is intact for manual resolution. Do not attempt automated recovery from this session.
 
 **If `$ACTION == "pr"`:**
 
@@ -243,6 +268,13 @@ The branch was pushed in Step 7 (the `no push` + `pr` combination was rejected i
 SOURCE_BRANCH=$(git config --worktree --get start.source-branch 2>/dev/null || true)
 WORKTREE_BRANCH=$(git branch --show-current)
 gh pr create --base "$SOURCE_BRANCH" --head "$WORKTREE_BRANCH" --fill
+```
+
+After the PR is created, present the closing message:
+
+```text
+✓ PR opened (base=<SOURCE_BRANCH>, head=<WORKTREE_BRANCH>).
+This agent-view session is done — review/merge the PR, then `git worktree remove` from the main checkout when you're done.
 ```
 
 Leave the worktree in place — the PR is the lifecycle boundary. After the PR merges, the user removes the worktree manually from the main repo checkout:

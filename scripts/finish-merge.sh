@@ -1,7 +1,13 @@
 #!/bin/bash
 # finish-merge.sh — Merge a /start wt worktree back to its source branch.
 #
-# Usage: finish-merge.sh <wt-dir> <source-branch> <worktree-branch>
+# Usage: finish-merge.sh <wt-dir> <source-branch> <worktree-branch> <message-file>
+#
+#   <message-file> is a markdown/text file whose contents become the merge
+#   commit message (first line = subject; subsequent lines = body, per git
+#   conventions). The caller (/finish Step 9) must include the Linear
+#   issue ID in the subject for Linear's auto-linking to fire. The file
+#   path is passed to `git merge --no-ff -F`.
 #
 # Must be run from the main repo checkout (cwd is the parent of .git's
 # common dir). NOT from inside <wt-dir> — this script removes that
@@ -21,14 +27,24 @@
 
 set -eo pipefail
 
-if [ $# -ne 3 ]; then
-  echo "Usage: $0 <wt-dir> <source-branch> <worktree-branch>" >&2
+if [ $# -ne 4 ]; then
+  echo "Usage: $0 <wt-dir> <source-branch> <worktree-branch> <message-file>" >&2
   exit 1
 fi
 
 wt_dir="$1"
 source_branch="$2"
 worktree_branch="$3"
+message_file="$4"
+
+if [ ! -f "$message_file" ]; then
+  echo "ERROR: merge-message file '$message_file' does not exist or is not a regular file." >&2
+  exit 1
+fi
+if [ ! -s "$message_file" ]; then
+  echo "ERROR: merge-message file '$message_file' is empty. The merge commit needs a subject (must include the issue ID for Linear auto-linking)." >&2
+  exit 1
+fi
 
 # Precondition 1: source branch exists locally.
 if ! git rev-parse --verify "$source_branch" >/dev/null 2>&1; then
@@ -84,7 +100,7 @@ if ! git checkout "$source_branch"; then
   exit 1
 fi
 
-if git merge --no-ff "$worktree_branch" -m "Merge $worktree_branch into $source_branch"; then
+if git merge --no-ff -F "$message_file" "$worktree_branch"; then
   # Gate branch delete on worktree removal. Reverse (deleted branch + stale
   # dir) is worse than dangling-dir + intact-branch.
   if git worktree remove "$wt_dir"; then
@@ -106,7 +122,7 @@ else
   echo "Worktree at $wt_dir is intact. To resolve manually:" >&2
   echo "  cd $(pwd)" >&2
   echo "  git checkout $source_branch" >&2
-  echo "  git merge --no-ff $worktree_branch" >&2
+  echo "  git merge --no-ff -F '$message_file' $worktree_branch" >&2
   echo "  # resolve conflicts, then:" >&2
   echo "  git commit" >&2
   echo "  git worktree remove $wt_dir" >&2
