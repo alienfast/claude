@@ -162,6 +162,33 @@ git -C "$wt_dir" config --worktree start.source-branch "$source_branch"
 # Compute absolute paths.
 wt_abs=$(cd "$wt_dir" && pwd)
 
+# Copy files listed in .worktreeinclude from the main checkout into the new
+# worktree. `git worktree add` only copies *tracked* files; anything gitignored
+# (typically .env.local and other dev secrets) is left behind. The user
+# maintains .worktreeinclude (one path per line, # comments allowed) to mark
+# which untracked files should be carried into every worktree.
+#
+# Skip on reuse — the existing worktree may have user-edited values that we
+# shouldn't clobber. Only runs when we just created (CREATED_WT=1).
+if [ "${CREATED_WT:-0}" = "1" ] && [ -f ".worktreeinclude" ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    # Strip leading/trailing whitespace; skip blanks and # comments.
+    entry=$(printf '%s' "$line" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
+    case "$entry" in
+      ''|\#*) continue ;;
+    esac
+    if [ ! -e "$entry" ]; then
+      echo "WARN: .worktreeinclude entry '$entry' not found in main checkout; skipping" >&2
+      continue
+    fi
+    # Preserve relative path inside the worktree.
+    dst="$wt_abs/$entry"
+    mkdir -p "$(dirname "$dst")"
+    cp -R "$entry" "$dst"
+    echo "Copied $entry → $dst" >&2
+  done < ".worktreeinclude"
+fi
+
 # Pre-fetch the digest into the worktree's tmp/ for the subagent's Step 1.
 mkdir -p "$wt_abs/tmp"
 digest_file="$wt_abs/tmp/linear-context-${issue_lower}.md"
