@@ -231,11 +231,17 @@ body_file=$(mktemp tmp/deferred-XXXXXX)
 # ...write body to "$body_file" via the Write tool...
 
 # 2. Create the issue and capture the new ID from stdout.
-new_id=$(~/.claude/scripts/linear-stdin.sh "$body_file" i create "<short title>" --team <team> -d - | grep -oE '[A-Z]+-[0-9]+' | head -1)
+#    --state Planned: deferred items have a known design intent and a documented
+#    location/rationale (sub-step 1's consolidated list). They should not need
+#    triage — they're triaged the moment we file them. Filing them into Triage
+#    instead would queue them for re-evaluation that's already been done.
+new_id=$(~/.claude/scripts/linear-stdin.sh "$body_file" i create "<short title>" --team <team> --state Planned -d - | grep -oE '[A-Z]+-[0-9]+' | head -1)
 
 # 3. Link the new issue as a sub-issue of the originating issue (skip when none was resolved in Step 1).
 linear i update "$new_id" --parent <ISSUE-ID>
 ```
+
+If `--state Planned` is rejected (the team uses different state names), fall back to the team's equivalent "ready-to-work, not-yet-prioritized" state — verify with `linear teams states <TEAM>`. Do NOT silently fall through to the default (most teams default to Triage, which defeats the purpose).
 
 Items the user explicitly declined to file in this prompt go to `Deferred dropped` — record them as a list for the verdict block. (Items that never reached this prompt because Step 6 terminated early in sub-step 4 are routed to `Open items` instead — see sub-step 4.)
 
