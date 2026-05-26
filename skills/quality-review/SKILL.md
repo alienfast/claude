@@ -280,7 +280,7 @@ Reply semantics:
 - `none` → file nothing; remaining items become `Deferred dropped` in the verdict block.
 - Numeric list → file the listed numbers verbatim.
 
-For each chosen item, create and link the issue. Use `linear-stdin.sh` to safely pass the description (which contains backticks, colons, and other shell-significant characters from file:line refs and rationale). Use `mktemp` for the body file so concurrent `/quality-review` runs in different sessions or worktrees do not race on a shared path. **macOS BSD `mktemp` does not replace `XXXXXX` if a suffix follows it**, so omit the extension on the template; Linear accepts the body without one. Ensure `tmp/` exists first:
+For each chosen item, create the issue with the parent link set atomically. Use `linear-stdin.sh` to safely pass the description (which contains backticks, colons, and other shell-significant characters from file:line refs and rationale). Use `mktemp` for the body file so concurrent `/quality-review` runs in different sessions or worktrees do not race on a shared path. **macOS BSD `mktemp` does not replace `XXXXXX` if a suffix follows it**, so omit the extension on the template; Linear accepts the body without one. Ensure `tmp/` exists first:
 
 ```bash
 mkdir -p tmp
@@ -289,18 +289,23 @@ mkdir -p tmp
 body_file=$(mktemp tmp/deferred-XXXXXX)
 # ...write body to "$body_file" via the Write tool...
 
-# 2. Create the issue and capture the new ID from stdout.
+# 2. Create the issue with --parent set at create time so the sub-issue link is
+#    atomic. A separate `linear i update --parent` follow-up is fragile — it can
+#    be skipped, silently fail, or have its <ISSUE-ID> placeholder mis-substituted,
+#    leaving the new issue orphaned (no "Sub-issues" entry under the parent).
+#    See standards/linear-workflow.md "Spawned Issues Must Link to Their Parent".
 #    --state Planned: deferred items have a known design intent and a documented
 #    location/rationale (sub-step 1's consolidated list). They should not need
 #    triage — they're triaged the moment we file them. Filing them into Triage
 #    instead would queue them for re-evaluation that's already been done.
-new_id=$(~/.claude/scripts/linear-stdin.sh "$body_file" i create "<short title>" --team <team> --state Planned -d - | grep -oE '[A-Z]+-[0-9]+' | head -1)
-
-# 3. Link the new issue as a sub-issue of the originating issue (skip when none was resolved in Step 1).
-linear i update "$new_id" --parent <ISSUE-ID>
+#    If no issue was resolved in Step 1, omit the `--parent` line entirely
+#    (do not invent a parent).
+new_id=$(~/.claude/scripts/linear-stdin.sh "$body_file" i create "<short title>" --team <team> --state Planned --parent <ISSUE-ID> -d - | grep -oE '[A-Z]+-[0-9]+' | head -1)
 ```
 
 If `--state Planned` is rejected (the team uses different state names), fall back to the team's equivalent "ready-to-work, not-yet-prioritized" state — verify with `linear teams states <TEAM>`. Do NOT silently fall through to the default (most teams default to Triage, which defeats the purpose).
+
+After creation, verify the parent link took (`linear i view "$new_id"` should show the parent). If it did not, surface the failure rather than proceeding — an orphaned deferred issue defeats the purpose of filing it.
 
 Items the user explicitly declined to file in this prompt go to `Deferred dropped` — record them as a list for the verdict block. (Items that never reached this prompt because Step 6 terminated early in sub-step 5 are routed to `Open items` instead — see sub-step 5.)
 
@@ -313,10 +318,12 @@ Verdict: passed-clean | passed-after-fixes | terminated-with-open-items
 Cycles: N (initial + N-1 re-reviews)
 Findings resolved: [list, or "none" if passed-clean]
 Deferred fixed in-session: [list, or "none"]
-Deferred filed as issues: [PL-XX, PL-YY, or "none"]
+Deferred filed as issues: [PL-XX, PL-YY (sub-issues of <PARENT>), or "none"]
 Deferred dropped: [list, or "none"]
 Open items: [list, or "none" — populated only on terminated-with-open-items; includes any deferred items not handled above]
 ```
+
+The `(sub-issues of <PARENT>)` suffix is required when issues are filed and a parent issue was resolved in Step 1 — it gives the user a one-glance audit that the parent link from sub-step 6 was set. Omit the suffix only when no parent issue was resolved (in which case the newly-filed issues are intentionally not sub-issues).
 
 When delegated from `/start`, this block becomes the "Adversarial review" section of the completion summary verbatim.
 

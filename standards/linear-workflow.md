@@ -48,3 +48,11 @@ When evaluating whether an issue's blockers are resolved (for triage, dependency
 ## Implication for Skills
 
 Any skill that checks whether blockers are resolved (triage, deps, next, cycle-plan) should treat "Ready For Release" identically to "Done" when determining if an issue is workable.
+
+## Spawned Issues Must Link to Their Parent
+
+Any Linear issue created as a follow-up from another issue's workflow (deferred items from `/quality-review`, sub-tasks from `/prd`, etc.) MUST be created with `--parent <originating-issue-id>` on the `linear i create` call itself.
+
+Do not split creation and linking into two CLI calls (`linear i create ...` then `linear i update <new> --parent <orig>`). The second call is easy to skip when filing several issues in a row, easy to silently fail (the new issue already exists, so the workflow looks successful), and easy to mis-substitute when `<ISSUE-ID>` is a literal placeholder. Any of those failure modes leaves the new issue orphaned in Linear's UI — no "Sub-issues" entry under the parent, no breadcrumb on the child.
+
+If the originating context has no issue ID, file the new issue without `--parent` — never invent a parent.
