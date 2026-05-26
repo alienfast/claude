@@ -5,7 +5,7 @@ description: Suggest the best next issue to work on. Considers current cycle, de
 
 # Next Issue
 
-Suggests the most logical next issue to work on by combining cycle planning, dependency analysis, and triage signals.
+Suggests the most logical next issue to work on by combining cycle planning, dependency analysis, and triage signals. All fetching, blocker verification, and tier ranking is delegated to [scripts/next-candidates.sh](../../scripts/next-candidates.sh) — this skill is just the entry point and result narration.
 
 ## When to Use
 
@@ -15,96 +15,58 @@ Suggests the most logical next issue to work on by combining cycle planning, dep
 
 ## Workflow
 
-### Step 1: Gather Context
+### Step 1: Determine completed-issue context
 
-Determine if there's a just-completed issue providing context (e.g., invoked from `/finish` with an issue ID, or a branch name that maps to one). If so, note it as `<COMPLETED-ID>`.
+Check whether there's a just-completed issue providing context. Two ways this can surface:
 
-Determine the team key from `.linear.yaml` or the issue prefix.
+- Invoked from `/finish` with the issue ID already in scope — capture it as `<COMPLETED-ID>`.
+- Current branch name matches a Linear issue (e.g. `kross/pl-260-foo`) AND that issue is in Done or Ready For Release — capture as `<COMPLETED-ID>`. Otherwise treat as standalone.
 
-**Run all commands as parallel Bash calls — one command per call, never chained with `&&` or `;`:**
+If neither applies, run in standalone mode.
 
-```bash
-# Parallel call 1: Current cycle
-linear i list --cycle current --team <TEAM> --format compact
-```
+### Step 2: Run the ranking script
 
-```bash
-# Parallel call 2: Team dependency graph
-linear deps --team <TEAM>
-```
+Run from inside the project directory so the script can read `.linear.yaml` for the team key. Use the appropriate form:
 
 ```bash
-# Parallel call 3: Issues assigned to me
-linear i list --team <TEAM> --format compact
+# Standalone
+~/.claude/scripts/next-candidates.sh
+
+# Post-finish (transitively unblock from <COMPLETED-ID>)
+~/.claude/scripts/next-candidates.sh --completed <COMPLETED-ID>
+
+# Show more than the default 3
+~/.claude/scripts/next-candidates.sh --limit 5
 ```
 
-**If a just-completed issue exists, add this as a fourth parallel call:**
+The script emits a markdown-formatted ranked list with tier, parent chain, and reasoning per candidate. It exits 0 even when no workable candidates exist (it prints `_No workable issues in team <KEY>._`).
 
-```bash
-# Parallel call 4: What the completed issue was blocking
-linear search --blocked-by <COMPLETED-ID>
-```
+### Step 3: Present the result
 
-### Step 2: Identify Candidates
+Read the script's stdout and narrate it naturally:
 
-From the cycle list and dependency graph, build a candidate set of issues that are **workable** — meaning:
+- Lead with the top candidate: identifier, title, why it's the recommendation (the tier reason already encodes this).
+- If there's a runner-up that's qualitatively different from the top pick (different tier, different parent epic), mention it as "also consider."
+- If the script reported no workable issues, say so plainly — do not invent a suggestion.
 
-- State is Todo, Planned, Backlog, or Triage (not Done, Ready For Release, In Progress, or Cancelled)
-- All blockers are resolved (in Done/Ready For Release state)
-- Not assigned to someone else who is actively working on it
-
-If a just-completed issue exists, also identify **transitively unblocked** issues — not just direct dependents, but issues further down the dependency chain whose last remaining blocker was the completed issue (or was itself unblocked by it).
-
-**Verify blockers on top candidates** — the dependency graph from Step 1 shows relationships, but may not show all blockers or their current states. Before presenting any suggestion, verify its blockers are actually resolved:
-
-```bash
-# Run for each top candidate (parallel calls, one per candidate)
-linear i blocked-by <CANDIDATE-ID>
-```
-
-If any blocker is not in Done or Ready For Release, the candidate is **not workable** — remove it from the candidate set.
-
-### Step 3: Rank Candidates
-
-Ranking uses two key signals: **parent/epic status** and **assignment to you**.
-
-**Parent status weight** — when a candidate has a parent (or grandparent) issue, that ancestor's state determines urgency:
-
-- Parent **In Progress** → highest weight (active epic, finish it first)
-- Parent **Planned** → second highest (committed to, up next)
-- Parent **Backlog** → third (accepted work, not yet scheduled)
-- Parent **Triage** → lowest weight (but not zero — Triage does not mean unimportant, just not yet categorized)
-- No parent → neutral (ranked on its own merits)
-
-Climb the full parent chain — if an issue's parent is a sub-issue of an In Progress epic, it inherits that weight.
-
-**Apply this priority order:**
-
-1. **Already assigned to you + unblocked** — Issues assigned to the current user with no remaining blockers. You've already committed to these — finish what you started. Rank by parent status weight, then priority.
-2. **Current cycle + newly unblocked** — Issues in the active cycle that were blocked by the just-completed issue (directly or transitively). Rank by parent status weight, then priority.
-3. **Current cycle + ready** — Other cycle issues with no remaining blockers. Rank by parent status weight, then priority.
-4. **Newly unblocked + highest priority** — Issues directly unblocked by the completed issue, ranked by parent status weight, then priority.
-5. **Sibling under same parent** — If the completed issue has a parent, look for sibling issues that are workable. Prefer the next one in dependency order within the parent.
-6. **Highest priority workable** — Any remaining workable issue, ranked by parent status weight, then priority, then estimate.
-
-**Tiebreakers within a tier:** parent status weight > priority (Urgent > High > Normal > Low) > in current cycle > fewer remaining blockers > lower estimate (quick wins maintain momentum).
-
-**Note:** If there is no just-completed issue (standalone mode), tiers 2, 4, and 5 don't apply — start at tier 1 (assigned to you), then tier 3 (current cycle, ready), then tier 6.
-
-### Step 4: Present Suggestion
-
-> **Suggested next issue:** PL-17 — "Payment webhook handler"
-> Priority: High | Estimate: 3 points | State: Planned (Cycle 24)
-> **Why**: In current cycle, was transitively blocked by PL-14 (now unblocked) — highest-signal next pick.
-
-If a runner-up exists in a different tier, mention it briefly:
-
-> **Also consider:** PL-13 — "Auth proxy" (High, 2 points) — sibling under same parent, unblocked, not yet in cycle.
-
-If no clear next issue exists, say so — don't force a suggestion.
+The script's tier reasons (e.g. "in current cycle + newly unblocked", "sibling under completed parent") already explain the *why* — surface them rather than rephrasing.
 
 ## Error Handling
 
-- If no current cycle exists, skip cycle-based tiers and work from the full backlog
-- If `linear` CLI is not authenticated, prompt: `linear auth login`
-- If the team has no workable issues, say so clearly
+- Exit 1 — arg error. Read stderr and fix the invocation.
+- Exit 2 — Linear/network failure. Surface the error message verbatim and stop.
+- Exit 3 — missing dependency (`linear`, `jq`). Tell the user to install it.
+- If `linear auth status` shows logged out, prompt: `linear auth login`.
+
+## Notes on the Algorithm
+
+The script applies the same six-tier scheme the previous prose version of this skill described — see [scripts/next-candidates.sh](../../scripts/next-candidates.sh) for the exact logic. The high-level priority order:
+
+1. Already assigned to you (finish what you started)
+2. In current cycle + newly unblocked by `<COMPLETED-ID>`
+3. In current cycle, ready
+4. Newly unblocked anywhere
+5. Sibling under the same parent as `<COMPLETED-ID>`
+6. Highest-priority workable fallback
+
+Within each tier: parent-epic state (In Progress > Planned > Backlog > Triage) > priority > cycle membership > estimate.
