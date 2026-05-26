@@ -78,6 +78,12 @@ if [ -z "$source_branch" ] && [ -n "$action" ]; then
   exit 2
 fi
 
+# Default to merge when in a worktree and no explicit action was requested.
+# PR mode requires explicit `/finish pr`.
+if [ -z "$action" ] && [ -n "$source_branch" ]; then
+  action="merge"
+fi
+
 printf 'ACTION=%s\n' "$action"
 printf 'SOURCE_BRANCH=%s\n' "$source_branch"
 printf 'WORKTREE_BRANCH=%s\n' "$worktree_branch"

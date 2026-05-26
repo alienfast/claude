@@ -11,7 +11,7 @@ Automates the post-completion workflow for a Linear issue using the `linear` CLI
 
 - Issue identifier (e.g., `PL-12`) — optional, auto-detected from branch/commit
 - `no push` / `don't push` / `skip push` — optional, skips the git push step (commit still happens)
-- `merge` — only meaningful inside a `/start wt` worktree. Merge the worktree branch back into its recorded source branch, then remove the worktree.
+- `merge` — only meaningful inside a `/start wt` worktree. **Default when in a worktree.** Merge the worktree branch back into its recorded source branch, then remove the worktree.
 - `pr` — only meaningful inside a `/start wt` worktree. Open a pull request with `base = source branch` and leave the worktree in place.
 
 Examples: `/finish`, `/finish PL-12`, `/finish no push`, `/finish PL-12 no push`, `/finish merge`, `/finish pr PL-12`
@@ -40,14 +40,7 @@ The script probes worktree state, validates incompatible argument combinations, 
 - 1 — incompatible args (e.g., `merge` + `pr`, or `pr` + `no push`). Surface the error and stop.
 - 2 — `merge`/`pr` requested outside a `/start wt` worktree. Surface and stop.
 
-**Resolving `ACTION` when ambiguous.** If `SOURCE_BRANCH` is set (we're in a worktree) but `ACTION` is empty (no `merge`/`pr` arg supplied), prompt via `AskUserQuestion`:
-
-- Question: `Finalize ${WORKTREE_BRANCH}?`
-- Options:
-  - `merge` (Recommended) — Merge into `${SOURCE_BRANCH}` and remove the worktree.
-  - `pr` — Open a pull request with base=`${SOURCE_BRANCH}`; keep the worktree.
-
-Carry the resolved `ACTION` forward.
+When `SOURCE_BRANCH` is set (we're in a worktree), the script defaults `ACTION` to `merge`. `/finish pr` is the only way to opt into the PR flow.
 
 If both `SOURCE_BRANCH` and `ACTION` are empty, this is the standard `/finish` flow.
 
@@ -148,7 +141,9 @@ If it **passes**: proceed to commit.
 ~/.claude/scripts/finish-commit.sh PL-13 tmp/finish-commit-pl-13.md [--no-push]
 ```
 
-Pass `--no-push` if the user requested `no push` / `don't push` / `skip push`. The script handles all three states: pre-staged changes (commit + push), already-committed-but-ahead (push only), already-synced (no-op). If staging is missing for an unstaged-only state, it errors with exit 2 — go back and `git add` the files.
+Pass `--no-push` if the user requested `no push` / `don't push` / `skip push`. **Also pass `--no-push` whenever `ACTION=merge`** — the temp branch is about to be merged and deleted locally; pushing it pollutes origin with abandoned branches. The merge commit reaches origin later via the source branch.
+
+The script handles all three states: pre-staged changes (commit + push), already-committed-but-ahead (push only), already-synced (no-op). If staging is missing for an unstaged-only state, it errors with exit 2 — go back and `git add` the files.
 
 ### Step 8: Mark Issue as Ready For Release
 
@@ -191,16 +186,30 @@ The merge produces a real `--no-ff` commit on the source branch. The commit mess
    ~/.claude/scripts/finish-merge.sh '<WT_DIR>' '<SOURCE_BRANCH>' '<WORKTREE_BRANCH>' '<WT_DIR>/tmp/git-merge-msg-pl-13.md'
    ```
 
-If the script returns 0, surface its output and present the closing message:
+**Exit codes:**
 
-```text
-✓ <WORKTREE_BRANCH> merged into <SOURCE_BRANCH>. Worktree removed.
-This agent-view session is done — close it and dispatch a new session for the next issue.
-```
+- **0 (success)** — surface the script's output and present the closing message:
 
-Do not run further bash commands.
+  ```text
+  ✓ <WORKTREE_BRANCH> merged into <SOURCE_BRANCH>. Worktree removed.
+  This agent-view session is done — close it and dispatch a new session for the next issue.
+  ```
 
-If the script exits non-zero (precondition failure or merge conflict), surface its output verbatim and stop. The script's conflict-abort path has already restored the main checkout; the worktree is intact for manual resolution. Do not attempt automated recovery from this session.
+  Do not run further bash commands.
+
+- **1 (precondition failure)** — surface the script's output and stop. Don't attempt recovery; precondition errors are setup issues (dirty checkout, missing branch, mid-merge state) that the user needs to resolve.
+
+- **2 (merge conflict, state preserved)** — resolve inline. The main checkout is on `<SOURCE_BRANCH>` with an in-progress merge; conflicted files are listed on the script's stderr.
+
+  1. For each conflicted file: read it from `<REPO_ROOT>/<path>`, understand both sides of the conflict, apply the resolution. When one side clearly subsumes the other (e.g., the worktree branch removed code the source side modified), take the subsuming side. Ask the user only when the right answer is genuinely ambiguous.
+  2. `git -C '<REPO_ROOT>' add <resolved-files>`
+  3. Run `pnpm check` from `<REPO_ROOT>` — must be green before committing.
+  4. `git -C '<REPO_ROOT>' commit -F '<WT_DIR>/tmp/git-merge-msg-<issue>.md'` — reuse the prepared merge-commit message.
+  5. `git -C '<REPO_ROOT>' worktree remove '<WT_DIR>'`
+  6. `git -C '<REPO_ROOT>' branch -d '<WORKTREE_BRANCH>'`
+  7. Present the closing message above.
+
+  **Known limitation:** if this orchestrator is running in an isolated background session (bgIsolation guard active), edits to `<REPO_ROOT>` will be blocked. In that case, surface the conflict files and stop — the user will resolve from a foreground session.
 
 **If `ACTION == "pr"`:**
 

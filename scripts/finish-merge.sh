@@ -21,9 +21,10 @@
 #   5. main checkout (cwd) is clean
 #
 # On success: removes the worktree directory and (if removal succeeded) the
-# worktree branch. On merge conflict: runs `git merge --abort` so the main
-# checkout returns to a clean state, leaves the worktree intact, and prints
-# concrete manual-resolution steps before exiting non-zero.
+# worktree branch. On merge conflict: leaves the merge in progress (does NOT
+# auto-abort) and exits 2 with the conflicted file list on stderr. The
+# orchestrator resolves inline in the main checkout. Exit 1 is reserved for
+# precondition failures, where the merge was never started.
 
 set -eo pipefail
 
@@ -114,18 +115,11 @@ if git merge --no-ff -F "$message_file" "$worktree_branch"; then
   fi
   git --no-pager log --oneline -1
 else
-  # Conflict path: abort so the main checkout returns to a clean state.
-  # Worktree stays intact for manual resolution.
-  git merge --abort
+  # Conflict path: leave the merge in progress so the orchestrator can
+  # resolve inline. Exit 2 to distinguish from precondition failures (exit 1).
   echo "CONFLICT: merge of $worktree_branch into $source_branch produced conflicts." >&2
-  echo "Main checkout has been aborted to a clean state." >&2
-  echo "Worktree at $wt_dir is intact. To resolve manually:" >&2
-  echo "  cd $(pwd)" >&2
-  echo "  git checkout $source_branch" >&2
-  echo "  git merge --no-ff -F '$message_file' $worktree_branch" >&2
-  echo "  # resolve conflicts, then:" >&2
-  echo "  git commit" >&2
-  echo "  git worktree remove $wt_dir" >&2
-  echo "  git branch -d $worktree_branch" >&2
-  exit 1
+  echo "Merge state is preserved in the main checkout for inline resolution." >&2
+  echo "Conflicted files:" >&2
+  git diff --name-only --diff-filter=U >&2
+  exit 2
 fi
