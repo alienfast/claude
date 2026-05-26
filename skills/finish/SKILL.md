@@ -52,6 +52,22 @@ If both `SOURCE_BRANCH` and `ACTION` are empty, this is the standard `/finish` f
 
 The script tries `--input` → current branch → latest commit subject, in that order. Pass `--input` only when the user typed an explicit ID (e.g., `/finish PL-12`). On exit 1, ask the user for the identifier explicitly.
 
+### Step 1.5: Read Quality-Review Verdict + Sub-issues
+
+```bash
+~/.claude/scripts/finish-read-verdict.sh PL-12
+```
+
+Emits four `KEY=value` lines: `VERDICT_FILE`, `VERDICT`, `CYCLES`, `SUB_ISSUES`. **Read those values and carry them forward** — Step 4 embeds them in the completion comment, Step 8 gates the `Ready For Release` transition on `VERDICT`.
+
+`VERDICT` is one of:
+
+- `passed-clean` / `passed-after-fixes` — `/quality-review` converged cleanly. Step 8 proceeds without prompting.
+- `terminated-with-open-items` / `escalated-to-architect` — non-passing. Step 8 hard-refuses by default (override prompt; see Step 8).
+- `none-found` — no verdict file exists at either the current worktree's `tmp/` or the main checkout's `tmp/`. `/quality-review` was either never run for this issue or was run from a different repo. Step 8 warns and proceeds.
+
+`SUB_ISSUES` is the parent's `children` array from Linear (comma-separated `PL-XX` identifiers). Step 4 lists these in the completion comment so deferred work filed during `/quality-review` is discoverable from the issue.
+
 ### Step 2: Get Issue Details
 
 ```bash
@@ -90,12 +106,17 @@ Branch: `<branch>` | Commit: `<short-sha>`
 ### Verification
 - What was verified (type checks, tests, dev server, etc.)
 
+### Adversarial review
+- Verdict: <VERDICT> (cycles: <CYCLES>)
+- Sub-issues filed: <comma-list of SUB_ISSUES, or "none">
+- Open items: <from verdict file, only when VERDICT=terminated-with-open-items or escalated-to-architect>
+
 ### Notes
 - Any unchecked items with explanation of why
 - Any follow-up work identified
 ```
 
-Omit sections that have no content (e.g., skip "Notes" if everything was completed).
+Omit sections that have no content (e.g., skip "Notes" if everything was completed). Omit the **Adversarial review** section entirely when `VERDICT=none-found` (no `/quality-review` ran). When the verdict is passing, drop the `Open items` bullet but keep the other two.
 
 ### Step 5: Post Description Update + Completion Comment
 
