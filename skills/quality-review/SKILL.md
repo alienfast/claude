@@ -14,6 +14,8 @@ Run an adversarial review of the current implementation, then triage and fix fin
 
 Examples: `/quality-review`, `/quality-review PL-13`, `/quality-review src/foo.ts src/bar.ts`, `/quality-review PL-13 packages/api/`
 
+Reject any bare argument that is neither an issue-ID (`[A-Z]+-[0-9]+`) nor a path that exists on disk. In particular, the tokens `merge`, `pr`, `no push`, `don't push`, `skip push` are `/finish` arguments — if seen here, error with: `Argument 'X' is a /finish argument, not a /quality-review argument` rather than silently treating it as a file path that doesn't exist (which would just produce an empty scope and warn about nothing to review).
+
 ## Invariant
 
 **Working Application Contract.** This skill assumes the application was working before the changes under review. `pnpm check` is the gate that proves it still is. A check failure after our changes is never "pre-existing", never "out of scope" — it is our breakage and must be fixed before review proceeds. Turborepo caching makes repeated runs cheap.
