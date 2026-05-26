@@ -205,15 +205,17 @@ In all other cases (no worktree, or `ACTION == "merge"`), gate the transition on
     On `re-run`: stop with `Re-run /quality-review <ISSUE-ID> to produce a fresh verdict for current HEAD, then retry /finish.`
     On `abort`: stop with no state change.
 
-- **`terminated-with-open-items` / `escalated-to-architect`** — **refuse by default.** The implementation has known unresolved findings per `/quality-review`. Before composing the prompt, `Read` the file at `VERDICT_FILE` and extract the `Open items:` line (and any continuation lines, if `Open items:` is followed by an indented bullet list). Substitute that text into the prompt below — never emit the literal placeholder `<open items list from VERDICT_FILE>`. Then prompt the user (single message, wait for reply):
+- **`terminated-with-open-items` / `escalated-to-architect`** — **refuse by default.** The implementation has known unresolved findings per `/quality-review`. Before composing the prompt, `Read` the file at `VERDICT_FILE` and extract the `Open items:` line (and any continuation lines, if `Open items:` is followed by an indented bullet list). Substitute that text into the prompt below — never emit the literal placeholder `<open items list from VERDICT_FILE>`. **If `VERDICT_STALE=1`, prepend a staleness note to the prompt** so the user knows the open-items list may not reflect current code (recent commits may have resolved some). Then prompt the user (single message, wait for reply):
 
   > Quality-review verdict is `<VERDICT>` with open items:
   >
   > `<text extracted from VERDICT_FILE's Open items: section>`
   >
+  > [If `VERDICT_STALE=1`, include: `Note: the verdict is stale — <VERDICT_STALE_REASON>. The open items above may have already been resolved by the more recent commits.`]
+  >
   > Mark `Ready For Release` anyway? Reply `yes` to override, `re-run` to invoke `/quality-review` and try to converge, or `abort` to stop here.
 
-  On `yes`: proceed with the state update AND post an additional Linear comment recording the override — body: `Override: marked Ready For Release despite verdict <VERDICT>. Open items at override time: <list>. User-acknowledged.` Use `~/.claude/scripts/linear-post.sh` to post.
+  On `yes`: proceed with the state update AND post an additional Linear comment recording the override — body: `Override: marked Ready For Release despite verdict <VERDICT>. Open items at override time: <list>. User-acknowledged.` (If `VERDICT_STALE=1`, append: ` Verdict was stale; user explicitly accepted the risk of overriding without a fresh /quality-review.`) Use `~/.claude/scripts/linear-post.sh` to post.
   On `re-run`: stop `/finish` with the message `Re-run /quality-review <ISSUE-ID> to address open items, then retry /finish.` Do not change state.
   On `abort`: stop with no state change and no further output.
 

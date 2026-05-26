@@ -131,6 +131,14 @@ fi
 # from sailing through on a verdict produced before the latest changes.
 stale=0
 stale_reason=""
+# fmt_epoch <epoch> → ISO-8601 local time; falls back to raw epoch if both
+# date dialects fail (vanishingly rare; macOS BSD `date -r` works, GNU
+# `date -d @N` works).
+fmt_epoch() {
+  date -r "$1" "+%Y-%m-%dT%H:%M:%S%z" 2>/dev/null \
+    || date -d "@$1" "+%Y-%m-%dT%H:%M:%S%z" 2>/dev/null \
+    || printf 'epoch %s' "$1"
+}
 if [ -n "$verdict_file" ]; then
   # mtime in epoch seconds (BSD vs GNU stat differ; try BSD first since
   # macOS is the primary platform, then fall back to GNU).
@@ -138,7 +146,7 @@ if [ -n "$verdict_file" ]; then
   head_ctime=$(git log -1 --format=%ct HEAD 2>/dev/null || echo 0)
   if [ "$vmtime" -gt 0 ] && [ "$head_ctime" -gt 0 ] && [ "$vmtime" -lt "$head_ctime" ]; then
     stale=1
-    stale_reason="verdict file mtime ($vmtime) predates HEAD's commit time ($head_ctime) — additional commits landed after /quality-review ran"
+    stale_reason="verdict file last written $(fmt_epoch "$vmtime"); HEAD commit landed $(fmt_epoch "$head_ctime") — additional commits since /quality-review ran"
   fi
 fi
 
