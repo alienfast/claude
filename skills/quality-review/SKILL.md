@@ -176,7 +176,7 @@ Runs once, only after the fix loop terminates with `passed-clean` or `passed-aft
 
 **Substitution token.** `<ISSUE-ID>` in the templates below means the issue ID resolved in Step 1. If no issue was resolved, replace `for <ISSUE-ID>` with `for the current change set` and skip the dependency-link command in sub-step 6.
 
-**Malformed user replies.** If the user replies to any prompt below with input you cannot parse (e.g., `1-3`, `the first three`, `sure`), re-prompt once with the exact accepted syntax — including the `suggested` shortcut — and a literal example. After a second malformed reply, fall back to a *safe default*: for sub-step 4, default to `none` (do not start unrequested work); for sub-step 6, default to `all` (filing extra Linear issues is recoverable, silently dropping findings is not). Note: `suggested` is an accepted input, never a fallback.
+**Malformed user replies.** If the user replies to any prompt below with input you cannot parse (e.g., `1-3`, `the first three`, `sure`), re-prompt once with the exact accepted syntax — including the `suggested` shortcut — and a literal example. After a second malformed reply, fall back to a *safe default*: for sub-step 4, default to `none` (do not start unrequested work); for sub-step 6, default to `all` (filing extra Linear issues is recoverable, silently dropping findings is not). Note: `suggested` is an accepted input, never a fallback. On re-prompt at sub-step 6, re-render the full template; do not abbreviate on retry.
 
 **Verdict downgrade.** Step 6 can transition the run state from `passed-after-fixes` back to `terminated-with-open-items` (see sub-step 5 regression-cap path). When that happens, the new verdict overrides the verdict assigned at Step 4.
 
@@ -250,7 +250,26 @@ Reply semantics:
   - **Deferred dropped:** `none` (this field is reserved for items the user explicitly declined to fix and declined to file in sub-step 6).
   - Skip sub-step 6.
 
-**6. Offer Linear issues for unfixed items.** Present the remaining unfixed items as a single numbered list, preserving the original group labels so the recommendation stays visible, and ask:
+**6. Offer Linear issues for unfixed items.** Render the remaining unfixed items using the template below, then ask the question that follows. The render is REQUIRED regardless of prompt mechanism (markdown body, AskUserQuestion description, etc.) — do not collapse to a single sentence; assume the user is context-switching across parallel sessions and cannot scroll back to sub-step 3. Preserve original sub-step 3 numbering (items already fixed in sub-step 5 become gaps, e.g., 1, 3, 4 if item 2 was fixed). Omit a sub-group header entirely if empty; do not print "(none)".
+
+```text
+Quality review verdict: <passed-clean | passed-after-fixes>  (cycles: N)
+Deferred items still unfixed after sub-step 5:
+
+Fixed in-session (for context, not actionable here):
+  2. [Finding] — [file:line] — [tag]
+
+Suggested defer as issue (recommended to file):
+  3. [Finding] — [file:line] — [tag] — [rationale]
+
+Suggested fix now but skipped (filing as issue is unusual but allowed):
+  1. [Finding] — [file:line] — [tag] — [rationale]
+
+New Nice-to-Have findings from sub-step 5 re-review (appended, no group label):
+  5. [Finding] — [file:line] — [tag] — [rationale]
+```
+
+Every actionable item MUST include: finding text (verbatim from reviewer, not paraphrased), file:line, tag, and rationale. If the reviewer emitted no file:line, render `file:line: unknown` rather than omitting the field. Then ask:
 
 > For which of the unfixed items should I create Linear issues? Reply with comma-separated numbers (e.g., `1, 2`), `suggested` to file the defer-as-issue group, `all`, or `none`.
 

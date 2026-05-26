@@ -327,6 +327,8 @@ When implementation and review are complete, present a summary to the user that 
 5. **Checks**: Confirm `pnpm check` passes
 6. **Next steps**: Suggest running `/finish` to commit, push, and mark Ready For Release
 
+**Ordering — Next steps MUST be the final line.** The "Next steps" line is the only actionable item in this summary; the user scans bottom-up when running parallel sessions. Do not emit a separate end-of-turn `result:` summary, a one-line recap, or any trailing prose after "Next steps:". The Step 10 block IS your end-of-turn summary — nothing follows it. (The harness may append its own `※ recap:` line, which you cannot suppress; the goal is that no LLM-authored text comes between "Next steps" and that harness line.)
+
 ## Error Handling
 
 - If the issue is already In Progress assigned to someone else, warn the user and ask whether to reassign
