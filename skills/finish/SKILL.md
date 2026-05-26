@@ -64,15 +64,18 @@ The script tries `--input` → current branch → latest commit subject, in that
 ~/.claude/scripts/finish-read-verdict.sh PL-12
 ```
 
-Emits four `KEY=value` lines: `VERDICT_FILE`, `VERDICT`, `CYCLES`, `SUB_ISSUES`. **Read those values and carry them forward** — Step 4 embeds them in the completion comment, Step 8 gates the `Ready For Release` transition on `VERDICT`.
+Emits five `KEY=value` lines: `VERDICT_FILE`, `VERDICT`, `CYCLES`, `SUB_ISSUES`, `SUB_ISSUES_ERROR`. **Read those values and carry them forward** — Step 4 embeds them in the completion comment, Step 8 gates the `Ready For Release` transition on `VERDICT`.
 
 `VERDICT` is one of:
 
 - `passed-clean` / `passed-after-fixes` — `/quality-review` converged cleanly. Step 8 proceeds without prompting.
 - `terminated-with-open-items` / `escalated-to-architect` — non-passing. Step 8 hard-refuses by default (override prompt; see Step 8).
+- `malformed` — verdict file exists but cannot be parsed (no `Verdict:` line, the line contains the pipe-separated schema example, or the value is not one of the four recognized enums). Step 8 hard-refuses; the user clearly ran `/quality-review` but the handoff is broken, so silently passing the gate would defeat the safety check.
 - `none-found` — no verdict file exists at either the current worktree's `tmp/` or the main checkout's `tmp/`. `/quality-review` was either never run for this issue or was run from a different repo. Step 8 warns and proceeds.
 
-`SUB_ISSUES` is the parent's `children` array from Linear (comma-separated `PL-XX` identifiers). Step 4 lists these in the completion comment so deferred work filed during `/quality-review` is discoverable from the issue.
+`SUB_ISSUES` is the parent issue's **current `children` array from Linear** — i.e., every sub-issue that exists under this parent right now, not necessarily ones filed by this `/quality-review` run. Step 4 surfaces this list as context (labeled accordingly), not as a "filed this run" claim.
+
+`SUB_ISSUES_ERROR` is populated only if `linear i get` failed (CLI unauthenticated, missing issue, network blip). Step 1.5 does NOT abort on this — `linear auth login` is offered in Step 2's error handling if needed, and the rest of `/finish` can proceed without sub-issue context. Surface the warning text in chat once when populated.
 
 ### Step 2: Get Issue Details
 
@@ -114,8 +117,8 @@ Branch: `<branch>`
 
 ### Adversarial review
 - Verdict: <VERDICT> (cycles: <CYCLES>)
-- Sub-issues filed: <comma-list of SUB_ISSUES, or "none">
-- Open items: <from verdict file, only when VERDICT=terminated-with-open-items or escalated-to-architect>
+- Sub-issues (current children of this issue): <comma-list of SUB_ISSUES, or "none">
+- Open items: <from verdict file, only when VERDICT=terminated-with-open-items, escalated-to-architect, or malformed>
 
 ### Notes
 - Any unchecked items with explanation of why
@@ -184,11 +187,11 @@ In all other cases (no worktree, or `ACTION == "merge"`), gate the transition on
   linear issues update PL-12 --state "Ready For Release"
   ```
 
-- **`terminated-with-open-items` / `escalated-to-architect`** — **refuse by default.** The implementation has known unresolved findings per `/quality-review`. Prompt the user explicitly (single message, then wait for reply):
+- **`terminated-with-open-items` / `escalated-to-architect`** — **refuse by default.** The implementation has known unresolved findings per `/quality-review`. Before composing the prompt, `Read` the file at `VERDICT_FILE` and extract the `Open items:` line (and any continuation lines, if `Open items:` is followed by an indented bullet list). Substitute that text into the prompt below — never emit the literal placeholder `<open items list from VERDICT_FILE>`. Then prompt the user (single message, wait for reply):
 
   > Quality-review verdict is `<VERDICT>` with open items:
   >
-  > `<open items list from VERDICT_FILE>`
+  > `<text extracted from VERDICT_FILE's Open items: section>`
   >
   > Mark `Ready For Release` anyway? Reply `yes` to override, `re-run` to invoke `/quality-review` and try to converge, or `abort` to stop here.
 
@@ -196,7 +199,17 @@ In all other cases (no worktree, or `ACTION == "merge"`), gate the transition on
   On `re-run`: stop `/finish` with the message `Re-run /quality-review <ISSUE-ID> to address open items, then retry /finish.` Do not change state.
   On `abort`: stop with no state change and no further output.
 
+- **`malformed`** — verdict file exists at `VERDICT_FILE` but cannot be parsed (no `Verdict:` line, or value is the pipe-separated schema example, or value is not one of the four recognized enums). **Refuse with the same prompt as the non-passing path above**, but with this preamble instead of the open-items list:
+
+  > Quality-review verdict file exists at `<VERDICT_FILE>` but is malformed (no recognized verdict value). The user clearly ran /quality-review, but the handoff is broken — silently marking Ready For Release would defeat the safety check.
+  >
+  > Mark `Ready For Release` anyway? Reply `yes` to override (consider inspecting the file first), `re-run` to invoke `/quality-review` and produce a fresh artifact, or `abort` to stop here.
+
+  Same response handling as the non-passing path: `yes` posts an override comment (body: `Override: marked Ready For Release despite malformed /quality-review verdict file at <VERDICT_FILE>. User-acknowledged.`); `re-run` stops with the re-run suggestion; `abort` stops.
+
 - **`none-found`** — no verdict file located. Warn once: `No /quality-review artifact found for this issue. Proceeding without gate. Consider running /quality-review before /finish next time.` Then proceed with the state update. (Backward compatibility for issues finished before this gate existed.)
+
+- **Any other value** (defense in depth — shouldn't happen since the script normalizes everything else to `malformed`) → treat as `malformed`. Do NOT proceed silently.
 
 ### Step 9: Worktree Finalization (only when `SOURCE_BRANCH` is set)
 

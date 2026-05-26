@@ -327,17 +327,31 @@ Items the user explicitly declined to file in this prompt go to `Deferred droppe
 
 ## Output
 
-When the skill returns to its caller (or to the user, when standalone), present a structured verdict block:
+When the skill returns to its caller (or to the user, when standalone), present a structured verdict block. The schema is:
 
 ```text
-Verdict: passed-clean | passed-after-fixes | terminated-with-open-items | escalated-to-architect
+Verdict: <one of: passed-clean | passed-after-fixes | terminated-with-open-items | escalated-to-architect>
 Cycles: N (initial + N-1 re-reviews)
 Findings resolved: [list, or "none" if passed-clean]
 Deferred fixed in-session: [list, or "none"]
 Deferred filed as issues: [PL-XX, PL-YY (sub-issues of <PARENT>), or "none"]
 Deferred dropped: [list, or "none"]
-Open items: [list, or "none" — populated only on terminated-with-open-items; includes any deferred items not handled above]
+Open items: [list, or "none" — populated only on terminated-with-open-items or escalated-to-architect; includes any deferred items not handled above]
 ```
+
+**Substitute resolved values before rendering — never emit the schema verbatim.** The `Verdict:` line MUST contain exactly one of the four enum values, with no `|` separators and no remaining angle-bracket placeholders. A concrete passing example:
+
+```text
+Verdict: passed-after-fixes
+Cycles: 3 (initial + 2 re-reviews)
+Findings resolved: 2 (CRIT: null-pointer in handler; HIGH: race in retry loop)
+Deferred fixed in-session: 1 (dead-code in spec_helper.rb)
+Deferred filed as issues: PL-299, PL-300 (sub-issues of PL-190)
+Deferred dropped: none
+Open items: none
+```
+
+The persisted file (see "Persist the verdict" below) is parsed by `finish-read-verdict.sh`, which extracts the first whitespace-separated token after `Verdict:`. Writing the pipe-separated schema verbatim would silently produce `Verdict=passed-clean` downstream — the most permissive value — and bypass `/finish` Step 8's gate. The file MUST contain resolved values only.
 
 The `(sub-issues of <PARENT>)` suffix is required when issues are filed and a parent issue was resolved in Step 1 — it gives the user a one-glance audit that the parent link from sub-step 6 was set. Omit the suffix only when no parent issue was resolved (in which case the newly-filed issues are intentionally not sub-issues).
 
