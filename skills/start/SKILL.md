@@ -328,8 +328,11 @@ When implementation and review are complete, present a summary to the user that 
    - Deferred items filed as Linear issues (with issue IDs)
    - Deferred items dropped (user declined to fix and declined to file)
    - Open items (only on `terminated-with-open-items`; includes any deferred items not handled above)
-5. **Checks**: Confirm `pnpm check` passes
-6. **Next steps**: Suggest running `/finish` to commit, push, and mark Ready For Release
+5. **Checks**: Confirm `pnpm check` passes — OR, if `/quality-review` left it red via the sub-step 5 regression-cap path (verdict will be `terminated-with-open-items`), surface that failure here rather than asserting it passes
+6. **Next steps**: Branch on the verdict from Step 9:
+   - `passed-clean` / `passed-after-fixes` → `Suggest running /finish to commit, push, and mark Ready For Release`
+   - `terminated-with-open-items` → `Re-run /quality-review to address open items, or open follow-up issues, before /finish`
+   - `escalated-to-architect` → `Architect-agent recommendation supersedes — review it before any further action. Do NOT suggest /finish.`
 
 **Ordering — Next steps MUST be the final line.** The "Next steps" line is the only actionable item in this summary; the user scans bottom-up when running parallel sessions. Do not emit a separate end-of-turn `result:` summary, a one-line recap, or any trailing prose after "Next steps:". The Step 10 block IS your end-of-turn summary — nothing follows it. (The harness may append its own `※ recap:` line, which you cannot suppress; the goal is that no LLM-authored text comes between "Next steps" and that harness line.)
 

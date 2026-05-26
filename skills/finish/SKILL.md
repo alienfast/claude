@@ -170,11 +170,27 @@ The script handles all three states: pre-staged changes (commit + push), already
 
 **Skip when `ACTION == "pr"`.** In PR mode, the work is not yet shipped — review and merge are still pending. Leave the issue in `In Progress`; the transition to `Ready For Release` happens after the PR merges (manually, or via a follow-up `/finish` once the worktree branch is merged into source).
 
-In all other cases (no worktree, or `ACTION == "merge"`):
+In all other cases (no worktree, or `ACTION == "merge"`), gate the transition on the `VERDICT` from Step 1.5:
 
-```bash
-linear issues update PL-12 --state "Ready For Release"
-```
+- **`passed-clean` / `passed-after-fixes`** — proceed:
+
+  ```bash
+  linear issues update PL-12 --state "Ready For Release"
+  ```
+
+- **`terminated-with-open-items` / `escalated-to-architect`** — **refuse by default.** The implementation has known unresolved findings per `/quality-review`. Prompt the user explicitly (single message, then wait for reply):
+
+  > Quality-review verdict is `<VERDICT>` with open items:
+  >
+  > `<open items list from VERDICT_FILE>`
+  >
+  > Mark `Ready For Release` anyway? Reply `yes` to override, `re-run` to invoke `/quality-review` and try to converge, or `abort` to stop here.
+
+  On `yes`: proceed with the state update AND post an additional Linear comment recording the override — body: `Override: marked Ready For Release despite verdict <VERDICT>. Open items at override time: <list>. User-acknowledged.` Use `~/.claude/scripts/linear-post.sh` to post.
+  On `re-run`: stop `/finish` with the message `Re-run /quality-review <ISSUE-ID> to address open items, then retry /finish.` Do not change state.
+  On `abort`: stop with no state change and no further output.
+
+- **`none-found`** — no verdict file located. Warn once: `No /quality-review artifact found for this issue. Proceeding without gate. Consider running /quality-review before /finish next time.` Then proceed with the state update. (Backward compatibility for issues finished before this gate existed.)
 
 ### Step 9: Worktree Finalization (only when `SOURCE_BRANCH` is set)
 
