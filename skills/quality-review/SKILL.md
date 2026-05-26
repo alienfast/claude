@@ -335,6 +335,19 @@ The `(sub-issues of <PARENT>)` suffix is required when issues are filed and a pa
 
 When delegated from `/start`, this block becomes the "Adversarial review" section of the completion summary verbatim.
 
+**Persist the verdict for `/finish`.** After the block is composed, also write it to a file so a later `/finish` run (potentially in a different session or a different worktree of the same repo) can find it. Skip this step entirely if no issue ID was resolved in Step 1.
+
+```bash
+# 1. Write the verdict block (exactly as rendered above) to a tmp file.
+~/.claude/scripts/linear-stdin.sh tmp/qr-verdict-body.md  # or use Write tool
+
+# 2. Persist atomically to both the current worktree's tmp/ AND the main
+#    checkout's tmp/ (cross-worktree handoff for /finish).
+~/.claude/scripts/quality-review-write-verdict.sh <ISSUE-ID> tmp/qr-verdict-body.md
+```
+
+The persisted file is the canonical `/quality-review` → `/finish` handoff. The contents are the verdict block verbatim — downstream readers (`/finish` Step 1.5) parse the `Verdict:` line and the `Open items:` list.
+
 ## Error Handling
 
 - **`pnpm check` repeatedly fails** after multiple `developer` delegations (Step 2 gate): surface to the user with the failing output. Do not proceed to review.
