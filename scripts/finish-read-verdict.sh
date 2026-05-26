@@ -24,6 +24,12 @@
 #     (NOTE: these are all current children of the parent — not necessarily
 #     filed by THIS /quality-review run. /finish must label accordingly.)
 #   SUB_ISSUES_ERROR=<warning text if `linear i get` failed, else empty>
+#   VERDICT_STALE=<0|1>
+#     1 → verdict file's mtime predates HEAD's commit time. The user landed
+#         additional commits AFTER /quality-review ran, so the verdict no
+#         longer reflects the current code. /finish Step 8 escalates passing-
+#         but-stale to refuse-with-override (same shape as malformed).
+#   VERDICT_STALE_REASON=<diagnostic text when VERDICT_STALE=1, else empty>
 #
 # Exit codes:
 #   0 = success (even when VERDICT=none-found, VERDICT=malformed, or
@@ -118,8 +124,28 @@ else
   echo "WARN: $sub_issues_error" >&2
 fi
 
+# Staleness check: if the verdict file's mtime predates HEAD's commit time,
+# the user landed commits AFTER /quality-review ran — the verdict no longer
+# reflects current code. /finish Step 8 escalates passing-but-stale to a
+# refuse-with-override path (same shape as malformed), preventing the gate
+# from sailing through on a verdict produced before the latest changes.
+stale=0
+stale_reason=""
+if [ -n "$verdict_file" ]; then
+  # mtime in epoch seconds (BSD vs GNU stat differ; try BSD first since
+  # macOS is the primary platform, then fall back to GNU).
+  vmtime=$(stat -f %m "$verdict_file" 2>/dev/null || stat -c %Y "$verdict_file" 2>/dev/null || echo 0)
+  head_ctime=$(git log -1 --format=%ct HEAD 2>/dev/null || echo 0)
+  if [ "$vmtime" -gt 0 ] && [ "$head_ctime" -gt 0 ] && [ "$vmtime" -lt "$head_ctime" ]; then
+    stale=1
+    stale_reason="verdict file mtime ($vmtime) predates HEAD's commit time ($head_ctime) — additional commits landed after /quality-review ran"
+  fi
+fi
+
 printf 'VERDICT_FILE=%s\n' "$verdict_file"
 printf 'VERDICT=%s\n' "$verdict"
 printf 'CYCLES=%s\n' "$cycles"
 printf 'SUB_ISSUES=%s\n' "$sub_issues"
 printf 'SUB_ISSUES_ERROR=%s\n' "$sub_issues_error"
+printf 'VERDICT_STALE=%s\n' "$stale"
+printf 'VERDICT_STALE_REASON=%s\n' "$stale_reason"

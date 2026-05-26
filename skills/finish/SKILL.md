@@ -64,7 +64,7 @@ Continue only on explicit `yes`. This catches the case where `/start wt` created
 ~/.claude/scripts/finish-read-verdict.sh PL-12
 ```
 
-Emits five `KEY=value` lines: `VERDICT_FILE`, `VERDICT`, `CYCLES`, `SUB_ISSUES`, `SUB_ISSUES_ERROR`. **Read those values and carry them forward** — Step 4 embeds them in the completion comment, Step 8 gates the `Ready For Release` transition on `VERDICT`.
+Emits seven `KEY=value` lines: `VERDICT_FILE`, `VERDICT`, `CYCLES`, `SUB_ISSUES`, `SUB_ISSUES_ERROR`, `VERDICT_STALE`, `VERDICT_STALE_REASON`. **Read those values and carry them forward** — Step 4 embeds them in the completion comment, Step 8 gates the `Ready For Release` transition on `VERDICT` and `VERDICT_STALE`.
 
 `VERDICT` is one of:
 
@@ -76,6 +76,8 @@ Emits five `KEY=value` lines: `VERDICT_FILE`, `VERDICT`, `CYCLES`, `SUB_ISSUES`,
 `SUB_ISSUES` is the parent issue's **current `children` array from Linear** — i.e., every sub-issue that exists under this parent right now, not necessarily ones filed by this `/quality-review` run. Step 4 surfaces this list as context (labeled accordingly), not as a "filed this run" claim.
 
 `SUB_ISSUES_ERROR` is populated only if `linear i get` failed (CLI unauthenticated, missing issue, network blip). Step 1.5 does NOT abort on this — `linear auth login` is offered in Step 2's error handling if needed, and the rest of `/finish` can proceed without sub-issue context. Surface the warning text in chat once when populated.
+
+`VERDICT_STALE=1` means the verdict file's mtime predates HEAD's commit time — additional commits landed AFTER `/quality-review` ran, so the verdict does not reflect current code. Step 8 escalates passing-but-stale to refuse-with-override (same shape as `malformed`), preventing the gate from sailing through on an out-of-date verdict. The `VERDICT_STALE_REASON` field carries diagnostic text for the override prompt.
 
 ### Step 2: Get Issue Details
 
@@ -186,11 +188,22 @@ The script handles all three states: pre-staged changes (commit + push), already
 
 In all other cases (no worktree, or `ACTION == "merge"`), gate the transition on the `VERDICT` from Step 1.5. **Every `<...>` token in the prompt and comment bodies below is a substitution site** — replace each with the resolved value before emitting; never write a literal `<placeholder>` to chat or to Linear. The Step 4 substitution rule applies here too.
 
-- **`passed-clean` / `passed-after-fixes`** — proceed:
+- **`passed-clean` / `passed-after-fixes`** — proceed, BUT first check `VERDICT_STALE`:
+  - `VERDICT_STALE=0` → proceed with the state update:
 
-  ```bash
-  linear issues update PL-12 --state "Ready For Release"
-  ```
+    ```bash
+    linear issues update PL-12 --state "Ready For Release"
+    ```
+
+  - `VERDICT_STALE=1` → **refuse with override.** The verdict says "passing" but was produced before the latest commits — it may not reflect current code. Prompt the user:
+
+    > Quality-review verdict is `<VERDICT>` but is **stale**: `<VERDICT_STALE_REASON>`. Additional commits landed after `/quality-review` ran, so the verdict may not reflect current code.
+    >
+    > Mark `Ready For Release` anyway? Reply `yes` to override (the prior verdict was passing and you've verified the new commits don't introduce findings), `re-run` to invoke `/quality-review` and produce a fresh verdict for current HEAD, or `abort` to stop here.
+
+    On `yes`: proceed with the state update AND post an override comment: `Override: marked Ready For Release on stale verdict <VERDICT> (additional commits since /quality-review ran). User-acknowledged.`
+    On `re-run`: stop with `Re-run /quality-review <ISSUE-ID> to produce a fresh verdict for current HEAD, then retry /finish.`
+    On `abort`: stop with no state change.
 
 - **`terminated-with-open-items` / `escalated-to-architect`** — **refuse by default.** The implementation has known unresolved findings per `/quality-review`. Before composing the prompt, `Read` the file at `VERDICT_FILE` and extract the `Open items:` line (and any continuation lines, if `Open items:` is followed by an indented bullet list). Substitute that text into the prompt below — never emit the literal placeholder `<open items list from VERDICT_FILE>`. Then prompt the user (single message, wait for reply):
 
