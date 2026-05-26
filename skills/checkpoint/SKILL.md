@@ -18,21 +18,11 @@ Examples: `/checkpoint`, `/checkpoint PL-12`, `/checkpoint no push`, `/checkpoin
 
 ### Step 1: Identify the Issue
 
-Determine the issue identifier from (in priority order):
-
-1. **User input** — e.g., `/checkpoint PL-12`
-2. **Git branch name** — extract from branch (e.g., `kross/pl-42-auth-middleware` → `PL-42`)
-3. **Latest commit message** — extract issue key (only reliable if there are no unstaged changes; if the working tree is dirty, the latest commit may not relate to the current work)
-
 ```bash
-# Get current branch name
-git branch --show-current
-
-# Get latest commit message
-git log --oneline -1
+~/.claude/scripts/detect-issue-id.sh [--input <USER-SUPPLIED-ID>]
 ```
 
-If the identifier can't be determined from any of the above, ask the user.
+The script tries `--input` → current branch → latest commit subject, in that order. Pass `--input` only when the user typed an explicit ID (e.g., `/checkpoint PL-12`). On exit 1, ask the user for the identifier explicitly.
 
 ### Step 2: Branch Safety
 

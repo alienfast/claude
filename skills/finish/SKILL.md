@@ -5,7 +5,7 @@ description: Finish a Linear issue — check off requirements, add completion co
 
 # Finish Issue
 
-Automates the post-completion workflow for a Linear issue using the `linear` CLI.
+Automates the post-completion workflow for a Linear issue using the `linear` CLI. The mechanical steps (worktree-mode detection, issue-ID resolution, Linear posts, git commit/push) are delegated to scripts in `~/.claude/scripts/`; this skill is the orchestrator + LLM-judgment surface (reading the description, composing the completion comment).
 
 ## Arguments
 
@@ -22,67 +22,42 @@ Examples: `/finish`, `/finish PL-12`, `/finish no push`, `/finish PL-12 no push`
 
 ## Workflow
 
-### Step 0: Parse Worktree-Mode Arguments
+### Step 0: Detect Worktree Mode
 
-1. **Scan args for `merge` and `pr` tokens** (case-insensitive, position-agnostic). If exactly one is present, record it as `$ACTION`. If both are present, stop and ask the user which one — the choice is mutually exclusive.
+Normalize the user's args before calling the script:
 
-2. **Detect worktree mode** by reading the source branch recorded by `/start wt`. Read at per-worktree scope (`--worktree --get`) so a manual `start.source-branch` at common scope can't false-trigger worktree mode from outside a `/start wt` worktree. **Echo the values** so they appear in the tool output — Step 9 will need them, and each Bash tool call is a fresh shell so the variables themselves do not persist:
+- Look for `merge` and `pr` tokens (case-insensitive, position-agnostic) — pass through whichever is present (if both, the script errors).
+- Look for `no push` / `don't push` / `skip push` — translate to `--no-push` for the script.
 
-   ```bash
-   SOURCE_BRANCH=$(git config --worktree --get start.source-branch 2>/dev/null || true)
-   WORKTREE_BRANCH=$(git branch --show-current)
-   WT_DIR=$(git rev-parse --show-toplevel)
-   # Main repo root (parent of the common .git dir — different from $WT_DIR when in a linked worktree).
-   REPO_ROOT=$(cd "$(git rev-parse --git-common-dir)/.." && pwd)
-   printf 'SOURCE_BRANCH=%s\nWORKTREE_BRANCH=%s\nWT_DIR=%s\nREPO_ROOT=%s\n' \
-     "$SOURCE_BRANCH" "$WORKTREE_BRANCH" "$WT_DIR" "$REPO_ROOT"
-   ```
+```bash
+~/.claude/scripts/finish-detect-mode.sh [merge|pr] [--no-push]
+```
 
-3. **Branch on detection result:**
+The script probes worktree state, validates incompatible argument combinations, and emits six `KEY=value` lines on stdout: `ACTION`, `SOURCE_BRANCH`, `WORKTREE_BRANCH`, `WT_DIR`, `REPO_ROOT`, `NO_PUSH`. **Read those values and carry them forward** — Step 9 substitutes them into bash commands as literal strings (each Bash tool call is a fresh shell).
 
-   - **`$SOURCE_BRANCH` empty AND `$ACTION` set** (`merge` or `pr` outside a worktree): the user's intent is ambiguous — `merge`/`pr` mean nothing here. Stop and warn:
+**Exit codes:**
 
-     ```text
-     ERROR: `merge` / `pr` is only valid inside a `/start wt` worktree.
-     Current branch is `<WORKTREE_BRANCH>` but no `start.source-branch` is recorded.
-     For the standard push-to-current flow, run `/finish` without `merge` / `pr`.
-     ```
+- 1 — incompatible args (e.g., `merge` + `pr`, or `pr` + `no push`). Surface the error and stop.
+- 2 — `merge`/`pr` requested outside a `/start wt` worktree. Surface and stop.
 
-   - **`$SOURCE_BRANCH` empty AND `$ACTION` unset**: standard `/finish` — proceed to Step 1 with today's flow.
+**Resolving `ACTION` when ambiguous.** If `SOURCE_BRANCH` is set (we're in a worktree) but `ACTION` is empty (no `merge`/`pr` arg supplied), prompt via `AskUserQuestion`:
 
-   - **`$SOURCE_BRANCH` set AND `$ACTION` unset**: prompt via `AskUserQuestion`:
-     - Question: `Finalize ${WORKTREE_BRANCH}?`
-     - Options:
-       - `merge` (Recommended) — Merge into `${SOURCE_BRANCH}` and remove the worktree.
-       - `pr` — Open a pull request with base=`${SOURCE_BRANCH}`; keep the worktree.
+- Question: `Finalize ${WORKTREE_BRANCH}?`
+- Options:
+  - `merge` (Recommended) — Merge into `${SOURCE_BRANCH}` and remove the worktree.
+  - `pr` — Open a pull request with base=`${SOURCE_BRANCH}`; keep the worktree.
 
-     Note: in agent-view background sessions, the prompt surfaces as "Needs input" — the session blocks until the user resolves it. This is intentional: the merge-vs-PR choice has lasting consequences for the parent branch and shouldn't time out to a default.
+Carry the resolved `ACTION` forward.
 
-4. **Validate incompatible argument combinations.** If `$ACTION == "pr"` and `no push` / `don't push` / `skip push` is also present, stop and surface the conflict — opening a PR requires a pushed remote head:
-
-   ```text
-   ERROR: `/finish pr` requires pushing the branch. Remove `no push` or use `/finish merge`.
-   ```
-
-5. `$ACTION` informs the downstream branching (Step 8 skips when `pr`; Step 9 picks merge vs PR mode). The four shell variables (`$SOURCE_BRANCH`, `$WORKTREE_BRANCH`, `$WT_DIR`, `$REPO_ROOT`) do **not** persist across Bash tool calls — Step 9 re-derives them from the same git probes when it needs them. The printf above is informational only.
+If both `SOURCE_BRANCH` and `ACTION` are empty, this is the standard `/finish` flow.
 
 ### Step 1: Identify the Issue
 
-Determine the issue identifier from (in priority order):
-
-1. **User input** — e.g., `/finish PL-12`
-2. **Git branch name** — extract from branch (e.g., `pl-12-scaffold-nextjs-16-app-in-monorepo` → `PL-12`)
-3. **Latest commit message** — extract issue key from the most recent commit (only reliable if there are no unstaged changes; if the working tree is dirty, the latest commit may not relate to the current work)
-
 ```bash
-# Get current branch name
-git branch --show-current
-
-# Get latest commit message
-git log --oneline -1
+~/.claude/scripts/detect-issue-id.sh [--input <USER-SUPPLIED-ID>]
 ```
 
-If the identifier can't be determined from any of the above, ask the user.
+The script tries `--input` → current branch → latest commit subject, in that order. Pass `--input` only when the user typed an explicit ID (e.g., `/finish PL-12`). On exit 1, ask the user for the identifier explicitly.
 
 ### Step 2: Get Issue Details
 
@@ -96,30 +71,13 @@ Read the description carefully. Note:
 - Success criteria checkboxes
 - Any "Nice to Have" vs "Must Have" distinctions
 
-### Step 3: Check Off Completed Checkboxes
-
-Get the issue description and update checkboxes based on what was actually completed during this session.
+### Step 3: Read Current Description as JSON
 
 ```bash
-# Get current description as JSON
 linear issues get PL-12 --output json
 ```
 
-For each `- [ ]` checkbox in the description:
-
-- **If completed**: replace with `- [x]`
-- **If not completed**: leave as `- [ ]` and note it in the completion comment
-
-Update the description:
-
-1. Use the `Write` tool to save the full updated description to `tmp/linear-description-<issue-id>.md` (e.g., `tmp/linear-description-pl-12.md`)
-2. Run:
-
-```bash
-~/.claude/scripts/linear-post.sh description PL-12 tmp/linear-description-pl-12.md
-```
-
-**Important**: Preserve the entire description — only change `- [ ]` to `- [x]` for completed items. Do not rewrite or reformat the description.
+Identify each `- [ ]` checkbox and decide which were completed this session. Don't post anything yet — Step 5 sends the updated description and the completion comment together.
 
 ### Step 4: Generate Completion Comment
 
@@ -146,14 +104,20 @@ Branch: `<branch>` | Commit: `<short-sha>`
 
 Omit sections that have no content (e.g., skip "Notes" if everything was completed).
 
-### Step 5: Add Comment to Issue
+### Step 5: Post Description Update + Completion Comment
 
-1. Use the `Write` tool to save the comment to `tmp/linear-comment-<issue-id>.md` (e.g., `tmp/linear-comment-pl-12.md`)
-2. Run:
+Write both files:
+
+1. `tmp/linear-description-<issue-id>.md` — full description with `- [ ]` flipped to `- [x]` for completed items. Preserve everything else exactly.
+2. `tmp/linear-comment-<issue-id>.md` — completion-comment body from Step 4.
+
+Then post both in one call:
 
 ```bash
-~/.claude/scripts/linear-post.sh comment PL-12 tmp/linear-comment-pl-12.md
+~/.claude/scripts/finish-post-update.sh PL-12 tmp/linear-description-pl-12.md tmp/linear-comment-pl-12.md
 ```
+
+Exit codes: 1 (validation — missing/empty files), 2 (Linear API failure).
 
 ### Step 6: Verify Check Passes
 
@@ -169,52 +133,46 @@ If it **passes**: proceed to commit.
 
 ### Step 7: Git Commit & Push
 
-Check the current git state and act accordingly:
+1. Stage relevant files by name (`git add <files>`). Never `git add -A` / `git add .` (per CLAUDE.md).
+2. Write the commit message to `tmp/finish-commit-<issue-id>.md`. The issue ID **must** appear in the message (the script enforces it for Linear auto-linking):
+
+   ```text
+   PL-13: <short imperative summary>
+
+   <optional body explaining the why>
+   ```
+
+3. Run the commit script:
 
 ```bash
-git status
-git log --oneline -1
+~/.claude/scripts/finish-commit.sh PL-13 tmp/finish-commit-pl-13.md [--no-push]
 ```
 
-- **Uncommitted changes**: Stage relevant files, commit with a descriptive message.
-- **Committed but not pushed**: Push to remote (unless `no push` was requested).
-- **Already pushed**: Skip — confirm to user that code is already on remote.
-
-**Commit-message requirement.** The issue ID resolved in Step 1 (e.g., `PL-13`) **must** appear in the commit message. Linear auto-links commits referencing an issue ID, so this is how the issue's "Linked branches/commits" panel populates. Prefer a leading-reference convention:
-
-```text
-PL-13: <short imperative summary>
-
-<optional body explaining the why>
-```
-
-If the issue ID could not be resolved in Step 1 (no input, no branch hint, no commit hint) and the user did not supply one, ask before committing — do not silently commit without the reference.
-
-If the user requested **no push** (e.g., `/finish no push`, `/finish don't push`), skip pushing after commit. Inform the user: "Skipping push as requested. Push manually when ready: `git push`"
-
-Otherwise, always push to the current branch. Do not create PRs (that's a separate workflow).
+Pass `--no-push` if the user requested `no push` / `don't push` / `skip push`. The script handles all three states: pre-staged changes (commit + push), already-committed-but-ahead (push only), already-synced (no-op). If staging is missing for an unstaged-only state, it errors with exit 2 — go back and `git add` the files.
 
 ### Step 8: Mark Issue as Ready For Release
 
-**Skip when `$ACTION == "pr"`.** In PR mode, the work is not yet shipped — review and merge are still pending. Leave the issue in `In Progress`; transition to `Ready For Release` happens after the PR merges (manually, or via a follow-up `/finish` once the worktree branch is merged into source).
+**Skip when `ACTION == "pr"`.** In PR mode, the work is not yet shipped — review and merge are still pending. Leave the issue in `In Progress`; the transition to `Ready For Release` happens after the PR merges (manually, or via a follow-up `/finish` once the worktree branch is merged into source).
 
-In all other cases (no worktree, or `$ACTION == "merge"`):
+In all other cases (no worktree, or `ACTION == "merge"`):
 
 ```bash
 linear issues update PL-12 --state "Ready For Release"
 ```
 
-### Step 9: Worktree Finalization (only when `$SOURCE_BRANCH` is set)
+### Step 9: Worktree Finalization (only when `SOURCE_BRANCH` is set)
 
 Runs only if Step 0 detected a worktree. Skip entirely otherwise.
 
 **Step 9 is the terminal step of this session** — for both modes. After the merge (or `gh pr create`) completes, present the closing message and stop. Don't run further bash commands.
 
-**If `$ACTION == "merge"`: the merge runs in this session — no subagent.**
+Substitute the values captured from Step 0 (`SOURCE_BRANCH`, `WORKTREE_BRANCH`, `WT_DIR`, `REPO_ROOT`) into the bash commands below as literal strings.
 
-The merge produces a real `--no-ff` commit on the source branch. The commit's message must include the Linear issue ID (for auto-linking) and a meaningful summary + body — not the default `Merge <branch> into <source>` boilerplate.
+**If `ACTION == "merge"`:**
 
-1. **Write the merge-commit message** to `<WT_ABS>/tmp/git-merge-msg-pl-13.md` (use the actual absolute worktree path from Step 0 and the lowercased issue ID) via the `Write` tool. The `Write` tool requires an absolute path; using the absolute form here also guarantees the file lands where `MSG_FILE` (computed in sub-step 2) expects it, regardless of cwd. Shape — first line is the subject (≤72 chars), one blank line, then a body that summarizes what was done:
+The merge produces a real `--no-ff` commit on the source branch. The commit message must include the Linear issue ID (for auto-linking) and a meaningful summary + body — not the default `Merge <branch> into <source>` boilerplate.
+
+1. **Write the merge-commit message** to `<WT_DIR>/tmp/git-merge-msg-<issue-lower>.md` (substitute the actual `WT_DIR` value from Step 0). Use the `Write` tool — it requires an absolute path. Shape — first line is the subject (≤72 chars), one blank line, then a body that summarizes what was done:
 
    ```text
    PL-13: <short imperative summary of what shipped>
@@ -223,28 +181,14 @@ The merge produces a real `--no-ff` commit on the source branch. The commit's me
    notable verification (e.g., "pnpm check green; 15/15 specs pass"). Mirror
    Step 4's completion-comment content — but tighter, for git history.>
 
-   Merges kross/pl-13-<kebab> into <source-branch>.
+   Merges <WORKTREE_BRANCH> into <SOURCE_BRANCH>.
    ```
 
-2. **Run the merge in a single Bash tool call** — each Bash invocation is a fresh shell, so the re-derive, `cd`, and script call must share one shell (otherwise `$REPO_ROOT`/`$WT_DIR`/etc. are empty in the script-call shell and `finish-merge.sh` errors out):
+2. **Run the merge in a single Bash tool call** — `cd` to the main checkout (the script removes the worktree on success, so cwd must not be inside it), then call `finish-merge.sh`:
 
    ```bash
-   # Re-derive Step 0's values from the current worktree.
-   SOURCE_BRANCH=$(git config --worktree --get start.source-branch 2>/dev/null || true)
-   WORKTREE_BRANCH=$(git branch --show-current)
-   WT_DIR=$(git rev-parse --show-toplevel)
-   REPO_ROOT=$(cd "$(git rev-parse --git-common-dir)/.." && pwd)
-   MSG_FILE="$WT_DIR/tmp/git-merge-msg-pl-13.md"   # absolute path; survives cd
-   printf 'SOURCE_BRANCH=%s\nWORKTREE_BRANCH=%s\nWT_DIR=%s\nREPO_ROOT=%s\nMSG_FILE=%s\n' \
-     "$SOURCE_BRANCH" "$WORKTREE_BRANCH" "$WT_DIR" "$REPO_ROOT" "$MSG_FILE"
-
-   # cd out of the worktree to the main checkout (the script removes the worktree
-   # on success — cwd must not be inside it).
-   cd "$REPO_ROOT"
-
-   # Run the merge. Script handles preconditions, merge (--no-ff -F MSG_FILE),
-   # conflict-abort, and cleanup.
-   ~/.claude/scripts/finish-merge.sh "$WT_DIR" "$SOURCE_BRANCH" "$WORKTREE_BRANCH" "$MSG_FILE"
+   cd '<REPO_ROOT from Step 0>'
+   ~/.claude/scripts/finish-merge.sh '<WT_DIR>' '<SOURCE_BRANCH>' '<WORKTREE_BRANCH>' '<WT_DIR>/tmp/git-merge-msg-pl-13.md'
    ```
 
 If the script returns 0, surface its output and present the closing message:
@@ -258,16 +202,12 @@ Do not run further bash commands.
 
 If the script exits non-zero (precondition failure or merge conflict), surface its output verbatim and stop. The script's conflict-abort path has already restored the main checkout; the worktree is intact for manual resolution. Do not attempt automated recovery from this session.
 
-**If `$ACTION == "pr"`:**
+**If `ACTION == "pr"`:**
 
-The branch was pushed in Step 7 (the `no push` + `pr` combination was rejected in Step 0). Open a PR with the recorded source branch as base. Each Bash tool call is a fresh shell, so re-derive the source/worktree values inline and use them in the `gh` command from the same shell.
-
-**Run all three lines in a single Bash tool call** — splitting them across separate calls would leave `$SOURCE_BRANCH` empty in the second call and `gh pr create --base ''` would fail:
+The branch was pushed in Step 7 (the `no push` + `pr` combination was rejected in Step 0). Open a PR with the recorded source branch as base:
 
 ```bash
-SOURCE_BRANCH=$(git config --worktree --get start.source-branch 2>/dev/null || true)
-WORKTREE_BRANCH=$(git branch --show-current)
-gh pr create --base "$SOURCE_BRANCH" --head "$WORKTREE_BRANCH" --fill
+gh pr create --base '<SOURCE_BRANCH>' --head '<WORKTREE_BRANCH>' --fill
 ```
 
 After the PR is created, present the closing message:

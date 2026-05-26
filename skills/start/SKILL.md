@@ -29,7 +29,7 @@ Violating this contract — by shipping broken code, by claiming failures were p
 
 ### Step 0: Worktree Mode (only when `wt` in args)
 
-**Argument parsing.** Tokens are case-insensitive (`wt`, `WT`, `Wt`) and position-agnostic. After stripping `wt`, the remaining must be exactly one non-token argument matching `^[A-Z]+-\d+$` (case-normalized to upper) — a Linear issue ID. Multiple IDs or duplicated `wt` tokens are errors.
+**Argument parsing.** Tokens are case-insensitive (`wt`, `WT`, `Wt`) and position-agnostic. After stripping `wt`, exactly one non-token argument must remain — pass it through `~/.claude/scripts/detect-issue-id.sh --validate-only --input <arg>` to normalize and validate (the script enforces `^[A-Z]+-[0-9]+$` and uppercases). Multiple IDs or duplicated `wt` tokens are errors.
 
 If the args contain `wt`:
 
