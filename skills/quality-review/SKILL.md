@@ -174,28 +174,61 @@ If the user picks option 1, resume the loop with the new ceiling raised by N. If
 
 Runs once, only after the fix loop terminates with `passed-clean` or `passed-after-fixes`. On `terminated-with-open-items` this step is skipped, but the consolidated list from sub-step 1 is still appended to the verdict block under `Open items` so deferred findings are not silently lost.
 
-**Substitution token.** `<ISSUE-ID>` in the templates below means the issue ID resolved in Step 1. If no issue was resolved, replace `for <ISSUE-ID>` with `for the current change set` and skip the dependency-link command in sub-step 5.
+**Substitution token.** `<ISSUE-ID>` in the templates below means the issue ID resolved in Step 1. If no issue was resolved, replace `for <ISSUE-ID>` with `for the current change set` and skip the dependency-link command in sub-step 6.
 
-**Malformed user replies.** If the user replies to any prompt below with input you cannot parse (e.g., `1-3`, `the first three`, `sure`), re-prompt once with the exact accepted syntax and a literal example. After a second malformed reply, fall back to a *safe default*: for sub-step 3, default to `none` (do not start unrequested work); for sub-step 5, default to `all` (filing extra Linear issues is recoverable, silently dropping findings is not).
+**Malformed user replies.** If the user replies to any prompt below with input you cannot parse (e.g., `1-3`, `the first three`, `sure`), re-prompt once with the exact accepted syntax — including the `suggested` shortcut — and a literal example. After a second malformed reply, fall back to a *safe default*: for sub-step 4, default to `none` (do not start unrequested work); for sub-step 6, default to `all` (filing extra Linear issues is recoverable, silently dropping findings is not). Note: `suggested` is an accepted input, never a fallback.
 
-**Verdict downgrade.** Step 6 can transition the run state from `passed-after-fixes` back to `terminated-with-open-items` (see sub-step 4 regression-cap path). When that happens, the new verdict overrides the verdict assigned at Step 4.
+**Verdict downgrade.** Step 6 can transition the run state from `passed-after-fixes` back to `terminated-with-open-items` (see sub-step 5 regression-cap path). When that happens, the new verdict overrides the verdict assigned at Step 4.
 
 **1. Consolidate.** Collect every Nice-to-Have / Out-of-Scope finding reported across all review cycles. Deduplicate by `file:line + finding text`; if a finding was emitted without a file:line (a malformed-but-recoverable reviewer output, see Error Handling), fall back to deduplicating by finding text alone (trim, casefold, and collapse internal whitespace before comparison to absorb cosmetic differences). If the consolidated list is empty, skip the rest of this step.
 
-**2. Present a numbered list:**
+**2. Classify.** Label each item `fix-now` or `defer-as-issue` using the criteria below. The label routes the item to sub-step 4 (in-session fix) or sub-step 6 (Linear issue) by default — the user can override at either prompt.
+
+**Fix now** — *all* of the following hold:
+
+- One obviously-correct change (no decision between valid alternatives)
+- Localized (single file or small contiguous region)
+- No change to public APIs, schemas, exported types, or contracts
+- Small (~<30 lines diff, no new abstractions)
+- Attach a one-word kind tag: `[mechanical]`, `[naming-only]`, `[missing-guard]`, `[typo]`, `[dead-code]`, etc.
+
+**Defer as issue** — *any* of the following hold:
+
+- Requires a design choice between valid alternatives
+- Cross-cutting / touches multiple modules
+- Changes public APIs, schemas, or external contracts
+- Needs broader test, perf, or security strategy
+- Significant scope (refactor, new abstraction)
+- Attach a one-word kind tag: `[design TBD]`, `[cross-cutting]`, `[api-change]`, `[needs-perf-data]`, `[scope: multi-module]`, `[refactor]`, etc.
+
+If an item triggers criteria from both sides (e.g., mechanical but touches a public type), the **defer-as-issue** side wins — design implications dominate size.
+
+**3. Present grouped lists.** Render the classification as two labeled sub-groups with continuous numbering across both. Omit a group header entirely if its group is empty (do not print "(none)").
 
 ```text
 Deferred items surfaced during review:
-1. [Finding] — [file:line] — [rationale]
-2. [Finding] — [file:line] — [rationale]
-...
+
+Suggested fix now (no decisions required):
+  1. [Finding] — [file:line] — [tag] — [rationale]
+  2. [Finding] — [file:line] — [tag] — [rationale]
+
+Suggested defer as issue (needs research/planning):
+  3. [Finding] — [file:line] — [tag] — [rationale]
+  4. [Finding] — [file:line] — [tag] — [rationale]
 ```
 
-**3. Offer in-session fixes.** Ask:
+**4. Offer in-session fixes.** Ask:
 
-> Which of these would you like to fix now? Reply with comma-separated numbers (e.g., `1, 3`), `all`, or `none`.
+> Which of these would you like to fix now? Reply with comma-separated numbers (e.g., `1, 3`), `suggested` to accept the fix-now group, `all`, or `none`.
 
-**4. Fix selected items.** If the user picked any:
+Reply semantics:
+
+- `suggested` → select exactly the items in the "Suggested fix now" group. If that group is empty, treat as `none` and skip to sub-step 6.
+- `all` → select every item in the consolidated list (both groups).
+- `none` → skip in-session fixes; proceed to sub-step 6 with all items unfixed.
+- Numeric list → select the listed numbers verbatim.
+
+**5. Fix selected items.** If the user picked any:
 
 - Delegate to `developer` with the chosen findings (parallel agents if findings are in independent files, same pattern as Step 5).
 - Re-run `pnpm check`. If it fails after a single corrective `developer` delegation, surface the failure via the Error Handling path and stop — do not loop indefinitely.
@@ -209,17 +242,24 @@ Deferred items surfaced during review:
   Acceptance: Confirm fixes are correct. Flag any new findings (any severity) with concrete scenarios.
   ```
 
-- If the re-review surfaces new **Nice-to-Have** findings, append them to the remaining unfixed list for sub-step 5.
+- If the re-review surfaces new **Nice-to-Have** findings, append them to the remaining unfixed list for sub-step 6.
 - If the re-review surfaces new **Critical/High/Medium** findings (regressions caused by the deferred-item fixes), make exactly **one** corrective pass: delegate to `developer` to fix the regressions, then re-run `pnpm check`. Do **not** spawn another `quality-reviewer` cycle and do **not** re-enter the Step 5 loop. If `pnpm check` still fails or any of those findings remain unaddressed in the diff, terminate Step 6 immediately. On termination, populate the verdict block as follows:
   - **Verdict:** `terminated-with-open-items` (overriding the Step 4 verdict).
   - **Deferred fixed in-session:** deferred items whose fixes are not implicated in the regression. If causation cannot be cleanly attributed (the developer landed multiple fixes in one delegation and the re-review surfaced regressions from "this delta"), list **none** of them as fixed and route every chosen item to `Open items` — readers should not see "fixed" labels on changes that broke the application.
-  - **Open items:** the surviving Critical/High/Medium regressions, **plus** the implicated deferred-item fixes per the rule above, **plus** any not-yet-offered unfixed Nice-to-Have items (the user never reached sub-step 5, so those items are not "dropped" — they are surfaced for manual follow-up).
-  - **Deferred dropped:** `none` (this field is reserved for items the user explicitly declined to fix and declined to file in sub-step 5).
-  - Skip sub-step 5.
+  - **Open items:** the surviving Critical/High/Medium regressions, **plus** the implicated deferred-item fixes per the rule above, **plus** any not-yet-offered unfixed Nice-to-Have items (the user never reached sub-step 6, so those items are not "dropped" — they are surfaced for manual follow-up).
+  - **Deferred dropped:** `none` (this field is reserved for items the user explicitly declined to fix and declined to file in sub-step 6).
+  - Skip sub-step 6.
 
-**5. Offer Linear issues for unfixed items.** Present the remaining unfixed items as a single numbered list and ask:
+**6. Offer Linear issues for unfixed items.** Present the remaining unfixed items as a single numbered list, preserving the original group labels so the recommendation stays visible, and ask:
 
-> For which of the unfixed items should I create Linear issues? Reply with comma-separated numbers (e.g., `1, 2`), `all`, or `none`.
+> For which of the unfixed items should I create Linear issues? Reply with comma-separated numbers (e.g., `1, 2`), `suggested` to file the defer-as-issue group, `all`, or `none`.
+
+Reply semantics:
+
+- `suggested` → file every item still in the "Suggested defer as issue" group at this point (items already fixed in sub-step 5 are excluded automatically). If the remaining group is empty, treat as `none`.
+- `all` → file every remaining unfixed item.
+- `none` → file nothing; remaining items become `Deferred dropped` in the verdict block.
+- Numeric list → file the listed numbers verbatim.
 
 For each chosen item, create and link the issue. Use `linear-stdin.sh` to safely pass the description (which contains backticks, colons, and other shell-significant characters from file:line refs and rationale). Use `mktemp` for the body file so concurrent `/quality-review` runs in different sessions or worktrees do not race on a shared path. **macOS BSD `mktemp` does not replace `XXXXXX` if a suffix follows it**, so omit the extension on the template; Linear accepts the body without one. Ensure `tmp/` exists first:
 
@@ -243,7 +283,7 @@ linear i update "$new_id" --parent <ISSUE-ID>
 
 If `--state Planned` is rejected (the team uses different state names), fall back to the team's equivalent "ready-to-work, not-yet-prioritized" state — verify with `linear teams states <TEAM>`. Do NOT silently fall through to the default (most teams default to Triage, which defeats the purpose).
 
-Items the user explicitly declined to file in this prompt go to `Deferred dropped` — record them as a list for the verdict block. (Items that never reached this prompt because Step 6 terminated early in sub-step 4 are routed to `Open items` instead — see sub-step 4.)
+Items the user explicitly declined to file in this prompt go to `Deferred dropped` — record them as a list for the verdict block. (Items that never reached this prompt because Step 6 terminated early in sub-step 5 are routed to `Open items` instead — see sub-step 5.)
 
 ## Output
 
@@ -264,7 +304,7 @@ When delegated from `/start`, this block becomes the "Adversarial review" sectio
 ## Error Handling
 
 - **`pnpm check` repeatedly fails** after multiple `developer` delegations (Step 2 gate): surface to the user with the failing output. Do not proceed to review.
-- **Sub-step 4 corrective pass leaves `pnpm check` failing or regressions unaddressed**: the deferred-item fixes broke the application and the single corrective `developer` pass did not restore it. Set the run verdict to `terminated-with-open-items`, route per sub-step 4's verdict-population rules, and surface the failing output to the user along with the `Open items` list. Do not loop further or roll back automatically — let the user decide whether to revert, re-run `/quality-review`, or escalate to architect.
+- **Sub-step 5 corrective pass leaves `pnpm check` failing or regressions unaddressed**: the deferred-item fixes broke the application and the single corrective `developer` pass did not restore it. Set the run verdict to `terminated-with-open-items`, route per sub-step 5's verdict-population rules, and surface the failing output to the user along with the `Open items` list. Do not loop further or roll back automatically — let the user decide whether to revert, re-run `/quality-review`, or escalate to architect.
 - **No changed files detected**: warn the user and exit. Nothing to review.
 - **Issue ID provided but `linear` CLI not authenticated**: prompt `linear auth login`, then continue without issue context if the user skips.
 - **`quality-reviewer` agent unavailable or returns malformed findings**: surface the raw output to the user; do not silently proceed.
