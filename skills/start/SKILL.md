@@ -309,6 +309,8 @@ This ensures progress is visible in Linear even if the session is interrupted, a
 
 Use the `/quality-review` skill to run the adversarial implementation review and triage/fix loop, passing the current issue ID as context. The `/quality-review` skill enforces the `pnpm check` gate, delegates to `quality-reviewer`, and loops up to 5 review/fix cycles before escalating. When it returns a passing verdict (`passed-clean` or `passed-after-fixes`), proceed to Step 10. If it returns `terminated-with-open-items`, surface the open items to the user before continuing.
 
+Invoke as: `/quality-review <ISSUE-ID>` (e.g., `/quality-review PL-13`), passing the issue ID positionally so `/quality-review` Step 1 doesn't fall back to branch parsing.
+
 ### Step 10: Completion Summary
 
 When implementation and review are complete, present a summary to the user that includes:
