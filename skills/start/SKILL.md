@@ -313,7 +313,7 @@ Use the `/quality-review` skill to run the adversarial implementation review and
 
 Invoke as: `/quality-review <ISSUE-ID>` (e.g., `/quality-review PL-13`), passing the issue ID positionally so `/quality-review` Step 1 doesn't fall back to branch parsing.
 
-If `/quality-review` returns `escalated-to-architect`, do NOT proceed to Step 10's `/finish` recommendation. Surface the open items and the architect-agent recommendation in chat, then stop Step 10 after the verdict-block render — do not print the "Next steps: Suggest running /finish" line. The architect's recommendation supersedes downstream automation.
+If `/quality-review` returns `escalated-to-architect`, surface the open items and the architect-agent recommendation in chat, then proceed to Step 10. Step 10 item 6's verdict-conditional Next-steps branch handles this verdict correctly (it emits the "architect recommendation supersedes — do NOT suggest /finish" line). Do not invent a separate exit path here — go through Step 10 like any other verdict.
 
 ### Step 10: Completion Summary
 
@@ -323,13 +323,13 @@ When implementation and review are complete, present a summary to the user that 
 2. **What was implemented**: Brief description of changes made
 3. **Files changed**: List of created/modified files
 4. **Adversarial review**: Confirm the adversarial quality review ran. Reproduce the verdict block from `/quality-review` verbatim — its field order is the canonical order:
-   - Final review verdict (`passed-clean` / `passed-after-fixes` / `terminated-with-open-items`)
+   - Final review verdict (`passed-clean` / `passed-after-fixes` / `terminated-with-open-items` / `escalated-to-architect`)
    - Number of review cycles (initial + re-reviews)
    - Critical/High/Medium findings resolved
    - Deferred (Nice-to-Have) items fixed in-session
    - Deferred items filed as Linear issues (with issue IDs)
    - Deferred items dropped (user declined to fix and declined to file)
-   - Open items (only on `terminated-with-open-items`; includes any deferred items not handled above)
+   - Open items (only on `terminated-with-open-items` or `escalated-to-architect`; includes any deferred items not handled above)
 5. **Checks**: Confirm `pnpm check` passes — OR, if `/quality-review` left it red via the sub-step 5 regression-cap path (verdict will be `terminated-with-open-items`), surface that failure here rather than asserting it passes
 6. **Next steps**: Branch on the verdict from Step 9:
    - `passed-clean` / `passed-after-fixes` → `Suggest running /finish to commit, push, and mark Ready For Release`
