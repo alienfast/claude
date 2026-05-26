@@ -225,6 +225,7 @@ Suggested defer as issue (needs research/planning):
   - Pre-check (`[✔]`) the items the classification suggests (`fix-now` group at sub-step 4; `defer-as-issue` group at sub-step 6) so the user can accept the suggestion with one click.
   - Do **not** add description text that previews sub-step 6 (no "items not selected will be filed as issues") — sub-step 6 is a *separate* decision where items can still be dropped. Pre-announcing one outcome hides the drop option.
 - Equivalent plain-text reply is also acceptable per the existing `suggested / all / none / comma-list` semantics below.
+- Item labels in the rendered list and in the `AskUserQuestion` option labels MUST use the same identifiers. Use Arabic numerals only (`1`, `2`, `3`, …) — never letters, never roman numerals, never any other scheme. An option labeled "Items 5, 6" must refer to items literally labeled `5.` and `6.` in the rendered list directly above.
 
 **4. Offer in-session fixes.** Ask **only about the fix-now decision** — do not preview, hint at, or pre-allocate the filing decision from sub-step 6.
 
