@@ -114,7 +114,7 @@ ids = [c.get("identifier") for c in ch if c.get("identifier")]
 print(",".join(ids))
 ' 2>/dev/null || true)
 else
-  sub_issues_error="linear i get $issue_id failed (auth? missing issue?) — SUB_ISSUES unavailable"
+  sub_issues_error="linear i get $issue_id failed (linear CLI installed? auth? missing issue?) — SUB_ISSUES unavailable"
   echo "WARN: $sub_issues_error" >&2
 fi
 

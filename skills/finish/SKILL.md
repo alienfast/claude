@@ -104,7 +104,7 @@ Write a markdown comment summarizing the work. **Every `<...>` token below is a 
 ```markdown
 ## Implementation Complete
 
-Branch: `<actual branch name, e.g. kross/pl-13-foo>`
+Branch: `<actual branch name>`
 
 ### What was done
 - Bullet points of key changes (files created/modified, features implemented)
@@ -117,7 +117,7 @@ Branch: `<actual branch name, e.g. kross/pl-13-foo>`
 
 ### Adversarial review
 - Verdict: <VERDICT value from Step 1.5> (cycles: <CYCLES value from Step 1.5>)
-- Sub-issues (current children of this issue): <comma-list of SUB_ISSUES from Step 1.5, or "none">
+- Sub-issues (current children of this issue): <comma-list of SUB_ISSUES from Step 1.5, or the bare word `none` (no quotes) when empty>
 - Open items: <text extracted from VERDICT_FILE's Open items: section, only when VERDICT=terminated-with-open-items, escalated-to-architect, or malformed>
 
 ### Notes
