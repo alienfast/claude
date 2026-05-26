@@ -303,11 +303,13 @@ Update completed checkboxes (`- [ ]` → `- [x]`) and push the update:
 
 This ensures progress is visible in Linear even if the session is interrupted, and enables picking up where we left off.
 
+**Resumption.** `/start` is idempotent on the same issue: re-running `/start PL-13` after a `/checkpoint`-and-stop should detect the issue's existing `In Progress` state and the existing branch, skip the worktree-setup and assignment steps, and resume at the implementation phase. If Step 9 (review) had previously run, the existing `tmp/quality-review-verdict-<id>.md` file is still consulted by `/finish` Step 1.5 — the user can decide to re-run `/quality-review` to refresh it, or skip ahead to `/finish` if the prior verdict still applies.
+
 **After all implementation tasks are complete, proceed to Step 9.** Implementation is not finished until the review passes.
 
 ### Step 9: Adversarial Review and Triage
 
-Use the `/quality-review` skill to run the adversarial implementation review and triage/fix loop, passing the current issue ID as context. The `/quality-review` skill enforces the `pnpm check` gate, delegates to `quality-reviewer`, and loops up to 5 review/fix cycles before escalating. When it returns a passing verdict (`passed-clean` or `passed-after-fixes`), proceed to Step 10. If it returns `terminated-with-open-items`, surface the open items to the user before continuing.
+Use the `/quality-review` skill to run the adversarial implementation review and triage/fix loop, passing the current issue ID as context. The `/quality-review` skill enforces the `pnpm check` gate, delegates to `quality-reviewer`, and loops up to 5 review/fix cycles before escalating. When it returns a passing verdict (`passed-clean` or `passed-after-fixes`), proceed to Step 10. If it returns `terminated-with-open-items`, print the verdict block (as composed by `/quality-review`) to chat as a single message — no `AskUserQuestion` prompt at this point. Step 10 will re-render the same block as part of the structured summary; the duplication is intentional (chat-visibility now, structured artifact later).
 
 Invoke as: `/quality-review <ISSUE-ID>` (e.g., `/quality-review PL-13`), passing the issue ID positionally so `/quality-review` Step 1 doesn't fall back to branch parsing.
 
