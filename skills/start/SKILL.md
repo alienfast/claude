@@ -311,6 +311,8 @@ Use the `/quality-review` skill to run the adversarial implementation review and
 
 Invoke as: `/quality-review <ISSUE-ID>` (e.g., `/quality-review PL-13`), passing the issue ID positionally so `/quality-review` Step 1 doesn't fall back to branch parsing.
 
+If `/quality-review` returns `escalated-to-architect`, do NOT proceed to Step 10's `/finish` recommendation. Surface the open items and the architect-agent recommendation in chat, then stop Step 10 after the verdict-block render — do not print the "Next steps: Suggest running /finish" line. The architect's recommendation supersedes downstream automation.
+
 ### Step 10: Completion Summary
 
 When implementation and review are complete, present a summary to the user that includes:

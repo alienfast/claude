@@ -1,6 +1,6 @@
 ---
 name: quality-review
-description: Adversarial implementation review with triage and fix loop. Hard-gates on `pnpm check`, delegates to the quality-reviewer agent for categorized findings (Critical/High/Medium/Nice-to-Have/Approved), then triages and fixes findings via the developer agent. Loops until a re-review surfaces no new Critical/High/Medium findings (convergence), with a soft ceiling of 5 cycles before asking the user how to proceed. Use when the user says 'review my work', 'check this implementation', 'adversarial review', 'quality review', or invokes /quality-review.
+description: Adversarial implementation review with triage and fix loop. Hard-gates on `pnpm check`, delegates to the quality-reviewer agent for categorized findings (Critical/High/Medium/Nice-to-Have/Approved), then triages and fixes findings via the developer agent. Loops until a re-review surfaces no new Critical/High/Medium findings (convergence), with a soft ceiling of 5 cycles before asking the user how to proceed; option 3 of that prompt terminates with verdict `escalated-to-architect`. Use when the user says 'review my work', 'check this implementation', 'adversarial review', 'quality review', or invokes /quality-review.
 ---
 
 # Quality Review
@@ -166,7 +166,7 @@ Options:
 Reply with `1` (optionally `1 5` for a custom N), `2`, or `3`.
 ```
 
-If the user picks option 1, resume the loop with the new ceiling raised by N. If `2`, terminate with `terminated-with-open-items`. If `3`, terminate and surface to architect — the architect's recommendation supersedes anything in the verdict block.
+If the user picks option 1, resume the loop with the new ceiling raised by N. If `2`, terminate with `terminated-with-open-items`. If `3`, terminate with verdict `escalated-to-architect`: populate `Open items` with the surviving findings as of cycle N, skip Step 6 entirely, and surface the situation to the architect agent — its recommendation supersedes anything downstream consumers (`/start` Step 10, `/finish` Step 8) would otherwise do with the verdict block.
 
 ### Step 6: Deferred Items Triage
 
@@ -322,7 +322,7 @@ Items the user explicitly declined to file in this prompt go to `Deferred droppe
 When the skill returns to its caller (or to the user, when standalone), present a structured verdict block:
 
 ```text
-Verdict: passed-clean | passed-after-fixes | terminated-with-open-items
+Verdict: passed-clean | passed-after-fixes | terminated-with-open-items | escalated-to-architect
 Cycles: N (initial + N-1 re-reviews)
 Findings resolved: [list, or "none" if passed-clean]
 Deferred fixed in-session: [list, or "none"]
