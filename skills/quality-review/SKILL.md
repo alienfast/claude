@@ -217,7 +217,16 @@ Suggested defer as issue (needs research/planning):
   4. [Finding] — [file:line] — [tag] — [rationale]
 ```
 
-**4. Offer in-session fixes.** Ask:
+**Prompt mechanism (applies to sub-steps 4 and 6).** Sub-steps 4 and 6 are **two independent prompts** — never combine them into one. Each prompt asks about exactly one action verb (sub-step 4 = "fix now", sub-step 6 = "file as issue"); using both verbs in a single checklist makes the selection state ambiguous. Specifically:
+
+- Render the grouped list from sub-step 3 as **plain text above the question**. Do not rewrite an item's label to encode the action verb (e.g., never render `defer-as-issue` items as "File X as a Linear issue" inside sub-step 4 — the [tag] communicates the recommendation; the label is the finding).
+- The question itself MAY be an `AskUserQuestion` multiSelect, but if so:
+  - Every option label must read as "fix [finding]" at sub-step 4, and as "file [finding]" at sub-step 6 — one verb per prompt.
+  - Pre-check (`[✔]`) the items the classification suggests (`fix-now` group at sub-step 4; `defer-as-issue` group at sub-step 6) so the user can accept the suggestion with one click.
+  - Do **not** add description text that previews sub-step 6 (no "items not selected will be filed as issues") — sub-step 6 is a *separate* decision where items can still be dropped. Pre-announcing one outcome hides the drop option.
+- Equivalent plain-text reply is also acceptable per the existing `suggested / all / none / comma-list` semantics below.
+
+**4. Offer in-session fixes.** Ask **only about the fix-now decision** — do not preview, hint at, or pre-allocate the filing decision from sub-step 6.
 
 > Which of these would you like to fix now? Reply with comma-separated numbers (e.g., `1, 3`), `suggested` to accept the fix-now group, `all`, or `none`.
 
@@ -271,7 +280,7 @@ New Nice-to-Have findings from sub-step 5 re-review (appended, no group label):
 
 Every actionable item MUST include: finding text (verbatim from reviewer, not paraphrased), file:line, tag, and rationale. If the reviewer emitted no file:line, render `file:line: unknown` rather than omitting the field. Then ask:
 
-> For which of the unfixed items should I create Linear issues? Reply with comma-separated numbers (e.g., `1, 2`), `suggested` to file the defer-as-issue group, `all`, or `none`.
+> For which of the unfixed items should I create Linear issues? Reply with comma-separated numbers (e.g., `1, 2`), `suggested` to file the defer-as-issue group, `all`, or `none`. Items declined here become `Deferred dropped` in the verdict block — they are not silently re-added to any other category.
 
 Reply semantics:
 
