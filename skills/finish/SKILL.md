@@ -95,7 +95,7 @@ Write a markdown comment summarizing the work. Structure:
 ```markdown
 ## Implementation Complete
 
-Branch: `<branch>` | Commit: `<short-sha>`
+Branch: `<branch>`
 
 ### What was done
 - Bullet points of key changes (files created/modified, features implemented)
