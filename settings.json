@@ -135,16 +135,17 @@
       "mcp__mui",
       "Bash(.claude/skills/investigate/scripts/preflight.sh --need kubectl,gcloud,pulumi,jq,curl)",
       "mcp__descope-docs__search-descope-docs",
-      "mcp__descope-docs__ask-question-about-descope"
+      "mcp__descope-docs__ask-question-about-descope",
+      "Bash(~/.claude/scripts/next-candidates.sh)"
     ],
     "deny": [],
     "ask": [
       "mcp__circleci__run_pipeline"
     ],
+    "defaultMode": "auto",
     "additionalDirectories": [
       "/private/tmp"
-    ],
-    "defaultMode": "auto"
+    ]
   },
   "hooks": {
     "PreToolUse": [
