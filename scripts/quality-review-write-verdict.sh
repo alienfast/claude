@@ -56,6 +56,12 @@ write_atomic() {
   local tmp
   tmp=$(mktemp "${dest_dir}/.qr-verdict-XXXXXX")
   cp "$body_file" "$tmp"
+  # mktemp creates 0600; without this, the atomic mv preserves 0600 on the
+  # final artifact, which surprises any other user/process expecting the
+  # umask default. Force 0644 so the file is readable to group/other (verdict
+  # files are review findings, not secrets, and other processes/users on a
+  # shared machine may want to inspect them).
+  chmod 644 "$tmp"
   mv "$tmp" "$dest_file"
   printf 'wrote %s\n' "$dest_file"
 }

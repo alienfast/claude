@@ -262,8 +262,10 @@ Reply semantics:
 
 **6. Offer Linear issues for unfixed items.** Render the remaining unfixed items using the template below, then ask the question that follows. The render is REQUIRED regardless of prompt mechanism (markdown body, AskUserQuestion description, etc.) — do not collapse to a single sentence; assume the user is context-switching across parallel sessions and cannot scroll back to sub-step 3. Preserve original sub-step 3 numbering (items already fixed in sub-step 5 become gaps, e.g., 1, 3, 4 if item 2 was fixed). Omit a sub-group header entirely if empty; do not print "(none)".
 
+**Every `<...>` token below is a substitution site** — replace each with the resolved value before emitting; never emit the literal pipe-separated schema (`<passed-clean | passed-after-fixes>`) to the user. The verdict header line should read e.g. `Quality review verdict: passed-after-fixes (cycles: 3)`. The Step 4-class substitution rule applies here too.
+
 ```text
-Quality review verdict: <passed-clean | passed-after-fixes>  (cycles: N)
+Quality review verdict: <one of: passed-clean | passed-after-fixes>  (cycles: N)
 Deferred items still unfixed after sub-step 5:
 
 Fixed in-session (for context, not actionable here):
@@ -332,11 +334,11 @@ When the skill returns to its caller (or to the user, when standalone), present 
 ```text
 Verdict: <one of: passed-clean | passed-after-fixes | terminated-with-open-items | escalated-to-architect>
 Cycles: N (initial + N-1 re-reviews)
-Findings resolved: [list, or "none" if passed-clean]
-Deferred fixed in-session: [list, or "none"]
-Deferred filed as issues: [PL-XX, PL-YY (sub-issues of <PARENT>), or "none"]
-Deferred dropped: [list, or "none"]
-Open items: [list, or "none" — populated only on terminated-with-open-items or escalated-to-architect; includes any deferred items not handled above]
+Findings resolved: [list, or the bare word none if passed-clean]
+Deferred fixed in-session: [list, or the bare word none]
+Deferred filed as issues: [PL-XX, PL-YY (sub-issues of <PARENT>), or the bare word none]
+Deferred dropped: [list, or the bare word none]
+Open items: [list, or the bare word none — populated only on terminated-with-open-items or escalated-to-architect; includes any deferred items not handled above]
 ```
 
 **Substitute resolved values before rendering — never emit the schema verbatim.** The `Verdict:` line MUST contain exactly one of the four enum values, with no `|` separators and no remaining angle-bracket placeholders. A concrete passing example:
