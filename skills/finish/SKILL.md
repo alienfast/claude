@@ -44,12 +44,6 @@ When `SOURCE_BRANCH` is set (we're in a worktree), the script defaults `ACTION` 
 
 If both `SOURCE_BRANCH` and `ACTION` are empty, this is the standard `/finish` flow.
 
-**Cross-worktree sanity check.** If the standard flow is detected (no worktree config under the current cwd) but the resolved issue ID's branch exists in a known linked worktree of this repo (`git worktree list` shows a path whose basename or branch contains `<issue-id-lower>`), warn the user before continuing:
-
-> Issue `<ISSUE-ID>` appears to live in worktree `<path>`. Are you running `/finish` from the wrong cwd? Reply `yes` to proceed here anyway, or `abort` and `cd` into the worktree first.
-
-Continue only on explicit `yes`. This catches the case where `/start wt` created a worktree, the user opened a fresh terminal in the main checkout, and ran `/finish PL-13` from there — which would otherwise push/commit on the wrong branch.
-
 ### Step 1: Identify the Issue
 
 ```bash
@@ -57,6 +51,12 @@ Continue only on explicit `yes`. This catches the case where `/start wt` created
 ```
 
 The script tries `--input` → current branch → latest commit subject, in that order. Pass `--input` only when the user typed an explicit ID (e.g., `/finish PL-12`). On exit 1, ask the user for the identifier explicitly.
+
+**Cross-worktree sanity check (standard-flow only).** After the issue ID is resolved, if the standard flow was detected in Step 0 (no worktree config under the current cwd) but the issue's branch exists in a known linked worktree of this repo (`git worktree list` shows a path whose basename or branch contains `<issue-id-lower>`), warn the user before continuing:
+
+> Issue `<ISSUE-ID>` appears to live in worktree `<path>`. Are you running `/finish` from the wrong cwd? Reply `yes` to proceed here anyway, or `abort` and `cd` into the worktree first.
+
+Continue only on explicit `yes`. This catches the case where `/start wt` created a worktree, the user opened a fresh terminal in the main checkout, and ran `/finish PL-13` from there — which would otherwise push/commit on the wrong branch. Skip the check entirely when Step 0 detected a worktree (in which case `SOURCE_BRANCH` is set and we're already in the right place) or when no issue ID was resolved (nothing to check against).
 
 ### Step 1.5: Read Quality-Review Verdict + Sub-issues
 
@@ -99,12 +99,12 @@ Identify each `- [ ]` checkbox and decide which were completed this session. Don
 
 ### Step 4: Generate Completion Comment
 
-Write a markdown comment summarizing the work. Structure:
+Write a markdown comment summarizing the work. **Every `<...>` token below is a substitution site — replace each one with the resolved value before posting; never emit a literal `<placeholder>` to Linear.** Template:
 
 ```markdown
 ## Implementation Complete
 
-Branch: `<branch>`
+Branch: `<actual branch name, e.g. kross/pl-13-foo>`
 
 ### What was done
 - Bullet points of key changes (files created/modified, features implemented)
@@ -116,9 +116,9 @@ Branch: `<branch>`
 - What was verified (type checks, tests, dev server, etc.)
 
 ### Adversarial review
-- Verdict: <VERDICT> (cycles: <CYCLES>)
-- Sub-issues (current children of this issue): <comma-list of SUB_ISSUES, or "none">
-- Open items: <from verdict file, only when VERDICT=terminated-with-open-items, escalated-to-architect, or malformed>
+- Verdict: <VERDICT value from Step 1.5> (cycles: <CYCLES value from Step 1.5>)
+- Sub-issues (current children of this issue): <comma-list of SUB_ISSUES from Step 1.5, or "none">
+- Open items: <text extracted from VERDICT_FILE's Open items: section, only when VERDICT=terminated-with-open-items, escalated-to-architect, or malformed>
 
 ### Notes
 - Any unchecked items with explanation of why
@@ -171,7 +171,12 @@ If it **passes**: proceed to commit.
 ~/.claude/scripts/finish-commit.sh PL-13 tmp/finish-commit-pl-13.md [--no-push]
 ```
 
-Pass `--no-push` if the user requested `no push` / `don't push` / `skip push`. **Also pass `--no-push` whenever `ACTION=merge`** — the temp branch is about to be merged and deleted locally; pushing it pollutes origin with abandoned branches. The merge commit reaches origin later via the source branch.
+**`--no-push` is required in TWO cases — easy to miss the second:**
+
+1. The user requested `no push` / `don't push` / `skip push` (Step 0 translates these to `NO_PUSH=1`).
+2. **`ACTION=merge`** — the temp branch is about to be merged into source and deleted locally; pushing it pollutes origin with abandoned branches. The merge commit reaches origin later via the source branch.
+
+If either condition holds, pass `--no-push`. The script does NOT enforce this rule (it has no awareness of `ACTION`), so the orchestrator MUST gate on `NO_PUSH=1 OR ACTION=merge`.
 
 The script handles all three states: pre-staged changes (commit + push), already-committed-but-ahead (push only), already-synced (no-op). If staging is missing for an unstaged-only state, it errors with exit 2 — go back and `git add` the files.
 
@@ -241,7 +246,7 @@ The merge fast-forwards when possible — the common case, since worktree branch
 - **0 (success)** — surface the script's output and present the closing message:
 
   ```text
-  ✓ <WORKTREE_BRANCH> merged into <SOURCE_BRANCH>. Worktree removed.
+  Done: <WORKTREE_BRANCH> merged into <SOURCE_BRANCH>. Worktree removed.
   This agent-view session is done — close it and dispatch a new session for the next issue.
   ```
 
@@ -272,7 +277,7 @@ gh pr create --base '<SOURCE_BRANCH>' --head '<WORKTREE_BRANCH>' --fill
 After the PR is created, present the closing message:
 
 ```text
-✓ PR opened (base=<SOURCE_BRANCH>, head=<WORKTREE_BRANCH>).
+Done: PR opened (base=<SOURCE_BRANCH>, head=<WORKTREE_BRANCH>).
 This agent-view session is done — review/merge the PR, then `git worktree remove` from the main checkout when you're done.
 ```
 
