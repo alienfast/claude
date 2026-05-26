@@ -22,17 +22,13 @@ Examples: `/quality-review`, `/quality-review PL-13`, `/quality-review src/foo.t
 
 ### Step 1: Resolve Scope
 
-**Issue ID** (in priority order):
-
-1. User input — e.g., `/quality-review PL-13`
-2. Git branch name — extract from branch (e.g., `pl-13-add-foo` → `PL-13`)
-3. Latest commit message — extract issue key from `git log --oneline -1` (only if working tree is clean)
-4. None — proceed without issue context; the requirements-conformance bullet in the reviewer prompt is omitted
+**Issue ID** — delegate to the shared script (same one `/start` and `/finish` use):
 
 ```bash
-git branch --show-current
-git log --oneline -1
+~/.claude/scripts/detect-issue-id.sh [--input <USER-SUPPLIED-ID>]
 ```
+
+Pass `--input` only when the user typed an explicit ID (e.g., `/quality-review PL-13`). The script tries `--input` → current branch → latest commit subject, in that order. On exit 1 (no ID resolvable), proceed without issue context — the requirements-conformance bullet in the reviewer prompt is omitted.
 
 **Changed files** (in priority order):
 
