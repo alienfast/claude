@@ -44,6 +44,12 @@ When `SOURCE_BRANCH` is set (we're in a worktree), the script defaults `ACTION` 
 
 If both `SOURCE_BRANCH` and `ACTION` are empty, this is the standard `/finish` flow.
 
+**Cross-worktree sanity check.** If the standard flow is detected (no worktree config under the current cwd) but the resolved issue ID's branch exists in a known linked worktree of this repo (`git worktree list` shows a path whose basename or branch contains `<issue-id-lower>`), warn the user before continuing:
+
+> Issue `<ISSUE-ID>` appears to live in worktree `<path>`. Are you running `/finish` from the wrong cwd? Reply `yes` to proceed here anyway, or `abort` and `cd` into the worktree first.
+
+Continue only on explicit `yes`. This catches the case where `/start wt` created a worktree, the user opened a fresh terminal in the main checkout, and ran `/finish PL-13` from there — which would otherwise push/commit on the wrong branch.
+
 ### Step 1: Identify the Issue
 
 ```bash
@@ -234,7 +240,7 @@ The merge fast-forwards when possible — the common case, since worktree branch
 
   1. For each conflicted file: read it from `<REPO_ROOT>/<path>`, understand both sides of the conflict, apply the resolution. When one side clearly subsumes the other (e.g., the worktree branch removed code the source side modified), take the subsuming side. Ask the user only when the right answer is genuinely ambiguous.
   2. `git -C '<REPO_ROOT>' add <resolved-files>`
-  3. Run `pnpm check` from `<REPO_ROOT>` — must be green before committing.
+  3. Run `pnpm check` from `<REPO_ROOT>` — must be green before committing. If it fails: the conflict resolution introduced a regression. Per the Working Application Contract, do **not** commit and do **not** proceed to step 4. Surface the failing output to the user; let them decide between fixing the resolution further, aborting the merge (`git -C '<REPO_ROOT>' merge --abort`), or escalating to architect. The mid-merge state is preserved on disk for inspection.
   4. `git -C '<REPO_ROOT>' commit -F '<WT_DIR>/tmp/git-merge-msg-<issue>.md'` — reuse the prepared merge-commit message.
   5. `git -C '<REPO_ROOT>' worktree remove '<WT_DIR>'`
   6. `git -C '<REPO_ROOT>' branch -d '<WORKTREE_BRANCH>'`

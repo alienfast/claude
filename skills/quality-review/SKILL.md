@@ -251,7 +251,9 @@ Reply semantics:
   ```
 
 - If the re-review surfaces new **Nice-to-Have** findings, append them to the remaining unfixed list for sub-step 6.
-- If the re-review surfaces new **Critical/High/Medium** findings (regressions caused by the deferred-item fixes), make exactly **one** corrective pass: delegate to `developer` to fix the regressions, then re-run `pnpm check`. Do **not** spawn another `quality-reviewer` cycle and do **not** re-enter the Step 5 loop. If `pnpm check` still fails or any of those findings remain unaddressed in the diff, terminate Step 6 immediately. On termination, populate the verdict block as follows:
+- If the re-review surfaces new **Critical/High/Medium** findings (regressions caused by the deferred-item fixes), make exactly **one** corrective pass: delegate to `developer` to fix the regressions, then re-run `pnpm check`. Do **not** re-enter the Step 5 loop.
+  - **Upgrade-on-success exception.** If the corrective pass produces a clean `pnpm check` AND the diff stays scoped to the regression area, an OPTIONAL single confirmatory `quality-reviewer` re-review MAY be spawned (scoped to just the corrective-pass files). If that re-review returns no new Critical/High/Medium findings, **restore the verdict to `passed-after-fixes`** rather than terminating with open items, and continue to sub-step 6. This prevents the regression-cap path from forcing a downgrade on a genuinely successful recovery.
+  - If the confirmatory re-review is skipped, or surfaces new findings, or the corrective `pnpm check` still fails, or any of the original regressions remain unaddressed in the diff, terminate Step 6 immediately. On termination, populate the verdict block as follows:
   - **Verdict:** `terminated-with-open-items` (overriding the Step 4 verdict).
   - **Deferred fixed in-session:** deferred items whose fixes are not implicated in the regression. If causation cannot be cleanly attributed (the developer landed multiple fixes in one delegation and the re-review surfaced regressions from "this delta"), list **none** of them as fixed and route every chosen item to `Open items` — readers should not see "fixed" labels on changes that broke the application.
   - **Open items:** the surviving Critical/High/Medium regressions, **plus** the implicated deferred-item fixes per the rule above, **plus** any not-yet-offered unfixed Nice-to-Have items (the user never reached sub-step 6, so those items are not "dropped" — they are surfaced for manual follow-up).
@@ -311,7 +313,13 @@ body_file=$(mktemp tmp/deferred-XXXXXX)
 new_id=$(~/.claude/scripts/linear-stdin.sh "$body_file" i create "<short title>" --team <team> --state Planned --parent <ISSUE-ID> -d - | grep -oE '[A-Z]+-[0-9]+' | head -1)
 ```
 
-If `--state Planned` is rejected (the team uses different state names), fall back to the team's equivalent "ready-to-work, not-yet-prioritized" state — verify with `linear teams states <TEAM>`. Do NOT silently fall through to the default (most teams default to Triage, which defeats the purpose).
+If `--state Planned` is rejected (the team uses different state names), follow this explicit fallback algorithm:
+
+1. Probe available states: `linear teams states <TEAM>`.
+2. Pick the first state whose name matches `/^(planned|backlog|to.?do|ready)/i` (case-insensitive, prefix match).
+3. If none match, surface the available states to the user and ask which to use (`Available: Backlog, In Review, Done … which is the "ready-to-work, not-yet-prioritized" state for this team?`) rather than silently falling through to the team default — most teams default to `Triage`, which defeats the purpose of filing deferred items that are already triaged.
+
+Do NOT silently fall through to the default.
 
 After creation, verify the parent link took (`linear i view "$new_id"` should show the parent). If it did not, surface the failure rather than proceeding — an orphaned deferred issue defeats the purpose of filing it.
 
