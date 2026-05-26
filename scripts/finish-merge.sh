@@ -4,10 +4,12 @@
 # Usage: finish-merge.sh <wt-dir> <source-branch> <worktree-branch> <message-file>
 #
 #   <message-file> is a markdown/text file whose contents become the merge
-#   commit message (first line = subject; subsequent lines = body, per git
-#   conventions). The caller (/finish Step 9) must include the Linear
-#   issue ID in the subject for Linear's auto-linking to fire. The file
-#   path is passed to `git merge --no-ff -F`.
+#   commit message if a merge commit is actually created. The merge runs as
+#   `git merge -F <message-file>` — git fast-forwards when possible (the
+#   common case for a single-commit worktree branch), and only consumes the
+#   message when the branches have diverged. The caller (/finish Step 9)
+#   should include the Linear issue ID in the subject (e.g. `Merge PL-13`)
+#   for Linear's auto-linking to fire in the divergent-merge case.
 #
 # Must be run from the main repo checkout (cwd is the parent of .git's
 # common dir). NOT from inside <wt-dir> — this script removes that
@@ -101,7 +103,7 @@ if ! git checkout "$source_branch"; then
   exit 1
 fi
 
-if git merge --no-ff -F "$message_file" "$worktree_branch"; then
+if git merge -F "$message_file" "$worktree_branch"; then
   # Gate branch delete on worktree removal. Reverse (deleted branch + stale
   # dir) is worse than dangling-dir + intact-branch.
   if git worktree remove "$wt_dir"; then

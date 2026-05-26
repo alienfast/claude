@@ -165,18 +165,12 @@ Substitute the values captured from Step 0 (`SOURCE_BRANCH`, `WORKTREE_BRANCH`, 
 
 **If `ACTION == "merge"`:**
 
-The merge produces a real `--no-ff` commit on the source branch. The commit message must include the Linear issue ID (for auto-linking) and a meaningful summary + body — not the default `Merge <branch> into <source>` boilerplate.
+The merge fast-forwards when possible — the common case, since worktree branches are usually one commit ahead of source. That collapses to a single `PL-XXX: <summary>` line in `git log` with no merge commit. Only when the source branch has moved during the worktree's life does git create a merge commit; in that case it uses the prepared one-line `Merge PL-XXX` subject (avoiding the verbose default `Merge branch '<long-branch-name>' into <source>` boilerplate).
 
-1. **Write the merge-commit message** to `<WT_DIR>/tmp/git-merge-msg-<issue-lower>.md` (substitute the actual `WT_DIR` value from Step 0). Use the `Write` tool — it requires an absolute path. Shape — first line is the subject (≤72 chars), one blank line, then a body that summarizes what was done:
+1. **Write the merge-commit message** to `<WT_DIR>/tmp/git-merge-msg-<issue-lower>.md` (substitute the actual `WT_DIR` value from Step 0). Use the `Write` tool — it requires an absolute path. A single line is all that's needed; it's only used in the rare divergent-merge case (or during conflict resolution), and the issue ID is what Linear auto-links on:
 
    ```text
-   PL-13: <short imperative summary of what shipped>
-
-   <2–5 lines describing what was implemented, key design choices, and any
-   notable verification (e.g., "pnpm check green; 15/15 specs pass"). Mirror
-   Step 4's completion-comment content — but tighter, for git history.>
-
-   Merges <WORKTREE_BRANCH> into <SOURCE_BRANCH>.
+   Merge PL-13
    ```
 
 2. **Run the merge in a single Bash tool call** — `cd` to the main checkout (the script removes the worktree on success, so cwd must not be inside it), then call `finish-merge.sh`:
