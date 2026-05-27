@@ -130,16 +130,20 @@ Write a checkpoint comment summarizing progress. Structure:
 
 Omit empty sections. Keep it concise — this is a status update, not a report.
 
-1. Use the `Write` tool to save the comment to `tmp/linear-checkpoint-<issue-id>.md`
+1. Use the `Write` tool to save the comment to `tmp/linear-checkpoint-<issue-id-lowercased>.md` (e.g., `tmp/linear-checkpoint-pl-42.md`).
 2. Run:
 
 ```bash
-~/.claude/scripts/linear-post.sh comment PL-42 tmp/linear-checkpoint-pl-42.md
+~/.claude/scripts/linear-post.sh comment <ISSUE-ID> tmp/linear-checkpoint-<issue-id-lowercased>.md
 ```
 
 ### Step 9: Tagged Final Line
 
 After Step 8 posts the Linear comment, emit the tagged final line per `standards/lifecycle-tags.md` as the last LLM-authored output. `/checkpoint` always ends with `IN-PROGRESS:` since the issue stays in `In Progress` and work is expected to resume.
+
+**Every `<...>` token in the templates below is a substitution site** — replace each with the resolved value before emitting; never write a literal `<placeholder>` to chat. `<ISSUE-ID>` is uppercase (e.g., `PL-42`); `<issue-id-lowercased>` is lowercase (e.g., `pl-42`) and MUST match the filename Step 8 wrote.
+
+**Inspect the exit code from Step 8's `linear-post.sh` invocation** to decide which branch fires below. If the bash exit code was non-zero, take the "Step 8 failed" branch even if the prose output looks partially normal — non-zero is the signal that matters.
 
 **Step 8 succeeded** (`linear-post.sh` exited 0):
 
@@ -177,4 +181,4 @@ Do not emit any trailing prose after the tagged line.
 - **No issue found**: Ask the user for the issue identifier.
 - **`linear` CLI not authenticated**: Prompt `linear auth login`.
 - **Push fails**: Warn but don't fail — the commit is saved locally. User can push later.
-- **Linear post fails (Step 8 `linear-post.sh` exits non-zero)**: Surface the error to the user, preserve the staging file (`tmp/linear-checkpoint-<id>.md`), and proceed to Step 9 — which emits `IN-PROGRESS:` with an inline WARNING that Linear was NOT updated and a recovery command. Do not silently emit a clean `IN-PROGRESS:` (the agents-list would then claim success while Linear has no record of the checkpoint).
+- **Linear post fails (Step 8 `linear-post.sh` exits non-zero)**: Surface the error to the user, preserve the staging file (`tmp/linear-checkpoint-<issue-id-lowercased>.md`), and proceed to Step 9 — which inspects the exit code and emits `IN-PROGRESS:` with an inline WARNING that Linear was NOT updated and a recovery command. Do not silently emit a clean `IN-PROGRESS:` (the agents-list would then claim success while Linear has no record of the checkpoint).

@@ -193,19 +193,20 @@ In all other cases (no worktree, or `ACTION == "merge"`), gate the transition on
 - A branch that completed `linear issues update --state "Ready For Release"` AND `SOURCE_BRANCH` from Step 0 is empty (non-worktree flow, no Step 9 to follow) → emit `RELEASED: <ISSUE-ID> — <one-line summary>` as the last LLM-authored line.
 - A branch that completed the state update AND `SOURCE_BRANCH` is non-empty (worktree flow) → do NOT emit a tag here; Step 9 owns the terminal line (`SHIPPED-MERGE:` or `SHIPPED-PR:`).
 - A branch that exited via the user picking `abort` or `re-run` at the gate prompt → emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — <one-line reason>` as the last LLM-authored line. State was NOT changed.
-- A branch that warned-and-proceeded (`none-found`) → same as the first/second bullets depending on `SOURCE_BRANCH`.
-- **A branch where `linear issues update` itself failed** (API error, auth dropped mid-session, team's terminal state name differs from `Ready For Release`) → see the **State-update failure** section below for the recovery + terminator rule.
+- A branch that warned-and-proceeded (`none-found`) → same as the first/second bullets depending on `SOURCE_BRANCH`, **unless `linear issues update` itself fails, in which case bullet 5 supersedes**.
+- **A branch where `linear issues update` itself failed** (API error, auth dropped mid-session, team's terminal state name differs from `Ready For Release`) → see the **State-update failure** section below for the recovery + terminator rule. **This bullet supersedes bullets 1, 2, and 4 whenever the state update doesn't succeed** — never emit `RELEASED:` on a failed update.
 
 The per-branch instructions below indicate which terminator each branch uses; trust the contract above for the literal tag wording.
 
 **State-update failure recovery (applies to every branch that attempts `linear issues update --state "Ready For Release"`).** If the call exits non-zero:
 
 1. Inspect the error. If it's a "no such state" rejection (the team uses a different terminal state name), apply this probe-and-match fallback — analogous to `/start` Step 8.5's CANCELED/ABANDONED fallback and `/quality-review` sub-step 6's fallback:
-   - Probe `linear teams states <TEAM>`.
-   - Pick the first state whose name matches `/^ready.?for.?(release|deploy|ship)$/i` (exact match — NOT a prefix match — to avoid latching onto `Ready For Review`).
+   - Derive the team key from the issue ID prefix (e.g., `PL-13` → team `PL`). Then probe: `linear teams states PL`.
+   - Pick the first state whose name matches `/^ready[ _-]?for[ _-]?(release|deploy|ship)$/i` (exact match — NOT a prefix match — to avoid latching onto `Ready For Review`; the `[ _-]?` separator class matches `Ready For Release`, `Ready_For_Release`, `Ready-For-Release`, `ReadyForRelease`).
    - If found, retry `linear issues update <ISSUE-ID> --state "<matched-name>"`. If it succeeds, proceed with the branch's stated `RELEASED:` terminator.
    - If no match, OR if the retry also fails, fall through to step 2.
-2. Surface the error to the user and emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — linear issues update failed: <reason>. State NOT changed; this issue remains In Progress.` as the terminator. Do NOT silently emit `RELEASED:` (it would lie about the state) and do NOT continue to Step 9 (worktree flow can't ship an issue whose state didn't transition).
+   - **Note on bare `Ready`:** the regex deliberately requires `Ready For <release|deploy|ship>` and does NOT match a bare `Ready` state. A team's `Ready` state is too ambiguous (could mean ready-for-review, ready-for-QA, etc.) to auto-route into — the issue falls through to step 2's BLOCKED-ON-REVIEW. To use bare `Ready` as a release state, rename it to `Ready For Release` or add canonical config.
+2. Surface the error to the user and emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — linear issues update failed: <reason>. State NOT changed; this issue remains In Progress.` as the terminator. **Distill `<reason>` to a single line**: if the CLI returned a multi-line error (stack trace, JSON error body), take the first informative line (typically the error message) and drop the rest — the tag must fit on one line so the agents-list parser picks it up correctly. Do NOT silently emit `RELEASED:` (it would lie about the state) and do NOT continue to Step 9 (worktree flow can't ship an issue whose state didn't transition).
 
 - **`passed-clean` / `passed-after-fixes`** — proceed, BUT first check `VERDICT_STALE`:
   - `VERDICT_STALE=0` → proceed with the state update:

@@ -328,7 +328,7 @@ Steps:
    linear issues update <ISSUE-ID> --state Canceled
    ```
 
-   If the team's canceled-state name differs (rejected), probe `linear teams states <TEAM>` and pick the first state whose name matches `/^(canceled|cancelled|won.?t.?do|abandoned)/i` (case-insensitive, prefix). If none match, surface the available states to the user and ask which to use — do not silently fall through to the team default.
+   If the team's canceled-state name differs (rejected), derive the team key from the issue ID prefix (e.g., `PL-13` → team `PL`), then probe `linear teams states PL` and pick the first state whose name matches `/^(canceled|cancelled|won.?t.?do|abandoned)/i` (case-insensitive, prefix). If none match, surface the available states to the user and ask which to use — do not silently fall through to the team default.
 3. Surface the cleanup commands to the user (do NOT run them automatically — the worktree might contain in-progress notes worth saving):
 
    ```bash
@@ -357,7 +357,7 @@ Steps:
    linear issues update <ISSUE-ID> --state Planned
    ```
 
-   If the team's planned-state name differs (rejected), probe `linear teams states <TEAM>` and pick the first state whose name matches `/^(planned|backlog|to.?do)$/i` (exact match on these four; NOT a prefix match) — preferring `Planned` if present, since it preserves the "we intend to do this" signal more strongly than `Backlog`. **Deliberately exclude `ready` from the regex** — a prefix match on `ready` would latch onto `Ready For Release` or `Ready For Review` on teams that have those states, silently moving an abandoned issue into a release/review state. If none match, surface the available states to the user and ask which to use — do not silently fall through to the team default.
+   If the team's planned-state name differs (rejected), derive the team key from the issue ID prefix (e.g., `PL-13` → team `PL`), then probe `linear teams states PL` and pick the first state whose name matches `/^(planned|backlog|to.?do)$/i` (exact match on these four; NOT a prefix match) — preferring `Planned` if present, since it preserves the "we intend to do this" signal more strongly than `Backlog`. **Deliberately exclude `ready` from the regex** — a prefix match on `ready` would latch onto `Ready For Release` or `Ready For Review` on teams that have those states, silently moving an abandoned issue into a release/review state. If none match, surface the available states to the user and ask which to use — do not silently fall through to the team default.
 3. **Preserve the worktree** — the whole point of `ABANDONED` (vs `CANCELED`) is that resumption is expected. Do not run `git worktree remove` and do not delete the branch.
 4. Emit the tagged final line and stop:
 
