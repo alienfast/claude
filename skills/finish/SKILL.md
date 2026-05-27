@@ -133,8 +133,8 @@ Omit sections that have no content (e.g., skip "Notes" if everything was complet
 
 Write both files:
 
-1. `tmp/linear-description-<issue-id>.md` — full description with `- [ ]` flipped to `- [x]` for completed items. Preserve everything else exactly.
-2. `tmp/linear-comment-<issue-id>.md` — completion-comment body from Step 4.
+1. `tmp/linear-description-<issue-id-lowercased>.md` (e.g., `tmp/linear-description-pl-12.md`) — full description with `- [ ]` flipped to `- [x]` for completed items. Preserve everything else exactly.
+2. `tmp/linear-comment-<issue-id-lowercased>.md` (e.g., `tmp/linear-comment-pl-12.md`) — completion-comment body from Step 4.
 
 Then post both in one call:
 
@@ -159,7 +159,7 @@ If it **passes**: proceed to commit.
 ### Step 7: Git Commit & Push
 
 1. Stage relevant files by name (`git add <files>`). Never `git add -A` / `git add .` (per CLAUDE.md).
-2. Write the commit message to `tmp/finish-commit-<issue-id>.md`. The issue ID **must** appear in the message (the script enforces it for Linear auto-linking):
+2. Write the commit message to `tmp/finish-commit-<issue-id-lowercased>.md` (e.g., `tmp/finish-commit-pl-13.md`). The issue ID **must** appear in the message (the script enforces it for Linear auto-linking):
 
    ```text
    PL-13: <short imperative summary>
@@ -265,7 +265,7 @@ Substitute the values captured from Step 0 (`SOURCE_BRANCH`, `WORKTREE_BRANCH`, 
 
 The merge fast-forwards when possible — the common case, since worktree branches are usually one commit ahead of source. That collapses to a single `PL-XXX: <summary>` line in `git log` with no merge commit. Only when the source branch has moved during the worktree's life does git create a merge commit; in that case it uses the prepared one-line `Merge PL-XXX` subject (avoiding the verbose default `Merge branch '<long-branch-name>' into <source>` boilerplate).
 
-1. **Write the merge-commit message** to `<WT_DIR>/tmp/git-merge-msg-<issue-lower>.md` (substitute the actual `WT_DIR` value from Step 0). Use the `Write` tool — it requires an absolute path. A single line is all that's needed; it's only used in the rare divergent-merge case (or during conflict resolution), and the issue ID is what Linear auto-links on:
+1. **Write the merge-commit message** to `<WT_DIR>/tmp/git-merge-msg-<issue-id-lowercased>.md` (e.g., `<WT_DIR>/tmp/git-merge-msg-pl-13.md`; substitute the actual `WT_DIR` value from Step 0). Use the `Write` tool — it requires an absolute path. A single line is all that's needed; it's only used in the rare divergent-merge case (or during conflict resolution), and the issue ID is what Linear auto-links on:
 
    ```text
    Merge PL-13
@@ -297,7 +297,7 @@ The merge fast-forwards when possible — the common case, since worktree branch
   1. For each conflicted file: read it from `<REPO_ROOT>/<path>`, understand both sides of the conflict, apply the resolution. When one side clearly subsumes the other (e.g., the worktree branch removed code the source side modified), take the subsuming side. Ask the user only when the right answer is genuinely ambiguous.
   2. `git -C '<REPO_ROOT>' add <resolved-files>`
   3. Run `pnpm check` from `<REPO_ROOT>` — must be green before committing. If it fails: the conflict resolution introduced a regression. Per the Working Application Contract, do **not** commit and do **not** proceed to step 4. Surface the failing output to the user; let them decide between fixing the resolution further, aborting the merge (`git -C '<REPO_ROOT>' merge --abort`), or escalating to architect. The mid-merge state is preserved on disk for inspection.
-  4. `git -C '<REPO_ROOT>' commit -F '<WT_DIR>/tmp/git-merge-msg-<issue>.md'` — reuse the prepared merge-commit message.
+  4. `git -C '<REPO_ROOT>' commit -F '<WT_DIR>/tmp/git-merge-msg-<issue-id-lowercased>.md'` — reuse the prepared merge-commit message (e.g., `<WT_DIR>/tmp/git-merge-msg-pl-13.md`).
   5. `git -C '<REPO_ROOT>' worktree remove '<WT_DIR>'`
   6. `git -C '<REPO_ROOT>' branch -d '<WORKTREE_BRANCH>'`
   7. Present the closing message above.

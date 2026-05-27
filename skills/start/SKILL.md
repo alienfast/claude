@@ -62,7 +62,7 @@ If the args contain `wt`:
 
 3. **Continue to Step 1 in this same session — no subagent.** The user is already in an isolated agent-view session; the worktree provides git-level isolation. Stacking subagent isolation on top would only hide plan-mode prompts and `/quality-review` output from the user. Steps 1–10 run unchanged:
 
-   - Step 1 reads the pre-fetched digest at `tmp/linear-context-<issue-lower>.md`.
+   - Step 1 reads the pre-fetched digest at `tmp/linear-context-<issue-id-lowercased>.md` (e.g., `tmp/linear-context-pl-13.md`).
    - Step 5 short-circuits via the recorded per-worktree git config.
    - Step 6 (`EnterPlanMode`) surfaces the approval UI to the user.
    - Step 8 delegates implementation to `developer` subagents (those are appropriate — they're scoped tasks, not whole-workflow dispatch).
@@ -204,7 +204,7 @@ Do not start implementation until the user approves the plan via `ExitPlanMode`.
 
 Record the approved plan as a comment on the issue before starting work. This creates a permanent record so that if the session is interrupted, anyone (including a future session) can reconstruct intent from Linear.
 
-1. Use the `Write` tool to save the plan as a structured comment to `tmp/linear-comment-<issue-id>.md`:
+1. Use the `Write` tool to save the plan as a structured comment to `tmp/linear-comment-<issue-id-lowercased>.md` (e.g., `tmp/linear-comment-pl-13.md`):
 
 ```markdown
 ## Implementation Plan
@@ -281,7 +281,7 @@ linear issues get PL-13 --output json
 
 Update completed checkboxes (`- [ ]` → `- [x]`) and push the update:
 
-1. Use the `Write` tool to save the full updated description to `tmp/linear-description-<issue-id>.md` (e.g., `tmp/linear-description-pl-13.md`)
+1. Use the `Write` tool to save the full updated description to `tmp/linear-description-<issue-id-lowercased>.md` (e.g., `tmp/linear-description-pl-13.md`)
 2. Run:
 
 ```bash
@@ -296,7 +296,7 @@ Update completed checkboxes (`- [ ]` → `- [x]`) and push the update:
 
 **Progress Checkpoints** — As implementation progresses, add brief comments on significant design decisions or unexpected blockers:
 
-1. Use the `Write` tool to save the comment to `tmp/linear-comment-<issue-id>.md` (e.g., `tmp/linear-comment-pl-13.md`)
+1. Use the `Write` tool to save the comment to `tmp/linear-comment-<issue-id-lowercased>.md` (e.g., `tmp/linear-comment-pl-13.md`)
 2. Run:
 
 ```bash
@@ -305,7 +305,7 @@ Update completed checkboxes (`- [ ]` → `- [x]`) and push the update:
 
 This ensures progress is visible in Linear even if the session is interrupted, and enables picking up where we left off.
 
-**Resumption.** `/start` is idempotent on the same issue: re-running `/start PL-13` after a `/checkpoint`-and-stop should detect the issue's existing `In Progress` state and the existing branch, skip the worktree-setup and assignment steps, and resume at the implementation phase. If Step 9 (review) had previously run, the existing `tmp/quality-review-verdict-<id>.md` file is still consulted by `/finish` Step 1.5 — the user can decide to re-run `/quality-review` to refresh it, or skip ahead to `/finish` if the prior verdict still applies.
+**Resumption.** `/start` is idempotent on the same issue: re-running `/start PL-13` after a `/checkpoint`-and-stop should detect the issue's existing `In Progress` state and the existing branch, skip the worktree-setup and assignment steps, and resume at the implementation phase. If Step 9 (review) had previously run, the existing `tmp/quality-review-verdict-<issue-id-lowercased>.md` file (e.g., `tmp/quality-review-verdict-pl-13.md`) is still consulted by `/finish` Step 1.5 — the user can decide to re-run `/quality-review` to refresh it, or skip ahead to `/finish` if the prior verdict still applies.
 
 **After all implementation tasks are complete, proceed to Step 9.** Implementation is not finished until the review passes.
 
@@ -321,7 +321,7 @@ Two terminal states can fire BEFORE the normal Step 9 → Step 10 flow. Both byp
 
 Steps:
 
-1. Post a Linear comment summarizing what was found and why no code is shipping. Use `~/.claude/scripts/linear-post.sh comment <ISSUE-ID> tmp/canceled-comment-<id>.md`. Body should name the issues/PRs that already cover the work (if applicable) and note any out-of-scope findings worth filing as separate issues.
+1. Post a Linear comment summarizing what was found and why no code is shipping. Use `~/.claude/scripts/linear-post.sh comment <ISSUE-ID> tmp/canceled-comment-<issue-id-lowercased>.md` (e.g., `tmp/canceled-comment-pl-292.md`). Body should name the issues/PRs that already cover the work (if applicable) and note any out-of-scope findings worth filing as separate issues.
 2. Move the Linear issue state to a "canceled" terminal state. Try the canonical name first, then fall back per `/quality-review` sub-step 6's fallback pattern:
 
    ```bash
@@ -350,7 +350,7 @@ Steps:
 
 Steps:
 
-1. Post a Linear comment noting where things stand: what's done, what's not, any decisions made, where the implementation left off. Use `~/.claude/scripts/linear-post.sh comment <ISSUE-ID> tmp/abandoned-comment-<id>.md`.
+1. Post a Linear comment noting where things stand: what's done, what's not, any decisions made, where the implementation left off. Use `~/.claude/scripts/linear-post.sh comment <ISSUE-ID> tmp/abandoned-comment-<issue-id-lowercased>.md` (e.g., `tmp/abandoned-comment-pl-322.md`).
 2. Move the Linear issue state back to a "ready-to-work" state. Try the canonical name first, then fall back per `/quality-review` sub-step 6's fallback pattern:
 
    ```bash

@@ -63,7 +63,7 @@ For each `- [ ]` checkbox in the description:
 
 If any checkboxes changed, update the description:
 
-1. Use the `Write` tool to save the full updated description to `tmp/linear-description-<issue-id>.md`
+1. Use the `Write` tool to save the full updated description to `tmp/linear-description-<issue-id-lowercased>.md` (e.g., `tmp/linear-description-pl-42.md`)
 2. Run:
 
 ```bash

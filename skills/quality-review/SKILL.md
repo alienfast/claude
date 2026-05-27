@@ -361,11 +361,11 @@ When delegated from `/start`, this block becomes the "Adversarial review" sectio
 
 **Persist the verdict for `/finish`.** After the block is composed, also write it to a file so a later `/finish` run (potentially in a different session or a different worktree of the same repo) can find it. Skip this step entirely if no issue ID was resolved in Step 1.
 
-1. Use the `Write` tool to save the resolved verdict block (every placeholder substituted; no `|`-separated schema lines) to `tmp/quality-review-verdict-<issue-id-lower>.md`. This is the same filename the persistence script will publish to both `tmp/` locations — staging and final artifact share one name so an LLM debugging the handoff doesn't have to follow a rename.
+1. Use the `Write` tool to save the resolved verdict block (every placeholder substituted; no `|`-separated schema lines) to `tmp/quality-review-verdict-<issue-id-lowercased>.md`. This is the same filename the persistence script will publish to both `tmp/` locations — staging and final artifact share one name so an LLM debugging the handoff doesn't have to follow a rename.
 2. Persist atomically to both the current worktree's `tmp/` AND the main checkout's `tmp/` for cross-worktree handoff (the script reads the staging file and rewrites it in place at both locations):
 
    ```bash
-   ~/.claude/scripts/quality-review-write-verdict.sh <ISSUE-ID> tmp/quality-review-verdict-<issue-id-lower>.md
+   ~/.claude/scripts/quality-review-write-verdict.sh <ISSUE-ID> tmp/quality-review-verdict-<issue-id-lowercased>.md
    ```
 
 The persisted file is the canonical `/quality-review` → `/finish` handoff. The contents are the verdict block verbatim — downstream readers (`/finish` Step 1.5) parse the `Verdict:` line and the `Open items:` list.
