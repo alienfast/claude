@@ -292,6 +292,8 @@ Update completed checkboxes (`- [ ]` → `- [x]`) and push the update:
 
 **Do NOT change the issue state** during implementation. The issue stays "In Progress" throughout this entire skill. Moving to "Ready For Release" is handled exclusively by the `/finish` skill after commit and push. Even if all checkboxes are checked, do not transition the state.
 
+**The two exceptions** to this rule are Step 8.5's terminal-exit paths (CANCELED / ABANDONED), which transition the issue to `Canceled` or `Planned` respectively. Those are explicit terminal contracts — when one of the Step 8.5 triggers fires (work already shipped / no longer needed; user halting before completion), Step 8.5 supersedes this prohibition. Outside Step 8.5, the rule above holds: no state changes during implementation.
+
 **Progress Checkpoints** — As implementation progresses, add brief comments on significant design decisions or unexpected blockers:
 
 1. Use the `Write` tool to save the comment to `tmp/linear-comment-<issue-id>.md` (e.g., `tmp/linear-comment-pl-13.md`)
@@ -320,7 +322,13 @@ Two terminal states can fire BEFORE the normal Step 9 → Step 10 flow. Both byp
 Steps:
 
 1. Post a Linear comment summarizing what was found and why no code is shipping. Use `~/.claude/scripts/linear-post.sh comment <ISSUE-ID> tmp/canceled-comment-<id>.md`. Body should name the issues/PRs that already cover the work (if applicable) and note any out-of-scope findings worth filing as separate issues.
-2. Move the Linear issue state to `Canceled`: `linear issues update <ISSUE-ID> --state Canceled`.
+2. Move the Linear issue state to a "canceled" terminal state. Try the canonical name first, then fall back per `/quality-review` sub-step 6's fallback pattern:
+
+   ```bash
+   linear issues update <ISSUE-ID> --state Canceled
+   ```
+
+   If the team's canceled-state name differs (rejected), probe `linear teams states <TEAM>` and pick the first state whose name matches `/^(canceled|cancelled|won.?t.?do|abandoned)/i` (case-insensitive, prefix). If none match, surface the available states to the user and ask which to use — do not silently fall through to the team default.
 3. Surface the cleanup commands to the user (do NOT run them automatically — the worktree might contain in-progress notes worth saving):
 
    ```bash
@@ -343,7 +351,13 @@ Steps:
 Steps:
 
 1. Post a Linear comment noting where things stand: what's done, what's not, any decisions made, where the implementation left off. Use `~/.claude/scripts/linear-post.sh comment <ISSUE-ID> tmp/abandoned-comment-<id>.md`.
-2. Move the Linear issue state back to `Planned`: `linear issues update <ISSUE-ID> --state Planned`. (Do NOT use `Backlog` — `Planned` preserves the "we intend to do this" signal.)
+2. Move the Linear issue state back to a "ready-to-work" state. Try the canonical name first, then fall back per `/quality-review` sub-step 6's fallback pattern:
+
+   ```bash
+   linear issues update <ISSUE-ID> --state Planned
+   ```
+
+   If the team's planned-state name differs (rejected), probe `linear teams states <TEAM>` and pick the first state whose name matches `/^(planned|backlog|to.?do|ready)/i` — preferring `Planned` if present, since it preserves the "we intend to do this" signal more strongly than `Backlog`. If none match, surface the available states to the user and ask which to use — do not silently fall through to the team default.
 3. **Preserve the worktree** — the whole point of `ABANDONED` (vs `CANCELED`) is that resumption is expected. Do not run `git worktree remove` and do not delete the branch.
 4. Emit the tagged final line and stop:
 
@@ -396,6 +410,7 @@ When implementation and review are complete, present a summary to the user that 
    - `terminated-with-open-items` → `BLOCKED-ON-REVIEW: <ISSUE-ID> — open items unresolved after N cycles. Re-run /quality-review or file follow-up issues before /finish.`
    - `escalated-to-architect` → `BLOCKED-ON-REVIEW: <ISSUE-ID> — escalated to architect agent. Review its recommendation before any further action; do NOT run /finish.`
    - missing/unavailable verdict (subagent emitted malformed output, infrastructure error, etc.) → `BLOCKED-ON-REVIEW: <ISSUE-ID> — /quality-review verdict unavailable (likely malformed reviewer output or infrastructure error). Investigate before /finish.`
+   - **Any other value** (defense in depth — `/quality-review` should normalize to one of the four above) → `BLOCKED-ON-REVIEW: <ISSUE-ID> — unrecognized /quality-review verdict <value>. Investigate before /finish; do NOT guess.`
 
 **Ordering — the tagged line MUST be the final line.** The tagged line is the only scannable lifecycle signal in the agents-list display; the user scans bottom-up when running parallel sessions. Do not emit a separate end-of-turn `result:` summary, a one-line recap, or any trailing prose after the tagged line. The Step 10 block IS your end-of-turn summary — nothing follows it. (The harness may append its own `※ recap:` line, which you cannot suppress; the goal is that no LLM-authored text comes between the tagged line and that harness line.)
 
