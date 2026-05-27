@@ -315,6 +315,8 @@ Invoke as: `/quality-review <ISSUE-ID>` (e.g., `/quality-review PL-13`), passing
 
 If `/quality-review` returns `escalated-to-architect`, surface the open items and the architect-agent recommendation in chat, then proceed to Step 10. Step 10 item 6's verdict-conditional Next-steps branch handles this verdict correctly (it emits the "architect recommendation supersedes — do NOT suggest /finish" line). Do not invent a separate exit path here — go through Step 10 like any other verdict.
 
+**Step 10 ALWAYS fires** — even when `/quality-review` failed to produce a clean verdict (subagent emitted malformed output, infrastructure error, partial run, etc.). The user must always see Step 10's structured summary including the Next-steps line; silently ending the session at a broken `/quality-review` violates the "Next steps MUST be the final line" rule. If no verdict was produced or it is missing, render Step 10 item 4 as `Verdict: unavailable (see chat above for /quality-review failure details)` and item 6 as `Next steps: Investigate /quality-review failure (likely malformed reviewer output or infrastructure error) before /finish. Do NOT suggest /finish until a clean verdict exists.` Do not skip Step 10 to "save the user from noise" — the structured summary IS the contract.
+
 ### Step 10: Completion Summary
 
 When implementation and review are complete, present a summary to the user that includes:
@@ -335,6 +337,7 @@ When implementation and review are complete, present a summary to the user that 
    - `passed-clean` / `passed-after-fixes` → `Suggest running /finish to commit, push, and mark Ready For Release`
    - `terminated-with-open-items` → `Re-run /quality-review to address open items, or open follow-up issues, before /finish`
    - `escalated-to-architect` → `Architect-agent recommendation supersedes — review it before any further action. Do NOT suggest /finish.`
+   - missing/unavailable verdict (subagent emitted malformed output, infrastructure error, etc.) → `Investigate /quality-review failure (likely malformed reviewer output or infrastructure error) before /finish. Do NOT suggest /finish until a clean verdict exists.`
 
 **Ordering — Next steps MUST be the final line.** The "Next steps" line is the only actionable item in this summary; the user scans bottom-up when running parallel sessions. Do not emit a separate end-of-turn `result:` summary, a one-line recap, or any trailing prose after "Next steps:". The Step 10 block IS your end-of-turn summary — nothing follows it. (The harness may append its own `※ recap:` line, which you cannot suppress; the goal is that no LLM-authored text comes between "Next steps" and that harness line.)
 

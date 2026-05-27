@@ -78,12 +78,12 @@ Requirements:
 - Assess security surface beyond obvious vulnerabilities
 - Check integration boundaries with existing code
 - Verify conformance against user-level and project-level conventions
-Acceptance: Produce a categorized findings report with concrete scenarios for each finding.
+Acceptance: Produce a categorized findings report following the Required findings format below — markdown sections with `## Review Findings` heading and the five `### <severity>` subheadings, in that order. Do NOT emit JSON arrays of findings, tables, "Verification summary" sections, "Categorization" tallies, or any alternative structure. The format is parsed by sub-step 1 below; deviations break the consolidation step and surface raw output to the user.
 ```
 
 For large changes spanning multiple domains, **always** spawn parallel reviewers scoped by domain in a single message (e.g., one for backend, one for frontend). The same parallelism principle applies here — reviews are independent and must run simultaneously. Consolidate findings before proceeding.
 
-**Required findings format:**
+**Required findings format** (this is the parsed contract — the `quality-reviewer` agent's system prompt also specifies it; both must agree):
 
 ```markdown
 ## Review Findings
@@ -376,4 +376,8 @@ The persisted file is the canonical `/quality-review` → `/finish` handoff. The
 - **Sub-step 5 corrective pass leaves `pnpm check` failing or regressions unaddressed**: the deferred-item fixes broke the application and the single corrective `developer` pass did not restore it. Set the run verdict to `terminated-with-open-items`, route per sub-step 5's verdict-population rules, and surface the failing output to the user along with the `Open items` list. Do not loop further or roll back automatically — let the user decide whether to revert, re-run `/quality-review`, or escalate to architect.
 - **No changed files detected**: warn the user and exit. Nothing to review.
 - **Issue ID provided but `linear` CLI not authenticated**: prompt `linear auth login`, then continue without issue context if the user skips.
-- **`quality-reviewer` agent unavailable or returns malformed findings**: surface the raw output to the user; do not silently proceed.
+- **`quality-reviewer` agent returns malformed findings**: a response is malformed if it lacks the `## Review Findings` heading OR is missing any of the five `### <severity>` subheadings (Critical / High / Medium / Nice-to-Have / Out-of-Scope / Approved) OR contains a JSON array of findings instead of markdown bullets OR uses non-standard headings ("Verification summary", "Categorization", "Final findings"). On detection:
+  1. Surface the raw agent output to the user (so the work isn't lost).
+  2. Re-spawn the agent ONCE with a corrective prompt prepended: `Your previous response did not follow the Required findings format from your system prompt. Re-issue your findings using the exact markdown structure with ## Review Findings + five ### subheadings + bullet lists; do not emit JSON, tables, or alternative section headings. Empty severity sections must render as "- None".`
+  3. If the second response is still malformed, terminate `/quality-review` with verdict `terminated-with-open-items` and `Open items: agent output malformed across two attempts; manual review required`. Persist this verdict via the standard `quality-review-write-verdict.sh` path so `/finish` Step 8 gates appropriately and `/start` Step 10 has something to render.
+- **`quality-reviewer` agent unavailable** (subagent type missing, infrastructure error): surface the failure to the user. Terminate with verdict `terminated-with-open-items` and `Open items: review could not run; agent unavailable`. Persist as above.

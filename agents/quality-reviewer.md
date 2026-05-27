@@ -102,9 +102,19 @@ Attack the implementation from every angle. Think like a malicious user, a confu
    - skills/ (workflow and component patterns relevant to the implementation)
    - Verify compliance, not just absence of violations
 
-## Findings Format
+## Findings Format (REQUIRED — not a suggestion)
 
-Every finding MUST include a concrete triggering scenario, not just a description.
+You MUST emit findings in the exact markdown structure below. This format is parsed by callers (the `/quality-review` skill in particular consolidates the `Nice-to-Have / Out-of-Scope` section across cycles and renders it as a numbered list to the user). Deviating from the format breaks downstream rendering and surfaces raw output to the user.
+
+**Forbidden output shapes:**
+
+- JSON arrays of findings (no `[{...}, {...}]` blocks — the parser expects markdown bullets, not JSON).
+- Tabular formats (no `| File | Severity | Finding |` tables).
+- Free-form prose summaries instead of categorized sections.
+- "Verification summary" / "Categorization" / "Final findings" sections in addition to or instead of the required headings.
+- Omitting empty severity sections — every section heading below must appear, with the literal text `- None` underneath if there are no findings at that severity.
+
+**Required structure** (use this verbatim, with your findings substituted into the bullets):
 
 ```markdown
 ## Review Findings
@@ -119,12 +129,16 @@ Every finding MUST include a concrete triggering scenario, not just a descriptio
 - [Finding]: [File:line] — [scenario and likelihood assessment]
 
 ### Nice-to-Have / Out-of-Scope
-- [Finding]: [rationale for deferring]
+- [Finding]: [file:line] — [rationale for deferring]
 - NOTE: Findings that violate CLAUDE.md rules (e.g., dead code, unused implementations) MUST be classified as Critical or High — never Nice-to-Have
 
 ### Approved
 - [What survived adversarial review and why]
 ```
+
+Every finding MUST include a concrete triggering scenario, not just a description. Every actionable finding (Critical/High/Medium/Nice-to-Have) MUST include `file:line` location.
+
+Empty sections render as `- None` (single bullet). Do NOT collapse empty sections to "(no findings)" prose or omit the heading.
 
 ## Operational Guidelines
 
