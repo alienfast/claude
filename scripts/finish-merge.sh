@@ -30,6 +30,39 @@
 
 set -eo pipefail
 
+# Self-serialize against the parent repo. The lock helper re-execs this
+# script with the OS holding an exclusive flock on $repo_key. The sentinel
+# is PID-tied (exec preserves PID, so the post-exec check matches; a stray
+# exported _FINISH_MERGE_LOCK_PID in the environment will not match $$ and
+# is treated as unset). Lock releases on script exit — including conflict
+# exits (code 2); the orchestrator's inline conflict resolution re-acquires
+# per command (see skills/finish/SKILL.md Step 9 conflict handler).
+#
+# Lock key = absolute path to the common git dir (e.g. /repo/.git), so
+# every worktree of the same parent repo shares one key, and distinct
+# repos — including bare repos under a common parent — never collide.
+if [ "$_FINISH_MERGE_LOCK_PID" != "$$" ]; then
+  common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || {
+    echo "ERROR: finish-merge.sh: not inside a git repository (cwd: $PWD)" >&2
+    exit 1
+  }
+  if [ -z "$common_dir" ]; then
+    echo "ERROR: finish-merge.sh: git rev-parse --git-common-dir returned empty (cwd: $PWD)" >&2
+    exit 1
+  fi
+  case "$common_dir" in
+    /*) repo_key="$common_dir" ;;
+    *)  repo_key=$(cd "$common_dir" 2>/dev/null && pwd -P) ;;
+  esac
+  if [ -z "$repo_key" ] || [ "$repo_key" = "/" ]; then
+    echo "ERROR: finish-merge.sh: refusing degenerate repo_key='$repo_key' (common_dir='$common_dir')" >&2
+    exit 1
+  fi
+  export _FINISH_MERGE_LOCK_PID=$$
+  exec "$HOME/.claude/scripts/with-repo-lock.py" "$repo_key" \
+       "$HOME/.claude/scripts/finish-merge.sh" "$@"
+fi
+
 if [ $# -ne 4 ]; then
   echo "Usage: $0 <wt-dir> <source-branch> <worktree-branch> <message-file>" >&2
   exit 1
@@ -88,7 +121,25 @@ if [ -e "$wt_git_dir/MERGE_HEAD" ] || [ -e "$wt_git_dir/CHERRY_PICK_HEAD" ] \
   exit 1
 fi
 
-# Precondition 5: main checkout (cwd) is clean.
+# Precondition 5: main checkout (cwd) is clean AND not mid-merge/rebase.
+# The mid-merge check catches the case where another /finish session hit a
+# conflict (exit 2) and is mid-resolution: the lock was released on exit but
+# MERGE_HEAD still pins the parent repo. Reporting that explicitly beats the
+# generic "uncommitted changes" message which would otherwise fire here.
+# Use --absolute-git-dir (not literal .git/) so this works for bare-repo
+# setups and worktree-as-main configurations.
+main_git_dir=$(git rev-parse --absolute-git-dir 2>/dev/null) || {
+  echo "ERROR: main checkout: not a git repository (cwd: $PWD)" >&2
+  exit 1
+}
+if [ -e "$main_git_dir/MERGE_HEAD" ] || [ -e "$main_git_dir/CHERRY_PICK_HEAD" ] \
+   || [ -d "$main_git_dir/rebase-merge" ] || [ -d "$main_git_dir/rebase-apply" ]; then
+  echo "ERROR: main checkout at $PWD is mid-merge / mid-rebase / mid-cherry-pick." >&2
+  echo "Another /finish session is likely mid-conflict-resolution on this repo." >&2
+  echo "Resolve it from that session, then re-run /finish here." >&2
+  echo "Worktree at $wt_dir is untouched." >&2
+  exit 1
+fi
 if ! git diff --quiet || ! git diff --cached --quiet; then
   echo "ERROR: main checkout has uncommitted changes. Commit, stash, or revert before running /finish merge." >&2
   echo "Worktree at $wt_dir is untouched." >&2

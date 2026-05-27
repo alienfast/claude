@@ -37,3 +37,4 @@ packages/*/.npmignore
 /daemon
 /daemon.*
 /jobs
+/locks

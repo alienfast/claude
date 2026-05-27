@@ -278,6 +278,8 @@ The merge fast-forwards when possible — the common case, since worktree branch
    ~/.claude/scripts/finish-merge.sh '<WT_DIR>' '<SOURCE_BRANCH>' '<WORKTREE_BRANCH>' '<WT_DIR>/tmp/git-merge-msg-pl-13.md'
    ```
 
+   The script self-serializes against other `/finish merge` sessions targeting the same parent repo. If another session holds the merge slot, the Bash call will print `[finish-queue] waiting for <REPO_ROOT> ...` on stderr and block until its turn — surface that output to the user as-is and wait. The lock is released by the OS when the script exits (success, error, or crash); no manual cleanup is needed.
+
 **Exit codes:**
 
 - **0 (success)** — surface the script's output and present the closing message. The tagged final line (per `standards/lifecycle-tags.md`) MUST be the last LLM-authored output:
@@ -294,15 +296,19 @@ The merge fast-forwards when possible — the common case, since worktree branch
 
 - **2 (merge conflict, state preserved)** — resolve inline. The main checkout is on `<SOURCE_BRANCH>` with an in-progress merge; conflicted files are listed on the script's stderr.
 
+  **Lock state:** `finish-merge.sh` exited 2 and released the parent-repo lock, but `MERGE_HEAD` is still set. Wrap every git mutation below in `with-repo-lock.py` so a concurrent `/finish merge` session cannot race on the parent's `.git/worktrees/` admin state during cleanup. Reads (status, diff) do not need the lock.
+
   1. For each conflicted file: read it from `<REPO_ROOT>/<path>`, understand both sides of the conflict, apply the resolution. When one side clearly subsumes the other (e.g., the worktree branch removed code the source side modified), take the subsuming side. Ask the user only when the right answer is genuinely ambiguous.
-  2. `git -C '<REPO_ROOT>' add <resolved-files>`
-  3. Run `pnpm check` from `<REPO_ROOT>` — must be green before committing. If it fails: the conflict resolution introduced a regression. Per the Working Application Contract, do **not** commit and do **not** proceed to step 4. Surface the failing output to the user; let them decide between fixing the resolution further, aborting the merge (`git -C '<REPO_ROOT>' merge --abort`), or escalating to architect. The mid-merge state is preserved on disk for inspection.
-  4. `git -C '<REPO_ROOT>' commit -F '<WT_DIR>/tmp/git-merge-msg-<issue-id-lowercased>.md'` — reuse the prepared merge-commit message (e.g., `<WT_DIR>/tmp/git-merge-msg-pl-13.md`).
-  5. `git -C '<REPO_ROOT>' worktree remove '<WT_DIR>'`
-  6. `git -C '<REPO_ROOT>' branch -d '<WORKTREE_BRANCH>'`
+  2. `~/.claude/scripts/with-repo-lock.py '<REPO_ROOT>' git -C '<REPO_ROOT>' add <resolved-files>`
+  3. Run `pnpm check` from `<REPO_ROOT>` — must be green before committing. If it fails: the conflict resolution introduced a regression. Per the Working Application Contract, do **not** commit and do **not** proceed to step 4. Surface the failing output to the user; let them decide between fixing the resolution further, aborting the merge (`~/.claude/scripts/with-repo-lock.py '<REPO_ROOT>' git -C '<REPO_ROOT>' merge --abort`), or escalating to architect. The mid-merge state is preserved on disk for inspection.
+  4. `~/.claude/scripts/with-repo-lock.py '<REPO_ROOT>' git -C '<REPO_ROOT>' commit -F '<WT_DIR>/tmp/git-merge-msg-<issue-id-lowercased>.md'` — reuse the prepared merge-commit message (e.g., `<WT_DIR>/tmp/git-merge-msg-pl-13.md`).
+  5. `~/.claude/scripts/with-repo-lock.py '<REPO_ROOT>' git -C '<REPO_ROOT>' worktree remove '<WT_DIR>'`
+  6. `~/.claude/scripts/with-repo-lock.py '<REPO_ROOT>' git -C '<REPO_ROOT>' branch -d '<WORKTREE_BRANCH>'`
   7. Present the closing message above.
 
-  **Known limitation:** if this orchestrator is running in an isolated background session (bgIsolation guard active), edits to `<REPO_ROOT>` will be blocked. In that case, surface the conflict files and stop — the user will resolve from a foreground session.
+  **Known limitation (residual race):** the lock is briefly released between the wrapped commands above. Between commit (step 4) and `worktree remove` (step 5), a fresh `/finish merge` session could acquire the lock, pass precondition 5 (MERGE_HEAD is now cleared), and start a new merge. Git's per-worktree admin locking makes this safe in the common case, but if you launch a new `/finish` while another session is actively resolving conflicts, you may see "ref already exists" or "worktree busy" errors on the new session. **Recommendation:** wait for in-flight conflict resolutions to complete before launching additional concurrent `/finish` sessions on the same parent repo.
+
+  **Known limitation (background isolation):** if this orchestrator is running in an isolated background session (bgIsolation guard active), edits to `<REPO_ROOT>` will be blocked. In that case, surface the conflict files and stop — the user will resolve from a foreground session.
 
 **If `ACTION == "pr"`:**
 

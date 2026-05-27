@@ -93,6 +93,15 @@ Should I:
 3. Something else?"
 ```
 
+#### `/finish merge` is self-serializing per parent repo
+
+When multiple worktree sessions run `/finish merge` concurrently against the same parent repo, [scripts/finish-merge.sh](../scripts/finish-merge.sh) acquires an exclusive lock keyed by `REPO_ROOT` (via [scripts/with-repo-lock.py](../scripts/with-repo-lock.py)) before touching the main checkout's working tree. Other sessions block on stderr (`[finish-queue] waiting for <REPO_ROOT> ...`) and acquire in turn.
+
+- Lockfile: `~/.claude/locks/repo-<sha1>.lock`. To inspect the current holder: `cat ~/.claude/locks/repo-*.lock`.
+- Release: `fcntl.flock` is OS-managed; the lock is released on any process exit (including SIGKILL). No stale-lock cleanup is needed.
+- Scope: only the merge step is locked. Worktree-branch pushes, Linear updates, and `gh pr create` (PR mode) run in parallel — they don't contend.
+- Conflict-resolution edge case: a `finish-merge.sh` conflict exit releases the lock with `MERGE_HEAD` still present in the parent repo. The next session bails on precondition 5 with an explicit "another /finish session is mid-conflict-resolution" message rather than queueing behind a half-merged checkout.
+
 ### Proper File Staging
 
 **Only stage files you created or modified:**
