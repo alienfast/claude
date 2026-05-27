@@ -52,7 +52,7 @@ If both `SOURCE_BRANCH` and `ACTION` are empty, this is the standard `/finish` f
 
 The script tries `--input` → current branch → latest commit subject, in that order. Pass `--input` only when the user typed an explicit ID (e.g., `/finish PL-12`). On exit 1, ask the user for the identifier explicitly.
 
-**Cross-worktree sanity check (standard-flow only).** After the issue ID is resolved, if the standard flow was detected in Step 0 (no worktree config under the current cwd) but the issue's branch exists in a known linked worktree of this repo (`git worktree list` shows a path whose basename or branch contains `<issue-id-lower>`), warn the user before continuing:
+**Cross-worktree sanity check (standard-flow only).** After the issue ID is resolved, if the standard flow was detected in Step 0 (no worktree config under the current cwd) but the issue's branch exists in a known linked worktree of this repo (`git worktree list` shows a path whose basename or branch contains `<issue-id-lowercased>`, e.g., `pl-13`), warn the user before continuing:
 
 > Issue `<ISSUE-ID>` appears to live in worktree `<path>`. Are you running `/finish` from the wrong cwd? Reply `yes` to proceed here anyway, or `abort` and `cd` into the worktree first.
 

@@ -339,7 +339,7 @@ Steps:
 4. Emit the tagged final line and stop. Do NOT run Step 9 or Step 10:
 
    ```text
-   CANCELED: <ISSUE-ID> — <one-line reason>. Run git worktree remove .claude/worktrees/<id> && git branch -D <branch>.
+   CANCELED: <ISSUE-ID> — <one-line reason>. Run git worktree remove .claude/worktrees/<issue-id-lowercased> && git branch -D <worktree-branch-name>.
    ```
 
 **ABANDONED — "user is halting the session before completion."** Fires when:
@@ -362,7 +362,7 @@ Steps:
 4. Emit the tagged final line and stop:
 
    ```text
-   ABANDONED: <ISSUE-ID> — <one-line reason>. Worktree preserved at .claude/worktrees/<id> for resumption.
+   ABANDONED: <ISSUE-ID> — <one-line reason>. Worktree preserved at .claude/worktrees/<issue-id-lowercased> for resumption.
    ```
 
 **Distinguishing the two:** if the user (or implementation discovery) determined the work is done or unneeded → `CANCELED`. If the user is pausing with intent to resume → `ABANDONED`. When in doubt, ask the user once which they intend; do not silently pick.
