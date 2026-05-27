@@ -52,6 +52,18 @@ Use memoization only when there is a measured performance need or a specific tec
 - **State updater functions**: Use updater form in `useCallback` (`setItems(prev => [...prev, item])`) to avoid including state in dependency arrays
 - **Incomplete memoization chain**: If a component is wrapped with `memo()`, ALL props passed to it must be stable (memoized or primitive). Memoizing some props but not all silently breaks `memo()`.
 
+### Reviewer guidance: do NOT file standalone memoization cleanups
+
+When reviewing code, **do not surface a finding** (Critical/High/Medium/Nice-to-Have) recommending `useMemo` or `useCallback` purely for referential stability of a value or function passed to a child component that is **not** `memo()`-wrapped. Such cleanups produce code churn without measurable benefit — the child re-renders either way, the memo's recomputation cost roughly equals the inline expression's, and the surrounding handler/prop chain typically isn't memoized either.
+
+A memoization finding is legitimate ONLY when at least one of these holds:
+
+- The child is already `memo()`-wrapped (and the new memo completes the prop-stability chain — all other props must also be stable, otherwise `memo()` is silently broken anyway).
+- The value is used as a hook dependency upstream, where identity changes would re-fire the effect/memo unnecessarily.
+- The computation is measurably expensive (>1ms — name the measurement or the input scale that justifies the threshold).
+
+Otherwise, mention it in the "Approved" section as a deliberate non-finding ("inline expression is fine here — child is not memoized, no hook dep") rather than as Nice-to-Have. This prevents trivial memoization tickets from being filed as deferred work that the rules above would tell you not to do in the first place.
+
 ## Effect Dependencies
 
 - **Dependencies**: Always include all dependencies in `useEffect` arrays
