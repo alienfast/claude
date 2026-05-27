@@ -139,13 +139,25 @@ Omit empty sections. Keep it concise — this is a status update, not a report.
 
 ### Step 9: Tagged Final Line
 
-After Step 8 posts the Linear comment, emit the tagged final line per `standards/lifecycle-tags.md` as the last LLM-authored output. `/checkpoint` always ends with `IN-PROGRESS:` since the issue stays in `In Progress` and work is expected to resume:
+After Step 8 posts the Linear comment, emit the tagged final line per `standards/lifecycle-tags.md` as the last LLM-authored output. `/checkpoint` always ends with `IN-PROGRESS:` since the issue stays in `In Progress` and work is expected to resume.
+
+**Step 8 succeeded** (`linear-post.sh` exited 0):
 
 ```text
 IN-PROGRESS: <ISSUE-ID> — <one-line progress summary: e.g., "3 of 5 requirement checkboxes complete; paused mid-implementation.">
 ```
 
-The summary should match what was just posted to Linear (so the agents-list and Linear stay in sync). Do not emit any trailing prose after the tagged line.
+The summary should match what was just posted to Linear (so the agents-list and Linear stay in sync). For multi-section comments, distill the most recent `### Completed` count or the most-significant in-progress item — one line, not a paraphrase of the whole body.
+
+**Step 8 failed** (`linear-post.sh` exited non-zero — auth dropped, network blip, Linear outage): do NOT silently emit a tag claiming success. Surface the staging-file path so the user can recover, then emit:
+
+```text
+IN-PROGRESS: <ISSUE-ID> — <one-line progress summary>. WARNING: Linear comment NOT posted (linear-post.sh failed; see error above). Staging file preserved at tmp/linear-checkpoint-<issue-id-lowercased>.md — re-post manually with: ~/.claude/scripts/linear-post.sh comment <ISSUE-ID> tmp/linear-checkpoint-<issue-id-lowercased>.md
+```
+
+The agents-list still shows `IN-PROGRESS:` (work IS in progress), but the inline WARNING makes the de-sync visible so the user doesn't assume Linear was updated.
+
+Do not emit any trailing prose after the tagged line.
 
 ## Key Differences from /finish
 
@@ -165,3 +177,4 @@ The summary should match what was just posted to Linear (so the agents-list and 
 - **No issue found**: Ask the user for the issue identifier.
 - **`linear` CLI not authenticated**: Prompt `linear auth login`.
 - **Push fails**: Warn but don't fail — the commit is saved locally. User can push later.
+- **Linear post fails (Step 8 `linear-post.sh` exits non-zero)**: Surface the error to the user, preserve the staging file (`tmp/linear-checkpoint-<id>.md`), and proceed to Step 9 — which emits `IN-PROGRESS:` with an inline WARNING that Linear was NOT updated and a recovery command. Do not silently emit a clean `IN-PROGRESS:` (the agents-list would then claim success while Linear has no record of the checkpoint).

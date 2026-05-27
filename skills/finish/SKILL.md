@@ -194,8 +194,18 @@ In all other cases (no worktree, or `ACTION == "merge"`), gate the transition on
 - A branch that completed the state update AND `SOURCE_BRANCH` is non-empty (worktree flow) → do NOT emit a tag here; Step 9 owns the terminal line (`SHIPPED-MERGE:` or `SHIPPED-PR:`).
 - A branch that exited via the user picking `abort` or `re-run` at the gate prompt → emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — <one-line reason>` as the last LLM-authored line. State was NOT changed.
 - A branch that warned-and-proceeded (`none-found`) → same as the first/second bullets depending on `SOURCE_BRANCH`.
+- **A branch where `linear issues update` itself failed** (API error, auth dropped mid-session, team's terminal state name differs from `Ready For Release`) → see the **State-update failure** section below for the recovery + terminator rule.
 
 The per-branch instructions below indicate which terminator each branch uses; trust the contract above for the literal tag wording.
+
+**State-update failure recovery (applies to every branch that attempts `linear issues update --state "Ready For Release"`).** If the call exits non-zero:
+
+1. Inspect the error. If it's a "no such state" rejection (the team uses a different terminal state name), apply this probe-and-match fallback — analogous to `/start` Step 8.5's CANCELED/ABANDONED fallback and `/quality-review` sub-step 6's fallback:
+   - Probe `linear teams states <TEAM>`.
+   - Pick the first state whose name matches `/^ready.?for.?(release|deploy|ship)$/i` (exact match — NOT a prefix match — to avoid latching onto `Ready For Review`).
+   - If found, retry `linear issues update <ISSUE-ID> --state "<matched-name>"`. If it succeeds, proceed with the branch's stated `RELEASED:` terminator.
+   - If no match, OR if the retry also fails, fall through to step 2.
+2. Surface the error to the user and emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — linear issues update failed: <reason>. State NOT changed; this issue remains In Progress.` as the terminator. Do NOT silently emit `RELEASED:` (it would lie about the state) and do NOT continue to Step 9 (worktree flow can't ship an issue whose state didn't transition).
 
 - **`passed-clean` / `passed-after-fixes`** — proceed, BUT first check `VERDICT_STALE`:
   - `VERDICT_STALE=0` → proceed with the state update:

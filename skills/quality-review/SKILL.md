@@ -318,7 +318,7 @@ new_id=$(~/.claude/scripts/linear-stdin.sh "$body_file" i create "<short title>"
 If `--state Planned` is rejected (the team uses different state names), follow this explicit fallback algorithm:
 
 1. Probe available states: `linear teams states <TEAM>`.
-2. Pick the first state whose name matches `/^(planned|backlog|to.?do|ready)/i` (case-insensitive, prefix match).
+2. Pick the first state whose name matches `/^(planned|backlog|to.?do)$/i` (case-insensitive, exact match — NOT a prefix match). **Deliberately exclude `ready` from this regex**: a prefix match on `ready` would latch onto `Ready For Release` or `Ready For Review` on teams that have those states, silently filing new deferred issues into a release/review state.
 3. If none match, surface the available states to the user and ask which to use (`Available: Backlog, In Review, Done … which is the "ready-to-work, not-yet-prioritized" state for this team?`) rather than silently falling through to the team default — most teams default to `Triage`, which defeats the purpose of filing deferred items that are already triaged.
 
 Do NOT silently fall through to the default.
