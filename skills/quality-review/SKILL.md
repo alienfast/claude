@@ -22,6 +22,22 @@ Reject any bare argument that is neither an issue-ID (`[A-Z]+-[0-9]+`) nor a pat
 
 ## Workflow
 
+### Preflight: Exit Plan Mode If Active
+
+If the session is in plan mode when `/quality-review` is invoked standalone, call `ExitPlanMode` **before any other step**. Step 1 onward needs Bash (`detect-issue-id.sh`, `git diff`, `pnpm check`, etc.), Agent (for the `quality-reviewer`/`developer` delegations), and Write (verdict persistence) — all blocked in plan mode.
+
+**Detection.** Use the harness's plan-mode indicator visible at skill entry (the same signal that was gating tool calls just before this skill loaded). If that indicator is ambiguous or unavailable, attempt Step 1; if `detect-issue-id.sh` fails with a plan-mode block, return here, call `ExitPlanMode`, then retry Step 1. Do NOT speculatively call `ExitPlanMode` when plan mode is not active — it raises a spurious approval prompt the user must dismiss.
+
+**Plan body.** Pass a one-line plan summarizing what `/quality-review` is about to do. There is nothing to design — `/quality-review` is a fixed mechanical workflow — but `ExitPlanMode` is the only way to leave plan mode and it requires a plan body. For the `<ISSUE-ID>` substitution: only inline a user-supplied token if it matches `^[A-Z]+-[0-9]+$` (case-insensitive, uppercase it before substituting); otherwise use `the current change set`.
+
+- Approved by the user: proceed to Step 1.
+- Rejected by the user: stop with `/quality-review aborted at preflight: user rejected plan-mode exit. No review ran; no verdict persisted.` Do NOT emit a lifecycle tag — `/quality-review` does not normally emit one, and no skill-stage code ran. The absence of a persisted verdict file is the signal a later `/finish` will see (`VERDICT=none-found`).
+- Tool-error / harness failure (not a user rejection — the tool itself returns an error, or the harness reports `ExitPlanMode` failed for a non-user-cancel reason): surface the error verbatim and stop with `/quality-review aborted at preflight: ExitPlanMode failed (<first line of error>). No review ran; no verdict persisted.` Do NOT continue to Step 1; plan mode is still active.
+
+**Delegated invocation note.** When `/quality-review` is invoked by `/start` Step 9, the parent session has already exited plan mode at `/start` Step 6, so this preflight is a no-op in that path. The hazard only applies to ad-hoc standalone invocations of `/quality-review`.
+
+**Skip this preflight only when plan mode is NOT active** (the common case).
+
 ### Step 1: Resolve Scope
 
 **Issue ID** — delegate to the shared script (same one `/start` and `/finish` use):

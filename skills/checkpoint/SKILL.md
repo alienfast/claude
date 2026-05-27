@@ -16,6 +16,26 @@ Examples: `/checkpoint`, `/checkpoint PL-12`, `/checkpoint no push`, `/checkpoin
 
 ## Workflow
 
+### Preflight: Exit Plan Mode If Active
+
+If the session is in plan mode when `/checkpoint` is invoked, call `ExitPlanMode` **before any other step**. Step 1 onward needs Bash (`detect-issue-id.sh`, `git status`, `git commit`, etc.) and Write — all blocked in plan mode — so the first script call would fail otherwise.
+
+**Detection.** Use the harness's plan-mode indicator visible at skill entry (the same signal that was gating tool calls just before this skill loaded). If that indicator is ambiguous or unavailable, attempt Step 1; if `detect-issue-id.sh` fails with a plan-mode block, return here, call `ExitPlanMode`, then retry Step 1. Do NOT speculatively call `ExitPlanMode` when plan mode is not active — it raises a spurious approval prompt the user must dismiss.
+
+**Plan body.** Pass a one-line plan summarizing what `/checkpoint` is about to do. There is nothing to design — `/checkpoint` is a fixed mechanical workflow — but `ExitPlanMode` is the only way to leave plan mode and it requires a plan body. For the `<ISSUE-ID>` substitution: only inline a user-supplied token if it matches `^[A-Z]+-[0-9]+$` (case-insensitive, uppercase it before substituting); otherwise use `the current branch's issue`. This keeps malformed tokens out of the plan body and out of any rejection-terminator that echoes the same value.
+
+- Approved by the user: proceed to Step 1.
+- Rejected by the user: proceed to the rejection terminator below.
+- Tool-error / harness failure (not a user rejection — the tool itself returns an error, or the harness reports `ExitPlanMode` failed for a non-user-cancel reason): surface the error verbatim and stop with `IN-PROGRESS: <ISSUE-ID or "current branch"> — ExitPlanMode failed at /checkpoint preflight: <first line of error>. WARNING: no commit, no Linear update. Resolve and re-run /checkpoint.` Do NOT continue to Step 1; plan mode is still active and Step 1 will compound the failure.
+
+**On user rejection** via the approval UI, treat as an abort and stop with:
+
+```text
+IN-PROGRESS: <ISSUE-ID or "current branch"> — user rejected /checkpoint at the plan-mode preflight. No commit, no Linear update.
+```
+
+`IN-PROGRESS` is the right tag because no state changed — the issue truly is still in progress. Do not retry, do not re-prompt, do not run any subsequent step. **Skip this preflight only when plan mode is NOT active** — `/checkpoint` is normally invoked from a non-plan session during active development, in which case this section is a no-op.
+
 ### Step 1: Identify the Issue
 
 ```bash

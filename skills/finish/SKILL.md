@@ -22,6 +22,26 @@ Examples: `/finish`, `/finish PL-12`, `/finish no push`, `/finish PL-12 no push`
 
 ## Workflow
 
+### Preflight: Exit Plan Mode If Active
+
+If the session is in plan mode when `/finish` is invoked, call `ExitPlanMode` **before any other step**. Every step from Step 0 onward needs Bash, Write, or Edit — all blocked in plan mode — so `finish-detect-mode.sh` would fail on its first call otherwise.
+
+**Detection.** Use the harness's plan-mode indicator visible at skill entry (the same signal that was gating tool calls just before this skill loaded). If that indicator is ambiguous or unavailable, attempt Step 0; if `finish-detect-mode.sh` fails with a plan-mode block, return here, call `ExitPlanMode`, then retry Step 0. Do NOT speculatively call `ExitPlanMode` when plan mode is not active — it raises a spurious approval prompt the user must dismiss.
+
+**Plan body.** Pass a one-line plan summarizing what `/finish` is about to do for the resolved issue. There is nothing to design — `/finish` is a fixed mechanical workflow — but `ExitPlanMode` is the only way to leave plan mode and it requires a plan body. For the `<ISSUE-ID>` substitution: only inline a user-supplied token if it matches `^[A-Z]+-[0-9]+$` (case-insensitive, uppercase it before substituting); otherwise use `the current branch's issue`. This keeps malformed tokens (e.g., `PL13`, stray `merge`/`pr` keywords) out of the plan body and out of any rejection-terminator that echoes the same value.
+
+- Approved by the user: proceed to Step 0.
+- Rejected by the user: proceed to the rejection terminator below.
+- Tool-error / harness failure (not a user rejection — the tool itself returns an error, or the harness reports `ExitPlanMode` failed for a non-user-cancel reason): surface the error verbatim and stop with `BLOCKED-ON-REVIEW: <ISSUE-ID or "current branch"> — ExitPlanMode failed: <first line of error>. No state change.` Do NOT continue to Step 0; plan mode is still active and Step 0 will compound the failure.
+
+**On user rejection** via the approval UI, treat as an abort and stop with:
+
+```text
+BLOCKED-ON-REVIEW: <ISSUE-ID or "current branch"> — user rejected /finish at the plan-mode preflight. No state change.
+```
+
+Do not retry, do not re-prompt, do not run any subsequent step. **Skip this preflight only when plan mode is NOT active** — `/finish` is normally invoked from a non-plan session after `/start` or manual development, in which case this section is a no-op.
+
 ### Step 0: Detect Worktree Mode
 
 Normalize the user's args before calling the script:
@@ -188,7 +208,7 @@ The script handles all three states: pre-staged changes (commit + push), already
 
 In all other cases (no worktree, or `ACTION == "merge"`), gate the transition on the `VERDICT` from Step 1.5. **Every `<...>` token in the prompt and comment bodies below is a substitution site** — replace each with the resolved value before emitting; never write a literal `<placeholder>` to chat or to Linear. The Step 4 substitution rule applies here too.
 
-**Step 8 termination contract — applies to ALL branches below.** Per `standards/lifecycle-tags.md`, every terminal path of `/finish` Step 8 ends with exactly one tagged final line. Mechanical mapping (do not skip):
+**Step 8 termination contract — applies to ALL branches below.** Per `standards/lifecycle-tags.md`, every terminal path of `/finish` Step 8 ends with exactly one tagged final line. (The Preflight has its own independent terminator — `BLOCKED-ON-REVIEW` on plan-mode rejection or `ExitPlanMode` tool failure — and never reaches Step 8.) Mechanical mapping (do not skip):
 
 - A branch that completed `linear issues update --state "Ready For Release"` AND `SOURCE_BRANCH` from Step 0 is empty (non-worktree flow, no Step 9 to follow) → emit `RELEASED: <ISSUE-ID> — <one-line summary>` as the last LLM-authored line.
 - A branch that completed the state update AND `SOURCE_BRANCH` is non-empty (worktree flow) → do NOT emit a tag here; Step 9 owns the terminal line (`SHIPPED-MERGE:` or `SHIPPED-PR:`).
