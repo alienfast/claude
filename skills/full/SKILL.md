@@ -37,12 +37,14 @@ Examples: `/full PL-13` (in-place), `/full wt PL-13` (worktree merge), `/full wt
 
 ### Step 1: Invoke /start
 
-Compose the `/start` invocation:
+Compose the args string for `/start`:
 
-- If the user passed `wt`: `/start wt <ISSUE-ID>` (worktree mode).
-- Otherwise: `/start <ISSUE-ID>` (in-place mode on the current branch).
+- If the user passed `wt`: `args = "wt <ISSUE-ID>"` (worktree mode).
+- Otherwise: `args = "<ISSUE-ID>"` (in-place mode on the current branch).
 
-Run it as a slash command in this same session — concretely, emit the literal `/start [wt] <ID>` as a top-level chat directive and let Claude Code's skill-dispatch system pick it up and run the `start` skill end-to-end (the same way `/start` Step 9 invokes `/quality-review`). Do NOT inline `/start`'s workflow text into this skill's execution context — that would skip dispatch and bypass plan mode's tool flow. Do NOT pass `pr` or `no push` tokens through — those are `/finish` arguments and `/start` will reject unknown tokens.
+**Dispatch via the Skill tool.** Call `Skill(skill: "start", args: <args>)` directly — do NOT emit the literal `/start ...` as chat text. Slash commands in chat output are not re-parsed by the harness; they render as plain text and the skill never runs. The Skill tool is the only programmatic invocation path. (`/start` Step 9 invokes `/quality-review` the same way.)
+
+Do NOT inline `/start`'s workflow text into this skill's execution context — that would skip dispatch and bypass plan mode's tool flow. Do NOT pass `pr` or `no push` tokens through — those are `/finish` arguments and `/start` will reject unknown tokens.
 
 `/start` runs end-to-end:
 
@@ -75,13 +77,13 @@ The macro does NOT prompt the user on non-pass tags. The whole point of `/full` 
 
 **Cwd safety check (worktree mode only).** Skip this paragraph entirely in non-`wt` mode — there is no worktree to be in, and `/finish` will run from the current branch as expected. When `wt` is in effect, `/start` Step 0 sub-step 2 `cd`s into the worktree at `<WT_ABS>`. The Bash tool's cwd persists across tool calls within a single session, but if cwd has been lost (verify with `pwd`), `cd '<WT_ABS>'` back into it before dispatching `/finish`. The `start.source-branch` config is recorded at per-worktree scope only (`/start` Step 0 sub-step 1, "Foot-gun warning" paragraph); running `/finish` from the main checkout would make `finish-detect-mode.sh` see no source branch, fall into the standard (non-worktree) flow, and surface `/finish` Step 1's "Cross-worktree sanity check" prompt — an unexpected user prompt the macro is supposed to avoid.
 
-Compose the `/finish` invocation based on mode:
+Compose the args string for `/finish` based on mode:
 
-- **Non-`wt` mode** — base form: `/finish <ISSUE-ID>`. Append `no push` if the user passed it.
-- **`wt` mode without `pr`** — base form: `/finish <ISSUE-ID> merge`. Append `no push` if the user passed it. Pass `merge` explicitly even though it is `/finish`'s worktree default — keeps the macro self-documenting in chat. (`/finish` Step 0 short-circuits when `SOURCE_BRANCH` is set anyway.)
-- **`wt` mode with `pr`** — base form: `/finish <ISSUE-ID> pr`. No `no push` is possible here (fail-fast in Arguments rejects the combination upstream).
+- **Non-`wt` mode** — `args = "<ISSUE-ID>"`. Append ` no push` if the user passed it.
+- **`wt` mode without `pr`** — `args = "<ISSUE-ID> merge"`. Append ` no push` if the user passed it. Pass `merge` explicitly even though it is `/finish`'s worktree default — keeps the dispatch self-documenting. (`/finish` Step 0 short-circuits when `SOURCE_BRANCH` is set anyway.)
+- **`wt` mode with `pr`** — `args = "<ISSUE-ID> pr"`. No `no push` is possible here (fail-fast in Arguments rejects the combination upstream).
 
-Dispatch the same way as Step 1 — emit the literal slash-command as a top-level chat directive. `/finish` handles everything from here:
+**Dispatch via the Skill tool.** Call `Skill(skill: "finish", args: <args>)` — same mechanism as Step 1, not chat-text emission. `/finish` handles everything from here:
 
 - Mode detection (`finish-detect-mode.sh`)
 - Issue ID resolution
