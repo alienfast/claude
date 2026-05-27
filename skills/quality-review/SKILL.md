@@ -378,14 +378,14 @@ The persisted file is the canonical `/quality-review` → `/finish` handoff. The
 - **Issue ID provided but `linear` CLI not authenticated**: prompt `linear auth login`, then continue without issue context if the user skips.
 - **`quality-reviewer` agent returns malformed findings**: a response is malformed if ANY of the following hold:
   - Missing the `## Review Findings` heading.
-  - Missing any of the five required subheadings (in order: `### Critical`, `### High`, `### Medium`, `### Nice-to-Have / Out-of-Scope`, `### Approved`). Match by line-prefix only — a line beginning with `### Critical` matches whether or not it has a trailing parenthetical like `(must fix before done)`. Subheadings appearing out of order also count as malformed (downstream consumers scan positionally).
+  - Missing any of the five required subheadings (in order: `### Critical`, `### High`, `### Medium`, `### Nice-to-Have / Out-of-Scope`, `### Approved`). Match by line-prefix with a narrow tail: the heading word(s) must be followed by either end-of-line OR ` (` (single space + opening paren, for the optional parenthetical like `(must fix before done)`). Examples that match: `### Critical`, `### Critical (must fix before done)`. Examples that do NOT match (treated as malformed under criterion 4 below): `### Critical findings`, `### Critical:`, `### CRITICAL`. Subheadings appearing out of order also count as malformed (downstream consumers scan positionally).
   - Contains a JSON array of findings (`[{...}, {...}]`) in ANY form — including as an appendix alongside the required headings, not only "instead of" them.
   - Uses non-standard headings ("Verification summary", "Categorization", "Final findings", or any other heading not in the Required findings format).
   - Contains free-form prose between or around the required sections (preamble before `## Review Findings`, appendix after `### Approved`, or commentary between subheadings).
 
   On detection:
   1. Surface the raw agent output to the user (so the work isn't lost).
-  2. Re-spawn the agent ONCE with a corrective prompt prepended: `Your previous response did not follow the Required findings format from your system prompt. Your entire response MUST consist of ONLY the Required structure: ## Review Findings heading, then exactly five ### subheadings in the prescribed order (Critical, High, Medium, Nice-to-Have / Out-of-Scope, Approved), each followed by bullet items or the literal "- None". Do NOT emit JSON in any form, tables, alternative section headings, preamble, appendix, or prose between sections.`
+  2. Re-spawn the agent ONCE with a corrective prompt prepended: `Your previous response did not follow the Required findings format from your system prompt. Your entire response MUST consist of ONLY the Required structure: ## Review Findings heading, then exactly five ### subheadings in the prescribed order (Critical, High, Medium, Nice-to-Have / Out-of-Scope, Approved), each followed by bullet items or the literal "- None". Do NOT emit JSON arrays, JSON objects, or any other non-markdown structure. Do NOT emit tables, alternative section headings, preamble, appendix, or prose between sections — markdown bullets only.`
   3. Route the re-spawn's outcome:
      - **Re-spawn produced a well-formed response** → continue normally with its findings.
      - **Re-spawn still malformed** → terminate `/quality-review` with the verdict body below.
@@ -403,14 +403,33 @@ The persisted file is the canonical `/quality-review` → `/finish` handoff. The
   Open items: agent output malformed across two attempts; manual review required (see chat above for raw outputs)
   ```
 
-- **`quality-reviewer` agent unavailable** (subagent type missing, infrastructure error, or re-spawn from the malformed branch failed to return): surface the failure to the user. Terminate with the verdict body below. The `Cycles:` count reflects how many attempts ran before the unavailability — `0` if the initial spawn never returned, `1 (initial; re-spawn after malformed output unavailable)` if routed here from the malformed-fallthrough.
+- **`quality-reviewer` agent unavailable** (subagent type missing, infrastructure error, or re-spawn from the malformed branch failed to return): surface the failure to the user. Terminate with one of the two verdict bodies below — pick by route, write the chosen body verbatim with no further substitution.
+
+  **Route A — initial spawn returned unavailable** (no cycles ran):
 
   ```text
   Verdict: terminated-with-open-items
-  Cycles: <0 or 1 per the rule above>
+  Cycles: 0
   Findings resolved: none
   Deferred fixed in-session: none
   Deferred filed as issues: none
   Deferred dropped: none
-  Open items: review could not run; quality-reviewer agent unavailable (see chat above for failure details)
+  Open items: review could not run; quality-reviewer agent unavailable on initial spawn (see chat above for failure details)
   ```
+
+  **Route B — re-spawn from the malformed branch returned unavailable** (one malformed cycle ran):
+
+  ```text
+  Verdict: terminated-with-open-items
+  Cycles: 1
+  Findings resolved: none
+  Deferred fixed in-session: none
+  Deferred filed as issues: none
+  Deferred dropped: none
+  Open items: review could not run; initial output was malformed and the corrective re-spawn returned unavailable (see chat above for failure details)
+  ```
+
+- **`quality-review-write-verdict.sh` itself fails** (disk full, perms, mktemp/mv error, missing `tmp/` parent unreachable): the persistence layer cannot record the verdict, so `/finish` Step 1.5 would see `VERDICT=none-found` and proceed with only a warning — defeating the gate that the fallthrough verdict was meant to establish. On detection (script exit code non-zero):
+  1. Surface the script's stderr to the user immediately.
+  2. Do NOT silently proceed. Print an explicit warning: `WARNING: /quality-review verdict could not be persisted (see above). /finish for this issue will not be gated by this verdict. Either resolve the persistence failure and re-run /quality-review, or run /finish with explicit awareness that Step 8's gate cannot read the verdict you just produced.`
+  3. Continue with the in-memory verdict (still surface the verdict block to the user / caller) so `/start` Step 10 has something to render, but understand that `/finish` cannot enforce it. The user must decide whether to re-run or proceed manually.

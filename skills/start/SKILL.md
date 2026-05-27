@@ -340,10 +340,11 @@ When implementation and review are complete, present a summary to the user that 
    - Deferred items filed as Linear issues (with issue IDs)
    - Deferred items dropped (user declined to fix and declined to file)
    - Open items (only on `terminated-with-open-items` or `escalated-to-architect`; includes any deferred items not handled above)
-5. **Checks**: Confirm `pnpm check` passes. Three exception paths to handle explicitly:
-   - `/quality-review` left it red via the sub-step 5 regression-cap path (verdict = `terminated-with-open-items`) → surface that failure here rather than asserting passes.
-   - `/quality-review` terminated at its Error Handling (malformed reviewer output across two attempts, or agent unavailable) BEFORE reaching the fix loop → report `pnpm check` state as last observed at `/quality-review`'s Step 2 gate (green, since the gate must pass for Step 3 to fire). Mention the early termination explicitly: `pnpm check passed at /quality-review Step 2 gate (review terminated before fix loop ran)`.
-   - `/quality-review` never ran at all (verdict = unavailable per the Step 9 always-fires fallback) → report the most recent `pnpm check` state from the implementation phase, or note that the gate was not exercised.
+5. **Checks**: Confirm `pnpm check` passes. Four exception paths to handle explicitly, mutually exclusive by `/quality-review` termination point:
+   - **Terminated at sub-step 5 regression-cap** (verdict = `terminated-with-open-items` from the deferred-items regression path) → `pnpm check` may be red. Surface that failure here rather than asserting passes.
+   - **Terminated at Step 3+ Error Handling** (malformed reviewer output across two attempts, OR agent unavailable returned after Step 2's gate passed) → `pnpm check` is green as last observed at Step 2's gate. Report explicitly: `pnpm check passed at /quality-review Step 2 gate (review terminated at Error Handling after Step 2; fix loop did not run)`.
+   - **Terminated at Step 2 itself** (`pnpm check` failed and Error Handling escalated to the user without proceeding) → `pnpm check` is red. Report the failing output and direct the user to fix before any further action.
+   - **`/quality-review` never ran or crashed before reaching Step 2** (verdict = unavailable per the Step 9 always-fires fallback, no verdict file written) → report the most recent `pnpm check` state from the implementation phase, or note that the gate was not exercised.
 6. **Next steps**: Branch on the verdict from Step 9:
    - `passed-clean` / `passed-after-fixes` → `Suggest running /finish to commit, push, and mark Ready For Release`
    - `terminated-with-open-items` → `Re-run /quality-review to address open items, or open follow-up issues, before /finish`
