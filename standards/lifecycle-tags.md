@@ -22,10 +22,10 @@ Without a convention, final summaries are prose ("PR merged; worktree cleaned up
 Eight tags cover the lifecycle. Every session ends with exactly one.
 
 | Tag | Issued by | Meaning | Typical next action |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `IN-PROGRESS` | `/start` mid-flight (e.g., `/checkpoint`) | Implementation or review still running | wait, or resume in a new session |
 | `READY-FOR-FINISH` | `/start` Step 10 (passing verdict) | Implementation + review passed cleanly; awaiting commit/push/state-transition | run `/finish` |
-| `BLOCKED-ON-REVIEW` | `/start` Step 10 (non-passing or unavailable verdict) | `/quality-review` did not reach a clean pass — covers `terminated-with-open-items`, `escalated-to-architect`, and verdict-unavailable | re-run `/quality-review`, escalate to architect, or investigate failure |
+| `BLOCKED-ON-REVIEW` | `/start` Step 10 OR `/finish` Step 8 (non-passing/unavailable/malformed verdict, OR user picked `abort`/`re-run` at the gate) | `/quality-review` did not reach a clean pass, OR the user explicitly bailed at `/finish`'s gate. Covers `terminated-with-open-items`, `escalated-to-architect`, verdict-unavailable, malformed, and Step 8 `abort`/`re-run` responses | re-run `/quality-review`, escalate to architect, or investigate failure |
 | `SHIPPED-MERGE` | `/finish` Step 9 (`ACTION=merge`) | Worktree branch merged into source, worktree removed, issue Ready For Release | done |
 | `SHIPPED-PR` | `/finish` Step 9 (`ACTION=pr`) | PR opened, worktree preserved | review/merge the PR, then `git worktree remove` |
 | `RELEASED` | `/finish` Step 8 (non-worktree flow) | Plain `/finish` complete, issue Ready For Release | done |

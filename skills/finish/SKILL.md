@@ -188,6 +188,15 @@ The script handles all three states: pre-staged changes (commit + push), already
 
 In all other cases (no worktree, or `ACTION == "merge"`), gate the transition on the `VERDICT` from Step 1.5. **Every `<...>` token in the prompt and comment bodies below is a substitution site** — replace each with the resolved value before emitting; never write a literal `<placeholder>` to chat or to Linear. The Step 4 substitution rule applies here too.
 
+**Step 8 termination contract — applies to ALL branches below.** Per `standards/lifecycle-tags.md`, every terminal path of `/finish` Step 8 ends with exactly one tagged final line. Mechanical mapping (do not skip):
+
+- A branch that completed `linear issues update --state "Ready For Release"` AND `SOURCE_BRANCH` from Step 0 is empty (non-worktree flow, no Step 9 to follow) → emit `RELEASED: <ISSUE-ID> — <one-line summary>` as the last LLM-authored line.
+- A branch that completed the state update AND `SOURCE_BRANCH` is non-empty (worktree flow) → do NOT emit a tag here; Step 9 owns the terminal line (`SHIPPED-MERGE:` or `SHIPPED-PR:`).
+- A branch that exited via the user picking `abort` or `re-run` at the gate prompt → emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — <one-line reason>` as the last LLM-authored line. State was NOT changed.
+- A branch that warned-and-proceeded (`none-found`) → same as the first/second bullets depending on `SOURCE_BRANCH`.
+
+The per-branch instructions below indicate which terminator each branch uses; trust the contract above for the literal tag wording.
+
 - **`passed-clean` / `passed-after-fixes`** — proceed, BUT first check `VERDICT_STALE`:
   - `VERDICT_STALE=0` → proceed with the state update:
 
@@ -195,13 +204,7 @@ In all other cases (no worktree, or `ACTION == "merge"`), gate the transition on
     linear issues update PL-12 --state "Ready For Release"
     ```
 
-    **When this is a non-worktree flow (no Step 9 follows), emit the tagged final line per `standards/lifecycle-tags.md` as the last LLM-authored output:**
-
-    ```text
-    RELEASED: <ISSUE-ID> — committed, pushed, marked Ready For Release.
-    ```
-
-    When this is a worktree flow (Step 9 follows), do NOT emit the tag here — Step 9 owns the terminal line.
+    **Terminator:** `RELEASED:` (non-worktree) or none (worktree; Step 9 emits).
 
   - `VERDICT_STALE=1` → **refuse with override.** The verdict says "passing" but was produced before the latest commits — it may not reflect current code. Prompt the user:
 
@@ -209,9 +212,9 @@ In all other cases (no worktree, or `ACTION == "merge"`), gate the transition on
     >
     > Mark `Ready For Release` anyway? Reply `yes` to override (the prior verdict was passing and you've verified the new commits don't introduce findings), `re-run` to invoke `/quality-review` and produce a fresh verdict for current HEAD, or `abort` to stop here.
 
-    On `yes`: proceed with the state update AND post an override comment: `Override: marked Ready For Release on stale verdict <VERDICT> (additional commits since /quality-review ran). User-acknowledged.`
-    On `re-run`: stop with `Re-run /quality-review <ISSUE-ID> to produce a fresh verdict for current HEAD, then retry /finish.`
-    On `abort`: stop with no state change.
+    On `yes`: proceed with the state update AND post an override comment: `Override: marked Ready For Release on stale verdict <VERDICT> (additional commits since /quality-review ran). User-acknowledged.` **Terminator:** `RELEASED:` (non-worktree) or none (worktree).
+    On `re-run`: stop with `Re-run /quality-review <ISSUE-ID> to produce a fresh verdict for current HEAD, then retry /finish.` **Terminator:** `BLOCKED-ON-REVIEW: <ISSUE-ID> — stale verdict, user opted to re-run /quality-review against current HEAD before /finish.`
+    On `abort`: stop with no state change. **Terminator:** `BLOCKED-ON-REVIEW: <ISSUE-ID> — stale verdict, user aborted at /finish gate. No state change.`
 
 - **`terminated-with-open-items` / `escalated-to-architect`** — **refuse by default.** The implementation has known unresolved findings per `/quality-review`. Before composing the prompt, `Read` the file at `VERDICT_FILE` and extract the `Open items:` line (and any continuation lines, if `Open items:` is followed by an indented bullet list). Substitute that text into the prompt below — never emit the literal placeholder `<open items list from VERDICT_FILE>`. **If `VERDICT_STALE=1`, prepend a staleness note to the prompt** so the user knows the open-items list may not reflect current code (recent commits may have resolved some). Then prompt the user (single message, wait for reply):
 
@@ -223,9 +226,9 @@ In all other cases (no worktree, or `ACTION == "merge"`), gate the transition on
   >
   > Mark `Ready For Release` anyway? Reply `yes` to override, `re-run` to invoke `/quality-review` and try to converge, or `abort` to stop here.
 
-  On `yes`: proceed with the state update AND post an additional Linear comment recording the override — body: `Override: marked Ready For Release despite verdict <VERDICT>. Open items at override time: <list>. User-acknowledged.` (If `VERDICT_STALE=1`, append: ` Verdict was stale; user explicitly accepted the risk of overriding without a fresh /quality-review.`) Use `~/.claude/scripts/linear-post.sh` to post.
-  On `re-run`: stop `/finish` with the message `Re-run /quality-review <ISSUE-ID> to address open items, then retry /finish.` Do not change state.
-  On `abort`: stop with no state change and no further output.
+  On `yes`: proceed with the state update AND post an additional Linear comment recording the override — body: `Override: marked Ready For Release despite verdict <VERDICT>. Open items at override time: <list>. User-acknowledged.` (If `VERDICT_STALE=1`, append: ` Verdict was stale; user explicitly accepted the risk of overriding without a fresh /quality-review.`) Use `~/.claude/scripts/linear-post.sh` to post. **Terminator:** `RELEASED:` (non-worktree) or none (worktree).
+  On `re-run`: stop `/finish` with the message `Re-run /quality-review <ISSUE-ID> to address open items, then retry /finish.` Do not change state. **Terminator:** `BLOCKED-ON-REVIEW: <ISSUE-ID> — verdict <VERDICT>, user opted to re-run /quality-review before /finish.`
+  On `abort`: stop with no state change and no further output. **Terminator:** `BLOCKED-ON-REVIEW: <ISSUE-ID> — verdict <VERDICT>, user aborted at /finish gate. No state change.`
 
 - **`malformed`** — verdict file exists at `VERDICT_FILE` but cannot be parsed (no `Verdict:` line, or value is the pipe-separated schema example, or value is not one of the four recognized enums). **Refuse with the same prompt as the non-passing path above**, but with this preamble instead of the open-items list:
 
@@ -233,11 +236,11 @@ In all other cases (no worktree, or `ACTION == "merge"`), gate the transition on
   >
   > Mark `Ready For Release` anyway? Reply `yes` to override (consider inspecting the file first), `re-run` to invoke `/quality-review` and produce a fresh artifact, or `abort` to stop here.
 
-  Same response handling as the non-passing path: `yes` posts an override comment (body: `Override: marked Ready For Release despite malformed /quality-review verdict file. User-acknowledged.` — do NOT include `VERDICT_FILE`'s absolute path in the comment body, since Linear comments are not necessarily private and the path leaks the user's home directory and project layout); `re-run` stops with the re-run suggestion; `abort` stops.
+  Same response handling as the non-passing path: `yes` posts an override comment (body: `Override: marked Ready For Release despite malformed /quality-review verdict file. User-acknowledged.` — do NOT include `VERDICT_FILE`'s absolute path in the comment body, since Linear comments are not necessarily private and the path leaks the user's home directory and project layout); `re-run` stops with the re-run suggestion; `abort` stops. **Terminators:** `yes` → `RELEASED:` (non-worktree) or none (worktree); `re-run` → `BLOCKED-ON-REVIEW: <ISSUE-ID> — malformed verdict, user opted to re-run /quality-review.`; `abort` → `BLOCKED-ON-REVIEW: <ISSUE-ID> — malformed verdict, user aborted at /finish gate. No state change.`
 
-- **`none-found`** — no verdict file located. Warn once: `No /quality-review artifact found for this issue. Proceeding without gate. Consider running /quality-review before /finish next time.` Then proceed with the state update. (Backward compatibility for issues finished before this gate existed.)
+- **`none-found`** — no verdict file located. Warn once: `No /quality-review artifact found for this issue. Proceeding without gate. Consider running /quality-review before /finish next time.` Then proceed with the state update. **Terminator:** `RELEASED:` (non-worktree) or none (worktree). (Backward compatibility for issues finished before this gate existed.)
 
-- **Any other value** (defense in depth — shouldn't happen since the script normalizes everything else to `malformed`) → treat as `malformed`. Do NOT proceed silently.
+- **Any other value** (defense in depth — shouldn't happen since the script normalizes everything else to `malformed`) → treat as `malformed`. Do NOT proceed silently. **Terminators:** same as `malformed`.
 
 ### Step 9: Worktree Finalization (only when `SOURCE_BRANCH` is set)
 
@@ -298,12 +301,12 @@ The branch was pushed in Step 7 (the `no push` + `pr` combination was rejected i
 gh pr create --base '<SOURCE_BRANCH>' --head '<WORKTREE_BRANCH>' --fill
 ```
 
-After the PR is created, present the closing message. The tagged final line (per `standards/lifecycle-tags.md`) MUST be the last LLM-authored output:
+After the PR is created, present the closing message. The tagged final line (per `standards/lifecycle-tags.md`) MUST be the last LLM-authored output. The leading sentence and the tagged line should NOT duplicate the cleanup hint:
 
 ```text
-This agent-view session is done — review/merge the PR, then `git worktree remove` from the main checkout when you're done.
+This agent-view session is done. The worktree stays in place until the PR merges.
 
-SHIPPED-PR: <ISSUE-ID> — PR opened (base=<SOURCE_BRANCH>, head=<WORKTREE_BRANCH>). Review/merge then git worktree remove .claude/worktrees/<issue-id-lowercased>.
+SHIPPED-PR: <ISSUE-ID> — PR opened (base=<SOURCE_BRANCH>, head=<WORKTREE_BRANCH>). After merge, run `git worktree remove .claude/worktrees/<issue-id-lowercased>` from the main checkout.
 ```
 
 Leave the worktree in place — the PR is the lifecycle boundary. After the PR merges, the user removes the worktree manually from the main repo checkout:
