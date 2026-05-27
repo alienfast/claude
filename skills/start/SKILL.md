@@ -307,6 +307,52 @@ This ensures progress is visible in Linear even if the session is interrupted, a
 
 **After all implementation tasks are complete, proceed to Step 9.** Implementation is not finished until the review passes.
 
+### Step 8.5: Early-Termination Exit Paths (CANCELED / ABANDONED)
+
+Two terminal states can fire BEFORE the normal Step 9 → Step 10 flow. Both bypass Step 9 entirely and emit a tagged final line per `standards/lifecycle-tags.md`. Use these explicitly rather than ad-hoc'ing an exit; they are documented contracts other sessions (and the user) can scan.
+
+**CANCELED — "the work is already done or no longer needed."** Fires when implementation discovery reveals that:
+
+- The change the issue requested already shipped (under another issue, on the source branch, or via a parallel session — the PL-292 case).
+- The change is no longer wanted (requirements changed, design pivot).
+- The issue is a duplicate of work currently in progress elsewhere.
+
+Steps:
+
+1. Post a Linear comment summarizing what was found and why no code is shipping. Use `~/.claude/scripts/linear-post.sh comment <ISSUE-ID> tmp/canceled-comment-<id>.md`. Body should name the issues/PRs that already cover the work (if applicable) and note any out-of-scope findings worth filing as separate issues.
+2. Move the Linear issue state to `Canceled`: `linear issues update <ISSUE-ID> --state Canceled`.
+3. Surface the cleanup commands to the user (do NOT run them automatically — the worktree might contain in-progress notes worth saving):
+
+   ```bash
+   git worktree remove .claude/worktrees/<issue-id-lowercased>
+   git branch -D <worktree-branch-name>
+   ```
+
+4. Emit the tagged final line and stop. Do NOT run Step 9 or Step 10:
+
+   ```text
+   CANCELED: <ISSUE-ID> — <one-line reason>. Run git worktree remove .claude/worktrees/<id> && git branch -D <branch>.
+   ```
+
+**ABANDONED — "user is halting the session before completion."** Fires when:
+
+- The user explicitly asks to pause and return the issue to the backlog ("move PL-322 back to Planned").
+- A blocker emerges that the user wants to defer (waiting on external decision, dependency not ready).
+- The session is being intentionally parked for resumption later (different context, different person).
+
+Steps:
+
+1. Post a Linear comment noting where things stand: what's done, what's not, any decisions made, where the implementation left off. Use `~/.claude/scripts/linear-post.sh comment <ISSUE-ID> tmp/abandoned-comment-<id>.md`.
+2. Move the Linear issue state back to `Planned`: `linear issues update <ISSUE-ID> --state Planned`. (Do NOT use `Backlog` — `Planned` preserves the "we intend to do this" signal.)
+3. **Preserve the worktree** — the whole point of `ABANDONED` (vs `CANCELED`) is that resumption is expected. Do not run `git worktree remove` and do not delete the branch.
+4. Emit the tagged final line and stop:
+
+   ```text
+   ABANDONED: <ISSUE-ID> — <one-line reason>. Worktree preserved at .claude/worktrees/<id> for resumption.
+   ```
+
+**Distinguishing the two:** if the user (or implementation discovery) determined the work is done or unneeded → `CANCELED`. If the user is pausing with intent to resume → `ABANDONED`. When in doubt, ask the user once which they intend; do not silently pick.
+
 ### Step 9: Adversarial Review and Triage
 
 Use the `/quality-review` skill to run the adversarial implementation review and triage/fix loop, passing the current issue ID as context. The `/quality-review` skill enforces the `pnpm check` gate, delegates to `quality-reviewer`, and loops up to 5 review/fix cycles before escalating. When it returns a passing verdict (`passed-clean` or `passed-after-fixes`), proceed to Step 10. If it returns `terminated-with-open-items`, print the verdict block (as composed by `/quality-review`) to chat as a single message — no `AskUserQuestion` prompt at this point. Step 10 will re-render the same block as part of the structured summary; the duplication is intentional (chat-visibility now, structured artifact later).
@@ -345,13 +391,13 @@ When implementation and review are complete, present a summary to the user that 
    - **Terminated at Step 3+ Error Handling** (malformed reviewer output across two attempts, OR agent unavailable returned after Step 2's gate passed) → `pnpm check` is green as last observed at Step 2's gate. Report explicitly: `pnpm check passed at /quality-review Step 2 gate (review terminated at Error Handling after Step 2; fix loop did not run)`.
    - **Terminated at Step 2 itself** (`pnpm check` failed and Error Handling escalated to the user without proceeding) → `pnpm check` is red. Report the failing output and direct the user to fix before any further action.
    - **`/quality-review` never ran or crashed before reaching Step 2** (verdict = unavailable per the Step 9 always-fires fallback, no verdict file written) → report the most recent `pnpm check` state from the implementation phase, or note that the gate was not exercised.
-6. **Next steps**: Branch on the verdict from Step 9:
-   - `passed-clean` / `passed-after-fixes` → `Suggest running /finish to commit, push, and mark Ready For Release`
-   - `terminated-with-open-items` → `Re-run /quality-review to address open items, or open follow-up issues, before /finish`
-   - `escalated-to-architect` → `Architect-agent recommendation supersedes — review it before any further action. Do NOT suggest /finish.`
-   - missing/unavailable verdict (subagent emitted malformed output, infrastructure error, etc.) → `Investigate /quality-review failure (likely malformed reviewer output or infrastructure error) before /finish. Do NOT suggest /finish until a clean verdict exists.`
+6. **Next steps (tagged final line — see `standards/lifecycle-tags.md`)**: Emit ONE line, structured as `<TAG>: <ISSUE-ID> — <one-line summary including the recommended next command>`. Tag is mechanical, keyed off the verdict from Step 9:
+   - `passed-clean` / `passed-after-fixes` → `READY-FOR-FINISH: <ISSUE-ID> — <impl summary>. Run /finish <ISSUE-ID>[ merge]` (append ` merge` when in a `/start wt` worktree).
+   - `terminated-with-open-items` → `BLOCKED-ON-REVIEW: <ISSUE-ID> — open items unresolved after N cycles. Re-run /quality-review or file follow-up issues before /finish.`
+   - `escalated-to-architect` → `BLOCKED-ON-REVIEW: <ISSUE-ID> — escalated to architect agent. Review its recommendation before any further action; do NOT run /finish.`
+   - missing/unavailable verdict (subagent emitted malformed output, infrastructure error, etc.) → `BLOCKED-ON-REVIEW: <ISSUE-ID> — /quality-review verdict unavailable (likely malformed reviewer output or infrastructure error). Investigate before /finish.`
 
-**Ordering — Next steps MUST be the final line.** The "Next steps" line is the only actionable item in this summary; the user scans bottom-up when running parallel sessions. Do not emit a separate end-of-turn `result:` summary, a one-line recap, or any trailing prose after "Next steps:". The Step 10 block IS your end-of-turn summary — nothing follows it. (The harness may append its own `※ recap:` line, which you cannot suppress; the goal is that no LLM-authored text comes between "Next steps" and that harness line.)
+**Ordering — the tagged line MUST be the final line.** The tagged line is the only scannable lifecycle signal in the agents-list display; the user scans bottom-up when running parallel sessions. Do not emit a separate end-of-turn `result:` summary, a one-line recap, or any trailing prose after the tagged line. The Step 10 block IS your end-of-turn summary — nothing follows it. (The harness may append its own `※ recap:` line, which you cannot suppress; the goal is that no LLM-authored text comes between the tagged line and that harness line.)
 
 ## Error Handling
 

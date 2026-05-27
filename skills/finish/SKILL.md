@@ -195,6 +195,14 @@ In all other cases (no worktree, or `ACTION == "merge"`), gate the transition on
     linear issues update PL-12 --state "Ready For Release"
     ```
 
+    **When this is a non-worktree flow (no Step 9 follows), emit the tagged final line per `standards/lifecycle-tags.md` as the last LLM-authored output:**
+
+    ```text
+    RELEASED: <ISSUE-ID> — committed, pushed, marked Ready For Release.
+    ```
+
+    When this is a worktree flow (Step 9 follows), do NOT emit the tag here — Step 9 owns the terminal line.
+
   - `VERDICT_STALE=1` → **refuse with override.** The verdict says "passing" but was produced before the latest commits — it may not reflect current code. Prompt the user:
 
     > Quality-review verdict is `<VERDICT>` but is **stale**: `<VERDICT_STALE_REASON>`. Additional commits landed after `/quality-review` ran, so the verdict may not reflect current code.
@@ -258,11 +266,12 @@ The merge fast-forwards when possible — the common case, since worktree branch
 
 **Exit codes:**
 
-- **0 (success)** — surface the script's output and present the closing message:
+- **0 (success)** — surface the script's output and present the closing message. The tagged final line (per `standards/lifecycle-tags.md`) MUST be the last LLM-authored output:
 
   ```text
-  Done: <WORKTREE_BRANCH> merged into <SOURCE_BRANCH>. Worktree removed.
   This agent-view session is done — close it and dispatch a new session for the next issue.
+
+  SHIPPED-MERGE: <ISSUE-ID> — <WORKTREE_BRANCH> merged into <SOURCE_BRANCH>, worktree removed, Ready For Release.
   ```
 
   Do not run further bash commands.
@@ -289,11 +298,12 @@ The branch was pushed in Step 7 (the `no push` + `pr` combination was rejected i
 gh pr create --base '<SOURCE_BRANCH>' --head '<WORKTREE_BRANCH>' --fill
 ```
 
-After the PR is created, present the closing message:
+After the PR is created, present the closing message. The tagged final line (per `standards/lifecycle-tags.md`) MUST be the last LLM-authored output:
 
 ```text
-Done: PR opened (base=<SOURCE_BRANCH>, head=<WORKTREE_BRANCH>).
 This agent-view session is done — review/merge the PR, then `git worktree remove` from the main checkout when you're done.
+
+SHIPPED-PR: <ISSUE-ID> — PR opened (base=<SOURCE_BRANCH>, head=<WORKTREE_BRANCH>). Review/merge then git worktree remove .claude/worktrees/<issue-id-lowercased>.
 ```
 
 Leave the worktree in place — the PR is the lifecycle boundary. After the PR merges, the user removes the worktree manually from the main repo checkout:
