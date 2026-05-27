@@ -315,7 +315,15 @@ Invoke as: `/quality-review <ISSUE-ID>` (e.g., `/quality-review PL-13`), passing
 
 If `/quality-review` returns `escalated-to-architect`, surface the open items and the architect-agent recommendation in chat, then proceed to Step 10. Step 10 item 6's verdict-conditional Next-steps branch handles this verdict correctly (it emits the "architect recommendation supersedes — do NOT suggest /finish" line). Do not invent a separate exit path here — go through Step 10 like any other verdict.
 
-**Step 10 ALWAYS fires** — even when `/quality-review` failed to produce a clean verdict (subagent emitted malformed output, infrastructure error, partial run, etc.). The user must always see Step 10's structured summary including the Next-steps line; silently ending the session at a broken `/quality-review` violates the "Next steps MUST be the final line" rule. If no verdict was produced or it is missing, render Step 10 item 4 as `Verdict: unavailable (see chat above for /quality-review failure details)` and item 6 as `Next steps: Investigate /quality-review failure (likely malformed reviewer output or infrastructure error) before /finish. Do NOT suggest /finish until a clean verdict exists.` Do not skip Step 10 to "save the user from noise" — the structured summary IS the contract.
+**Step 10 ALWAYS fires** — even when `/quality-review` failed to produce a clean verdict. The user must always see Step 10's structured summary including the Next-steps line; silently ending the session at a broken `/quality-review` violates the "Next steps MUST be the final line" rule.
+
+Two distinct failure modes route Step 10 differently:
+
+- **`/quality-review` ran to completion and wrote a verdict file** — even with malformed reviewer output (Error Handling fallthrough writes `Verdict: terminated-with-open-items`) or unavailable agent (writes the same). In this case Step 10 item 4 reads the persisted verdict block normally and item 6 takes the `terminated-with-open-items` branch (`Re-run /quality-review to address open items, or open follow-up issues, before /finish`). This is the common failure path.
+
+- **`/quality-review` crashed mid-flight without writing any verdict file** (orchestrator killed, OOM, network blip during the Output step, etc.) — narrow window. In this case Step 10 item 4 renders `Verdict: unavailable (see chat above for /quality-review failure details)` and item 6 takes the missing/unavailable branch (`Investigate /quality-review failure ... before /finish`).
+
+Do not skip Step 10 to "save the user from noise" — the structured summary IS the contract.
 
 ### Step 10: Completion Summary
 
@@ -332,7 +340,10 @@ When implementation and review are complete, present a summary to the user that 
    - Deferred items filed as Linear issues (with issue IDs)
    - Deferred items dropped (user declined to fix and declined to file)
    - Open items (only on `terminated-with-open-items` or `escalated-to-architect`; includes any deferred items not handled above)
-5. **Checks**: Confirm `pnpm check` passes — OR, if `/quality-review` left it red via the sub-step 5 regression-cap path (verdict will be `terminated-with-open-items`), surface that failure here rather than asserting it passes
+5. **Checks**: Confirm `pnpm check` passes. Three exception paths to handle explicitly:
+   - `/quality-review` left it red via the sub-step 5 regression-cap path (verdict = `terminated-with-open-items`) → surface that failure here rather than asserting passes.
+   - `/quality-review` terminated at its Error Handling (malformed reviewer output across two attempts, or agent unavailable) BEFORE reaching the fix loop → report `pnpm check` state as last observed at `/quality-review`'s Step 2 gate (green, since the gate must pass for Step 3 to fire). Mention the early termination explicitly: `pnpm check passed at /quality-review Step 2 gate (review terminated before fix loop ran)`.
+   - `/quality-review` never ran at all (verdict = unavailable per the Step 9 always-fires fallback) → report the most recent `pnpm check` state from the implementation phase, or note that the gate was not exercised.
 6. **Next steps**: Branch on the verdict from Step 9:
    - `passed-clean` / `passed-after-fixes` → `Suggest running /finish to commit, push, and mark Ready For Release`
    - `terminated-with-open-items` → `Re-run /quality-review to address open items, or open follow-up issues, before /finish`

@@ -376,8 +376,41 @@ The persisted file is the canonical `/quality-review` → `/finish` handoff. The
 - **Sub-step 5 corrective pass leaves `pnpm check` failing or regressions unaddressed**: the deferred-item fixes broke the application and the single corrective `developer` pass did not restore it. Set the run verdict to `terminated-with-open-items`, route per sub-step 5's verdict-population rules, and surface the failing output to the user along with the `Open items` list. Do not loop further or roll back automatically — let the user decide whether to revert, re-run `/quality-review`, or escalate to architect.
 - **No changed files detected**: warn the user and exit. Nothing to review.
 - **Issue ID provided but `linear` CLI not authenticated**: prompt `linear auth login`, then continue without issue context if the user skips.
-- **`quality-reviewer` agent returns malformed findings**: a response is malformed if it lacks the `## Review Findings` heading OR is missing any of the five `### <severity>` subheadings (Critical / High / Medium / Nice-to-Have / Out-of-Scope / Approved) OR contains a JSON array of findings instead of markdown bullets OR uses non-standard headings ("Verification summary", "Categorization", "Final findings"). On detection:
+- **`quality-reviewer` agent returns malformed findings**: a response is malformed if ANY of the following hold:
+  - Missing the `## Review Findings` heading.
+  - Missing any of the five required subheadings (in order: `### Critical`, `### High`, `### Medium`, `### Nice-to-Have / Out-of-Scope`, `### Approved`). Match by line-prefix only — a line beginning with `### Critical` matches whether or not it has a trailing parenthetical like `(must fix before done)`. Subheadings appearing out of order also count as malformed (downstream consumers scan positionally).
+  - Contains a JSON array of findings (`[{...}, {...}]`) in ANY form — including as an appendix alongside the required headings, not only "instead of" them.
+  - Uses non-standard headings ("Verification summary", "Categorization", "Final findings", or any other heading not in the Required findings format).
+  - Contains free-form prose between or around the required sections (preamble before `## Review Findings`, appendix after `### Approved`, or commentary between subheadings).
+
+  On detection:
   1. Surface the raw agent output to the user (so the work isn't lost).
-  2. Re-spawn the agent ONCE with a corrective prompt prepended: `Your previous response did not follow the Required findings format from your system prompt. Re-issue your findings using the exact markdown structure with ## Review Findings + five ### subheadings + bullet lists; do not emit JSON, tables, or alternative section headings. Empty severity sections must render as "- None".`
-  3. If the second response is still malformed, terminate `/quality-review` with verdict `terminated-with-open-items` and `Open items: agent output malformed across two attempts; manual review required`. Persist this verdict via the standard `quality-review-write-verdict.sh` path so `/finish` Step 8 gates appropriately and `/start` Step 10 has something to render.
-- **`quality-reviewer` agent unavailable** (subagent type missing, infrastructure error): surface the failure to the user. Terminate with verdict `terminated-with-open-items` and `Open items: review could not run; agent unavailable`. Persist as above.
+  2. Re-spawn the agent ONCE with a corrective prompt prepended: `Your previous response did not follow the Required findings format from your system prompt. Your entire response MUST consist of ONLY the Required structure: ## Review Findings heading, then exactly five ### subheadings in the prescribed order (Critical, High, Medium, Nice-to-Have / Out-of-Scope, Approved), each followed by bullet items or the literal "- None". Do NOT emit JSON in any form, tables, alternative section headings, preamble, appendix, or prose between sections.`
+  3. Route the re-spawn's outcome:
+     - **Re-spawn produced a well-formed response** → continue normally with its findings.
+     - **Re-spawn still malformed** → terminate `/quality-review` with the verdict body below.
+     - **Re-spawn failed to return at all** (subagent crashed, infrastructure error, timeout) → route to the agent-unavailable branch below (use its verdict body).
+
+  **Verdict body for malformed-fallthrough** (write this verbatim to the staging file before calling `quality-review-write-verdict.sh`; all seven Output schema fields populated so `/finish` Step 4 has consistent shape to template):
+
+  ```text
+  Verdict: terminated-with-open-items
+  Cycles: 1 (initial review malformed; one corrective re-spawn also malformed)
+  Findings resolved: none
+  Deferred fixed in-session: none
+  Deferred filed as issues: none
+  Deferred dropped: none
+  Open items: agent output malformed across two attempts; manual review required (see chat above for raw outputs)
+  ```
+
+- **`quality-reviewer` agent unavailable** (subagent type missing, infrastructure error, or re-spawn from the malformed branch failed to return): surface the failure to the user. Terminate with the verdict body below. The `Cycles:` count reflects how many attempts ran before the unavailability — `0` if the initial spawn never returned, `1 (initial; re-spawn after malformed output unavailable)` if routed here from the malformed-fallthrough.
+
+  ```text
+  Verdict: terminated-with-open-items
+  Cycles: <0 or 1 per the rule above>
+  Findings resolved: none
+  Deferred fixed in-session: none
+  Deferred filed as issues: none
+  Deferred dropped: none
+  Open items: review could not run; quality-reviewer agent unavailable (see chat above for failure details)
+  ```
