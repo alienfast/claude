@@ -22,11 +22,12 @@ Research-augmented workflow for implementing something large:
 | Create issues | `/prd @doc/plan-foo.md` | Should be done by Developer - need to review stages and accuracy. Approval creates issues in Linear |
 | Triage | `/triage` | Reviews dependencies, identifies blockers, suggests priorities |
 | Prioritize | Move stage 1 to "Planned", stage 2 to "Backlog" | |
-| **Build loop** | `/start PL-12` | Assigns, creates branch, plans, implements |
+| **Build loop** | `/start PL-12` | Assigns, creates branch, plans, implements, then auto-runs `/quality-review` |
 | | `/checkpoint` _(optional)_ | Commits WIP, posts progress to Linear |
-| | Review | |
-| | `/finish` | Commits, pushes, marks Ready For Release, calls `/next` |
+| | `/quality-review` _(standalone)_ | Adversarial review + triage/fix loop until convergence |
+| | `/finish` | Reads the verdict, commits, pushes, marks Ready For Release, calls `/next` |
 | | Repeat from `/start` | |
+| **Or, one-shot** | `/full PL-12` | Runs `/start` → `/quality-review` → `/finish` end-to-end, gated on verdict. Append `wt` for worktree mode |
 
 Starting a new day/week? Just run `/next` for a suggestion.
 
@@ -38,11 +39,11 @@ Specialized personas delegated to by the `/do` orchestrator.
 
 | Agent | Role | Model |
 |-------|------|-------|
-| [architect](agents/architect.md) | Solution design, ADRs, technical recommendations | Opus (default) |
+| [architect](agents/architect.md) | Solution design, ADRs, technical recommendations | Inherits (Opus) |
 | [developer](agents/developer.md) | Code implementation from specifications | Sonnet |
-| [debugger](agents/debugger.md) | Root cause analysis through systematic evidence gathering | Haiku |
-| [quality-reviewer](agents/quality-reviewer.md) | Security, performance, and concurrency review | Haiku |
-| [research](agents/research.md) | Multi-perspective research and synthesis | Haiku |
+| [debugger](agents/debugger.md) | Root cause analysis through systematic evidence gathering | Inherits |
+| [quality-reviewer](agents/quality-reviewer.md) | Adversarial review — edge cases, contract violations, security | Inherits |
+| [research](agents/research.md) | Multi-perspective research and synthesis | Inherits |
 | [technical-writer](agents/technical-writer.md) | Concise documentation for completed features | Sonnet |
 
 ### Skills
@@ -54,9 +55,11 @@ Automated multi-step workflows invoked by trigger phrases or slash commands.
 | Skill | Description |
 |-------|-------------|
 | [linear](skills/linear/) | Issue tracking CLI with semantic search and velocity analytics |
-| [start](skills/start/) | Start a Linear issue — check blockers, assign, create branch, plan, execute |
+| [start](skills/start/) | Start a Linear issue — check blockers, assign, create branch, plan, execute, auto-review |
 | [checkpoint](skills/checkpoint/) | Save progress — commit WIP and post progress update to Linear |
-| [finish](skills/finish/) | Finish an issue — check requirements, commit/push, mark Ready For Release |
+| [quality-review](skills/quality-review/) | Adversarial review + triage/fix loop until convergence (gates `pnpm check`) |
+| [finish](skills/finish/) | Finish an issue — read verdict, commit/push, mark Ready For Release |
+| [full](skills/full/) | End-to-end macro: `/start` → `/quality-review` → `/finish`, gated on verdict |
 | [next](skills/next/) | Suggest best next issue using cycle, dependency, and triage signals |
 | [triage](skills/triage/) | Analyze backlog for staleness, blockers, and priority suggestions |
 | [prd](skills/prd/) | Create agent-friendly tickets with PRDs and success criteria |
@@ -92,8 +95,11 @@ Universal rules governing agent behavior. See [standards/README.md](standards/RE
 |----------|--------|
 | [agent-coordination](standards/agent-coordination.md) | Parallel vs sequential execution patterns |
 | [git](standards/git.md) | Commit messages, destructive command blocking, multi-session safety |
+| [commenting](standards/commenting.md) | Default to no comments; when WHY-comments earn their place |
 | [problem-solving](standards/problem-solving.md) | When to stop and ask vs proceed |
 | [technical-debt-prevention](standards/technical-debt-prevention.md) | No backups, no duplicates, delete aggressively |
+| [linear-workflow](standards/linear-workflow.md) | Terminal states, dependency rules, Linear CLI quoting gotchas |
+| [lifecycle-tags](standards/lifecycle-tags.md) | Final-line status tags for Linear-lifecycle skills |
 | [semver](standards/semver.md) | Version classification and compatibility rules |
 | [version-aware-planning](standards/version-aware-planning.md) | Check actual versions before planning |
 | [deprecation-handling](standards/deprecation-handling.md) | Proactively update deprecated code |
@@ -117,6 +123,7 @@ Automatic quality checks that run without manual invocation.
 | Hook | Trigger | What It Does |
 |------|---------|-------------|
 | [git-permissions](hooks/git-permissions.sh) | Before git commands | Blocks destructive operations (`reset --hard`, `--force`, `clean -f`) |
+| [no-cd-before-git](hooks/no-cd-before-git.sh) | Before Bash | Rejects `cd <dir> && git ...` — forces `git -C <dir> ...` to keep the allow-list working |
 | [lint-post-tool](hooks/lint-post-tool.sh) | After file edits | Runs Biome and markdownlint with auto-fix |
 | [typecheck](hooks/typecheck.sh) | On stop | Runs `tsc -b` after TypeScript changes |
 
@@ -189,6 +196,7 @@ all react code, and implement the best practices for react 19.
 No manual intervention needed — hooks run behind the scenes:
 
 - Destructive git commands are blocked before execution
+- `cd <dir> && git ...` is rejected in favor of `git -C <dir> ...` so the allow-list keeps working
 - Biome and markdownlint run after every file edit
 - TypeScript type checking runs when Claude stops
 
