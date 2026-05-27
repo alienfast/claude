@@ -137,6 +137,16 @@ Omit empty sections. Keep it concise — this is a status update, not a report.
 ~/.claude/scripts/linear-post.sh comment PL-42 tmp/linear-checkpoint-pl-42.md
 ```
 
+### Step 9: Tagged Final Line
+
+After Step 8 posts the Linear comment, emit the tagged final line per `standards/lifecycle-tags.md` as the last LLM-authored output. `/checkpoint` always ends with `IN-PROGRESS:` since the issue stays in `In Progress` and work is expected to resume:
+
+```text
+IN-PROGRESS: <ISSUE-ID> — <one-line progress summary: e.g., "3 of 5 requirement checkboxes complete; paused mid-implementation.">
+```
+
+The summary should match what was just posted to Linear (so the agents-list and Linear stay in sync). Do not emit any trailing prose after the tagged line.
+
 ## Key Differences from /finish
 
 | Aspect | /checkpoint | /finish |
