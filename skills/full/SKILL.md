@@ -37,10 +37,22 @@ Examples: `/full PL-13` (in-place), `/full wt PL-13` (worktree merge), `/full wt
 
 ### Step 1: Invoke /start
 
-Compose the args string for `/start`:
+Step 1 is a four-action sub-procedure. Execute in order — **do not** dispatch `Skill(start)` before completing actions 1 and 2:
 
-- If the user passed `wt`: `args = "wt <ISSUE-ID>"` (worktree mode).
-- Otherwise: `args = "<ISSUE-ID>"` (in-place mode on the current branch).
+1. **Compose `/start` args.**
+   - If the user passed `wt`: `args = "wt <ISSUE-ID>"` (worktree mode).
+   - Otherwise: `args = "<ISSUE-ID>"` (in-place mode on the current branch).
+
+2. **Prime the orchestrator with `TodoWrite` (MANDATORY, before any skill dispatch).** Create exactly these three items, in this order:
+   - content: `Run /start (long-running; emits a tagged final line)` — activeForm: `Running /start` — status: `in_progress`.
+   - content: `Parse /start's tagged final line; branch per Step 2's mapping table` — activeForm: `Parsing /start's tagged final line` — status: `pending`.
+   - content: `Dispatch /finish via Skill (only on READY-FOR-FINISH)` — activeForm: `Dispatching /finish` — status: `pending`.
+
+   The load-bearing mechanism is **not** passive surfacing of the todo list (TodoWrite state does not auto-render after every unrelated tool call). It is the **mandatory `TodoWrite` tool call at each state-transition boundary** — this one at Step 1 start, another in action 4 on `Skill(start)` return, another in Step 2 on tag parse, another in Step 3 on `Skill(finish)` return. Each tool call is an action the orchestrator cannot end the turn during, and each call's result re-surfaces the in-progress item at the exact moment of decision. Prose reminders alone failed at the `Skill(start)`-return boundary in commit 0fe0ec3; the unconditional tool calls are what holds.
+
+3. **Dispatch `Skill(skill: "start", args: <args>)`.**
+
+4. **On return: MUST immediately call `TodoWrite` BEFORE any other tool call, narration, or chat text.** Single call. New state: todo 1 → `completed`, todo 2 → `in_progress`, todo 3 → `pending`. This `TodoWrite` call is the defining act of action 4 — not a description of intent. It cannot be skipped, deferred, batched with later steps, or replaced with text like "/start done, ready for /finish?". After the call returns, proceed immediately to Step 2.
 
 **Dispatch via the Skill tool.** Call `Skill(skill: "start", args: <args>)` directly — do NOT emit the literal `/start ...` as chat text. Slash commands in chat output are not re-parsed by the harness; they render as plain text and the skill never runs. The Skill tool is the only programmatic invocation path. (`/start` Step 9 invokes `/quality-review` the same way.)
 
@@ -58,13 +70,18 @@ Do NOT inline `/start`'s workflow text into this skill's execution context — t
 
 `/full` does not narrate progress, does not inject extra prompts, and does not race ahead. The next `/full` step does not begin until `/start` has emitted its tagged final line — that is, the LAST LLM-authored line of `/start`'s output, after any intermediate `IN-PROGRESS` lines from sub-skills like `/checkpoint`.
 
-**Step 1 → Step 2 transition is automatic, not user-prompted.** When the `Skill(skill: "start", ...)` call returns, the `/full` orchestrator MUST immediately proceed to Step 2, parse the tagged final line, and (on `READY-FOR-FINISH`) dispatch Step 3 — no user confirmation, no "ready to finish?" prompt, no pause. The whole point of the macro is automation across this boundary. If the orchestrator finds itself unsure what to do after `/start` returns, the answer is always "proceed to Step 2", never "ask the user".
-
-**Session interruption between Step 1 and Step 3.** If the session is killed between `/start` emitting `READY-FOR-FINISH` and `/full` dispatching `/finish` (terminal closed, machine slept, overnight pause, etc.), the `/full` orchestrator is dead and cannot resume on its own. The user must dispatch `/finish` manually — typing `/finish <ISSUE-ID> [merge]` (with `merge` if the issue was started in `wt` mode) at the prompt picks up cleanly: `/finish` Step 1.5 reads the persisted `tmp/quality-review-verdict-<issue-id-lowercased>.md` written by `/quality-review`, and Step 8's gate proceeds without re-running the review. Re-invoking `/full <ISSUE-ID> [wt]` is **not** the right recovery — it would re-run all of `/start` (plan mode, implementation, review) on an already-completed issue.
+**Session interruption between Step 1 and Step 3.** If the session is killed between `/start` emitting `READY-FOR-FINISH` and `/full` dispatching `/finish` (terminal closed, machine slept, overnight pause, etc.), the `/full` orchestrator is dead and cannot resume on its own. The user must dispatch `/finish` manually — typing `/finish <ISSUE-ID> [merge]` (with `merge` if the issue was started in `wt` mode) at the prompt picks up cleanly: `/finish` Step 1.5 reads the persisted `tmp/quality-review-verdict-<issue-id-lowercased>.md` written by `/quality-review`, and Step 8's gate proceeds without re-running the review. Re-invoking `/full <ISSUE-ID> [wt]` is **not** the right recovery — it would re-run all of `/start` (plan mode, implementation, review) on an already-completed issue. The dead session's `TodoWrite` list does not carry forward (lists are session-scoped); the recovery path is unaffected because `/finish` reads the persisted verdict file directly, not `TodoWrite` state.
 
 ### Step 2: Branch on /start's tagged final line
 
-`/start` always ends with exactly one tag per `~/.claude/standards/lifecycle-tags.md`. Parse the first token of the final line. Mechanical mapping — no LLM judgment:
+`/start` always ends with exactly one tag per `~/.claude/standards/lifecycle-tags.md`. Parse the first token of the final line. Mechanical mapping — no LLM judgment.
+
+**Todo bookkeeping.** After parsing the tag and selecting the mapped action, **MUST call `TodoWrite`** (single call) before executing the action:
+
+- On `READY-FOR-FINISH`: todo 1 `completed`, todo 2 `completed`, todo 3 `in_progress`. Then proceed to Step 3.
+- On any other tag: todo 1 `completed`, todo 2 `completed`, with **todo 3 omitted from the list entirely** (per TodoWrite's "Remove tasks that are no longer relevant from the list" guidance — the macro will not reach Step 3 on a non-pass tag). Then stop.
+
+Batch each transition into a single `TodoWrite` call so the "exactly one in_progress" invariant is never transiently violated.
 
 | Tag from /start | Action |
 | --- | --- |
@@ -108,6 +125,8 @@ Compose the args string for `/finish` based on mode:
 | `SHIPPED-PR` | `wt` mode with `pr` (`/finish` Step 9 `ACTION == "pr"` block) | Stop. Terminal. Worktree preserved by `/finish` (PR is the lifecycle boundary). **Anomaly in non-`wt` mode** — same as above. |
 | `BLOCKED-ON-REVIEW` | Either mode | Stop. Terminal. State unchanged; branch (and worktree, if `wt`) intact. (E.g., user picked `abort` at the stale-verdict prompt, or `linear issues update` failed.) |
 
+**Todo bookkeeping.** Once `Skill(finish)` returns and emits its terminal tag, **MUST call `TodoWrite`** (single call) setting todo 3 → `completed`. Every action on the macro's three-item list is now resolved.
+
 That tagged line is `/full`'s terminal output. Do not wrap it, do not add a closing summary, do not re-emit the issue title.
 
 ### No Step 4
@@ -121,6 +140,7 @@ That tagged line is `/full`'s terminal output. Do not wrap it, do not add a clos
 - **Re-run after a successful `/full`.** If the issue has already moved to `Ready For Release` or `Done`, `/start`'s Error Handling fires ("If the issue is already Done or Ready For Release, warn the user and ask if they want to reopen it"). That's a third user prompt beyond plan approval and deferred-items triage — narrowly tolerable as it only fires on misuse. The macro inherits the prompt; do not bypass it.
 - **Non-`wt` `/full` invoked from inside an existing worktree directory.** Operator error: the user's cwd is `.claude/worktrees/pl-99/` (a leftover from a separate `/start wt PL-99` session) and they type `/full PL-13` (no `wt`). `finish-detect-mode.sh` will see PL-99's `start.source-branch` config, default `ACTION` to `merge`, and try to merge a foreign worktree branch — the issue-ID mismatch surfaces only through `/finish` Step 1's cross-worktree sanity check, but the user is already in a foreign worktree so the warning text is misleading. **Recommendation:** run non-`wt` `/full` only from the main checkout, not from any `.claude/worktrees/*` directory.
 - **Session killed between `/start` finishing and `/finish` dispatching.** The macro orchestrator is dead and cannot resume on its own (terminal closed, machine slept, overnight pause). See Step 1's "Session interruption" paragraph for the recovery: type `/finish <ISSUE-ID> [merge]` manually. Do NOT re-invoke `/full` — it would re-run the entire `/start` workflow on an already-finished issue.
+- **TodoWrite priming fails to hold (third recurrence of the historical failure mode).** If `/finish` is again skipped after `Skill(start)` returns with `READY-FOR-FINISH` — meaning the mandatory `TodoWrite` tool call in Step 1 action 4 did not survive as the boundary-forcing mechanism — the escalation is to modify `/start` Step 10's tagged-line text so it does not read as turn-ending user-facing guidance when invoked under `/full`. Mechanism: `/full` sets an env var (e.g., `CLAUDE_FULL_MACRO_ACTIVE=1`) before dispatching `Skill(start)`; `/start` Step 10 reads it and emits a `READY-FOR-FINISH` line that reads as a state signal (e.g., `READY-FOR-FINISH: <ISSUE-ID> — /full continues to Step 2.`) instead of `Run /finish ...`. This was the rejected alternative at the original design because of the `/start`↔`/full` coupling cost; if the TodoWrite mechanism doesn't hold, the coupling cost becomes worth paying. Update `/start` Step 10's emission contract and this skill's invocation paragraph in lockstep.
 - **User aborts plan approval.** Plan mode just doesn't exit. The macro never reaches Step 2. Nothing special to do.
 - **`/quality-review` returns `escalated-to-architect`.** `/start` Step 10 maps this to `BLOCKED-ON-REVIEW`. Macro stops at Step 2 with the inherited tag; the architect's recommendation is already in chat per `/start` Step 9.
 - **Stale-verdict prompt in `/finish` Step 8.** `/finish` itself handles the override/re-run/abort prompt. The macro doesn't intervene. Stale verdict is uncommon in this flow because `/start` just produced the verdict and HEAD typically hasn't moved.
