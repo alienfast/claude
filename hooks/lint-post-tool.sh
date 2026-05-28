@@ -83,20 +83,19 @@ stamp="tmp/.lint-hook-plugin-error-${session_id}"
 check_comment_widths() {
   local target="$1"
   awk '
-    function flush(    i, merge, combined, maxw) {
+    function flush(    i, total, avail, needed, maxw) {
       if (n < 3 || skip) { n = 0; skip = 0; return }
-      merge = 0
-      for (i = 1; i < n; i++) {
-        combined = indent_len + 3 + length(content[i]) + 1 + length(content[i+1])
-        if (combined <= 160 && length(lines[i]) < 120 && length(lines[i+1]) < 120) {
-          merge = 1
-          break
+      total = 0
+      for (i = 1; i <= n; i++) total += length(content[i])
+      total += n - 1                                          # joining spaces
+      avail = 160 - indent_len - 3                            # width left after indent + "// "
+      if (avail > 0) {
+        needed = int((total + avail - 1) / avail)             # ceil(total / avail)
+        if (needed < n) {
+          maxw = 0
+          for (i = 1; i <= n; i++) if (length(lines[i]) > maxw) maxw = length(lines[i])
+          printf "  Lines %d-%d: %d-line // block (max width ~%d) — could reflow to %d line%s at 160.\n", start, start + n - 1, n, maxw, needed, (needed == 1 ? "" : "s")
         }
-      }
-      if (merge) {
-        maxw = 0
-        for (i = 1; i <= n; i++) if (length(lines[i]) > maxw) maxw = length(lines[i])
-        printf "  Lines %d-%d: %d-line // block, max width ~%d — could fit at 160.\n", start, start + n - 1, n, maxw
       }
       n = 0; skip = 0
     }
@@ -110,7 +109,7 @@ check_comment_widths() {
       sline = 0
       if (body ~ /^(biome-ignore|eslint-|@ts-|prettier-|TODO|FIXME|HACK|NOTE|XXX|@no-wrap)/) sline = 1
       if (body ~ /^[-*][[:space:]]/ || body ~ /^[0-9]+\.[[:space:]]/) sline = 1
-      if (body ~ /,[[:space:]]*$/) sline = 1                       # commented-out code (trailing comma)
+      if (body ~ /['\''")}\]][[:space:]]*,[[:space:]]*$/) sline = 1   # commented-out code (literal closer + comma)
       if (body ~ /[-=+|*_~#]{4,}/) sline = 1                       # ASCII art / banner separators
       if (NR <= 20 && tolower(body) ~ /copyright|license|spdx/) sline = 1
       if (n == 0) { start = NR; indent_len = length(ind) }
