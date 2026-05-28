@@ -244,11 +244,13 @@ Suggested defer as issue (needs research/planning):
 
 **4. Offer in-session fixes.** Ask **only about the fix-now decision** — do not preview, hint at, or pre-allocate the filing decision from sub-step 6.
 
+**Entry gate — skip this sub-step entirely if the "Suggested fix now" group from sub-step 3 is empty.** With no fix-now candidates, every reply option (`suggested`, `all`, `none`, numeric list) resolves to the same action (zero fixes), so the prompt is degenerate. Proceed directly to sub-step 6. Do NOT attempt to render the question with a clarifying parenthetical to disambiguate the collapsed options — that leaks sub-step 6's filing semantics into sub-step 4's prompt, which the rules below forbid.
+
 > Which of these would you like to fix now? Reply with comma-separated numbers (e.g., `1, 3`), `suggested` to accept the fix-now group, `all`, or `none`.
 
 Reply semantics:
 
-- `suggested` → select exactly the items in the "Suggested fix now" group. If that group is empty, treat as `none` and skip to sub-step 6.
+- `suggested` → select exactly the items in the "Suggested fix now" group.
 - `all` → select every item in the consolidated list (both groups).
 - `none` → skip in-session fixes; proceed to sub-step 6 with all items unfixed.
 - Numeric list → select the listed numbers verbatim.
