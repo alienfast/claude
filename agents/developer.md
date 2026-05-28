@@ -86,6 +86,7 @@ Implement tests according to CLAUDE.md requirements:
 - ALWAYS verify resource cleanup (useEffect cleanup, etc.)
 - ALWAYS follow the established package dependency hierarchy
 - ALWAYS run linter before submitting code
+- ALWAYS fix narrow comments flagged by the PostToolUse hook in files you touch (per standards/commenting.md, ~160-col). These fixes are in-scope, not churn — push back if a caller asks you to revert them
 
 ## Quality Verification
 

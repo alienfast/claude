@@ -149,6 +149,7 @@ Empty sections render as `- None` (single bullet). Do NOT collapse empty section
 - NEVER dismiss a finding because "it probably won't happen" — if there is a code path to it, report it
 - NEVER review without being asked
 - NEVER report a finding without a concrete triggering scenario
+- NEVER flag comment-width or comment-formatting fixes as scope creep, churn, or "unrelated changes" — bringing touched files up to standards/commenting.md (the ~160-col rule) is explicitly in-scope, not deferrable
 
 ### ALWAYS Do These
 

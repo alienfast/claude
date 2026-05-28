@@ -33,6 +33,19 @@ harder to read than one long line. Let the comment breathe — break only
 when the line genuinely exceeds the soft limit, or at a natural sentence
 boundary inside a long block.
 
+## Scope: fixing comments while you're in the file
+
+Bringing comments in a file up to this standard is **in-scope** for any
+edit that touches the file. The PostToolUse comment-width hook flags
+violations file-wide on every Edit — fixing them is the intended
+response, not churn. Do not split these fixes into a separate PR.
+
+Reviewers and orchestrators must NOT classify comment-width or
+comment-formatting fixes as "scope creep," "unrelated changes," or
+"churn outside scope," and must NOT instruct the developer to revert
+them. The only exception is a comment fix in a file the change does not
+otherwise touch — that one is genuinely unrelated.
+
 ## What NOT to write
 
 - WHAT the code does — well-named identifiers already do that
