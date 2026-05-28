@@ -73,6 +73,57 @@ trap emit EXIT
 mkdir -p tmp 2>/dev/null
 stamp="tmp/.lint-hook-plugin-error-${session_id}"
 
+# Detect premature comment wrapping. See standards/commenting.md: the standard
+# is ~160 chars, but training-data muscle memory wraps at ~80. Biome can't
+# enforce this (formatter doesn't rewrap comments, by design). So we scan for
+# the signature: 3+ consecutive `//` lines where at least one adjacent pair
+# could merge under 160 chars. Skips pragmas, lists, license headers, ASCII
+# art, commented-out code, triple-slash directives, and bare-`//` paragraph
+# separators (which break blocks instead of joining them).
+check_comment_widths() {
+  local target="$1"
+  awk '
+    function flush(    i, merge, combined, maxw) {
+      if (n < 3 || skip) { n = 0; skip = 0; return }
+      merge = 0
+      for (i = 1; i < n; i++) {
+        combined = indent_len + 3 + length(content[i]) + 1 + length(content[i+1])
+        if (combined <= 160 && length(lines[i]) < 120 && length(lines[i+1]) < 120) {
+          merge = 1
+          break
+        }
+      }
+      if (merge) {
+        maxw = 0
+        for (i = 1; i <= n; i++) if (length(lines[i]) > maxw) maxw = length(lines[i])
+        printf "  Lines %d-%d: %d-line // block, max width ~%d — could fit at 160.\n", start, start + n - 1, n, maxw
+      }
+      n = 0; skip = 0
+    }
+    /^[[:space:]]*\/\// {
+      match($0, /^[[:space:]]*/); ind = substr($0, 1, RLENGTH); rest = substr($0, RLENGTH + 1)
+      # Triple-slash directives (/// <reference …>) are not prose — never part of a block.
+      if (substr(rest, 1, 3) == "///") { flush(); next }
+      if (substr(rest, 1, 3) == "// ") body = substr(rest, 4); else body = substr(rest, 3)
+      # Bare `//` separator: ends the current block, itself belongs to no block.
+      if (body == "") { flush(); next }
+      sline = 0
+      if (body ~ /^(biome-ignore|eslint-|@ts-|prettier-|TODO|FIXME|HACK|NOTE|XXX|@no-wrap)/) sline = 1
+      if (body ~ /^[-*][[:space:]]/ || body ~ /^[0-9]+\.[[:space:]]/) sline = 1
+      if (body ~ /,[[:space:]]*$/) sline = 1                       # commented-out code (trailing comma)
+      if (body ~ /[-=+|*_~#]{4,}/) sline = 1                       # ASCII art / banner separators
+      if (NR <= 20 && tolower(body) ~ /copyright|license|spdx/) sline = 1
+      if (n == 0) { start = NR; indent_len = length(ind) }
+      else if (length(ind) != indent_len) { flush(); start = NR; indent_len = length(ind) }
+      n++; lines[n] = $0; content[n] = body
+      if (sline) skip = 1
+      next
+    }
+    { flush() }
+    END { flush() }
+  ' "$target"
+}
+
 # ----- markdown -----
 if [[ "$file_ext" == "md" || "$file_ext" == "markdown" ]]; then
   if [[ -f ".markdownlint.jsonc" || -f ".markdownlint.json" || -f ".markdownlintrc" ]]; then
@@ -112,6 +163,21 @@ case "$file_ext" in
           issues=$(grep -ivE 'plugin.*\.grit|failed to load plugin|plugin.*(failed to parse|parse error|invalid)' <<<"$issues")
         fi
         [[ -n "$issues" ]] && append_context "Biome issues in ${file_name}:"$'\n'"${issues}"
+      fi
+    fi
+    ;;
+esac
+
+# ----- comment-width -----
+# Runs AFTER biome --write so line numbers reflect the post-format file the
+# agent will read next. Skips .d.ts (declaration overloads use intentionally
+# vertical comments).
+case "$file_ext" in
+  js|jsx|ts|tsx|mjs|cjs)
+    if [[ "$file_path" != *.d.ts ]]; then
+      width_issues=$(check_comment_widths "$file_path")
+      if [[ -n "$width_issues" ]]; then
+        append_context "Comment-width issues in ${file_name} (See standards/commenting.md — wrap at ~160, not ~80):"$'\n'"${width_issues}"
       fi
     fi
     ;;
