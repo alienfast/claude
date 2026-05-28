@@ -38,6 +38,18 @@ esac
 [[ -z "$file_path" ]] && exit 0
 [[ -n "$cwd" && -d "$cwd" ]] && cd "$cwd"
 
+# Skip if the target file lives outside the project root. Lint configs
+# rooted at $cwd shouldn't apply to outside-cwd files, and markdownlint-cli
+# (via the `ignore` package) crashes with RangeError on `..`-prefixed
+# relative paths. Realpath both sides so symlinked roots compare correctly.
+if [[ -n "$cwd" && "$file_path" = /* ]]; then
+  abs_file=$(realpath "$file_path" 2>/dev/null || echo "$file_path")
+  abs_cwd=$(realpath "$cwd" 2>/dev/null || echo "$cwd")
+  if [[ "$abs_file" != "$abs_cwd"/* && "$abs_file" != "$abs_cwd" ]]; then
+    exit 0
+  fi
+fi
+
 # Repo-relative path when possible (GNU realpath; macOS realpath without
 # coreutils silently falls through and we keep the absolute path).
 if [[ "$file_path" = /* && -n "$cwd" ]]; then
