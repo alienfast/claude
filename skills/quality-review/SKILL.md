@@ -190,13 +190,13 @@ Runs once, only after the fix loop terminates with `passed-clean` or `passed-aft
 
 **Substitution token.** `<ISSUE-ID>` in the templates below means the issue ID resolved in Step 1. If no issue was resolved, replace `for <ISSUE-ID>` with `for the current change set` and skip the dependency-link command in sub-step 6.
 
-**Malformed user replies.** If the user replies to any prompt below with input you cannot parse (e.g., `1-3`, `the first three`, `sure`), re-prompt once with the exact accepted syntax — including the `suggested` shortcut — and a literal example. After a second malformed reply, fall back to a *safe default*: for sub-step 4, default to `none` (do not start unrequested work); for sub-step 6, default to `all` (filing extra Linear issues is recoverable, silently dropping findings is not). Note: `suggested` is an accepted input, never a fallback. On re-prompt at sub-step 6, re-render the full template; do not abbreviate on retry.
+**Malformed user replies.** Sub-step 6 is the only prompt in this step. If the user replies to it with input you cannot parse (e.g., `1-3`, `the first three`, `sure`), re-prompt once with the exact accepted syntax — including the `suggested` shortcut — and a literal example. After a second malformed reply, fall back to the *safe default* `all` (filing extra Linear issues is recoverable, silently dropping findings is not). Note: `suggested` is an accepted input, never a fallback. On re-prompt, re-render the full template; do not abbreviate on retry.
 
 **Verdict downgrade.** Step 6 can transition the run state from `passed-after-fixes` back to `terminated-with-open-items` (see sub-step 5 regression-cap path). When that happens, the new verdict overrides the verdict assigned at Step 4.
 
 **1. Consolidate.** Collect every Nice-to-Have / Out-of-Scope finding reported across all review cycles. Deduplicate by `file:line + finding text`; if a finding was emitted without a file:line (a malformed-but-recoverable reviewer output, see Error Handling), fall back to deduplicating by finding text alone (trim, casefold, and collapse internal whitespace before comparison to absorb cosmetic differences). If the consolidated list is empty, skip the rest of this step.
 
-**2. Classify.** Label each item `fix-now` or `defer-as-issue` using the criteria below. The label routes the item to sub-step 4 (in-session fix) or sub-step 6 (Linear issue) by default — the user can override at either prompt.
+**2. Classify.** Label each item `fix-now` or `defer-as-issue` using the criteria below. `fix-now` items are **applied automatically in-session with no approval prompt** (sub-steps 4–5) — they are gated to obviously-correct, localized, no-API-change changes, so the user has opted into fixing them without per-item review. Only `defer-as-issue` items reach a user prompt (sub-step 6, the filing decision), where the user can still choose to file or drop each one.
 
 **Fix now** — *all* of the following hold:
 
@@ -222,7 +222,7 @@ If an item triggers criteria from both sides (e.g., mechanical but touches a pub
 ```text
 Deferred items surfaced during review:
 
-Suggested fix now (no decisions required):
+Auto-fixing now (no approval needed):
   1. [Finding] — [file:line] — [tag] — [rationale]
   2. [Finding] — [file:line] — [tag] — [rationale]
 
@@ -231,33 +231,25 @@ Suggested defer as issue (needs research/planning):
   4. [Finding] — [file:line] — [tag] — [rationale]
 ```
 
-**Prompt mechanism (applies to sub-steps 4 and 6).** Sub-steps 4 and 6 are **two independent prompts** — never combine them into one. Each prompt asks about exactly one action verb (sub-step 4 = "fix now", sub-step 6 = "file as issue"); using both verbs in a single checklist makes the selection state ambiguous. Specifically:
+**Prompt mechanism (applies to sub-step 6).** Sub-step 6 is the only prompt in Step 6 — it asks about exactly one action verb ("file as issue"). `fix-now` items are auto-applied in sub-steps 4–5 with no prompt, so there is no second prompt to disambiguate against. Specifically:
 
-- Render the grouped list from sub-step 3 as **plain text above the question**. Do not rewrite an item's label to encode the action verb (e.g., never render `defer-as-issue` items as "File X as a Linear issue" inside sub-step 4 — the [tag] communicates the recommendation; the label is the finding).
+- Render the unfixed-items list from sub-step 6 as **plain text above the question**. Do not rewrite an item's label to encode the action verb — the [tag] communicates the recommendation; the label is the finding.
 - The question itself MAY be an `AskUserQuestion` multiSelect, but if so:
-  - Every option label must read as "fix [finding]" at sub-step 4, and as "file [finding]" at sub-step 6 — one verb per prompt.
-  - Pre-check (`[✔]`) the items the classification suggests (`fix-now` group at sub-step 4; `defer-as-issue` group at sub-step 6) so the user can accept the suggestion with one click.
-  - Do **not** add description text that previews sub-step 6 (no "items not selected will be filed as issues") — sub-step 6 is a *separate* decision where items can still be dropped. Pre-announcing one outcome hides the drop option.
+  - Every option label must read as "file [finding]".
+  - Pre-check (`[✔]`) the items the classification suggests (the `defer-as-issue` group) so the user can accept the suggestion with one click.
   - Do **not** add an "Other" / "type something" / "I have a different choice" option to the options array. The `AskUserQuestion` tool surfaces an "Other" capability automatically (per its tool description: "Users will always be able to select 'Other' to provide custom text input"; "There should be no 'Other' option, that will be provided automatically"). The chat is always available for the user to interject a different reply (e.g., `none`, a comma-list, or free-text). An explicit "type something" option is redundant clutter — the multiSelect must contain exactly the N finding options and nothing else.
 - Equivalent plain-text reply is also acceptable per the existing `suggested / all / none / comma-list` semantics below.
 - Item labels in the rendered list and in the `AskUserQuestion` option labels MUST use the same identifiers. Use Arabic numerals only (`1`, `2`, `3`, …) — never letters, never roman numerals, never any other scheme. An option labeled "Items 5, 6" must refer to items literally labeled `5.` and `6.` in the rendered list directly above.
 
-**4. Offer in-session fixes.** Ask **only about the fix-now decision** — do not preview, hint at, or pre-allocate the filing decision from sub-step 6.
+**4. Select fix-now items for auto-apply.** No prompt — every item in the `fix-now` group is applied in-session automatically. These are gated to obviously-correct, localized, no-API-change changes, and the user has opted into fixing them without per-item approval. The set to fix = every `fix-now` item from sub-step 2.
 
-**Entry gate — skip this sub-step entirely if the "Suggested fix now" group from sub-step 3 is empty.** With no fix-now candidates, every reply option (`suggested`, `all`, `none`, numeric list) resolves to the same action (zero fixes), so the prompt is degenerate. Proceed directly to sub-step 6. Do NOT attempt to render the question with a clarifying parenthetical to disambiguate the collapsed options — that leaks sub-step 6's filing semantics into sub-step 4's prompt, which the rules below forbid.
+**Entry gate — skip sub-steps 4–5 entirely if the `fix-now` group is empty.** With nothing to apply, proceed directly to sub-step 6.
 
-> Which of these would you like to fix now? Reply with comma-separated numbers (e.g., `1, 3`), `suggested` to accept the fix-now group, `all`, or `none`.
+Before delegating, emit a one-line chat note listing the items being auto-applied so the user has visibility (e.g., `Auto-fixing 3 deferred items in-session: #1, #2, #4`). Then proceed to sub-step 5.
 
-Reply semantics:
+**5. Fix the fix-now items.** If the `fix-now` group is non-empty:
 
-- `suggested` → select exactly the items in the "Suggested fix now" group.
-- `all` → select every item in the consolidated list (both groups).
-- `none` → skip in-session fixes; proceed to sub-step 6 with all items unfixed.
-- Numeric list → select the listed numbers verbatim.
-
-**5. Fix selected items.** If the user picked any:
-
-- Delegate to `developer` with the chosen findings (parallel agents if findings are in independent files, same pattern as Step 5).
+- Delegate to `developer` with all `fix-now` findings (parallel agents if findings are in independent files, same pattern as Step 5).
 - Re-run `pnpm check`. If it fails after a single corrective `developer` delegation, surface the failure via the Error Handling path and stop — do not loop indefinitely.
 - Spawn a single `quality-reviewer` re-review scoped to **only** the files touched by the deferred fixes:
 
@@ -274,12 +266,16 @@ Reply semantics:
   - **Upgrade-on-success exception.** If the corrective pass produces a clean `pnpm check` AND the diff stays scoped to the regression area, an OPTIONAL single confirmatory `quality-reviewer` re-review MAY be spawned (scoped to just the corrective-pass files). If that re-review returns no new Critical/High/Medium findings, **restore the verdict to `passed-after-fixes`** rather than terminating with open items, and continue to sub-step 6. This prevents the regression-cap path from forcing a downgrade on a genuinely successful recovery.
   - If the confirmatory re-review is skipped, or surfaces new findings, or the corrective `pnpm check` still fails, or any of the original regressions remain unaddressed in the diff, terminate Step 6 immediately. On termination, populate the verdict block as follows:
   - **Verdict:** `terminated-with-open-items` (overriding the Step 4 verdict).
-  - **Deferred fixed in-session:** deferred items whose fixes are not implicated in the regression. If causation cannot be cleanly attributed (the developer landed multiple fixes in one delegation and the re-review surfaced regressions from "this delta"), list **none** of them as fixed and route every chosen item to `Open items` — readers should not see "fixed" labels on changes that broke the application.
+  - **Deferred fixed in-session:** deferred items whose fixes are not implicated in the regression. If causation cannot be cleanly attributed (the developer landed multiple fixes in one delegation and the re-review surfaced regressions from "this delta"), list **none** of them as fixed and route every auto-applied item to `Open items` — readers should not see "fixed" labels on changes that broke the application.
   - **Open items:** the surviving Critical/High/Medium regressions, **plus** the implicated deferred-item fixes per the rule above, **plus** any not-yet-offered unfixed Nice-to-Have items (the user never reached sub-step 6, so those items are not "dropped" — they are surfaced for manual follow-up).
-  - **Deferred dropped:** `none` (this field is reserved for items the user explicitly declined to fix and declined to file in sub-step 6).
+  - **Deferred dropped:** `none` (this field is reserved for items the user explicitly declined to file in sub-step 6).
   - Skip sub-step 6.
 
-**6. Offer Linear issues for unfixed items.** Render the remaining unfixed items using the template below, then ask the question that follows. The render is REQUIRED regardless of prompt mechanism (markdown body, AskUserQuestion description, etc.) — do not collapse to a single sentence; assume the user is context-switching across parallel sessions and cannot scroll back to sub-step 3. Preserve original sub-step 3 numbering (items already fixed in sub-step 5 become gaps, e.g., 1, 3, 4 if item 2 was fixed). Omit a sub-group header entirely if empty; do not print "(none)".
+**6. Offer Linear issues for unfixed items.**
+
+**Entry gate — skip sub-step 6 entirely if no *fileable* items remain.** Fileable items are the `defer-as-issue` items plus any new Nice-to-Have findings appended by sub-step 5's re-review. Auto-applied `fix-now` items are already fixed and are not fileable. If both are empty there is nothing to file — skip the prompt and emit the Output-section verdict block (the schema under `## Output`, not the sub-step 6 template below). Skipping sub-step 6 does **not** exempt the auto-applied items from the verdict: they MUST still be listed in that block's `Deferred fixed in-session:` field. (This is the common case when every deferred item was `fix-now`: they all auto-apply and the run reaches Output with no prompt at all.)
+
+Render the remaining unfixed items using the template below, then ask the question that follows. The render is REQUIRED regardless of prompt mechanism (markdown body, AskUserQuestion description, etc.) — do not collapse to a single sentence; assume the user is context-switching across parallel sessions and cannot scroll back to sub-step 3. Preserve original sub-step 3 numbering: auto-applied `fix-now` items are shown under "Auto-fixed in-session (for context)" with their original numbers (e.g., 1, 2), and the fileable `defer-as-issue` items keep theirs (e.g., 3, 4), with any new sub-step 5 re-review findings appended after. Omit a sub-group header entirely if empty; do not print "(none)".
 
 **Every `<...>` token below is a substitution site** — replace each with the resolved value before emitting; never emit the literal pipe-separated schema (`<passed-clean | passed-after-fixes>`) to the user. The verdict header line should read e.g. `Quality review verdict: passed-after-fixes (cycles: 3)`. The Step 4-class substitution rule applies here too.
 
@@ -287,14 +283,13 @@ Reply semantics:
 Quality review verdict: <one of: passed-clean | passed-after-fixes>  (cycles: N)
 Deferred items still unfixed after sub-step 5:
 
-Fixed in-session (for context, not actionable here):
+Auto-fixed in-session (for context, not actionable here):
+  1. [Finding] — [file:line] — [tag]
   2. [Finding] — [file:line] — [tag]
 
 Suggested defer as issue (recommended to file):
   3. [Finding] — [file:line] — [tag] — [rationale]
-
-Suggested fix now but skipped (filing as issue is unusual but allowed):
-  1. [Finding] — [file:line] — [tag] — [rationale]
+  4. [Finding] — [file:line] — [tag] — [rationale]
 
 New Nice-to-Have findings from sub-step 5 re-review (appended, no group label):
   5. [Finding] — [file:line] — [tag] — [rationale]
@@ -302,14 +297,14 @@ New Nice-to-Have findings from sub-step 5 re-review (appended, no group label):
 
 Every actionable item MUST include: finding text (verbatim from reviewer, not paraphrased), file:line, tag, and rationale. If the reviewer emitted no file:line, render `file:line: unknown` rather than omitting the field. Then ask:
 
-> For which of the unfixed items should I create Linear issues? Reply with comma-separated numbers (e.g., `1, 2`), `suggested` to file the defer-as-issue group, `all`, or `none`. Items declined here become `Deferred dropped` in the verdict block — they are not silently re-added to any other category.
+> For which of the unfixed items should I create Linear issues? Reply with comma-separated numbers (e.g., `3, 4`), `suggested` to file the defer-as-issue group, `all`, or `none`. Items declined here become `Deferred dropped` in the verdict block — they are not silently re-added to any other category.
 
 Reply semantics:
 
 - `suggested` → file every item still in the "Suggested defer as issue" group at this point (items already fixed in sub-step 5 are excluded automatically). If the remaining group is empty, treat as `none`.
 - `all` → file every remaining unfixed item.
 - `none` → file nothing; remaining items become `Deferred dropped` in the verdict block.
-- Numeric list → file the listed numbers verbatim.
+- Numeric list → file the listed numbers verbatim, **excluding any that reference the "Auto-fixed in-session" context group** — those items are already fixed and not fileable (the same exclusion `suggested` applies); silently skip such numbers rather than filing a redundant issue.
 
 For each chosen item, create the issue with the parent link set atomically. Use `linear-stdin.sh` to safely pass the description (which contains backticks, colons, and other shell-significant characters from file:line refs and rationale). Use `mktemp` for the body file so concurrent `/quality-review` runs in different sessions or worktrees do not race on a shared path. **macOS BSD `mktemp` does not replace `XXXXXX` if a suffix follows it**, so omit the extension on the template; Linear accepts the body without one. Ensure `tmp/` exists first:
 
@@ -354,7 +349,7 @@ When the skill returns to its caller (or to the user, when standalone), present 
 Verdict: <one of: passed-clean | passed-after-fixes | terminated-with-open-items | escalated-to-architect>
 Cycles: N (initial + N-1 re-reviews)
 Findings resolved: [list, or the bare word none if passed-clean]
-Deferred fixed in-session: [list, or the bare word none]
+Deferred fixed in-session: [list of items applied in-session, including auto-applied fix-now items even when sub-step 6 was skipped; or the bare word none]
 Deferred filed as issues: [PL-XX, PL-YY (sub-issues of <PARENT>), or the bare word none]
 Deferred dropped: [list, or the bare word none]
 Open items: [list, or the bare word none — populated only on terminated-with-open-items or escalated-to-architect; includes any deferred items not handled above]
