@@ -205,6 +205,25 @@ fi
 # Setup succeeded; clear the cleanup trap so the worktree persists.
 trap - EXIT
 
+# Warm-install dependencies so the worktree is immediately usable. `git worktree add` copies only tracked files, and node_modules is gitignored, so a fresh
+# worktree has none. The package *contents* are already in the global store (shared, content-addressed, APFS-cloned), so this is a linking-bound warm install —
+# no re-download. Runs only when node_modules is absent (covers fresh creation and resumed worktrees whose modules were never installed). Package-manager-aware
+# via lockfile detection, and non-fatal: a failure leaves a valid worktree the user can install into manually. Output goes to stderr so it never pollutes the
+# key=value contract on stdout. Placed after `trap - EXIT` so a failed install can never trigger the worktree-removal trap.
+if [ ! -d "$wt_abs/node_modules" ]; then
+  if [ -f "$wt_abs/pnpm-lock.yaml" ] && command -v pnpm >/dev/null 2>&1; then
+    echo "Installing dependencies (pnpm, warm path)…" >&2
+    if ! pnpm -C "$wt_abs" install --prefer-offline --frozen-lockfile >&2; then
+      echo "WARN: pnpm install failed; worktree is valid but deps are not installed. Run 'pnpm install' in $wt_abs." >&2
+    fi
+  elif [ -f "$wt_abs/package-lock.json" ] && command -v npm >/dev/null 2>&1; then
+    echo "Installing dependencies (npm ci)…" >&2
+    if ! npm --prefix "$wt_abs" ci >&2; then
+      echo "WARN: npm ci failed; run 'npm ci' in $wt_abs." >&2
+    fi
+  fi
+fi
+
 # Emit plain key=value lines for the caller (skill markdown) to read from
 # the tool output and substitute into the next step's Agent prompt. Values
 # are NOT eval'd — they should be visible to the orchestrator.
