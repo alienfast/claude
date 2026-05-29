@@ -38,3 +38,4 @@ packages/*/.npmignore
 /daemon.*
 /jobs
 /locks
+.last-update*

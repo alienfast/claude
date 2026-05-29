@@ -183,7 +183,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/typecheck.sh"
+            "command": "~/.claude/hooks/full-continue.sh"
           }
         ]
       }

@@ -125,7 +125,7 @@ Automatic quality checks that run without manual invocation.
 | [git-permissions](hooks/git-permissions.sh) | Before git commands | Blocks destructive operations (`reset --hard`, `--force`, `clean -f`) |
 | [no-cd-before-git](hooks/no-cd-before-git.sh) | Before Bash | Rejects `cd <dir> && git ...` — forces `git -C <dir> ...` to keep the allow-list working |
 | [lint-post-tool](hooks/lint-post-tool.sh) | After file edits | Runs Biome and markdownlint with auto-fix |
-| [typecheck](hooks/typecheck.sh) | On stop | Runs `tsc -b` after TypeScript changes |
+| [full-continue](hooks/full-continue.sh) | On stop | Keeps `/full` going: re-dispatches `/finish` if the macro stalls after `READY-FOR-FINISH` |
 
 ### Commands
 
