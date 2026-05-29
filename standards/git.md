@@ -95,12 +95,14 @@ Should I:
 
 #### `/finish merge` is self-serializing per parent repo
 
-When multiple worktree sessions run `/finish merge` concurrently against the same parent repo, [scripts/finish-merge.sh](../scripts/finish-merge.sh) acquires an exclusive lock keyed by `REPO_ROOT` (via [scripts/with-repo-lock.py](../scripts/with-repo-lock.py)) before touching the main checkout's working tree. Other sessions block on stderr (`[finish-queue] waiting for <REPO_ROOT> ...`) and acquire in turn.
+When multiple worktree sessions run `/finish merge` concurrently against the same parent repo, [scripts/finish-merge.sh](../scripts/finish-merge.sh) acquires an exclusive lock keyed by the repo's common git dir (via [scripts/with-repo-lock.py](../scripts/with-repo-lock.py)) before advancing source — one key per parent repo, shared across all its worktrees. Other sessions block on stderr (`[finish-queue] waiting for <common-git-dir> ...`) and acquire in turn.
 
-- Lockfile: `~/.claude/locks/repo-<sha1>.lock`. To inspect the current holder: `cat ~/.claude/locks/repo-*.lock`.
+The merge is structured so the source branch is only ever advanced cleanly: the worktree branch is first brought up to source's tip **inside the worktree** (private to the session, lock-free, and editable even from a background session), and any conflicts are resolved there — never in the main checkout. Source is then advanced by `git merge --ff-only` (when the main checkout is on source) or an atomic `git update-ref` compare-and-swap (when it is on another branch). The main checkout is therefore never left mid-merge and its HEAD is never switched, so a concurrent session can never merge into an unclean directory.
+
+- Lockfile: `~/.claude/locks/repo-<sha256-prefix>.lock`. To inspect the current holder: `cat ~/.claude/locks/repo-*.lock`.
 - Release: `fcntl.flock` is OS-managed; the lock is released on any process exit (including SIGKILL). No stale-lock cleanup is needed.
-- Scope: only the merge step is locked. Worktree-branch pushes, Linear updates, and `gh pr create` (PR mode) run in parallel — they don't contend.
-- Conflict-resolution edge case: a `finish-merge.sh` conflict exit releases the lock with `MERGE_HEAD` still present in the parent repo. The next session bails on precondition 5 with an explicit "another /finish session is mid-conflict-resolution" message rather than queueing behind a half-merged checkout.
+- Scope: only the fast-forward finalize (and a fast, conflict-free worktree pre-merge) is locked. Worktree-branch pushes, Linear updates, and `gh pr create` (PR mode) run in parallel — they don't contend. On a conflict the script exits 2 and releases the lock; the slow conflict resolution runs lock-free in the private worktree with the main checkout clean and available to other sessions.
+- Optimistic re-check: source can advance between a session's worktree pre-merge and its fast-forward (another `/finish merge`, or a local human/CI update). The finalize re-verifies under the lock that the worktree branch still descends from source's current tip and re-merges the new delta if not, looping until it converges — it does not fast-forward a stale branch.
 
 ### Proper File Staging
 
