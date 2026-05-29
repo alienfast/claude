@@ -67,13 +67,30 @@ DECISION=$(jq -nR -c '
       # (so a stale, already-completed earlier /full does not count).
       | ($openfull != null and ($lastclose == null or $openfull.i > $lastclose.i)) as $open_full
 
-      # Has Skill(finish) been dispatched after the tag? (self-clear). Same sidechain
-      # filter as $tags — a subagent dispatch must not be mistaken for a main-loop one.
+      # Has /finish STARTED after the tag, by ANY dispatch form? (self-clear). The hook must
+      # stand down the instant finish begins, no matter how it was invoked — otherwise it
+      # thrashes for the entire duration of a slash-invoked /finish and then falsely "gives up"
+      # (the manual-recovery path in full/SKILL.md emits a slash /finish, which produces NO Skill
+      # tool_use, so a Skill-only check never clears). Both checks are scoped to entries strictly
+      # after the tag, so a /finish from a prior issue — which precedes this tag — cannot self-clear.
+      # Same sidechain filter as $tags throughout: a subagent dispatch is not a main-loop one.
+      # (No closing-tag check is needed here: a SHIPPED-*/RELEASED tag would become the last tag,
+      # flipping is_ready false. A check for one with .i > $t.i would be unreachable — $t is last.)
+      #   (a) Skill tool_use {skill:"finish"} — the /full Step 3 happy path.
       | ([ $E[]
            | select(.key > $t.i) | .value
            | select(.type == "assistant" and (.isSidechain != true))
            | (.message.content // [])[]
-           | select(.type == "tool_use" and .name == "Skill" and (.input.skill == "finish")) ] | length) as $finish_after
+           | select(.type == "tool_use" and .name == "Skill" and (.input.skill == "finish")) ] | length) as $finish_skill
+      #   (b) <command-name>/finish</command-name> slash invocation — manual/recovery dispatch.
+      #       The harness adds this tag at invocation; it is absent from skill bodies and from the
+      #       block reason this hook emits, so the literal match is exact and self-match-free.
+      | ([ $E[]
+           | select(.key > $t.i) | .value
+           | select(.isSidechain != true)
+           | utext(.message.content // [])
+           | select(test("<command-name>/finish</command-name>")) ] | length) as $finish_slash
+      | ($finish_skill + $finish_slash) as $finish_after
 
       # Hard-bound counter: assistant turns since the FIRST READY tag of THIS /full window
       # (not the most recent tag). Counting from the first READY means a model that merely
@@ -132,10 +149,10 @@ if [[ "${ATTEMPTS:-0}" -ge 3 || ( "$STOP_ACTIVE" == "true" && "${ATTEMPTS:-0}" -
 fi
 
 REASON="You are executing the /full macro. /start has finished and emitted READY-FOR-FINISH for ${ISSUE}. \
-Do NOT stop. Continue /full Step 3 now by calling the Skill tool exactly once: \
-Skill(skill: \"finish\", args: \"${FINISHARGS}\"). \
-Do not re-emit the READY-FOR-FINISH line as text, do not summarize what /start did, do not ask the user \
-for confirmation. Dispatch Skill(finish) immediately and nothing else."
+Do NOT stop. Continue /full Step 3 now: dispatch /finish exactly once. Preferred — call the Skill tool: \
+Skill(skill: \"finish\", args: \"${FINISHARGS}\"). Running the slash command /finish ${FINISHARGS} is equally \
+acceptable; either form clears this hook. Do not re-emit the READY-FOR-FINISH line as text, do not summarize \
+what /start did, do not ask the user for confirmation. Dispatch /finish immediately and nothing else."
 
 jq -n -c --arg r "$REASON" '{decision: "block", reason: $r}'
 exit 0
