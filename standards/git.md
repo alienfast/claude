@@ -156,6 +156,20 @@ git stash               # Save work temporarily
 git reflog              # View reference log
 ```
 
+### Running Git Outside the Current Directory
+
+**Never `cd <dir> && git …`. Use `git -C <dir> …` instead.**
+
+```bash
+# ❌ FORBIDDEN — triggers a permission prompt every time
+cd /path/to/repo && git status
+
+# ✅ CORRECT
+git -C /path/to/repo status
+```
+
+`Bash(git:*)` is pre-approved, but `cd:*` is not — prefixing with `cd` makes the command match `cd` rather than `git`, so every invocation prompts. The `no-cd-before-git.sh` hook blocks `cd`-before-`git` automatically.
+
 ### Why This Matters: Real Incident
 
 **October 2025 catastrophic failure:**

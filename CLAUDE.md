@@ -2,10 +2,6 @@
 
 Global user-level guidance for Claude Code. This directory (`~/.claude/`) contains rules, skills, commands, and standards that apply to all projects unless overridden by project-specific configurations.
 
-## Date
-
-The year is 2026.
-
 ## Multi-Session Awareness
 
 Multiple Claude Code sessions can work simultaneously. Never touch changes you didn't create. The git-permissions.sh hook blocks destructive commands automatically.
@@ -21,42 +17,15 @@ Rules in `~/.claude/rules/` are automatically applied based on file type:
 - `markdown.md` - Applied to `**/*.md`, `**/*.mdx` files
 - `package-manager.md` - Applied to `**/package.json` and lockfiles
 
+These are generic, file-type-scoped, and shared across all projects via `alienfast/claude.git`. Projects layer their own domain rules in `<project>/.claude/rules/` — committed to the project repo and shared with the team (e.g. basefund's `descope.md`, `nextjs.md`, `apollo.md`, `mui-*.md`, `storybook.md`).
+
 ## Available Skills
 
-Skills activate automatically based on context. See [Skills README](skills/README.md) for the full list and creation guide.
-
-Linear workflow:
-
-- `linear` - Issue tracking CLI with semantic search
-- `start` / `checkpoint` / `finish` / `next` - Start, save progress, complete, and find next Linear issues
-- `quality-review` - Adversarial review + triage/fix loop (delegated from `/start`, also standalone)
-- `prd` - Create agent-friendly tickets with PRDs and sub-issues
-- `triage` - Backlog analysis and prioritization
-- `cycle-plan` / `retro` - Cycle planning and retrospectives
-- `deps` / `link-deps` - Dependency visualization and linking
-
-Development workflow:
-
-- `dependency-updater` - Package updates, ncu, version bumps
-- `pr-update` - PR titles and descriptions from code changes
-- `deprecation-handler` - Deprecated APIs and migrations (model: haiku)
-- `semver-advisor` - Version bump classification (model: haiku)
-- `react-component-generator` - React 19+ components with TypeScript
-
-External skills installed via `update.sh`: `agent-browser`, `skill-creator`, `vercel-react-best-practices`, `vercel-composition-patterns`
+Skills activate automatically based on context, and the harness lists the full available set each session — so this file does not enumerate them (the list drifts otherwise). See [Skills README](skills/README.md) for the catalog, grouping (Linear workflow vs development workflow), and creation guide. External skills are installed via `update.sh`.
 
 ## Standards
 
-Universal standards in `~/.claude/standards/` apply across all contexts. See [Standards README](standards/README.md) for core principles.
-
-Key standards:
-
-- `agent-coordination.md` - Parallel vs sequential execution patterns
-- `git.md` - Commit messages, PR descriptions, multi-session safety
-- `problem-solving.md` - When to ask vs proceed
-- `linear-workflow.md` - Terminal states, dependency resolution rules
-- `technical-debt-prevention.md` - No backups, no duplicates
-- `commenting.md` - Default to no comments; new files get a WHY docblock; wrap comments at ~160 chars (not 80)
+Universal standards in `~/.claude/standards/` apply across all contexts and are indexed in [Standards README](standards/README.md) — read the relevant file when its domain comes up. `git.md` (multi-session safety, commit/PR conventions) is the broadest and most safety-critical; read it before any git operation.
 
 ## Automatic Quality Checks
 
@@ -71,53 +40,22 @@ Type checking is **not** a hook — it runs via `pnpm check` (`turbo check-types
 ## Guidelines
 
 - Save screenshots to `tmp/screenshots/` relative to the project root. Never save to `/tmp` or `/private/tmp`.
-- Never create backup files (.backup, .old, .v2) - Git is the only backup needed
-- Modify existing files rather than creating duplicates
-- Delete unused code, old implementations, empty directories immediately
-- Create documentation only when explicitly requested
-- Do not modify generated or build artifact files (e.g., `src/generated/`, `dist/`)
-- Do not create git commits unless explicitly requested
-- Embrace breaking changes - this is private code, no compatibility layers needed
-- Prefer proper solutions over workarounds, even if they require more work
+- Create documentation only when explicitly requested.
+- Do not modify generated or build artifact files (e.g., `src/generated/`, `dist/`).
+- Do not create git commits unless explicitly requested — see [Git Standards](standards/git.md) for commit/push authorization.
 - Always Read a file before using Write or Edit on it. Write rejects writes to existing files that haven't been Read first. If Write fails, do NOT work around it with Bash (`cat`, `tee`, `echo >`, `sed`, `awk`) — Read the file first, then retry. Never create duplicate/debug files as workarounds.
 
-## Anti-Pattern Red Flags
+Own the code and move forward: modify in place, delete aggressively, embrace breaking changes, and never leave backups, duplicates, or compatibility layers behind. See [Technical Debt Prevention](standards/technical-debt-prevention.md) for the full rules.
 
-Before suggesting ANY of these, stop and investigate the root cause:
+## Decision-Making & Anti-Patterns
 
-- Version pins or downgrades to avoid compatibility issues
-- Error/warning suppression
-- Type casting to `any` to bypass checks
-- Disabling linter rules
-- Partial migrations
-- Workarounds instead of proper fixes
+You have autonomy to make good engineering decisions — architectural improvements, new abstractions, schema changes, API updates, cross-file refactors — without asking permission. Proceed directly when the solution is obvious, a codebase pattern exists, or a standard covers the scenario.
 
-These are signals to dig deeper, not shortcuts to take.
+Stop and ask when genuine uncertainty remains: root cause still unclear after investigation, multiple valid solutions with significant trade-offs, 2+ attempts failed, or a business / security / usability call is needed. When you stop, give what you tried, the trade-offs, your recommendation, and a clear question.
 
-## Complexity & Decision Thresholds
+Before reaching for a workaround — version pin/downgrade, error suppression, `any` cast, disabling a lint rule, partial migration, silent default for required config — stop and fix the root cause. These are signals to dig deeper, not shortcuts.
 
-Stop and ask for direction when encountering genuine uncertainty, not based on mechanical rules.
-
-### Stop and Ask When
-
-- Root cause unclear after thorough investigation
-- Multiple valid solutions with significant trade-offs
-- 2+ attempted solutions have failed
-- Business/product decisions needed
-- Security vs. usability trade-offs
-
-### Proceed With Confidence When
-
-- Solution is obvious from investigation
-- Pattern exists in codebase to follow
-- Change improves code quality
-- Standards explicitly cover the scenario
-
-You have autonomy to make architectural improvements, create new abstractions, change schemas, update APIs, and refactor across many files. Don't ask permission for good engineering decisions.
-
-### When Stopping to Ask
-
-Provide: what you tried, why you're uncertain, options with trade-offs, your recommendation, and a clear question.
+See [Problem-Solving Standards](standards/problem-solving.md) for the full decision framework, the seven workaround anti-patterns with their narrow exceptions, and the complexity-response template.
 
 ## Delegation
 
@@ -125,16 +63,32 @@ For complex multi-step tasks (>5 steps, multiple domains, high context usage), u
 
 ## Memory
 
-Auto memory persists learned context across sessions in `~/.claude/projects/<project>/memory/`.
+Auto memory persists learned context across sessions in `~/.claude/projects/<project>/memory/`. It is **gitignored and machine-local — never shared with the team.** Treat it as private scratch space, not a knowledge base.
 
-- **MEMORY.md** = Descriptive knowledge (what has been discovered). First 200 lines auto-loaded.
-- **CLAUDE.md** = Prescriptive rules (what to do). This file.
-- **Topic files** = Detailed notes in memory/ for specific domains.
+- **MEMORY.md** — index of private notes; first 200 lines auto-loaded each session.
+- **Topic files** — detailed private notes for specific domains.
 
-### Boundary Rule
+### Where Knowledge Goes
 
-If the information is an instruction or rule → CLAUDE.md or standards/.
-If the information is a discovered fact, pattern, or quirk → memory/.
+The first question is **shared or private**, not *rule or fact*. Both rules *and* discovered facts usually belong in shared config — only transient, personal context belongs in memory.
+
+**Shared** — committed to git, the whole team gets it:
+
+- `~/.claude/` config (`CLAUDE.md`, `rules/`, `standards/`, `skills/`) → pushed to `alienfast/claude.git`. Cross-project, generic.
+- Project config (`<project>/CLAUDE.md`, `<project>/.claude/rules/`) → committed to the project repo. Project-specific.
+
+**Private** — gitignored, only on this machine:
+
+- `~/.claude/projects/<project>/memory/` and `<project>/.claude/agent-memory/`.
+
+Route by what the information is:
+
+- Durable convention or "never do X here," project-specific → that project's `CLAUDE.md` or a `<project>/.claude/rules/*.md`.
+- Durable rule that applies everywhere → `~/.claude/CLAUDE.md`, `standards/`, or a file-type `~/.claude/rules/*.md`.
+- Durable discovered fact, pattern, or quirk the team should know → the shared layer too. Most of `<project>/CLAUDE.md` is exactly this. A useful discovery is **not** automatically "memory."
+- Temporary, personal, or session-spanning context not worth committing → `memory/`.
+
+Memory is the destination of last resort: if it's worth keeping and the team would benefit, promote it to shared config instead.
 
 ### Multi-Session Safety
 

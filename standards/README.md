@@ -1,6 +1,6 @@
 # Standards Quick Reference
 
-Core principles (anti-patterns, decision thresholds, autonomy) are defined in [CLAUDE.md](../CLAUDE.md). This file indexes the individual standards.
+Core principles (autonomy, decision thresholds, workaround anti-patterns) are summarized in [CLAUDE.md](../CLAUDE.md) and detailed in [problem-solving.md](problem-solving.md). This file indexes the individual standards.
 
 ## Available Standards
 
@@ -14,6 +14,8 @@ These standards apply universally across all contexts:
 - [Semantic Versioning](semver.md) - Version classification, compatibility rules, update strategies
 - [Technical Debt Prevention](technical-debt-prevention.md) - No backups, no duplicates, modify in place
 - [Linear Workflow](linear-workflow.md) - Terminal states, dependency resolution rules
+- [Lifecycle Tags](lifecycle-tags.md) - Final-line status tags for Linear-lifecycle skills
+- [Deprecation Handling](deprecation-handling.md) - Proactively update deprecated code; migration patterns and anti-patterns
 - [Version-Aware Planning](version-aware-planning.md) - Research and planning based on actual dependency versions
 
 ## Migrated to Path-Specific Rules
@@ -24,9 +26,3 @@ These have been moved to `~/.claude/rules/` for path-based application:
 - React → `rules/react.md` (applied to `**/*.tsx`, `**/*.jsx`)
 - Markdown → `rules/markdown.md` (applied to `**/*.md`, `**/*.mdx`)
 - Package Manager → `rules/package-manager.md` (applied to `**/package.json`)
-
-## Migrated to Skills
-
-These have been merged into their corresponding skills:
-
-- Deprecations → `skills/deprecation-handler/resources/standards.md`

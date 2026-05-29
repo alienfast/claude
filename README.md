@@ -50,7 +50,7 @@ Specialized personas delegated to by the `/do` orchestrator.
 
 Automated multi-step workflows invoked by trigger phrases or slash commands.
 
-**Linear Integration:** ([see CLI](https://github.com/joa23/linear-cli?))
+**Linear Integration:** ([see CLI](https://github.com/joa23/linear-cli))
 
 | Skill | Description |
 |-------|-------------|
@@ -198,7 +198,7 @@ No manual intervention needed — hooks run behind the scenes:
 - Destructive git commands are blocked before execution
 - `cd <dir> && git ...` is rejected in favor of `git -C <dir> ...` so the allow-list keeps working
 - Biome and markdownlint run after every file edit
-- TypeScript type checking runs when Claude stops
+- On stop, `full-continue` keeps `/full` going — re-dispatching `/finish` if the macro stalls after `READY-FOR-FINISH`
 
 ## Customization
 
