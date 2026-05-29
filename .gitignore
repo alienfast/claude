@@ -39,3 +39,4 @@ packages/*/.npmignore
 /jobs
 /locks
 .last-update*
+/.claude
