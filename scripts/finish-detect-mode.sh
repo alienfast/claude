@@ -18,7 +18,7 @@
 # Exit codes:
 #   0 success
 #   1 incompatible argument combination
-#   2 merge/pr requested outside a /start wt worktree
+#   2 merge requested outside a /start wt worktree
 
 set -eo pipefail
 
@@ -71,10 +71,10 @@ else
   repo_root=""
 fi
 
-if [ -z "$source_branch" ] && [ -n "$action" ]; then
-  echo "ERROR: '$action' is only valid inside a /start wt worktree." >&2
+if [ -z "$source_branch" ] && [ "$action" = "merge" ]; then
+  echo "ERROR: 'merge' is only valid inside a /start wt worktree." >&2
   echo "Current branch is '$worktree_branch' but no start.source-branch is recorded." >&2
-  echo "For the standard push-to-current flow, run /finish without 'merge'/'pr'." >&2
+  echo "For the standard flow run /finish with no action token; to open a PR run /finish pr." >&2
   exit 2
 fi
 

@@ -27,7 +27,7 @@ Eight tags cover the lifecycle. Every session ends with exactly one.
 | `READY-FOR-FINISH` | `/start` Step 10 (passing verdict) | Implementation + review passed cleanly; awaiting commit/push/state-transition | run `/finish` |
 | `BLOCKED-ON-REVIEW` | `/start` Step 10 OR `/finish` Preflight/Step 8 (non-passing/unavailable/malformed verdict, OR user picked `abort`/`re-run` at the gate, OR user rejected the plan-mode preflight, OR `ExitPlanMode` tool failure at preflight) | `/quality-review` did not reach a clean pass, OR the user explicitly bailed at `/finish`'s gate or preflight, OR `ExitPlanMode` failed (tool/harness error) at preflight. Covers `terminated-with-open-items`, `escalated-to-architect`, verdict-unavailable, malformed, Step 8 `abort`/`re-run` responses, plan-mode preflight rejection, and `ExitPlanMode` tool failure | re-run `/quality-review`, escalate to architect, or investigate failure |
 | `SHIPPED-MERGE` | `/finish` Step 9 (`ACTION=merge`) | Worktree branch merged into source, worktree removed, issue Ready For Release | done |
-| `SHIPPED-PR` | `/finish` Step 9 (`ACTION=pr`) | PR opened, worktree preserved | review/merge the PR, then `git worktree remove` |
+| `SHIPPED-PR` | `/finish` Step 9 (`ACTION=pr`) | PR opened (base = source branch in `wt` mode, else repo default branch); worktree preserved only in `wt` mode | review/merge the PR (then `git worktree remove` if it was a `wt` PR) |
 | `RELEASED` | `/finish` Step 8 (non-worktree flow) | Plain `/finish` complete, issue Ready For Release | done |
 | `CANCELED` | `/start` Step 8.5 (canceled-after-start path) | Implementation discovered the work was already done or no longer needed; issue moved to `Canceled` | manual `git worktree remove` + branch delete |
 | `ABANDONED` | `/start` Step 8.5 (abandoned-after-start path) | User halted the session before completion; issue moved back to `Planned`, worktree preserved for resumption | resume later, or clean up manually if dropping permanently |
@@ -42,6 +42,8 @@ BLOCKED-ON-REVIEW: PL-323 — 2 High findings unresolved after 5 cycles, user ac
 SHIPPED-MERGE: PL-313 — merged into nextjs-descope-user, worktree removed, Ready For Release.
 
 SHIPPED-PR: PL-319 — PR opened, base=main head=pl-319-foo. Review/merge then git worktree remove .claude/worktrees/pl-319.
+
+SHIPPED-PR: PL-340 — PR opened (base=main, head=fix-contact-corruption), labels: pr-deploy. Review/merge the PR.
 
 RELEASED: PL-201 — committed, pushed, marked Ready For Release.
 

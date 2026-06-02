@@ -23,17 +23,16 @@ All tokens are **position-agnostic and case-insensitive** (matching the conventi
 
 - `<ISSUE-ID>` — required, exactly one. Validated via `~/.claude/scripts/detect-issue-id.sh --validate-only --input <arg>` (enforces `^[A-Z]+-[0-9]+$` after uppercasing). Lowercase IDs (`pl-13`) are accepted; the script uppercases.
 - `wt` — optional. Pass-through to `/start`; selects worktree mode. Omit for in-place mode on the current branch.
-- `pr` — optional, **worktree-only**. Pass-through to `/finish` Step 3 below; opens a PR instead of merging. Requires `wt` (since `/finish pr` rejects non-worktree mode at `finish-detect-mode.sh` exit 2).
-- `no push` / `don't push` / `skip push` — optional. Pass-through to `/finish`; commit still happens, push is skipped. Compatible with both modes (worktree-merge accepts `no push` implicitly via the macro's gating in Step 3; worktree-pr does not — see fail-fast below).
+- `pr` — optional. Pass-through to `/finish` Step 3 below; opens a PR instead of the default finalize. Works in **both** modes: with `wt` the PR base is the recorded source branch and the worktree is preserved; without `wt` (in-place) the base is the repo's default branch. The issue stays `In Progress` until the PR merges.
+- `no push` / `don't push` / `skip push` — optional. Pass-through to `/finish`; commit still happens, push is skipped. Compatible with both modes (worktree-merge accepts `no push` implicitly via the macro's gating in Step 3; `pr` does not, in either mode — see fail-fast below).
 - Any other token — error. Surface: `Unrecognized argument 'X'. /full accepts <ISSUE-ID>, optionally with 'wt', 'pr', or a 'no push' variant.`
 
 **Fail-fast validation — catch incompatible combinations before invoking `/start`.** These are mechanical refusals (errors, not interactive prompts), so they do NOT violate the "two gates only" design constraint:
 
-1. **`pr` without `wt`** — refuse: `/full pr requires worktree mode. Add 'wt' or remove 'pr'.` (`/finish pr` is worktree-only by contract; without `wt`, the macro would invoke `/start` in-place, succeed, then crash at `/finish` after the user already spent N minutes on plan approval and review.)
-2. **`pr` + `no push`** — refuse: `/finish pr requires pushing the branch. Remove 'no push' or use plain /full <ISSUE-ID> [wt].`
-3. **Multiple issue IDs** — refuse: `/full accepts exactly one issue identifier.`
+1. **`pr` + `no push`** — refuse: `/finish pr requires pushing the branch. Remove 'no push' or use plain /full <ISSUE-ID> [wt].`
+2. **Multiple issue IDs** — refuse: `/full accepts exactly one issue identifier.`
 
-Examples: `/full PL-13` (in-place), `/full wt PL-13` (worktree merge), `/full wt PL-13 pr` (worktree PR), `/full PL-13 no push` (in-place, commit only), `/full wt PL-13 no push` (worktree merge, commit only), `/full WT pl-13` (case-insensitive, position-agnostic, lowercase ID).
+Examples: `/full PL-13` (in-place), `/full PL-13 pr` (in-place PR to default branch), `/full wt PL-13` (worktree merge), `/full wt PL-13 pr` (worktree PR), `/full PL-13 no push` (in-place, commit only), `/full wt PL-13 no push` (worktree merge, commit only), `/full WT pl-13` (case-insensitive, position-agnostic, lowercase ID).
 
 ## Workflow
 
@@ -79,7 +78,8 @@ Wait for `/start`'s tagged final line — the LAST LLM-authored line of its outp
 
 Compose the args string for `/finish` based on mode:
 
-- **Non-`wt` mode** — `args = "<ISSUE-ID>"`. Append ` no push` if the user passed it.
+- **Non-`wt` mode without `pr`** — `args = "<ISSUE-ID>"`. Append ` no push` if the user passed it. `/finish` runs its standard flow (commit/push the current branch, mark `Ready For Release`).
+- **Non-`wt` mode with `pr`** — `args = "<ISSUE-ID> pr"`. `/finish` opens an in-place PR against the repo's default branch and leaves the issue `In Progress`. No `no push` is possible here (fail-fast in Arguments rejects the combination upstream).
 - **`wt` mode without `pr`** — `args = "<ISSUE-ID> merge"`. Append ` no push` if the user passed it. Pass `merge` explicitly even though it is `/finish`'s worktree default — keeps the dispatch self-documenting. (`/finish` Step 0 short-circuits when `SOURCE_BRANCH` is set anyway.)
 - **`wt` mode with `pr`** — `args = "<ISSUE-ID> pr"`. No `no push` is possible here (fail-fast in Arguments rejects the combination upstream).
 
@@ -93,15 +93,15 @@ Compose the args string for `/finish` based on mode:
 - Commit + (conditional) push
 - State transition to `Ready For Release`
 - Merge serialization across parallel `/finish merge` sessions on the same parent repo (`scripts/with-repo-lock.py`) — `wt` mode only
-- Worktree removal (`wt` merge) or `gh pr create` (`wt` pr); no worktree touch in non-`wt` mode
+- Worktree removal (`wt` merge) or `gh pr create` (`wt` pr against the source branch, or in-place `pr` against the default branch); no worktree touch in non-`wt` mode
 
 **`/finish` terminal-tag handling.** Mechanical mapping for whatever tag `/finish` emits — `/full` does not interpret, does not wrap. Which tags are legitimate depends on mode:
 
 | Tag from /finish | Legitimate in | Action |
 | --- | --- | --- |
-| `RELEASED` | Non-`wt` mode (`/finish` Step 8 "termination contract" enumeration, first bullet — non-worktree happy path) | Stop. Terminal. Issue moved to `Ready For Release`; no worktree to clean. **Anomaly in `wt` mode** — should not occur because `/start wt` recorded a source branch; if it does (e.g., per-worktree git config lost, or `cd` safety check was skipped), the issue did still transition cleanly — stop, treat as terminal, surface the unexpected mode in chat. |
+| `RELEASED` | Non-`wt` mode **without** `pr` (`/finish` Step 8 "termination contract" enumeration, first bullet — standard happy path) | Stop. Terminal. Issue moved to `Ready For Release`; no worktree to clean. **Anomaly in `wt` mode** — should not occur because `/start wt` recorded a source branch; if it does (e.g., per-worktree git config lost, or `cd` safety check was skipped), the issue did still transition cleanly — stop, treat as terminal, surface the unexpected mode in chat. **Anomaly when `pr` was passed** — `pr` should yield `SHIPPED-PR`, not `RELEASED`; treat as terminal but surface the mismatch. |
 | `SHIPPED-MERGE` | `wt` mode without `pr` (`/finish` Step 9 `ACTION == "merge"` block) | Stop. Terminal. Worktree removed by `/finish`. **Anomaly in non-`wt` mode** — should not occur because `finish-detect-mode.sh` exit 2 would have rejected `merge`. |
-| `SHIPPED-PR` | `wt` mode with `pr` (`/finish` Step 9 `ACTION == "pr"` block) | Stop. Terminal. Worktree preserved by `/finish` (PR is the lifecycle boundary). **Anomaly in non-`wt` mode** — same as above. |
+| `SHIPPED-PR` | **Either** mode with `pr` (`/finish` Step 9 `ACTION == "pr"` block) — `wt` PR (base = source branch, worktree preserved) or in-place PR (base = default branch, no worktree) | Stop. Terminal. The PR is the lifecycle boundary; in `wt` mode the worktree is preserved for post-merge cleanup. **Anomaly when `pr` was NOT passed** — `SHIPPED-PR` without a `pr` token means `/finish` took an unexpected path; treat as terminal but surface the mismatch in chat. |
 | `BLOCKED-ON-REVIEW` | Either mode | Stop. Terminal. State unchanged; branch (and worktree, if `wt`) intact. (E.g., user picked `abort` at the stale-verdict prompt, or `linear issues update` failed.) |
 
 That tagged line is `/full`'s terminal output. Do not wrap it, do not add a closing summary, do not re-emit the issue title.
@@ -130,7 +130,6 @@ That tagged line is `/full`'s terminal output. Do not wrap it, do not add a clos
 - **Missing issue ID** — error: `/full requires an issue identifier (e.g., /full PL-13 or /full wt PL-13).`
 - **Invalid issue ID format** — defer to `detect-issue-id.sh --validate-only` and surface its stderr.
 - **Multiple issue IDs** — error: `/full accepts exactly one issue identifier.`
-- **`pr` without `wt`** — error: `/full pr requires worktree mode. Add 'wt' or remove 'pr'.` See Arguments fail-fast rule 1.
-- **`pr` + `no push`** — error: `/finish pr requires pushing the branch. Remove 'no push' or use plain /full <ISSUE-ID> [wt].` See Arguments fail-fast rule 2.
+- **`pr` + `no push`** — error: `/finish pr requires pushing the branch. Remove 'no push' or use plain /full <ISSUE-ID> [wt].` See Arguments fail-fast rule 1.
 - **`/start` errors mid-flight (e.g., baseline `pnpm check` fails, worktree setup fails in `wt` mode)** — those are `/start`'s contracts to surface. The macro never reaches Step 2; nothing to do.
 - **`/finish` errors mid-flight (e.g., merge precondition failure, `linear issues update` fails)** — those are `/finish`'s contracts to surface (BLOCKED-ON-REVIEW with the failure reason). The macro does not re-attempt.

@@ -12,9 +12,9 @@ Automates the post-completion workflow for a Linear issue using the `linear` CLI
 - Issue identifier (e.g., `PL-12`) — optional, auto-detected from branch/commit
 - `no push` / `don't push` / `skip push` — optional, skips the git push step (commit still happens)
 - `merge` — only meaningful inside a `/start wt` worktree. **Default when in a worktree.** Merge the worktree branch back into its recorded source branch, then remove the worktree.
-- `pr` — only meaningful inside a `/start wt` worktree. Open a pull request with `base = source branch` and leave the worktree in place.
+- `pr` — open a pull request for the current branch (works from **any** branch). Inside a `/start wt` worktree the base is the recorded source branch and the worktree is left in place; otherwise the base is the repo's GitHub default branch (in-place — no worktree touched). Optionally apply labels with `with label X` / `label X, Y`. The issue stays `In Progress` (the PR is open, not yet shipped).
 
-Examples: `/finish`, `/finish PL-12`, `/finish no push`, `/finish PL-12 no push`, `/finish merge`, `/finish pr PL-12`
+Examples: `/finish`, `/finish PL-12`, `/finish no push`, `/finish PL-12 no push`, `/finish merge`, `/finish pr PL-12`, `/finish pr with label pr-deploy`
 
 ## Invariant
 
@@ -48,6 +48,7 @@ Normalize the user's args before calling the script:
 
 - Look for `merge` and `pr` tokens (case-insensitive, position-agnostic) — pass through whichever is present (if both, the script errors).
 - Look for `no push` / `don't push` / `skip push` — translate to `--no-push` for the script.
+- Look for label requests (`with label X`, `label X, Y`, `--label X`) — collect them into a list and **carry it forward to Step 9** (pr mode only). Labels are NOT passed to the script — its arg contract is `merge|pr|--no-push` only. **If labels were requested but the resolved `ACTION` is not `pr`** (i.e., `merge` or the standard flow), labels have no PR to attach to — warn the user once (`Labels apply only to /finish pr; ignoring: <list>.`) rather than silently dropping them.
 
 ```bash
 ~/.claude/scripts/finish-detect-mode.sh [merge|pr] [--no-push]
@@ -58,9 +59,9 @@ The script probes worktree state, validates incompatible argument combinations, 
 **Exit codes:**
 
 - 1 — incompatible args (e.g., `merge` + `pr`, or `pr` + `no push`). Surface the error and stop.
-- 2 — `merge`/`pr` requested outside a `/start wt` worktree. Surface and stop.
+- 2 — `merge` requested outside a `/start wt` worktree. Surface and stop. (`pr` is **not** rejected here — it works from any branch; see below.)
 
-When `SOURCE_BRANCH` is set (we're in a worktree), the script defaults `ACTION` to `merge`. `/finish pr` is the only way to opt into the PR flow.
+When `SOURCE_BRANCH` is set (we're in a worktree), the script defaults `ACTION` to `merge`; `/finish pr` is the way to opt into the PR flow with `base = SOURCE_BRANCH`. Outside a worktree, `pr` is allowed (it emits `ACTION=pr` with an empty `SOURCE_BRANCH`, and Step 9 targets the repo's default branch), while `merge` is rejected (exit 2).
 
 If both `SOURCE_BRANCH` and `ACTION` are empty, this is the standard `/finish` flow.
 
@@ -72,11 +73,11 @@ If both `SOURCE_BRANCH` and `ACTION` are empty, this is the standard `/finish` f
 
 The script tries `--input` → current branch → latest commit subject, in that order. Pass `--input` only when the user typed an explicit ID (e.g., `/finish PL-12`). On exit 1, ask the user for the identifier explicitly.
 
-**Cross-worktree sanity check (standard-flow only).** After the issue ID is resolved, if the standard flow was detected in Step 0 (no worktree config under the current cwd) but the issue's branch exists in a known linked worktree of this repo (`git worktree list` shows a path whose basename or branch contains `<issue-id-lowercased>`, e.g., `pl-13`), warn the user before continuing:
+**Cross-worktree sanity check (standard-flow only).** After the issue ID is resolved, if the standard flow was detected in Step 0 (`ACTION` empty — no worktree config and no explicit `pr`) but the issue's branch exists in a known linked worktree of this repo (`git worktree list` shows a path whose basename or branch contains `<issue-id-lowercased>`, e.g., `pl-13`), warn the user before continuing:
 
 > Issue `<ISSUE-ID>` appears to live in worktree `<path>`. Are you running `/finish` from the wrong cwd? Reply `yes` to proceed here anyway, or `abort` and `cd` into the worktree first.
 
-Continue only on explicit `yes`. This catches the case where `/start wt` created a worktree, the user opened a fresh terminal in the main checkout, and ran `/finish PL-13` from there — which would otherwise push/commit on the wrong branch. Skip the check entirely when Step 0 detected a worktree (in which case `SOURCE_BRANCH` is set and we're already in the right place) or when no issue ID was resolved (nothing to check against).
+Continue only on explicit `yes`. This catches the case where `/start wt` created a worktree, the user opened a fresh terminal in the main checkout, and ran `/finish PL-13` from there — which would otherwise push/commit on the wrong branch. Skip the check entirely when Step 0 detected a worktree (in which case `SOURCE_BRANCH` is set and we're already in the right place), when `ACTION` is `pr` (an explicit `/finish pr` is a deliberate choice to open a PR for the current branch — never a wrong-cwd accident), or when no issue ID was resolved (nothing to check against).
 
 ### Step 1.5: Read Quality-Review Verdict + Sub-issues
 
@@ -210,10 +211,10 @@ In all other cases (no worktree, or `ACTION == "merge"`), gate the transition on
 
 **Step 8 termination contract — applies to ALL branches below.** Per `standards/lifecycle-tags.md`, every terminal path of `/finish` Step 8 ends with exactly one tagged final line. (The Preflight has its own independent terminator — `BLOCKED-ON-REVIEW` on plan-mode rejection or `ExitPlanMode` tool failure — and never reaches Step 8.) Mechanical mapping (do not skip):
 
-- A branch that completed `linear issues update --state "Ready For Release"` AND `SOURCE_BRANCH` from Step 0 is empty (non-worktree flow, no Step 9 to follow) → emit `RELEASED: <ISSUE-ID> — <one-line summary>` as the last LLM-authored line.
-- A branch that completed the state update AND `SOURCE_BRANCH` is non-empty (worktree flow) → do NOT emit a tag here; Step 9 owns the terminal line (`SHIPPED-MERGE:` or `SHIPPED-PR:`).
+- A branch that completed `linear issues update --state "Ready For Release"` AND `ACTION` from Step 0 is empty (standard flow, no Step 9 to follow) → emit `RELEASED: <ISSUE-ID> — <one-line summary>` as the last LLM-authored line.
+- A branch that completed the state update AND `ACTION == "merge"` → do NOT emit a tag here; Step 9 owns the terminal line (`SHIPPED-MERGE:`). (`ACTION == "pr"` never reaches a state update — Step 8 is skipped for it — so it isn't in these bullets; Step 9 owns `SHIPPED-PR:`. Discriminate on `ACTION`, not `SOURCE_BRANCH`: a non-worktree `pr` has an empty `SOURCE_BRANCH` yet still flows to Step 9.)
 - A branch that exited via the user picking `abort` or `re-run` at the gate prompt → emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — <one-line reason>` as the last LLM-authored line. State was NOT changed.
-- A branch that warned-and-proceeded (`none-found`) → same as the first/second bullets depending on `SOURCE_BRANCH`, **unless `linear issues update` itself fails, in which case bullet 5 supersedes**.
+- A branch that warned-and-proceeded (`none-found`) → same as the first/second bullets depending on `ACTION`, **unless `linear issues update` itself fails, in which case bullet 5 supersedes**.
 - **A branch where `linear issues update` itself failed** (API error, auth dropped mid-session, team's terminal state name differs from `Ready For Release`) → see the **State-update failure** section below for the recovery + terminator rule. **This bullet supersedes bullets 1, 2, and 4 whenever the state update doesn't succeed** — never emit `RELEASED:` on a failed update.
 
 The per-branch instructions below indicate which terminator each branch uses; trust the contract above for the literal tag wording.
@@ -223,7 +224,7 @@ The per-branch instructions below indicate which terminator each branch uses; tr
 1. Inspect the error. If it's a "no such state" rejection (the team uses a different terminal state name), apply this probe-and-match fallback — analogous to `/start` Step 8.5's CANCELED/ABANDONED fallback and `/quality-review` sub-step 6's fallback:
    - Derive the team key from the issue ID prefix (e.g., `PL-13` → team `PL`). Then probe: `linear teams states PL`.
    - Pick the first state whose name matches `/^ready[ _-]?for[ _-]?(release|deploy|ship)$/i` (exact match — NOT a prefix match — to avoid latching onto `Ready For Review`; the `[ _-]?` separator class matches `Ready For Release`, `Ready_For_Release`, `Ready-For-Release`, `ReadyForRelease`).
-   - If found, retry `linear issues update <ISSUE-ID> --state "<matched-name>"`. If it succeeds, proceed with the branch's stated `RELEASED:` terminator.
+   - If found, retry `linear issues update <ISSUE-ID> --state "<matched-name>"`. If it succeeds, proceed with the branch's stated terminator per the Step 8 termination contract — `RELEASED:` for the standard flow (`ACTION` empty), or **no tag here** for `ACTION == "merge"` (fall through to Step 9, which emits `SHIPPED-MERGE:`). Do NOT hardcode `RELEASED:` for a merge branch.
    - If no match, OR if the retry also fails, fall through to step 2.
    - **Note on bare `Ready`:** the regex deliberately requires `Ready For <release|deploy|ship>` and does NOT match a bare `Ready` state. A team's `Ready` state is too ambiguous (could mean ready-for-review, ready-for-QA, etc.) to auto-route into — the issue falls through to step 2's BLOCKED-ON-REVIEW. To use bare `Ready` as a release state, rename it to `Ready For Release` or add canonical config.
 2. Surface the error to the user and emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — linear issues update failed: <reason>. State NOT changed; this issue remains In Progress.` as the terminator. **Distill `<reason>` to a single line**: if the CLI returned a multi-line error (stack trace, JSON error body), take the first informative line (typically the error message) and drop the rest — the tag must fit on one line so the agents-list parser picks it up correctly. Do NOT silently emit `RELEASED:` (it would lie about the state) and do NOT continue to Step 9 (worktree flow can't ship an issue whose state didn't transition).
@@ -273,11 +274,11 @@ The per-branch instructions below indicate which terminator each branch uses; tr
 
 - **Any other value** (defense in depth — shouldn't happen since the script normalizes everything else to `malformed`) → treat as `malformed`. Do NOT proceed silently. **Terminators:** same as `malformed`.
 
-### Step 9: Worktree Finalization (only when `SOURCE_BRANCH` is set)
+### Step 9: Finalization (only when `ACTION` is `merge` or `pr`)
 
-Runs only if Step 0 detected a worktree. Skip entirely otherwise.
+Runs only when `ACTION` is `merge` or `pr`. Skip entirely when `ACTION` is empty (the standard flow ended at Step 8). `merge` always implies a worktree (`SOURCE_BRANCH` set); `pr` runs with or without one.
 
-**Step 9 is the terminal step of this session** — for both modes. After the merge (or `gh pr create`) completes, present the closing message and stop. Don't run further bash commands.
+**Step 9 is the terminal step of this session** — for all modes. After the merge (or `gh pr create`) completes, present the closing message and stop. Don't run further bash commands.
 
 Substitute the values captured from Step 0 (`SOURCE_BRANCH`, `WORKTREE_BRANCH`, `WT_DIR`, `REPO_ROOT`) into the bash commands below as literal strings.
 
@@ -325,26 +326,56 @@ The script brings the worktree branch up to source's tip **inside the worktree**
 
 **If `ACTION == "pr"`:**
 
-The branch was pushed in Step 7 (the `no push` + `pr` combination was rejected in Step 0). Open a PR with the recorded source branch as base:
+The branch was pushed in Step 7 (the `no push` + `pr` combination was rejected in Step 0). Open a PR for the current branch — this works whether or not we're in a worktree.
 
-```bash
-gh pr create --base '<SOURCE_BRANCH>' --head '<WORKTREE_BRANCH>' --fill
-```
+1. **Resolve the base branch:**
+   - `SOURCE_BRANCH` is set (we're in a `/start wt` worktree) → base = `SOURCE_BRANCH`.
+   - `SOURCE_BRANCH` is empty (plain-branch PR) → base = the repo's GitHub default branch:
 
-After the PR is created, present the closing message. The tagged final line (per `standards/lifecycle-tags.md`) MUST be the last LLM-authored output. The leading sentence and the tagged line should NOT duplicate the cleanup hint:
+     ```bash
+     gh repo view --json defaultBranchRef -q .defaultBranchRef.name
+     ```
 
-```text
-This agent-view session is done. The worktree stays in place until the PR merges.
+     If this fails (no GitHub remote, `gh` unauthenticated), surface the error and stop — there's nowhere to open the PR. Don't guess a base. The base is the default branch by design even when the branch was forked off another branch; the user can retarget the PR in GitHub if it should land elsewhere.
 
-SHIPPED-PR: <ISSUE-ID> — PR opened (base=<SOURCE_BRANCH>, head=<WORKTREE_BRANCH>). After merge, run `git worktree remove .claude/worktrees/<issue-id-lowercased>` from the main checkout.
-```
+2. **Verify any requested labels exist** (only if Step 0 collected labels). Check each label with an exact-equality `jq` filter (a substring like `deploy` must NOT match an existing `pr-deploy`) — the command prints the label name if it exists and nothing if it doesn't:
 
-Leave the worktree in place — the PR is the lifecycle boundary. After the PR merges, the user removes the worktree manually from the main repo checkout:
+   ```bash
+   gh label list --limit 200 --json name -q '.[].name | select(. == "<label>")'
+   ```
 
-```bash
-# cd to the main repo checkout (parent of .claude/worktrees/), then:
-git worktree remove .claude/worktrees/<issue-id-lowercased>
-```
+   If a requested label is missing (empty output), do NOT silently drop it. Surface it and ask the user: proceed without that label / create it (`gh label create '<label>'`) / abort. Apply only labels that exist (or that the user just created).
+
+3. **Create the PR** — pass `--base` explicitly and one `--label` per verified label:
+
+   ```bash
+   gh pr create --base '<BASE>' --head '<WORKTREE_BRANCH>' --fill [--label '<label>' ...]
+   ```
+
+After the PR is created, present the closing message. The tagged final line (per `standards/lifecycle-tags.md`) MUST be the last LLM-authored output. Substitute the actual resolved `<BASE>`, branch, and label list (or the bare word `none` when no labels were applied). The message branches on whether a worktree is involved:
+
+- **`SOURCE_BRANCH` set (worktree PR)** — leave the worktree in place; it's the lifecycle boundary. The leading sentence and the tagged line should NOT duplicate the cleanup hint:
+
+  ```text
+  This agent-view session is done. The worktree stays in place until the PR merges.
+
+  SHIPPED-PR: <ISSUE-ID> — PR opened (base=<BASE>, head=<WORKTREE_BRANCH>), labels: <list|none>. After merge, run `git worktree remove .claude/worktrees/<issue-id-lowercased>` from the main checkout.
+  ```
+
+  After the PR merges, the user removes the worktree manually from the main repo checkout:
+
+  ```bash
+  # cd to the main repo checkout (parent of .claude/worktrees/), then:
+  git worktree remove .claude/worktrees/<issue-id-lowercased>
+  ```
+
+- **`SOURCE_BRANCH` empty (plain-branch PR)** — there is no worktree to clean up; omit the worktree hint entirely:
+
+  ```text
+  This agent-view session is done. The PR is open against <BASE> — review and merge it there.
+
+  SHIPPED-PR: <ISSUE-ID> — PR opened (base=<BASE>, head=<WORKTREE_BRANCH>), labels: <list|none>. Review/merge the PR.
+  ```
 
 ## Error Handling
 
