@@ -1,6 +1,6 @@
 ---
 name: PR Title and Description Generator
-description: "Generate or update GitHub Pull Request titles and descriptions based on actual code changes in the final state. Use when the user mentions updating, generating, or writing PR descriptions, PR titles, pull request summaries, or says 'update the PR'. Analyzes git diff to determine what's actually in the code (not just commit history) and creates comprehensive, accurate PR documentation."
+description: "Generate or update GitHub Pull Request titles and descriptions from the actual code changes in the final state. Use whenever a PR is being opened or its title/description written — when the user says 'open a PR', 'create a PR', 'make/raise/submit a PR', 'update the PR', or mentions generating or writing PR descriptions, titles, or summaries. If no PR exists yet it pushes the branch and creates one; otherwise it updates the existing open PR. Analyzes the git diff to document what's actually in the code, not just commit history."
 ---
 
 # PR Title and Description Generator
@@ -173,22 +173,43 @@ If `gh pr view` returns an error OTHER than "no pull requests found", treat as U
 
 ### 2. Analyze Final State Changes
 
+**Resolve the base branch first.** All analysis below diffs against `BASE`, not a hardcoded `main` — so a PR targeting a non-`main` base (e.g. a worktree PR against its source branch) is documented accurately. Resolve it once, from the *final* PR state (after the §1.1 decision):
+
+```bash
+if [[ -n "$pr_info" ]]; then
+  BASE="$pr_base"   # updating an existing PR — use its actual base
+else
+  BASE="$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name)"   # no PR / creating — default branch
+fi
+
+# Guard: never proceed with an empty base. An empty $BASE silently turns every diff
+# below into "no changes" (git log/diff against ""..HEAD exit 0 with empty output) and
+# makes `gh pr create --base ""` fall through to gh's default-branch guess — shipping a
+# vacuous PR instead of erroring. Stop instead (mirrors /finish Step 9 sub-step 1).
+if [[ -z "$BASE" ]]; then
+  echo "ERROR: could not resolve base branch (gh unauthenticated / no GitHub remote). Cannot analyze or open a PR." >&2
+  exit 1
+fi
+```
+
+**Shell-variable persistence.** Each Bash tool call is a fresh shell — `BASE` (and the `pr_*` variables captured in §1) do **not** survive across calls. Resolve `BASE` in, or re-establish it within, the same Bash invocation that consumes it (the analysis commands below, and the final `gh pr create` / `gh pr edit` step). When updating a non-open PR via §1.1 option 2, `$pr_base` is the base the PR *had* — the diff against it may be approximate; this is rare and updating a non-open PR is already discouraged.
+
 Get commit count:
 
 ```bash
-git log main..HEAD --oneline | wc -l
+git log "$BASE"..HEAD --oneline | wc -l
 ```
 
 Get file change summary:
 
 ```bash
-git diff main...HEAD --stat
+git diff "$BASE"...HEAD --stat
 ```
 
 Identify major areas of change:
 
 ```bash
-git diff main...HEAD --name-only | cut -d/ -f1 | sort | uniq -c | sort -rn
+git diff "$BASE"...HEAD --name-only | cut -d/ -f1 | sort | uniq -c | sort -rn
 ```
 
 ### 3. Code Impact Summary
@@ -198,13 +219,13 @@ Generate a categorized line-count breakdown to quantify the PR's impact. This se
 **Step 1: Get the raw totals** (with rename detection):
 
 ```bash
-git diff --shortstat -M main...HEAD
+git diff --shortstat -M "$BASE"...HEAD
 ```
 
 **Step 2: Categorize by purpose** using `git diff --numstat`:
 
 ```bash
-git diff --numstat -M main...HEAD | awk '{if ($3 ~ /lock\.yaml$|lock\.json$|\.lock$/) next; added+=$1; removed+=$2; file=$3; if (file ~ /\.stories\./) {sa+=$1; sr+=$2} else if (file ~ /mock|Mock/) {ma+=$1; mr+=$2} else if (file ~ /generated|packages\/graphql\//) {ga+=$1; gr+=$2} else if (file ~ /ops\//) {oa+=$1; or+=$2} else if (file ~ /\.(yml|yaml|json|css|scss|svg|md)$/) {la+=$1; lr+=$2} else {ca+=$1; cr+=$2}} END {printf "%-20s %8s %8s %8s\n", "Category", "Added", "Removed", "Net"; printf "%-20s %8d %8d %8d\n", "App code", ca, cr, ca-cr; printf "%-20s %8d %8d %8d\n", "Stories", sa, sr, sa-sr; printf "%-20s %8d %8d %8d\n", "Mocks", ma, mr, ma-mr; printf "%-20s %8d %8d %8d\n", "Generated", ga, gr, ga-gr; printf "%-20s %8d %8d %8d\n", "Ops/Infra", oa, or, oa-or; printf "%-20s %8d %8d %8d\n", "Config/Assets", la, lr, la-lr; printf "%-20s %8d %8d %8d\n", "TOTAL", added, removed, added-removed}'
+git diff --numstat -M "$BASE"...HEAD | awk '{if ($3 ~ /lock\.yaml$|lock\.json$|\.lock$/) next; added+=$1; removed+=$2; file=$3; if (file ~ /\.stories\./) {sa+=$1; sr+=$2} else if (file ~ /mock|Mock/) {ma+=$1; mr+=$2} else if (file ~ /generated|packages\/graphql\//) {ga+=$1; gr+=$2} else if (file ~ /ops\//) {oa+=$1; or+=$2} else if (file ~ /\.(yml|yaml|json|css|scss|svg|md)$/) {la+=$1; lr+=$2} else {ca+=$1; cr+=$2}} END {printf "%-20s %8s %8s %8s\n", "Category", "Added", "Removed", "Net"; printf "%-20s %8d %8d %8d\n", "App code", ca, cr, ca-cr; printf "%-20s %8d %8d %8d\n", "Stories", sa, sr, sa-sr; printf "%-20s %8d %8d %8d\n", "Mocks", ma, mr, ma-mr; printf "%-20s %8d %8d %8d\n", "Generated", ga, gr, ga-gr; printf "%-20s %8d %8d %8d\n", "Ops/Infra", oa, or, oa-or; printf "%-20s %8d %8d %8d\n", "Config/Assets", la, lr, la-lr; printf "%-20s %8d %8d %8d\n", "TOTAL", added, removed, added-removed}'
 ```
 
 **Notes:**
@@ -219,7 +240,7 @@ git diff --numstat -M main...HEAD | awk '{if ($3 ~ /lock\.yaml$|lock\.json$|\.lo
   - `lock\.yaml$|lock\.json$|\.lock$` — Lock files (skipped entirely)
   - `\.(yml|yaml|json|css|scss|svg|md)$` — Config, locales, styles, assets
 - The categorized breakdown often reveals a different story than raw totals (e.g., production code reduced while test coverage increased)
-- If `cloc` is available, `cloc --diff main HEAD --git` provides an alternative per-language breakdown, but lacks categorization and doesn't handle renames
+- If `cloc` is available, `cloc --diff "$BASE" HEAD --git` provides an alternative per-language breakdown, but lacks categorization and doesn't handle renames
 
 Include the resulting table in the PR description under a **Code Impact** section.
 
@@ -468,11 +489,48 @@ EOF
 
 UNSAFE — never do this: `title=$(some_command)` without quotes could execute commands in the title.
 
-Update the PR using GitHub CLI.
+Create or update the PR using GitHub CLI — branch on whether a PR already exists.
 
-**Pre-Update State Verification** (prevent TOCTOU race condition) — re-check PR state immediately before update:
+### Case A — no PR exists (create)
+
+`pr_info` is empty: either none was found in §1, or the user chose "create new" in §1.1. Push the branch (idempotent), then create the PR against the resolved `$BASE`:
 
 ```bash
+branch="$(git branch --show-current)"
+if [[ -z "$branch" ]]; then
+  echo "ERROR: detached HEAD — check out a branch before opening a PR." >&2
+  exit 1
+fi
+
+if ! git push -u origin HEAD; then
+  echo "ERROR: push failed (diverged remote, or no write access). Resolve manually — do NOT force-push — then retry." >&2
+  exit 1
+fi
+
+gh pr create --base "$BASE" --head "$branch" --title "$title" --body "$(cat <<'EOF'
+[Your full description here]
+EOF
+)"
+```
+
+`git push -u origin HEAD` sets the upstream on first push and is a no-op when the branch is already up to date with its remote. It is **not** unconditionally safe — so the `if !` gate stops before `gh pr create` runs whenever the push fails (a diverged remote rejects it non-fast-forward; never force-push to recover). The `branch` guard above rejects a detached HEAD up front (so `--head` can never collapse to an empty value) and supplies `--head "$branch"`, which also keeps `gh` from dropping into its interactive "where should I push this branch?" prompt that would hang a non-interactive session. `$BASE` is the base resolved in §2 (the repo's default branch when creating).
+
+### Case B — a PR already exists (update)
+
+`pr_info` is non-empty: an OPEN PR, or a non-open PR the user confirmed updating in §1.1.
+
+**Pre-Update State Verification** (prevent TOCTOU race condition) — re-check PR state immediately before the edit:
+
+```bash
+# $pr_number / $pr_state were captured in §1, possibly in an earlier (now-gone) Bash
+# call. If they didn't persist into this shell, stop cleanly — otherwise the TOCTOU
+# guard below is silently skipped and the later checks emit a misleading "non-open PR"
+# error. Re-run §1's capture and this block together in one Bash invocation.
+if [[ -z "$pr_number" || -z "$pr_state" ]]; then
+  echo "ERROR: PR identity not present in this shell — re-run §1's capture and this block in a single Bash call." >&2
+  exit 1
+fi
+
 if [[ -n "$pr_number" ]]; then
   current_pr_info=$(gh pr view "$pr_number" --json state 2>/dev/null)
 
@@ -504,14 +562,16 @@ if [[ "$pr_state" != "OPEN" ]] && [[ "$user_confirmed_update" != "true" ]]; then
   exit 1
 fi
 
-gh pr edit <number> --title "Your Title Here" --body "$(cat <<'EOF'
+gh pr edit "$pr_number" --title "$title" --body "$(cat <<'EOF'
 [Your full description here]
 EOF
 )"
 ```
 
-Confirm the update was successful:
+### Confirm
+
+Either path — view the PR for the current branch:
 
 ```bash
-gh pr view <number>
+gh pr view
 ```

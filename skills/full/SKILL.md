@@ -93,7 +93,7 @@ Compose the args string for `/finish` based on mode:
 - Commit + (conditional) push
 - State transition to `Ready For Release`
 - Merge serialization across parallel `/finish merge` sessions on the same parent repo (`scripts/with-repo-lock.py`) — `wt` mode only
-- Worktree removal (`wt` merge) or `gh pr create` (`wt` pr against the source branch, or in-place `pr` against the default branch); no worktree touch in non-`wt` mode
+- Worktree removal (`wt` merge) or `gh pr create` with a `pr-update`-generated title/body (`wt` pr against the source branch, or in-place `pr` against the default branch); no worktree touch in non-`wt` mode
 
 **`/finish` terminal-tag handling.** Mechanical mapping for whatever tag `/finish` emits — `/full` does not interpret, does not wrap. Which tags are legitimate depends on mode:
 

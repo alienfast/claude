@@ -346,10 +346,14 @@ The branch was pushed in Step 7 (the `no push` + `pr` combination was rejected i
 
    If a requested label is missing (empty output), do NOT silently drop it. Surface it and ask the user: proceed without that label / create it (`gh label create '<label>'`) / abort. Apply only labels that exist (or that the user just created).
 
-3. **Create the PR** — pass `--base` explicitly and one `--label` per verified label:
+3. **Generate the PR title and body from the actual diff** — do NOT use `--fill` (it only echoes the commit message). Apply the `pr-update` skill's methodology directly: read [`~/.claude/skills/pr-update/SKILL.md`](../pr-update/SKILL.md) and follow its Analysis Process (§2–6), PR Title Formats, and Description Structure. **Skip pr-update's own base-resolution** (its §2 `if [[ -n "$pr_info" ]]; … BASE=…` prologue) and substitute the `<BASE>` you already resolved in sub-step 1 wherever its commands reference `$BASE` — in a worktree that base is `SOURCE_BRANCH`, **not** the default branch, and letting pr-update re-resolve `$BASE` would diff the worktree PR against the wrong base. This is a **by-reference** use of that methodology — read its sections and apply them here — **not** a `Skill`-tool dispatch of `pr-update`: `/finish` must stay the authority over the base, labels, and the terminal `SHIPPED-PR` tag, and must not trigger `pr-update`'s own interactive PR-state prompts. The branch is already pushed (Step 7), so no push here. (pr-update's own empty-`$BASE` guard lives in the §2 prologue you're skipping; sub-step 1 above is the backstop for this path — it already stops if it cannot resolve a base, so the substituted `<BASE>` is non-empty by the time you reach here.)
+
+4. **Write the body** to `<WT_DIR>/tmp/pr-body-<issue-id-lowercased>.md` (worktree mode) or `<REPO_ROOT>/tmp/pr-body-<issue-id-lowercased>.md` (in-place) using the **Write** tool (it requires an absolute path) — the same pattern as the merge-commit message file in the `merge` branch above.
+
+5. **Create the PR** — pass `--base` explicitly, the generated title, the body file, and one `--label` per verified label:
 
    ```bash
-   gh pr create --base '<BASE>' --head '<WORKTREE_BRANCH>' --fill [--label '<label>' ...]
+   gh pr create --base '<BASE>' --head '<WORKTREE_BRANCH>' --title '<generated title>' --body-file '<path from step 4>' [--label '<label>' ...]
    ```
 
 After the PR is created, present the closing message. The tagged final line (per `standards/lifecycle-tags.md`) MUST be the last LLM-authored output. Substitute the actual resolved `<BASE>`, branch, and label list (or the bare word `none` when no labels were applied). The message branches on whether a worktree is involved:
