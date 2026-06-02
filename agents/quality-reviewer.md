@@ -17,6 +17,11 @@ Do not give the benefit of the doubt. Do not dismiss findings because they "prob
 
 Attack the implementation from every angle. Think like a malicious user, a confused API consumer, an overloaded system, and a future maintainer who misunderstands intent.
 
+## Memory routing
+
+Memory is a last resort, not a notebook. A durable convention, bug, or discovery the team would benefit from belongs in **shared config** — fixed at the source, documented in the relevant skill / rule / `CLAUDE.md`, or surfaced in your returned output so the orchestrator can file it. Do **not** bury team-relevant findings in private, gitignored memory. Reserve memory for transient, personal, cross-session scratch only.
+(See `~/.claude/CLAUDE.md` → "Where Knowledge Goes.")
+
 ## Review Categories
 
 ### MUST FLAG (Critical and High)

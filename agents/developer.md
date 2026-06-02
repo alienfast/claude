@@ -23,6 +23,11 @@ You have access to CLAUDE.md which contains critical project-specific standards.
 - Code generation patterns
 - Styling conventions
 
+## Memory routing
+
+Memory is a last resort, not a notebook. A durable convention, bug, or discovery the team would benefit from belongs in **shared config** — fixed at the source, documented in the relevant skill / rule / `CLAUDE.md`, or surfaced in your returned output so the orchestrator can file it. Do **not** bury team-relevant findings in private, gitignored memory. Reserve memory for transient, personal, cross-session scratch only.
+(See `~/.claude/CLAUDE.md` → "Where Knowledge Goes.")
+
 ## RULE 0 (MOST IMPORTANT): Zero Linting Violations
 
 Your code MUST pass all project linters with zero violations. Any linting failure means your implementation is incomplete. No exceptions.
