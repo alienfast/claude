@@ -4,6 +4,9 @@
 
 set -euo pipefail
 
+# Base branch: explicit arg ($1) wins; otherwise resolved from the PR / repo default below.
+BASE="${1:-}"
+
 echo "========================================"
 echo "PR SCOPE ANALYSIS"
 echo "========================================"
@@ -24,6 +27,8 @@ if command -v gh &> /dev/null; then
     pr_merged_at=$(echo "$pr_info" | jq -r '.mergedAt // "null"')
     pr_number=$(echo "$pr_info" | jq -r '.number')
     PR_TITLE=$(echo "$pr_info" | jq -r '.title')
+    pr_base=$(echo "$pr_info" | jq -r '.baseRefName')
+    [[ -z "$BASE" && -n "$pr_base" && "$pr_base" != "null" ]] && BASE="$pr_base"
 
     # Security Fix #6: Validate pr_state is a known value
     case "$pr_state" in
@@ -70,23 +75,31 @@ if command -v gh &> /dev/null; then
   fi
 fi
 
+# Resolve the base branch (mirror SKILL.md §2): explicit arg > PR base > repo default > main.
+if [[ -z "$BASE" ]]; then
+  BASE="$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || true)"
+fi
+BASE="${BASE:-main}"
+echo "🎯 Base branch: $BASE"
+echo ""
+
 # Commit count
-COMMIT_COUNT=$(git log main..HEAD --oneline | wc -l | tr -d ' ')
+COMMIT_COUNT=$(git log "$BASE"..HEAD --oneline | wc -l | tr -d ' ')
 echo "📊 Commits in PR: $COMMIT_COUNT"
 echo ""
 
 # Files changed summary
 echo "📁 Files Changed Summary:"
-git diff main...HEAD --stat | tail -1
+git diff "$BASE"...HEAD --stat | tail -1
 echo ""
 
 # Major areas of change
 echo "🎯 Major Areas Changed:"
-git diff main...HEAD --name-only | cut -d/ -f1 | sort | uniq -c | sort -rn | head -10
+git diff "$BASE"...HEAD --name-only | cut -d/ -f1 | sort | uniq -c | sort -rn | head -10
 echo ""
 
 # Documentation changes
-DOC_CHANGES=$(git diff main...HEAD --name-only | grep -E '\.md$|^doc/' || true)
+DOC_CHANGES=$(git diff "$BASE"...HEAD --name-only | grep -E '\.md$|^doc/' || true)
 if [ -n "$DOC_CHANGES" ]; then
   echo "📝 Documentation Changes:"
   echo "$DOC_CHANGES" | head -10 | sed 's/^/   /'
@@ -98,7 +111,7 @@ if [ -n "$DOC_CHANGES" ]; then
 fi
 
 # Infrastructure changes
-INFRA_CHANGES=$(git diff main...HEAD --name-only | grep -E '^cloud/' || true)
+INFRA_CHANGES=$(git diff "$BASE"...HEAD --name-only | grep -E '^cloud/' || true)
 if [ -n "$INFRA_CHANGES" ]; then
   echo "☁️  Infrastructure Changes:"
   echo "$INFRA_CHANGES" | head -10 | sed 's/^/   /'
@@ -110,7 +123,7 @@ if [ -n "$INFRA_CHANGES" ]; then
 fi
 
 # CI/CD changes
-CICD_CHANGES=$(git diff main...HEAD --name-only | grep -E '\.yml$|\.yaml$|\.circleci|\.github/workflows' || true)
+CICD_CHANGES=$(git diff "$BASE"...HEAD --name-only | grep -E '\.yml$|\.yaml$|\.circleci|\.github/workflows' || true)
 if [ -n "$CICD_CHANGES" ]; then
   echo "🔄 CI/CD Changes:"
   echo "$CICD_CHANGES" | sed 's/^/   /'
@@ -118,17 +131,17 @@ if [ -n "$CICD_CHANGES" ]; then
 fi
 
 # Package changes
-if git diff main...HEAD --name-only | grep -q 'package.json'; then
+if git diff "$BASE"...HEAD --name-only | grep -q 'package.json'; then
   echo "📦 Dependency Changes Detected"
-  echo "   Run: git diff main...HEAD -- package.json"
+  echo "   Run: git diff $BASE...HEAD -- package.json"
   echo ""
 fi
 
 # Code impact summary
 echo "📈 Code Impact Summary:"
-git diff --shortstat -M main...HEAD
+git diff --shortstat -M "$BASE"...HEAD
 echo ""
-git diff --numstat -M main...HEAD | awk '{if ($3 ~ /lock\.yaml$|lock\.json$|\.lock$/) next; added+=$1; removed+=$2; file=$3; if (file ~ /\.stories\./) {sa+=$1; sr+=$2} else if (file ~ /mock|Mock/) {ma+=$1; mr+=$2} else if (file ~ /generated|packages\/graphql\//) {ga+=$1; gr+=$2} else if (file ~ /ops\//) {oa+=$1; or+=$2} else if (file ~ /\.(yml|yaml|json|css|scss|svg|md)$/) {la+=$1; lr+=$2} else {ca+=$1; cr+=$2}} END {printf "%-20s %8s %8s %8s\n", "Category", "Added", "Removed", "Net"; printf "%-20s %8d %8d %8d\n", "App code", ca, cr, ca-cr; printf "%-20s %8d %8d %8d\n", "Stories", sa, sr, sa-sr; printf "%-20s %8d %8d %8d\n", "Mocks", ma, mr, ma-mr; printf "%-20s %8d %8d %8d\n", "Generated", ga, gr, ga-gr; printf "%-20s %8d %8d %8d\n", "Ops/Infra", oa, or, oa-or; printf "%-20s %8d %8d %8d\n", "Config/Assets", la, lr, la-lr; printf "%-20s %8d %8d %8d\n", "TOTAL", added, removed, added-removed}'
+git diff --numstat -M "$BASE"...HEAD | awk '{if ($3 ~ /lock\.yaml$|lock\.json$|\.lock$/) next; added+=$1; removed+=$2; file=$3; if (file ~ /\.stories\./) {sa+=$1; sr+=$2} else if (file ~ /mock|Mock/) {ma+=$1; mr+=$2} else if (file ~ /generated|packages\/graphql\//) {ga+=$1; gr+=$2} else if (file ~ /ops\//) {ia+=$1; ir+=$2} else if (file ~ /\.(yml|yaml|json|css|scss|svg|md)$/) {la+=$1; lr+=$2} else {ca+=$1; cr+=$2}} END {printf "%-20s %8s %8s %8s\n", "Category", "Added", "Removed", "Net"; printf "%-20s %8d %8d %8d\n", "App code", ca, cr, ca-cr; printf "%-20s %8d %8d %8d\n", "Stories", sa, sr, sa-sr; printf "%-20s %8d %8d %8d\n", "Mocks", ma, mr, ma-mr; printf "%-20s %8d %8d %8d\n", "Generated", ga, gr, ga-gr; printf "%-20s %8d %8d %8d\n", "Ops/Infra", ia, ir, ia-ir; printf "%-20s %8d %8d %8d\n", "Config/Assets", la, lr, la-lr; printf "%-20s %8d %8d %8d\n", "TOTAL", added, removed, added-removed}'
 echo ""
 
 echo "========================================"

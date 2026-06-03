@@ -292,10 +292,4 @@ resource:
 - Updated `infrastructure-package` to x.y.z
 - Added `cloud-provider-sdk` for [specific feature]
 
----
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
-
-Co-Authored-By: Claude <noreply@anthropic.com>
-
 ```

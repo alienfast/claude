@@ -173,10 +173,4 @@ If this fix causes issues:
 - [Updated troubleshooting guide](docs/troubleshooting.md)
 - [Added to known issues (if partial fix)](docs/known-issues.md)
 
----
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
-
-Co-Authored-By: Claude <noreply@anthropic.com>
-
 ```
