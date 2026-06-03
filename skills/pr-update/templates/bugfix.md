@@ -2,7 +2,30 @@
 
 Use this template when fixing bugs or resolving issues.
 
+> **Verify the baseline first.** The **Root Cause**, the **Before** snippet, and
+> **Affected Users** are all claims about what the base branch shipped — ground them
+> in §4's baseline check (`git show "origin/$BASE":path`, or its local fallback when
+> the base isn't on origin), not an intermediate branch state (see SKILL.md §4,
+> "Verify the baseline before describing what changed"). If `origin/$BASE` already behaves
+> correctly, the bug was introduced and fixed within this branch and never reached
+> production — this is **not** a production bug fix. Drop the bug-fix framing and use
+> the feature/refactor template instead.
+
 ```markdown
+## Executive Summary
+
+[2–4 plain sentences for a business audience: what was going wrong for users or the
+business, and what is now resolved. No file paths, no code, minimal jargon. Only claim
+production impact if the broken behavior is confirmed in the base branch's shipped
+state (§4 baseline check).]
+
+[Optional one-liners — include only those that apply, omit the rest:]
+- **For users:** [what they experienced before vs. now]
+- **Business impact:** [risk, cost, or reliability effect of the fix]
+- **Security & quality:** [regression tests added, hardening]
+
+🔗 **Pull request:** [#<number> — <title>](<pr-url>)
+
 ## Summary
 
 [1-2 sentence overview: What bug was fixed and what the impact was]

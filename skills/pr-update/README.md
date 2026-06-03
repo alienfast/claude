@@ -1,6 +1,6 @@
 # PR Title and Description Generator
 
-Version: 1.0.0
+Version: 1.1.0
 
 Generate or update GitHub Pull Request titles and descriptions based on actual code changes in the final state.
 
@@ -18,6 +18,10 @@ This skill is automatically triggered when you mention:
 **Document ONLY what exists in the final state of the code, not the development history.**
 
 Always verify features exist in `HEAD` before documenting them. If a feature was added and then removed during development, it should NOT appear in the PR description.
+
+**Verify the baseline before claiming a fix.** The "before" you describe is what the base branch shipped (`origin/$BASE`), never an intermediate branch commit. A bug introduced and fixed within the same branch never shipped — confirm broken behavior with `git show "origin/$BASE":path` (the fetched remote tip; SKILL.md §4 falls back to a local ref when the base isn't on origin) before describing production impact.
+
+**Every description leads with an Executive Summary** — a self-contained, plain-language block (business outcome first, ending with a link to the PR) that can be copied out whole and shared with non-engineering stakeholders. It precedes the technical `## Summary`.
 
 ## Structure
 
@@ -147,4 +151,5 @@ To update this skill:
 
 ## Version History
 
+- **1.1.0** (2026-06-02): Add baseline-verification discipline (the "before"/"was broken" narrative must be verified against `$BASE`, not inferred from the diff) and a business-shareable Executive Summary that leads every description
 - **1.0.0** (2025-10-22): Initial structured release with resources, templates, and scripts

@@ -3,6 +3,19 @@
 Use this template for infrastructure changes, deployments, and cloud resources.
 
 ```markdown
+## Executive Summary
+
+[2–4 plain sentences for a business audience: what this infrastructure change means
+for reliability, cost, capacity, or risk — and why it matters. No file paths, no code,
+minimal jargon. Lead with the outcome.]
+
+[Optional one-liners — include only those that apply, omit the rest:]
+- **For users:** [reliability, performance, or availability they'll notice]
+- **Business impact:** [cost change, capacity, SLA, or compliance effect]
+- **Security & quality:** [hardening, DR posture, or audit improvements]
+
+🔗 **Pull request:** [#<number> — <title>](<pr-url>)
+
 ## Summary
 
 [1-2 sentence overview: What infrastructure is being deployed/changed and why]

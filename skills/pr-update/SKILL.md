@@ -11,6 +11,8 @@ Generate or update a PR title and description based on the actual changes in the
 
 **Document ONLY what exists in the final state of the code, not the development history.**
 
+**The "before" you describe is what the base branch shipped (`origin/$BASE`) — never an intermediate branch commit.** A bug introduced and fixed within the same branch was never shipped: describe the net effect, not the intra-branch detour. Any "fixes / was broken / now works / adds" statement is implicitly a claim about the baseline — verify it against `origin/$BASE` (§4) before writing it. (`$BASE` is resolved in §2.)
+
 ## Bash Command Rule
 
 **NEVER prefix bash commands with comment lines.** Permission patterns in `~/.claude/settings.json` match against the start of the command. A leading `# comment` breaks the match and triggers a manual permission check. Put descriptions in the Bash tool's `description` parameter instead.
@@ -246,6 +248,46 @@ Include the resulting table in the PR description under a **Code Impact** sectio
 
 ### 4. Verify What's Actually in the Code
 
+#### Verify the baseline before describing what changed
+
+**Before writing any "fixes / was broken / now works / adds" narrative, confirm what the base branch actually shipped.** The diff shows the *net* change between `$BASE` and `HEAD`, but it does **not** tell you which side was production reality — infer that wrong and you describe a bug that never shipped (or an "add" that already existed).
+
+Resolve the baseline ref once. "What's live in production now" is the **remote** tip `origin/$BASE` (the local `$BASE` can lag the remote and would then misreport the baseline) — but a worktree PR's base may exist only locally with no `origin/` counterpart (§2 permits `BASE="$pr_base"`), so fall back to the local `$BASE` when the remote ref is absent:
+
+```bash
+git fetch --quiet origin "$BASE" 2>/dev/null || true
+if git rev-parse --verify --quiet "origin/$BASE^{commit}" >/dev/null; then
+  BASE_REF="origin/$BASE"   # normal case: fetched remote tip == production
+elif git rev-parse --verify --quiet "$BASE^{commit}" >/dev/null; then
+  BASE_REF="$BASE"          # base-only-local (e.g. a worktree PR's source branch)
+else
+  echo "ERROR: base '$BASE' resolves neither as origin/$BASE nor locally — cannot verify the baseline. Fetch or check out the base, then retry." >&2
+  exit 1
+fi
+```
+
+Read the claimed-broken (or claimed-new) behavior at `$BASE_REF`:
+
+```bash
+git show "$BASE_REF":path/to/file.ts | grep -A5 "relevant_logic"
+```
+
+`$BASE_REF` is a verified commit (above), so a `git show` **error** here means the `path` doesn't exist at the baseline — the file is new in this branch (a genuine addition), not an unresolved ref. If `git show` **succeeds** but `grep` is empty, the *pattern* didn't match (a renamed symbol, reformatting) — widen the pattern; don't conclude the behavior is absent.
+
+Decision rule:
+
+- Broken behavior **is** in `$BASE_REF` → it's a real fix; describe the production impact.
+- `$BASE_REF` already has the correct behavior → the bug was introduced **and** fixed within this branch and never shipped. Do **not** claim it broke production; describe the net change (refactor / hardening / cohesion) instead.
+- Behavior claimed as "added" already exists in `$BASE_REF` → it's a modification, not an addition; say so.
+
+Separately, to confirm a line that *looks* changed was actually changed by this branch (not just reformatted, or changed-then-restored so the net diff hides it), inspect the **merge base** — where this branch diverged. This answers "did this branch touch this line," **not** "what's in production" (the merge base lags production whenever the base advanced after the branch was cut, so never use it for production-impact claims). Capture the merge base first so a resolution failure can't silently fall through to the index blob:
+
+```bash
+mb=$(git merge-base "$BASE_REF" HEAD) && git show "$mb":path/to/file.ts
+```
+
+#### Verify the feature exists in the final state
+
 **CRITICAL**: For each area of apparent change, verify if it's in the final state:
 
 Check if a feature is in final code:
@@ -296,6 +338,8 @@ For each change area:
 Before finalizing the description, verify:
 
 - [ ] Every feature mentioned exists in `git show HEAD:path/to/file`
+- [ ] Every "fixes / was broken / now works" claim is verified against the §4 baseline ref (`origin/$BASE`, or its local fallback when the base isn't on origin) — not inferred from the diff
+- [ ] No bug is described as production-affecting if it was introduced and resolved within this branch
 - [ ] No references to features that were added then removed during development
 - [ ] All file links use relative paths from repo root (not absolute paths)
 - [ ] Configuration examples reflect actual current state in HEAD
@@ -324,9 +368,46 @@ For detailed templates, see:
 - [templates/bugfix.md](templates/bugfix.md) - Bug fixes
 - [templates/infrastructure.md](templates/infrastructure.md) - Infrastructure changes
 
+### Executive Summary (lead with this)
+
+Every description opens with an **`## Executive Summary`** — a self-contained,
+plain-language block the user can copy out whole and share with the business team.
+It precedes the technical `## Summary` (the two serve different audiences: Executive
+Summary = business outcome; Summary = technical TL;DR for reviewers).
+
+Rules for the Executive Summary:
+
+- **Business language only.** Translate the change into its outcome. No file paths, no
+  code, no line-count tables, minimal jargon.
+- **Lead with impact** — what is better for users or the business now.
+- The **For users / Business impact / Security & quality** lines are *suggestions, not
+  required sections*. Include only those that genuinely apply; keep each to one line;
+  omit the rest. A simple change may be 2–3 sentences with no bullets at all.
+- **Accuracy is paramount here.** This is the most-shared, highest-visibility text, so
+  over-claiming is the worst case — every impact / "fixes" statement must pass the same
+  baseline check from §4 before it's written.
+- **End with the PR link** so the shared block is self-contained (see "After Generating
+  Description" for how the URL is resolved).
+- **Don't pad.** On a small PR where the technical `## Summary` would merely restate the
+  Executive Summary, drop the `## Summary` and go straight to the detailed sections —
+  two near-identical openers read as bloat. Keep both only when the technical Summary
+  adds reviewer-facing detail the Executive Summary deliberately omits.
+
 Use this general template structure:
 
 ```markdown
+## Executive Summary
+
+[2–4 plain sentences for a business audience: the user-facing or business outcome and
+why it matters. No file paths, no code, minimal jargon. Lead with impact.]
+
+[Optional one-liners — include only those that genuinely apply, omit the rest:]
+- **For users:** [what changes in their experience]
+- **Business impact:** [revenue, risk, cost, compliance, or operational effect]
+- **Security & quality:** [notable hardening, test coverage, or reliability gains]
+
+🔗 **Pull request:** [#<number> — <title>](<pr-url>)
+
 ## Summary
 
 [1-2 sentence overview of what this PR accomplishes and why]
@@ -430,13 +511,14 @@ Check if a file exists:
 ## Important Rules
 
 1. **Verify before documenting** - Always use `git show HEAD:file` to confirm features exist in final state
-2. **Never mention removed features** - If a commit added something but it was later removed or reverted, don't include it
-3. **Focus on outcomes, not process** - Describe the result, not the development journey
-4. **Link to actual code** - Every major feature should have a file reference that users can click
-5. **Be specific** - "Add MySQL native password authentication" not "Update database config"
-6. **Test your claims** - If you say "CI runs connectivity checks", verify the CI file actually shows that
-7. **Use present tense** - "Adds X", "Implements Y", not "Added X", "Implemented Y"
-8. **Quantify when possible** - "3x performance improvement", "99.99% SLA", "$460/month cost"
+2. **Verify the baseline before claiming a fix** - Before writing "fixes X" / "was broken" / "now works", confirm the broken behavior actually exists in production via §4's baseline check (`git show "origin/$BASE":file`, with a local fallback when the base isn't on origin). A bug introduced and fixed within this branch never shipped — don't describe it as a production failure
+3. **Never mention removed features** - If a commit added something but it was later removed or reverted, don't include it
+4. **Focus on outcomes, not process** - Describe the result, not the development journey
+5. **Link to actual code** - Every major feature should have a file reference that users can click
+6. **Be specific** - "Add MySQL native password authentication" not "Update database config"
+7. **Test your claims** - If you say "CI runs connectivity checks", verify the CI file actually shows that
+8. **Use present tense** - "Adds X", "Implements Y", not "Added X", "Implemented Y"
+9. **Quantify when possible** - "3x performance improvement", "99.99% SLA", "$460/month cost"
 
 ## Common Mistakes to Avoid
 
@@ -508,16 +590,44 @@ if ! git push -u origin HEAD; then
 fi
 
 gh pr create --base "$BASE" --head "$branch" --title "$title" --body "$(cat <<'EOF'
-[Your full description here]
+[Full description. The Executive Summary link line is a placeholder on this first pass — e.g. 🔗 **Pull request:** _(link below)_ — patched to the real URL in the required follow-up edit below.]
 EOF
 )"
 ```
 
 `git push -u origin HEAD` sets the upstream on first push and is a no-op when the branch is already up to date with its remote. It is **not** unconditionally safe — so the `if !` gate stops before `gh pr create` runs whenever the push fails (a diverged remote rejects it non-fast-forward; never force-push to recover). The `branch` guard above rejects a detached HEAD up front (so `--head` can never collapse to an empty value) and supplies `--head "$branch"`, which also keeps `gh` from dropping into its interactive "where should I push this branch?" prompt that would hang a non-interactive session. `$BASE` is the base resolved in §2 (the repo's default branch when creating).
 
+**Fill the Executive Summary PR link.** A new PR's URL doesn't exist until it's created, so create the PR with the Executive Summary's link line as a placeholder (e.g. `🔗 **Pull request:** _(link below)_`), then resolve the real URL and patch the body in one **required** follow-up edit — skip it and the PR permanently shows the placeholder in its most-shared line:
+
+```bash
+pr_url=$(gh pr view --json url -q .url)
+if [[ -z "$pr_url" ]]; then
+  echo "ERROR: could not resolve the new PR's URL — leave the placeholder and retry the edit; do not ship it." >&2
+  exit 1
+fi
+gh pr edit "$pr_url" --body "$(cat <<'EOF'
+[Full description with the real PR URL written into the Executive Summary link line]
+EOF
+)"
+```
+
+`gh pr view` with no argument resolves the PR for the current branch. The body heredoc is **quoted** (`<<'EOF'`), so it does **not** expand shell variables — write the *resolved* URL text into the Executive Summary link line (e.g. `[#42 — Title](https://github.com/org/repo/pull/42)`), never the literal token `$pr_url` or the template's `<pr-url>`, which would ship verbatim. This second edit is create-only; an update (Case B) already knows the URL and writes it on the first pass.
+
 ### Case B — a PR already exists (update)
 
 `pr_info` is non-empty: an OPEN PR, or a non-open PR the user confirmed updating in §1.1.
+
+**Fill the Executive Summary PR link.** The URL is already known here — resolve it before composing the body and write its *resolved value* straight into the Executive Summary link line, so the single `gh pr edit` below carries it (no second pass needed):
+
+```bash
+pr_url=$(gh pr view "$pr_number" --json url -q .url)
+if [[ -z "$pr_url" ]]; then
+  echo "ERROR: could not resolve PR #$pr_number URL — resolve before composing the body; do not ship an empty link." >&2
+  exit 1
+fi
+```
+
+The `gh pr edit` body below is a **quoted** heredoc (`<<'EOF'`) and will not expand variables — paste the actual URL text (e.g. `https://github.com/org/repo/pull/42`) into the link line, not the token `$pr_url` or the template placeholder `<pr-url>`.
 
 **Pre-Update State Verification** (prevent TOCTOU race condition) — re-check PR state immediately before the edit:
 

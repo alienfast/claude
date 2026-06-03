@@ -3,6 +3,19 @@
 Use this template when adding new features or capabilities.
 
 ```markdown
+## Executive Summary
+
+[2–4 plain sentences for a business audience: what this feature lets users or the
+business do now, and why it matters. No file paths, no code, minimal jargon. Lead
+with the outcome.]
+
+[Optional one-liners — include only those that apply, omit the rest:]
+- **For users:** [what they can now do]
+- **Business impact:** [revenue, retention, efficiency, or compliance effect]
+- **Security & quality:** [notable safeguards or test coverage]
+
+🔗 **Pull request:** [#<number> — <title>](<pr-url>)
+
 ## Summary
 
 [1-2 sentence overview: What feature is this adding and why is it valuable?]
