@@ -4,7 +4,7 @@
 # agent's mental model can be re-aligned by Read on the next edit if needed).
 # Surfaces only what the agent must act on:
 #
-#   - Unfixable diagnostics from biome or markdownlint (compact format)
+#   - Unfixable diagnostics from biome, markdownlint, or rubocop (compact format)
 #   - Biome plugin load errors (surfaced once per session via ./tmp stamp)
 #
 # Output channel: JSON to stdout with `hookSpecificOutput.additionalContext`,
@@ -86,40 +86,52 @@ mkdir -p tmp 2>/dev/null
 stamp="tmp/.lint-hook-plugin-error-${session_id}"
 
 # Detect premature comment wrapping. See standards/commenting.md: the standard
-# is ~160 chars, but training-data muscle memory wraps at ~80. Biome can't
-# enforce this (formatter doesn't rewrap comments, by design). So we scan for
-# the signature: 3+ consecutive `//` lines where at least one adjacent pair
-# could merge under 160 chars. Skips pragmas, lists, license headers, ASCII
-# art, commented-out code, triple-slash directives, and bare-`//` paragraph
-# separators (which break blocks instead of joining them).
+# is ~160 chars, but training-data muscle memory wraps at ~80. Formatters can't
+# enforce this (they don't rewrap comments, by design). So we scan for the
+# signature: 3+ consecutive comment lines where at least one adjacent pair could
+# merge under 160 chars. The comment lead is passed in ("//" for JS/TS, "#" for
+# Ruby). Skips pragmas, lists, license headers, ASCII art, commented-out code,
+# triple-slash directives, and bare-lead paragraph separators (which break
+# blocks instead of joining them). Known limitation: line-based, no language
+# parser — string/heredoc/template-literal lines that start with the marker can
+# be misread as comments. Advisory-only (never blocks), so the rare false
+# positive is acceptable rather than worth a parser.
 check_comment_widths() {
   local target="$1"
-  awk '
+  local marker="$2"   # comment lead: "//" for JS/TS, "#" for Ruby
+  awk -v marker="$marker" '
+    BEGIN { ml = length(marker); linere = "^[[:space:]]*" marker }
     function flush(    i, total, avail, needed, maxw) {
       if (n < 3 || skip) { n = 0; skip = 0; return }
       total = 0
       for (i = 1; i <= n; i++) total += length(content[i])
       total += n - 1                                          # joining spaces
-      avail = 160 - indent_len - 3                            # width left after indent + "// "
+      avail = 160 - indent_len - (ml + 1)                     # width left after indent + "marker "
       if (avail > 0) {
         needed = int((total + avail - 1) / avail)             # ceil(total / avail)
         if (needed < n) {
           maxw = 0
           for (i = 1; i <= n; i++) if (length(lines[i]) > maxw) maxw = length(lines[i])
-          printf "  Lines %d-%d: %d-line // block (max width ~%d) — could reflow to %d line%s at 160.\n", start, start + n - 1, n, maxw, needed, (needed == 1 ? "" : "s")
+          printf "  Lines %d-%d: %d-line %s block (max width ~%d) — could reflow to %d line%s at 160.\n", start, start + n - 1, n, marker, maxw, needed, (needed == 1 ? "" : "s")
         }
       }
       n = 0; skip = 0
     }
-    /^[[:space:]]*\/\// {
+    $0 ~ linere {
       match($0, /^[[:space:]]*/); ind = substr($0, 1, RLENGTH); rest = substr($0, RLENGTH + 1)
-      # Triple-slash directives (/// <reference …>) are not prose — never part of a block.
-      if (substr(rest, 1, 3) == "///") { flush(); next }
-      if (substr(rest, 1, 3) == "// ") body = substr(rest, 4); else body = substr(rest, 3)
-      # Bare `//` separator: ends the current block, itself belongs to no block.
+      # Triple-slash directives (/// <reference …>) are not prose — never part of a block. JS/TS only.
+      if (ml == 2 && substr(rest, 1, 3) == "///") { flush(); next }
+      if (substr(rest, 1, ml + 1) == marker " ") body = substr(rest, ml + 2); else body = substr(rest, ml + 1)
+      # Bare lead (e.g. a lone `//` or `#`): ends the current block, belongs to none.
       if (body == "") { flush(); next }
       sline = 0
-      if (body ~ /^(biome-ignore|eslint-|@ts-|prettier-|TODO|FIXME|HACK|NOTE|XXX|@no-wrap)/) sline = 1
+      if (body ~ /^(biome-ignore|eslint-|@ts-|prettier-|TODO|FIXME|HACK|NOTE|XXX|@no-wrap|rubocop:|:nodoc:|noinspection)/) sline = 1
+      # Ruby magic comments (ml==1, the "#" marker only) are meaningful solely in
+      # the file head — gate on NR so the same words mid-file (as prose) remain
+      # flaggable, and on ml==1 so a JS/TS "// encoding:" prose comment is not
+      # wrongly suppressed (mirrors the ml==2 triple-slash gate above). Shebang too.
+      if (ml == 1 && NR <= 5 && body ~ /^(frozen_string_literal|encoding:|coding:)/) sline = 1
+      if (NR == 1 && substr(body, 1, 1) == "!") sline = 1            # shebang (#!/usr/bin/env ruby)
       if (body ~ /^[-*][[:space:]]/ || body ~ /^[0-9]+\.[[:space:]]/) sline = 1
       if (body ~ /['\''")}\]][[:space:]]*,[[:space:]]*$/) sline = 1   # commented-out code (literal closer + comma)
       if (body ~ /[-=+|*_~#]{4,}/) sline = 1                       # ASCII art / banner separators
@@ -179,19 +191,59 @@ case "$file_ext" in
     ;;
 esac
 
-# ----- comment-width -----
-# Runs AFTER biome --write so line numbers reflect the post-format file the
-# agent will read next. Skips .d.ts (declaration overloads use intentionally
-# vertical comments).
-case "$file_ext" in
-  js|jsx|ts|tsx|mjs|cjs)
-    if [[ "$file_path" != *.d.ts ]]; then
-      width_issues=$(check_comment_widths "$file_path")
-      if [[ -n "$width_issues" ]]; then
-        append_context "Comment-width issues in ${file_name} (See standards/commenting.md — wrap at ~160, not ~80):"$'\n'"${width_issues}"
+# ----- ruby -----
+# Mirrors the biome flow: apply safe autocorrections silently (rubocop -a, the
+# analog of biome --write — safe fixes only, NOT --autocorrect-all), then
+# surface just the offenses rubocop couldn't fix in compact emacs format
+# (path:line:col: severity: message). Gated on a .rubocop.yml so we don't impose
+# rubocop's opinionated defaults on a project that never opted in. Prefer the
+# bundle-pinned rubocop when Gemfile.lock locks the core gem, else the global one.
+# Match by basename: covers *.rb/*.rake/*.gemspec plus the extensionless
+# Gemfile/Rakefile (keying on $file_ext would mis-split a dotted path like
+# ~/.claude/Gemfile). rubocop lints all of these by default.
+case "$file_name" in
+  *.rb|*.rake|*.gemspec|Gemfile|Rakefile)
+    if [[ -f ".rubocop.yml" || -f ".rubocop.yaml" ]]; then
+      rubocop_cmd=(rubocop)
+      # Match only the resolved top-level spec — 4-space indent under `specs:`,
+      # name followed by `(version)`. A looser pattern also matches 6-space nested
+      # constraints (`      rubocop (>= 2.0)`) or stops at `rubocop-rails`, which
+      # could pick `bundle exec rubocop` when the core gem isn't actually runnable.
+      if [[ -f "Gemfile.lock" ]] && grep -qE '^    rubocop \(' Gemfile.lock; then
+        rubocop_cmd=(bundle exec rubocop)
+      fi
+      "${rubocop_cmd[@]}" --autocorrect --format quiet "$file_path" >/dev/null 2>&1
+      rubocop_exit=$?
+      # Surface ONLY genuine offenses (rubocop exit 1). Exit 0 = clean or fully
+      # autocorrected; exit >=2 = config/usage error; 127 = rubocop not installed
+      # despite a .rubocop.yml (the global gem carries no install guarantee, unlike
+      # npx-resolved biome). Those are setup problems, not lint findings — surfacing
+      # their stderr would inject "command not found" into the agent's context on
+      # every Ruby edit, so we stay silent on anything other than exit 1.
+      if [[ $rubocop_exit -eq 1 ]]; then
+        issues=$("${rubocop_cmd[@]}" --format emacs "$file_path" 2>&1)
+        [[ -n "$issues" ]] && append_context "RuboCop issues in ${file_name}:"$'\n'"${issues}"
       fi
     fi
     ;;
 esac
+
+# ----- comment-width -----
+# Runs AFTER the formatters so line numbers reflect the post-format file the
+# agent will read next. Picks the comment lead per language: // for JS/TS, # for
+# Ruby. Skips .d.ts (declaration overloads use intentionally vertical comments).
+comment_marker=""
+case "$file_ext" in
+  js|jsx|ts|tsx|mjs|cjs) [[ "$file_path" != *.d.ts ]] && comment_marker="//" ;;
+esac
+case "$file_name" in
+  *.rb|*.rake|*.gemspec|Gemfile|Rakefile) comment_marker="#" ;;
+esac
+if [[ -n "$comment_marker" ]]; then
+  width_issues=$(check_comment_widths "$file_path" "$comment_marker")
+  if [[ -n "$width_issues" ]]; then
+    append_context "Comment-width issues in ${file_name} (See standards/commenting.md — wrap at ~160, not ~80):"$'\n'"${width_issues}"
+  fi
+fi
 
 exit 0
