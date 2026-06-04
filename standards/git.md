@@ -168,7 +168,7 @@ cd /path/to/repo && git status
 git -C /path/to/repo status
 ```
 
-`Bash(git:*)` is pre-approved, but `cd:*` is not — prefixing with `cd` makes the command match `cd` rather than `git`, so every invocation prompts. The `no-cd-before-git.sh` hook blocks `cd`-before-`git` automatically.
+`Bash(git:*)` is pre-approved, but `cd:*` is not — prefixing with `cd` makes the command match `cd` rather than `git`, so every invocation prompts.
 
 ### Why This Matters: Real Incident
 
