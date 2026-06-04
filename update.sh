@@ -15,17 +15,20 @@ claude plugin marketplace update claude-plugins-official
 echo "Installing lsp servers..."
 claude plugin install typescript-lsp
 
-# Ensure pnpm global bin directory is configured
+# Ensure pnpm's global bin directory ($PNPM_HOME/bin as of pnpm 11) is on PATH — `pnpm
+# add -g` refuses to run when it isn't. Augment PATH unconditionally (the parent shell
+# always exports PNPM_HOME, so a `-z "$PNPM_HOME"` guard would skip this every time).
 if [ -z "$PNPM_HOME" ]; then
-  echo "Configuring pnpm global bin directory..."
-  pnpm setup
   if [[ "$OSTYPE" == "darwin"* ]]; then
     export PNPM_HOME="$HOME/Library/pnpm"
   else
     export PNPM_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/pnpm"
   fi
-  export PATH="$PNPM_HOME:$PATH"
 fi
+case ":$PATH:" in
+  *":$PNPM_HOME/bin:"*) ;;
+  *) export PATH="$PNPM_HOME/bin:$PATH" ;;
+esac
 
 echo "Installing skills helper..."
 pnpm add -g skills
@@ -38,7 +41,12 @@ echo "Installing skills for: ${AI_AGENT_LIST[*]}"
 echo ""
 
 echo "Updating vercel agent-browser..."
-pnpm add -g agent-browser
+# pnpm 11 enables strictDepBuilds by default, so a global install of a package with a
+# build script (agent-browser's postinstall fetches its native binary) prompts for
+# approval in an interactive shell and hangs the script. --allow-build approves it
+# non-interactively. It is per-invocation (not persisted to global config), so it must
+# stay on this line.
+pnpm add -g agent-browser --allow-build=agent-browser
 agent-browser install
 pnpm dlx skills add vercel-labs/agent-browser \
   -g \
