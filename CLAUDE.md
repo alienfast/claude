@@ -44,6 +44,7 @@ Type checking is **not** a hook — it runs via `pnpm check` (`turbo check-types
 - Do not modify generated or build artifact files (e.g., `src/generated/`, `dist/`).
 - Do not create git commits unless explicitly requested — see [Git Standards](standards/git.md) for commit/push authorization.
 - Always Read a file before using Write or Edit on it. Write rejects writes to existing files that haven't been Read first. If Write fails, do NOT work around it with Bash (`cat`, `tee`, `echo >`, `sed`, `awk`) — Read the file first, then retry. Never create duplicate/debug files as workarounds.
+- When writing or editing comments, wrap at ~160 chars, never 80. See [Commenting Standards](standards/commenting.md).
 
 Own the code and move forward: modify in place, delete aggressively, embrace breaking changes, and never leave backups, duplicates, or compatibility layers behind. See [Technical Debt Prevention](standards/technical-debt-prevention.md) for the full rules.
 
