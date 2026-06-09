@@ -38,5 +38,7 @@ packages/*/.npmignore
 /daemon.*
 /jobs
 /locks
+/logs
+/merge-queue-repos.txt
 .last-update*
 /.claude

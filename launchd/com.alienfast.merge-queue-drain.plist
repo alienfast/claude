@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  TEMPLATE for the local deferred-merge drainer (launchd, macOS only). The
+  __HOME__ tokens are placeholders: launchd requires absolute paths and does NOT
+  expand ~ or $HOME, so this is NOT loaded as-is.
+
+  update.sh installs/refreshes it automatically: it renders __HOME__ → $HOME into
+  ~/Library/LaunchAgents/com.alienfast.merge-queue-drain.plist and bootstraps it
+  (idempotently). To do it by hand:
+
+    sed "s|__HOME__|$HOME|g" ~/.claude/launchd/com.alienfast.merge-queue-drain.plist \
+      > ~/Library/LaunchAgents/com.alienfast.merge-queue-drain.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.alienfast.merge-queue-drain.plist
+
+  To remove:
+
+    launchctl bootout gui/$(id -u)/com.alienfast.merge-queue-drain
+    rm ~/Library/LaunchAgents/com.alienfast.merge-queue-drain.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.alienfast.merge-queue-drain</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__HOME__/.claude/scripts/drain-merge-queue.sh</string>
+  </array>
+
+  <key>StartInterval</key>
+  <integer>900</integer>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/.claude/logs/merge-queue-drain.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/.claude/logs/merge-queue-drain.launchd.log</string>
+</dict>
+</plist>

@@ -19,7 +19,7 @@ Without a convention, final summaries are prose ("PR merged; worktree cleaned up
 
 ## Tag vocabulary
 
-Eight tags cover the lifecycle. Every session ends with exactly one.
+Nine tags cover the lifecycle. Every session ends with exactly one.
 
 | Tag | Issued by | Meaning | Typical next action |
 | --- | --- | --- | --- |
@@ -28,6 +28,7 @@ Eight tags cover the lifecycle. Every session ends with exactly one.
 | `BLOCKED-ON-REVIEW` | `/start` Step 10 OR `/finish` Preflight/Step 8 (non-passing/unavailable/malformed verdict, OR user picked `abort`/`re-run` at the gate, OR user rejected the plan-mode preflight, OR `ExitPlanMode` tool failure at preflight) | `/quality-review` did not reach a clean pass, OR the user explicitly bailed at `/finish`'s gate or preflight, OR `ExitPlanMode` failed (tool/harness error) at preflight. Covers `terminated-with-open-items`, `escalated-to-architect`, verdict-unavailable, malformed, Step 8 `abort`/`re-run` responses, plan-mode preflight rejection, and `ExitPlanMode` tool failure | re-run `/quality-review`, escalate to architect, or investigate failure |
 | `SHIPPED-MERGE` | `/finish` Step 9 (`ACTION=merge`) | Worktree branch merged into source, worktree removed, issue Ready For Release | done |
 | `SHIPPED-PR` | `/finish` Step 9 (`ACTION=pr`) | PR opened (base = source branch in `wt` mode, else repo default branch); worktree preserved only in `wt` mode | review/merge the PR (then `git worktree remove` if it was a `wt` PR) |
+| `DEFERRED-MERGE` | `/finish` Step 9 (`ACTION=merge`, `finish-merge.sh` exit 3) | Worktree merge couldn't advance source *right now* (transient: main checkout on source with WIP, source checked out elsewhere, main mid-operation, or contention) but was self-enqueued to the local merge queue; a launchd drainer retries until it lands and marks it Ready For Release then. Issue **remains In Progress** until the merge lands (it is not released until merged). Worktree intact | none — self-resolves. Check `/merge-queue`; act only if it later flags a conflict |
 | `RELEASED` | `/finish` Step 8 (non-worktree flow) | Plain `/finish` complete, issue Ready For Release | done |
 | `CANCELED` | `/start` Step 8.5 (canceled-after-start path) | Implementation discovered the work was already done or no longer needed; issue moved to `Canceled` | manual `git worktree remove` + branch delete |
 | `ABANDONED` | `/start` Step 8.5 (abandoned-after-start path) | User halted the session before completion; issue moved back to `Planned`, worktree preserved for resumption | resume later, or clean up manually if dropping permanently |
@@ -44,6 +45,8 @@ SHIPPED-MERGE: PL-313 — merged into nextjs-descope-user, worktree removed, Rea
 SHIPPED-PR: PL-319 — PR opened, base=main head=pl-319-foo. Review/merge then git worktree remove .claude/worktrees/pl-319.
 
 SHIPPED-PR: PL-340 — PR opened (base=main, head=fix-contact-corruption), labels: pr-deploy. Review/merge the PR.
+
+DEFERRED-MERGE: PL-361 — merge queued (main checkout on source branch with uncommitted changes); will retry automatically. Check with /merge-queue.
 
 RELEASED: PL-201 — committed, pushed, marked Ready For Release.
 
@@ -64,5 +67,6 @@ IN-PROGRESS: PL-321 — implementation paused at /checkpoint, 3 of 5 requirement
 ## Cross-references
 
 - `~/.claude/skills/start/SKILL.md` — Step 10 (READY-FOR-FINISH, BLOCKED-ON-REVIEW); Step 8.5 (CANCELED, ABANDONED); `/checkpoint` interaction (IN-PROGRESS).
-- `~/.claude/skills/finish/SKILL.md` — Step 8 (RELEASED, when non-worktree); Step 9 (SHIPPED-MERGE, SHIPPED-PR).
+- `~/.claude/skills/finish/SKILL.md` — Step 8 (RELEASED, when non-worktree); Step 9 (SHIPPED-MERGE, SHIPPED-PR, DEFERRED-MERGE).
 - `~/.claude/skills/checkpoint/SKILL.md` — IN-PROGRESS on save.
+- `~/.claude/skills/merge-queue/SKILL.md` — inspect/drain the deferred-merge queue behind DEFERRED-MERGE.

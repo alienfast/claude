@@ -89,6 +89,39 @@ brew install linear-cli
 
 
 
+echo ""
+echo "Installing merge-queue drainer (launchd)..."
+# Render the plist template (launchd needs absolute paths and won't expand $HOME)
+# and (re)load it idempotently. macOS-only — the deferred-merge queue is a local
+# launchd mechanism; skip elsewhere.
+if [[ "$OSTYPE" == "darwin"* ]]; then
+  mq_label="com.alienfast.merge-queue-drain"
+  mq_template="$HOME/.claude/launchd/$mq_label.plist"
+  mq_dest="$HOME/Library/LaunchAgents/$mq_label.plist"
+  if [ -f "$mq_template" ]; then
+    mkdir -p "$HOME/Library/LaunchAgents"
+    mq_rendered=$(sed "s|__HOME__|$HOME|g" "$mq_template")
+    if [ "$mq_rendered" != "$(cat "$mq_dest" 2>/dev/null)" ]; then
+      printf '%s\n' "$mq_rendered" > "$mq_dest"
+      launchctl bootout "gui/$(id -u)/$mq_label" 2>/dev/null || true
+      if launchctl bootstrap "gui/$(id -u)" "$mq_dest" 2>/dev/null; then
+        echo "  installed/updated — drains the merge queue every 15 min."
+      else
+        echo "  WARNING: wrote $mq_dest but launchctl bootstrap failed; load it manually:"
+        echo "    launchctl bootstrap gui/\$(id -u) $mq_dest"
+      fi
+    elif launchctl print "gui/$(id -u)/$mq_label" >/dev/null 2>&1; then
+      echo "  already current."
+    else
+      launchctl bootstrap "gui/$(id -u)" "$mq_dest" 2>/dev/null \
+        && echo "  loaded — drains the merge queue every 15 min." \
+        || echo "  WARNING: could not load; run: launchctl bootstrap gui/\$(id -u) $mq_dest"
+    fi
+  fi
+else
+  echo "  skipped (macOS/launchd-only; this is $OSTYPE)."
+fi
+
 lint_and_fix "pnpm check-markdown"
 
 echo ""

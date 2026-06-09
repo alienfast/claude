@@ -42,7 +42,7 @@ DECISION=$(jq -nR -c '
       | ($v.message.content // [])[]
       | select(.type == "text")
       | lastline(.text) as $ll
-      | select($ll | test("^(READY-FOR-FINISH|BLOCKED-ON-REVIEW|CANCELED|ABANDONED|RELEASED|SHIPPED-MERGE|SHIPPED-PR):"))
+      | select($ll | test("^(READY-FOR-FINISH|BLOCKED-ON-REVIEW|CANCELED|ABANDONED|RELEASED|SHIPPED-MERGE|SHIPPED-PR|DEFERRED-MERGE):"))
       | {i: $i, line: $ll} ] as $tags
 
   | if ($tags | length) == 0 then {fire: false}
@@ -61,7 +61,7 @@ DECISION=$(jq -nR -c '
       # Most recent macro-closing tag strictly before the current tag.
       | ([ $tags[]
            | select(.i < $t.i)
-           | select(.line | test("^(RELEASED|SHIPPED-MERGE|SHIPPED-PR|BLOCKED-ON-REVIEW):")) ] | last) as $lastclose
+           | select(.line | test("^(RELEASED|SHIPPED-MERGE|SHIPPED-PR|DEFERRED-MERGE|BLOCKED-ON-REVIEW):")) ] | last) as $lastclose
       | ([ $fulls[] | select(.i < $t.i) ] | last) as $openfull
       # An open /full = a /full command before the tag, more recent than any close
       # (so a stale, already-completed earlier /full does not count).

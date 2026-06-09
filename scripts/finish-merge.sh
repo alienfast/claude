@@ -40,13 +40,20 @@
 #   4. worktree is not mid-merge/rebase/cherry-pick (a mid-merge of source is
 #      treated as an in-progress resolution → exit 2, not a hard failure)
 #   5. worktree has no uncommitted tracked changes
-#   6. main checkout (cwd) is clean and not mid-merge/rebase/cherry-pick
+#   6. main checkout (cwd) can advance source: not mid-operation, and — only when
+#      it is ON source — has a clean working tree. Transient blocks here exit 3
+#      (queued for retry), not 1.
 #
 # Exit codes:
 #   0 — done: worktree branch fast-forwarded into source, worktree + branch removed.
 #   1 — precondition failure (setup issue; the merge was never completed).
 #   2 — worktree merge conflict: state preserved IN THE WORKTREE; the orchestrator
 #       resolves there (git -C <wt-dir> add/commit) and re-invokes this script.
+#   3 — transient block: source cannot advance right now but will succeed later
+#       untouched (main checkout on source with uncommitted WIP, source checked out
+#       in another worktree, main mid-operation, or continuous contention). The
+#       script self-enqueues to the local merge queue (scripts/merge-queue.sh) for
+#       automatic retry and leaves the worktree intact. NOT a failure.
 
 set -eo pipefail
 
@@ -92,6 +99,26 @@ wt_dir="$1"
 source_branch="$2"
 worktree_branch="$3"
 message_file="$4"
+
+# The worktree dir is always .claude/worktrees/<issue-lower>, so its basename is
+# the issue slug used as the merge-queue marker key (and uppercased for display).
+issue_slug=$(basename "$wt_dir")
+
+# Self-enqueue this deferred merge so the local drainer (merge-queue.sh) retries it
+# until it lands. Best-effort: a queue-tooling hiccup must never fail the merge.
+# main_root is set in precondition 6, before any caller runs.
+enqueue_transient() {
+  [ -x "$HOME/.claude/scripts/merge-queue.sh" ] || return 0
+  "$HOME/.claude/scripts/merge-queue.sh" add \
+    "$issue_slug" "$wt_dir" "$source_branch" "$worktree_branch" "$message_file" "$main_root" "$1" 1>&2 || true
+}
+
+# Self-dequeue on success — whichever path completes the merge (drainer or a live
+# /finish re-run) clears any pending marker.
+dequeue_self() {
+  [ -x "$HOME/.claude/scripts/merge-queue.sh" ] || return 0
+  "$HOME/.claude/scripts/merge-queue.sh" remove "$issue_slug" "$main_root" 2>/dev/null || true
+}
 
 if [ ! -f "$message_file" ]; then
   echo "ERROR: merge-message file '$message_file' does not exist or is not a regular file." >&2
@@ -178,17 +205,26 @@ main_git_dir=$(git rev-parse --absolute-git-dir 2>/dev/null) || {
   echo "ERROR: main checkout: not a git repository (cwd: $PWD)" >&2
   exit 1
 }
+main_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
+cur_branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
 if [ -e "$main_git_dir/MERGE_HEAD" ] || [ -e "$main_git_dir/CHERRY_PICK_HEAD" ] \
    || [ -d "$main_git_dir/rebase-merge" ] || [ -d "$main_git_dir/rebase-apply" ]; then
-  echo "ERROR: main checkout at $PWD is mid-merge / mid-rebase / mid-cherry-pick." >&2
-  echo "This flow never leaves the main checkout mid-operation, so resolve or abort it first, then re-run /finish merge." >&2
-  echo "Worktree at $wt_dir is untouched." >&2
-  exit 1
+  echo "DEFERRED: main checkout at $PWD is mid-merge / mid-rebase / mid-cherry-pick." >&2
+  echo "Queued for automatic retry once the main checkout settles. Worktree at $wt_dir is untouched." >&2
+  enqueue_transient "main checkout mid-merge/rebase/cherry-pick"
+  exit 3
 fi
-if ! git diff --quiet || ! git diff --cached --quiet; then
-  echo "ERROR: main checkout has uncommitted changes. Commit, stash, or revert before running /finish merge." >&2
-  echo "Worktree at $wt_dir is untouched." >&2
-  exit 1
+# A dirty working tree only blocks when the main checkout is ON the source branch —
+# that's the sole advance path that touches the tree (git merge --ff-only). When it
+# is on another branch / detached, source advances ref-only via git update-ref,
+# which never reads or writes the working tree, so a dirty tree there (e.g. another
+# session's WIP on a different branch) is irrelevant and safe to ignore.
+if [ "$cur_branch" = "$source_branch" ] && { ! git diff --quiet || ! git diff --cached --quiet; }; then
+  echo "DEFERRED: main checkout is on source branch '$source_branch' with uncommitted changes." >&2
+  echo "Cannot fast-forward its working tree over uncommitted work, and multi-session safety forbids touching it." >&2
+  echo "Queued for automatic retry once that work is committed/stashed or the checkout moves off '$source_branch'. Worktree at $wt_dir is untouched." >&2
+  enqueue_transient "main checkout on source branch '$source_branch' with uncommitted changes"
+  exit 3
 fi
 
 # Best-effort fetch; offline is OK. (Updates remote-tracking refs; the merge
@@ -231,15 +267,16 @@ fi
 # below always leaves the main checkout exactly as the user left it. Bounded
 # only as a backstop against pathological continuous contention — a clean
 # re-merge loops silently and converges; it does NOT hard-fail on transient races.
-cur_branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+# (cur_branch was captured in precondition 6, before the dirty-tree relaxation.)
 max_finalize_attempts=50
 attempt=0
 while : ; do
   attempt=$((attempt + 1))
   if [ "$attempt" -gt "$max_finalize_attempts" ]; then
-    echo "ERROR: source branch kept advancing across $max_finalize_attempts attempts (continuous contention)." >&2
-    echo "Re-run /finish merge when the source branch settles. The worktree is intact." >&2
-    exit 1
+    echo "DEFERRED: source branch kept advancing across $max_finalize_attempts attempts (continuous contention)." >&2
+    echo "Queued for automatic retry once the source branch settles. The worktree is intact." >&2
+    enqueue_transient "source branch under continuous contention ($max_finalize_attempts attempts)"
+    exit 3
   fi
 
   # Re-verify, while holding the lock, that the worktree branch still descends
@@ -287,8 +324,20 @@ while : ; do
     :   # already-merged: nothing to advance.
   elif [ "$cur_branch" = "$source_branch" ]; then
     # Main checkout is on source: fast-forward updates ref AND working tree
-    # atomically. A failed ff (source moved) is a clean no-op → loop.
-    git merge --ff-only "$target" || continue
+    # atomically. A failed ff has two causes: source moved (clean no-op → loop),
+    # or the tree went dirty since precondition 6 (another session started editing
+    # source here, so ff refuses to overwrite). Distinguish them: a dirty tree is
+    # the on-source-dirty transient — defer with the accurate reason rather than
+    # spinning the contention loop 50× and reporting it as contention.
+    if ! git merge --ff-only "$target"; then
+      if ! git diff --quiet || ! git diff --cached --quiet; then
+        echo "DEFERRED: main checkout on source branch '$source_branch' became dirty mid-merge; cannot fast-forward over uncommitted work." >&2
+        echo "Queued for automatic retry once that work is committed/stashed or the checkout moves off '$source_branch'. Worktree at $wt_dir is untouched." >&2
+        enqueue_transient "main checkout on source branch '$source_branch' with uncommitted changes"
+        exit 3
+      fi
+      continue
+    fi
   else
     # Main checkout is on another branch (or detached). Refuse if source is
     # checked out in a *different* worktree (moving its ref would desync that
@@ -296,9 +345,10 @@ while : ; do
     # concurrent move is detected and retried.
     elsewhere=$(git worktree list --porcelain 2>/dev/null | awk -v b="refs/heads/$source_branch" '/^worktree /{wt=$2} /^branch /{if ($2==b) print wt}' || true)
     if [ -n "$elsewhere" ]; then
-      echo "ERROR: $source_branch is checked out in another worktree ($elsewhere); cannot advance it from here without desyncing that checkout." >&2
-      echo "Run /finish merge from $elsewhere (or switch that worktree off $source_branch), then retry. The worktree is intact." >&2
-      exit 1
+      echo "DEFERRED: $source_branch is checked out in another worktree ($elsewhere); advancing it from here would desync that checkout." >&2
+      echo "Queued for automatic retry once that worktree moves off $source_branch (or run /finish merge from there). The worktree is intact." >&2
+      enqueue_transient "source branch checked out in another worktree ($elsewhere)"
+      exit 3
     fi
     git update-ref "refs/heads/$source_branch" "$target" "$src_old" || continue
   fi
@@ -334,4 +384,6 @@ else
   echo "  git branch -D $worktree_branch"
   echo "  git update-ref -d $orig_ref"
 fi
+# Merge landed — clear any pending merge-queue marker for this issue.
+dequeue_self
 git --no-pager log --oneline -1 "$source_branch"

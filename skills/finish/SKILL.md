@@ -209,10 +209,16 @@ The script handles all three states: pre-staged changes (commit + push), already
 
 In all other cases (no worktree, or `ACTION == "merge"`), gate the transition on the `VERDICT` from Step 1.5. **Every `<...>` token in the prompt and comment bodies below is a substitution site** — replace each with the resolved value before emitting; never write a literal `<placeholder>` to chat or to Linear. The Step 4 substitution rule applies here too.
 
+**Who performs the `Ready For Release` transition (read before any branch below).** The transition belongs to whoever *completes the lifecycle*, so Linear never shows `Ready For Release` for code that is not yet merged:
+
+- **Standard flow (`ACTION` empty):** Step 8 runs `linear issues update --state "Ready For Release"` inline (the commands in the branches below) — there is no merge to wait for.
+- **`ACTION == "merge"`:** Step 8 runs the verdict **gate only** (the proceed / abort / override decisions below) and does **NOT** run `linear issues update`. The merge owns the transition: Step 9 runs it via `~/.claude/scripts/mark-ready-for-release.sh <ISSUE-ID>` **only after `finish-merge.sh` exits 0** (the merge actually landed), and the launchd drainer runs the same script when it lands an async deferral. So wherever a branch below says "proceed with the state update", in `merge` mode that means **proceed to Step 9 without changing Linear state** — the gate passed; the merge (now, or later via the queue) transitions it. On a deferred merge (exit 3) the issue therefore stays **In Progress**, which is the truth: it is not released until it is merged. **Override-comment wording in merge mode:** the override comments in the branches below — posted when the user accepts a stale/failing verdict — still post here at gate time, but in `merge` mode they must record *authorization*, not a completed transition. Replace the literal `marked Ready For Release` in any such comment body with `authorized Ready For Release (the merge applies it when it lands)` — otherwise the comment re-tells the very lie this ordering exists to prevent (asserting a release state while the code is unmerged and the issue is still In Progress). The standard flow (`ACTION` empty) keeps `marked Ready For Release` — there the state really is changed here.
+- **`ACTION == "pr"`:** Step 8 is skipped entirely (handled above).
+
 **Step 8 termination contract — applies to ALL branches below.** Per `standards/lifecycle-tags.md`, every terminal path of `/finish` Step 8 ends with exactly one tagged final line. (The Preflight has its own independent terminator — `BLOCKED-ON-REVIEW` on plan-mode rejection or `ExitPlanMode` tool failure — and never reaches Step 8.) Mechanical mapping (do not skip):
 
 - A branch that completed `linear issues update --state "Ready For Release"` AND `ACTION` from Step 0 is empty (standard flow, no Step 9 to follow) → emit `RELEASED: <ISSUE-ID> — <one-line summary>` as the last LLM-authored line.
-- A branch that completed the state update AND `ACTION == "merge"` → do NOT emit a tag here; Step 9 owns the terminal line (`SHIPPED-MERGE:`). (`ACTION == "pr"` never reaches a state update — Step 8 is skipped for it — so it isn't in these bullets; Step 9 owns `SHIPPED-PR:`. Discriminate on `ACTION`, not `SOURCE_BRANCH`: a non-worktree `pr` has an empty `SOURCE_BRANCH` yet still flows to Step 9.)
+- A branch that passed the verdict gate AND `ACTION == "merge"` → do NOT change Linear state and do NOT emit a tag here (per "Who performs the transition" above, merge mode defers the state update). Step 9 owns BOTH the Ready-For-Release transition (after the merge lands) and the terminal line (`SHIPPED-MERGE:` on a completed merge, or `DEFERRED-MERGE:` when `finish-merge.sh` exits 3 and the merge is queued — the issue stays In Progress until it lands). (`ACTION == "pr"` never reaches a state update — Step 8 is skipped for it — so it isn't in these bullets; Step 9 owns `SHIPPED-PR:`. Discriminate on `ACTION`, not `SOURCE_BRANCH`: a non-worktree `pr` has an empty `SOURCE_BRANCH` yet still flows to Step 9.)
 - A branch that exited via the user picking `abort` or `re-run` at the gate prompt → emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — <one-line reason>` as the last LLM-authored line. State was NOT changed.
 - A branch that warned-and-proceeded (`none-found`) → same as the first/second bullets depending on `ACTION`, **unless `linear issues update` itself fails, in which case bullet 5 supersedes**.
 - **A branch where `linear issues update` itself failed** (API error, auth dropped mid-session, team's terminal state name differs from `Ready For Release`) → see the **State-update failure** section below for the recovery + terminator rule. **This bullet supersedes bullets 1, 2, and 4 whenever the state update doesn't succeed** — never emit `RELEASED:` on a failed update.
@@ -224,7 +230,7 @@ The per-branch instructions below indicate which terminator each branch uses; tr
 1. Inspect the error. If it's a "no such state" rejection (the team uses a different terminal state name), apply this probe-and-match fallback — analogous to `/start` Step 8.5's CANCELED/ABANDONED fallback and `/quality-review` sub-step 6's fallback:
    - Derive the team key from the issue ID prefix (e.g., `PL-13` → team `PL`). Then probe: `linear teams states PL`.
    - Pick the first state whose name matches `/^ready[ _-]?for[ _-]?(release|deploy|ship)$/i` (exact match — NOT a prefix match — to avoid latching onto `Ready For Review`; the `[ _-]?` separator class matches `Ready For Release`, `Ready_For_Release`, `Ready-For-Release`, `ReadyForRelease`).
-   - If found, retry `linear issues update <ISSUE-ID> --state "<matched-name>"`. If it succeeds, proceed with the branch's stated terminator per the Step 8 termination contract — `RELEASED:` for the standard flow (`ACTION` empty), or **no tag here** for `ACTION == "merge"` (fall through to Step 9, which emits `SHIPPED-MERGE:`). Do NOT hardcode `RELEASED:` for a merge branch.
+   - If found, retry `linear issues update <ISSUE-ID> --state "<matched-name>"`. If it succeeds, emit the standard-flow terminator `RELEASED:`. **This whole recovery applies only to the standard flow** (`ACTION` empty) — per "Who performs the transition" above, `ACTION == "merge"` does not run `linear issues update` in Step 8 at all, so there is no Step-8 update to recover here; the merge owns the transition (Step 9 / the drainer via `mark-ready-for-release.sh`, which carries this same fallback).
    - If no match, OR if the retry also fails, fall through to step 2.
    - **Note on bare `Ready`:** the regex deliberately requires `Ready For <release|deploy|ship>` and does NOT match a bare `Ready` state. A team's `Ready` state is too ambiguous (could mean ready-for-review, ready-for-QA, etc.) to auto-route into — the issue falls through to step 2's BLOCKED-ON-REVIEW. To use bare `Ready` as a release state, rename it to `Ready For Release` or add canonical config.
 2. Surface the error to the user and emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — linear issues update failed: <reason>. State NOT changed; this issue remains In Progress.` as the terminator. **Distill `<reason>` to a single line**: if the CLI returned a multi-line error (stack trace, JSON error body), take the first informative line (typically the error message) and drop the rest — the tag must fit on one line so the agents-list parser picks it up correctly. Do NOT silently emit `RELEASED:` (it would lie about the state) and do NOT continue to Step 9 (worktree flow can't ship an issue whose state didn't transition).
@@ -303,17 +309,32 @@ The script brings the worktree branch up to source's tip **inside the worktree**
 
 **Exit codes:**
 
-- **0 (success)** — surface the script's output and present the closing message. The tagged final line (per `standards/lifecycle-tags.md`) MUST be the last LLM-authored output:
+- **0 (success)** — the merge landed, so **now** perform the Ready-For-Release transition that Step 8 deferred (the merge owns it):
 
-  ```text
-  This agent-view session is done — close it and dispatch a new session for the next issue.
+  1. Run `~/.claude/scripts/mark-ready-for-release.sh <ISSUE-ID>` — moves the issue to Ready For Release with the same team-state fallback Step 8 documents.
+     - **Exit 0** → proceed to the closing message below.
+     - **Non-zero** → the merge succeeded but the Linear update failed. Do **NOT** undo the merge. Surface the script's error and emit, as the terminal line, `SHIPPED-MERGE: <ISSUE-ID> — <WORKTREE_BRANCH> merged into <SOURCE_BRANCH>, worktree removed, but Linear state update FAILED: <reason>. Mark Ready For Release manually.` (still `SHIPPED-MERGE` — the code shipped; only the bookkeeping needs a manual touch). Then stop.
+  2. On success, surface the merge output and present the closing message. The tagged final line (per `standards/lifecycle-tags.md`) MUST be the last LLM-authored output:
 
-  SHIPPED-MERGE: <ISSUE-ID> — <WORKTREE_BRANCH> merged into <SOURCE_BRANCH>, worktree removed, Ready For Release.
-  ```
+     ```text
+     This agent-view session is done — close it and dispatch a new session for the next issue.
+
+     SHIPPED-MERGE: <ISSUE-ID> — <WORKTREE_BRANCH> merged into <SOURCE_BRANCH>, worktree removed, Ready For Release.
+     ```
 
   Do not run further bash commands.
 
-- **1 (precondition failure)** — surface the script's output and stop. Don't attempt recovery; precondition errors are setup issues (dirty checkout, missing branch, mid-merge state) that the user needs to resolve.
+- **1 (hard precondition failure)** — surface the script's output and stop. Don't attempt recovery; these are genuine setup problems the user must resolve (source branch missing, worktree gone or on the wrong branch, worktree mid-unrelated-operation or with uncommitted tracked changes, or the merge couldn't be verified). The terminal tagged line is `BLOCKED-ON-REVIEW: <ISSUE-ID> — <reason from the script>. <recovery>.` Do not run further bash commands. (Transient blocks — dirty/on-source main checkout, source checked out elsewhere, main mid-operation, contention — are **exit 3**, not 1; see below.)
+
+- **3 (transient block — deferred to the merge queue)** — the merge can't advance the source branch *right now* but will succeed later untouched (the main checkout is on the source branch with uncommitted WIP, the source branch is checked out in another worktree, the main checkout is mid-operation, or the source branch is under continuous contention). The script has **already self-enqueued** the merge to the local queue (`scripts/merge-queue.sh`); a launchd drainer retries until it lands, and **the drainer marks the issue Ready For Release when it does**. The worktree is intact and the issue **remains In Progress** — Step 8 deliberately did NOT mark it Ready For Release (the merge owns that transition, and the merge hasn't landed). That is the honest state: it is not released until it is merged. So there is **nothing more to do** here — do **not** retry, commit, mark the issue Ready For Release, or touch any other session's changes. Surface the script's `DEFERRED:` output and present the terminal tagged line (substitute the script's reason):
+
+  ```text
+  Merge deferred — it'll retry automatically once the blocker clears. Inspect any time with /merge-queue.
+
+  DEFERRED-MERGE: <ISSUE-ID> — merge queued (<reason>); will retry automatically. Check with /merge-queue.
+  ```
+
+  Do not run further bash commands.
 
 - **2 (merge conflict — resolve in the worktree)** — the script merged `<SOURCE_BRANCH>` into the worktree branch **inside `<WT_DIR>`** and hit conflicts. The main checkout is untouched and clean; the conflict lives in the worktree, which this session **owns** (edits there are permitted even under bgIsolation) and which is **private** (no lock needed — do **not** wrap these in `with-repo-lock.py`). Conflicted files are listed on the script's stderr as worktree-relative paths.
 
