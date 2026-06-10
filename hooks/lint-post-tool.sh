@@ -56,7 +56,12 @@ if [[ "$file_path" = /* && -n "$cwd" ]]; then
   file_path=$(realpath --relative-to="$cwd" "$file_path" 2>/dev/null || echo "$file_path")
 fi
 
-[[ "$file_path" == tmp/* ]] && exit 0
+# Skip scratch files in any tmp/ directory — root-level (tmp/foo.md) or nested, e.g. a worktree's .claude/worktrees/pl-XX/tmp/foo.md. Match a tmp/ path
+# segment whether file_path is repo-relative or still absolute: on macOS the BSD realpath above can't make it relative, so a bare `tmp/*` prefix never matches.
+# This is the single chokepoint that keeps throwaway files out of every linter — the project's root-anchored `.markdownlintignore` `tmp/**` misses the nested case.
+case "$file_path" in
+  tmp/*|*/tmp/*) exit 0 ;;
+esac
 [[ ! -f "$file_path" ]] && exit 0
 
 file_ext="${file_path##*.}"
