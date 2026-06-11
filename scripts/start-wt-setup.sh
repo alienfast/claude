@@ -205,6 +205,17 @@ fi
 # Setup succeeded; clear the cleanup trap so the worktree persists.
 trap - EXIT
 
+# Register this repo with the worktree reaper (reap-worktrees.sh) so its periodic launchd pass knows
+# to scan here. The reaper reclaims worktrees the normal lifecycle leaves behind: a `/finish pr` whose
+# PR merges later on GitHub, or an issue Canceled/Done directly in Linear with no live /start session.
+# Idempotent append; best-effort so a registry hiccup never fails worktree setup.
+reaper_registry="$HOME/.claude/worktree-repos.txt"
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
+if [ -n "$repo_root" ]; then
+  touch "$reaper_registry" 2>/dev/null || true
+  grep -qxF "$repo_root" "$reaper_registry" 2>/dev/null || printf '%s\n' "$repo_root" >> "$reaper_registry" 2>/dev/null || true
+fi
+
 # Warm-install dependencies so the worktree is immediately usable. `git worktree add` copies only tracked files, and node_modules is gitignored, so a fresh
 # worktree has none. The package *contents* are already in the global store (shared, content-addressed, APFS-cloned), so this is a linking-bound warm install —
 # no re-download. Runs only when node_modules is absent (covers fresh creation and resumed worktrees whose modules were never installed). Package-manager-aware

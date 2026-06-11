@@ -40,5 +40,6 @@ packages/*/.npmignore
 /locks
 /logs
 /merge-queue-repos.txt
+/worktree-repos.txt
 .last-update*
 /.claude
