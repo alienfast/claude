@@ -129,6 +129,14 @@ check_comment_widths() {
       if (substr(rest, 1, ml + 1) == marker " ") body = substr(rest, ml + 2); else body = substr(rest, ml + 1)
       # Bare lead (e.g. a lone `//` or `#`): ends the current block, belongs to none.
       if (body == "") { flush(); next }
+      # Decoration / RDoc delimiter lines whose body is ALL punctuation, never prose: ### -> "##", #++/#-- (RDoc visibility), # === banners, # => result
+      # markers. They bracket a prose block, they are not part of it, so they end the current block and belong to none (same role as the bare lead above). The
+      # 4+-run ASCII-art rule further down only catches long banners and sets skip (suppressing the WHOLE block) — it cannot see these 2-char markers, and even if
+      # it could, suppressing is wrong here: we want the bracketed prose evaluated on its own, just without the delimiter lines polluting the line count and width
+      # math. This is what made the Rails new_framework_defaults_*.rb files report nonsense ("7-line block could reflow to 3") — ###, #++, and the commented-out
+      # config line below #++ were all being counted as prose. Breaking on the punctuation-only lines isolates each to its own short block, which then falls
+      # under the 3-line threshold or reflows correctly. Bodies with any alphanumeric char (incl. backtick-led `code` prose) stay prose and are unaffected.
+      if (body !~ /[[:alnum:]]/) { flush(); next }
       sline = 0
       if (body ~ /^(biome-ignore|eslint-|@ts-|prettier-|TODO|FIXME|HACK|NOTE|XXX|@no-wrap|rubocop:|:nodoc:|noinspection)/) sline = 1
       # Ruby magic comments (ml==1, the "#" marker only) are meaningful solely in
