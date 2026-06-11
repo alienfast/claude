@@ -64,6 +64,7 @@ pnpm dlx skills add vercel-labs/agent-skills \
   -y
 
 echo "Installing linear CLI and skills..."
+brew trust joa23/linear-cli
 brew tap joa23/linear-cli https://github.com/joa23/linear-cli
 brew install linear-cli
 

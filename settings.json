@@ -136,7 +136,8 @@
       "Bash(.claude/skills/investigate/scripts/preflight.sh --need kubectl,gcloud,pulumi,jq,curl)",
       "mcp__descope-docs__search-descope-docs",
       "mcp__descope-docs__ask-question-about-descope",
-      "Bash(~/.claude/scripts/next-candidates.sh)"
+      "Bash(~/.claude/scripts/next-candidates.sh)",
+      "Bash(~/.claude/scripts/linear-post.sh comment *)"
     ],
     "deny": [],
     "ask": [
