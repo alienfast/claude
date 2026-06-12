@@ -39,20 +39,24 @@ A research-augmented path for shipping something large, from raw idea to merged 
 
 ### 3. Build loop
 
-Repeat per issue until the stage is done:
+Per issue, the loop is two commands — `/start` then `/finish`:
 
 | Step | Command | Notes |
 | ---- | ------- | ----- |
 | Build | `/start PL-12` | Assigns, creates branch, plans, implements, then auto-runs `/quality-review`. Append `wt` to work in an isolated worktree |
-| Checkpoint _(optional)_ | `/checkpoint` | Commits WIP, posts progress to Linear |
-| Review _(standalone)_ | `/quality-review` | Adversarial review + triage/fix loop until convergence |
-| Finish | `/finish` | Reads the verdict, commits, pushes, marks Ready For Release, calls `/next` |
+| Finish | `/finish` | Reads the review verdict, commits, pushes, marks Ready For Release, then calls `/next` |
 
-### Or, one-shot
+Or collapse both into one: `/full PL-12` runs `/start` → `/quality-review` → `/finish` end to end, gated on the review verdict, pausing only for plan approval and the deferred-items decision. Append `wt` to run it in an isolated worktree.
 
-Skip the manual loop: `/full PL-12` runs `/start` → `/quality-review` → `/finish` end to end, gated on the review verdict, pausing only for plan approval and the deferred-items decision. Append `wt` to run it in an isolated worktree.
+### Standalone skills
 
-Starting a new day or week? Just run `/next` for a suggestion of what to pick up.
+Reach for these as needed — between loop steps or on their own:
+
+| Skill | When |
+| ----- | ---- |
+| `/checkpoint` | Mid-task — commits WIP and posts a progress update to Linear |
+| `/quality-review` | On demand — adversarial review + triage/fix loop until convergence (also auto-runs inside `/start`) |
+| `/next` | Starting a day or week — suggests the best next issue to pick up |
 
 ## What's Included
 
