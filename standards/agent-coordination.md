@@ -179,9 +179,9 @@ Only specify execution patterns when:
 
 Otherwise, trust the model to optimize execution autonomously.
 
-### What No Longer Needs Explicit Coordination
+### What Doesn't Need Explicit Coordination
 
-With Opus 4.6, these areas handle coordination automatically:
+Modern models handle these areas automatically:
 
 - Tool selection and ordering
 - Parallel file reads for context building

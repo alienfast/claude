@@ -67,7 +67,3 @@ some content
 - `javascript`, `typescript`, `json`, `bash`, `yaml`, `text`
 - `python`, `ruby`, `go`, `rust`, `html`, `css`, `sql`
 - `console` for terminal output, `diff` for file changes
-
-## Note
-
-Markdownlint automatically fixes most issues via the global Stop hook. These rules prevent the most common violations that hooks can't easily fix.

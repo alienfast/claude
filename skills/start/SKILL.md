@@ -33,7 +33,7 @@ Violating this contract — by shipping broken code, by claiming failures were p
 
 If the args contain `wt`:
 
-1. **Run the worktree setup script.** It encapsulates all the procedural setup that used to live inline here: argument validation, source-branch capture, per-worktree config enable, issue title fetch + branch name composition, worktree create/attach/reuse with branch-collision detection, source-branch recording, and digest pre-fetch into the worktree's `tmp/`.
+1. **Run the worktree setup script.** It encapsulates the procedural setup: argument validation, source-branch capture, per-worktree config enable, issue title fetch + branch name composition, worktree create/attach/reuse with branch-collision detection, source-branch recording, and digest pre-fetch into the worktree's `tmp/`.
 
    ```bash
    ~/.claude/scripts/start-wt-setup.sh PL-13

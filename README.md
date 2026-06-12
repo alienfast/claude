@@ -167,7 +167,6 @@ Automatic quality checks that run without manual invocation.
 | Hook | Trigger | What It Does |
 |------|---------|-------------|
 | [git-permissions](hooks/git-permissions.sh) | Before git commands | Blocks destructive operations (`reset --hard`/`--mixed`, `restore`/`checkout <file>`, `clean -f`, `--force`) |
-| [lint-post-tool](hooks/lint-post-tool.sh) | After file edits | Runs Biome and markdownlint with auto-fix |
 | [full-continue](hooks/full-continue.sh) | On stop | Keeps `/full` going: re-dispatches `/finish` if the macro stalls after `READY-FOR-FINISH` |
 
 ### Background daemons

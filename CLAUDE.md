@@ -27,15 +27,11 @@ Skills activate automatically based on context, and the harness lists the full a
 
 Universal standards in `~/.claude/standards/` apply across all contexts and are indexed in [Standards README](standards/README.md) — read the relevant file when its domain comes up. `git.md` (multi-session safety, commit/PR conventions) is the broadest and most safety-critical; read it before any git operation.
 
-## Automatic Quality Checks
+## Quality Checks
 
-Hooks run automatically after edits:
+Lint and type-check before committing — see [Project Commands](standards/project-commands.md) for the commands.
 
-- Linting (biome, markdownlint) after each file modification
-
-**NEVER run biome or markdownlint manually.** No `pnpm exec biome`, no `npx biome`, no `biome check`, no `markdownlint` — not for single files, not for auto-fixing, not for any reason. The `lint-post-tool` hook handles all linting and formatting automatically after every edit. Running them manually wastes time and triggers unnecessary permission prompts.
-
-Type checking is **not** a hook — it runs via `pnpm check` (`turbo check-types`), hard-gated in `/quality-review` and re-gated in `/finish`. When working outside that flow, run `pnpm check` (or `pnpm check-types`) directly to verify types.
+Type checking is hard-gated in `/quality-review` and re-gated in `/finish`; run it directly otherwise.
 
 ## Guidelines
 

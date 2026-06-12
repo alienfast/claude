@@ -94,6 +94,13 @@ function doThing(param: string) {
 - One truth
 - One place
 
+## Instruction & Doc Files
+
+The same "git is the archive, one source of truth" rules govern CLAUDE.md, `rules/`, `standards/`, and skill docs:
+
+- **State the ideal, not the history.** Write the procedure as it should be followed now. No "was removed", "no longer", "used to", "previously", or version pins narrating change — git holds that. (The `memory/` log is the deliberate exception: dated entries are its purpose.)
+- **Single-source the specifics.** State the rule and link to the standard that owns the details; don't re-list its commands or alternatives. Duplication drifts.
+
 ## Decision Tree
 
 When asked to modify code:

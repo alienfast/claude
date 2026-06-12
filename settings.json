@@ -159,16 +159,6 @@
         ]
       }
     ],
-    "PostToolUse": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/lint-post-tool.sh"
-          }
-        ]
-      }
-    ],
     "Stop": [
       {
         "hooks": [
