@@ -58,7 +58,8 @@ fi
 
 # Skip scratch files in any tmp/ directory — root-level (tmp/foo.md) or nested, e.g. a worktree's .claude/worktrees/pl-XX/tmp/foo.md. Match a tmp/ path
 # segment whether file_path is repo-relative or still absolute: on macOS the BSD realpath above can't make it relative, so a bare `tmp/*` prefix never matches.
-# This is the single chokepoint that keeps throwaway files out of every linter — the project's root-anchored `.markdownlintignore` `tmp/**` misses the nested case.
+# This is the hook's fast-path chokepoint keeping throwaway files out of every linter here; the cli2 `ignores` in .markdownlint-cli2.jsonc does the same for the
+# VS Code markdownlint extension (which never reads .markdownlintignore), so tmp/ scratch files no longer leak diagnostics into the agent's context from either path.
 case "$file_path" in
   tmp/*|*/tmp/*) exit 0 ;;
 esac
@@ -161,11 +162,15 @@ check_comment_widths() {
 }
 
 # ----- markdown -----
+# Uses markdownlint-cli2 (NOT markdownlint v1), the same engine the VS Code extension runs, so the hook and the IDE never diverge. cli2 reads
+# the rule config from .markdownlint-cli2.{jsonc,yaml,cjs} OR a legacy .markdownlint.{jsonc,json}/.markdownlintrc, so the gate accepts either —
+# repos mid-migration keep working. Note: cli2 does NOT read .markdownlintignore; ignores live in the cli2 config's `ignores`. The tmp/ skip above
+# already covers scratch files for the hook regardless. cli2 prints a 4-line banner (markdownlint-cli2 / Finding / Linting / Summary); strip it.
 if [[ "$file_ext" == "md" || "$file_ext" == "markdown" ]]; then
-  if [[ -f ".markdownlint.jsonc" || -f ".markdownlint.json" || -f ".markdownlintrc" ]]; then
-    npx markdownlint --fix "$file_path" >/dev/null 2>&1
+  if [[ -f ".markdownlint-cli2.jsonc" || -f ".markdownlint-cli2.yaml" || -f ".markdownlint-cli2.cjs" || -f ".markdownlint.jsonc" || -f ".markdownlint.json" || -f ".markdownlintrc" ]]; then
+    npx markdownlint-cli2 --fix "$file_path" >/dev/null 2>&1
     if [[ $? -ne 0 ]]; then
-      issues=$(npx markdownlint "$file_path" 2>&1)
+      issues=$(npx markdownlint-cli2 "$file_path" 2>&1 | grep -vE '^(markdownlint-cli2 |Finding: |Linting: |Summary: )')
       [[ -n "$issues" ]] && append_context "Markdownlint issues in ${file_name}:"$'\n'"${issues}"
     fi
   fi

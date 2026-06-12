@@ -1,0 +1,27 @@
+{
+  // markdownlint-cli2 config: a single source of truth read identically by the CLI (check-markdown script, the lint-post-tool hook) and the
+  // VS Code markdownlint extension. The in-editor extension does NOT read .markdownlintignore (only the cli2 `ignores` below), which is why
+  // scratch files under tmp/ used to leak MD041 warnings into the agent's context via <ide_diagnostics> even though the CLI ignored them.
+  "config": {
+    "default": true,
+    // MD013 (line-length): we wrap prose at ~160, not 80.
+    "MD013": false,
+    // MD060 (table-column-style): newly default-on in markdownlint 0.40 and has NO auto-fixer, so `--fix` can never repair it — every existing
+    // table (delimiter rows without the single-space padding the data rows use) fails forever. With style "any" it also flip-flops between
+    // "compact" and "aligned" per table, so there is no stable target to hand-fix toward. Purely cosmetic; our GFM tables are already readable. Off.
+    "MD060": false
+  },
+  // Glob patterns to skip (micromatch, relative to this file's directory). No `globs` key on purpose: invocations pass their own targets
+  // (the script passes globs as CLI args; the hook/pre-commit pass explicit file paths), so explicit-file runs stay scoped while ignores still apply.
+  "ignores": [
+    "**/node_modules/**",
+    "**/CHANGELOG.md",
+    ".agents/skills/**",
+    ".claude/skills/**",
+    "skills/**",
+    "plugins/**",
+    "plans/**",
+    "projects/**",
+    "tmp/**"
+  ]
+}

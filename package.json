@@ -2,10 +2,10 @@
   "name": ".claude",
   "packageManager": "pnpm@11.5.1",
   "scripts": {
-    "check-markdown": "markdownlint '**/*.md' --fix"
+    "check-markdown": "markdownlint-cli2 --fix '**/*.md'"
   },
   "devDependencies": {
-    "markdownlint-cli": "^0.48.0",
+    "markdownlint-cli2": "^0.22.1",
     "typescript": "^6.0.3"
   }
 }
