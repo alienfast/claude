@@ -21,7 +21,7 @@ Use this skill when:
    - Identify the core problem being solved
 
 2. **Create the Epic/Parent Issue**
-   Use `linear issues create` with:
+   Use `linear-cli issues create` with:
    - Clear, action-oriented title
    - Problem/Context section
    - Requirements (must-have vs nice-to-have)
@@ -35,7 +35,7 @@ Use this skill when:
    - Define boundaries (what's in/out of scope)
 
 4. **Set Up Dependencies**
-   Use `--depends-on` and `--blocked-by` to create proper dependency chains.
+   Use `linear-cli relations add <BLOCKER> <BLOCKED> -r blocks` to create dependency chains (see Example Commands).
 
 ## Ticket Structure
 
@@ -79,20 +79,16 @@ npm run lint
   --priority 2 \
   -d -
 
-# Create sub-issue with inline description (short enough for a flag)
-linear issues create "Implement OAuth2 login flow" \
-  --team ENG \
-  --parent ENG-100 \
-  --description "Implement OAuth2 with Google provider..."
+# Create a sub-issue linked to a parent. `linear-cli issues create` has no --parent
+# flag (and its --data silently drops parentId), so use the helper — it creates the
+# issue, links the parent via `relations parent`, and verifies. Write the body to a file first.
+#   ...write the description to tmp/sub-issue-description.md via the Write tool...
+~/.claude/scripts/linear-create-child.sh ENG-100 ENG Planned "Add JWT refresh tokens" tmp/sub-issue-description.md
 
-# Create sub-issue with longer description from file
-~/.claude/scripts/linear-stdin.sh tmp/sub-issue-description.md issues create "Add JWT refresh tokens" \
-  --team ENG \
-  --parent ENG-100 \
-  -d -
-
-# Set dependencies
-linear issues update ENG-102 --blocked-by ENG-101
+# Set a blocking dependency: ENG-101 blocks ENG-102 (i.e. ENG-102 is blocked by ENG-101).
+# Use `-r blocks` with the blocker FIRST — the `blocked-by` enum value is broken on
+# linear-cli 0.3.26 (it sends "blockedBy", which the API rejects).
+linear-cli relations add ENG-101 ENG-102 -r blocks
 ```
 
 **Important:** For any description or body content longer than a single line, write it to `tmp/` first and use `~/.claude/scripts/linear-stdin.sh` to pass it via stdin. Do NOT use shell operators (`<`, `|`, `$()`) in Bash commands — they trigger permission prompts regardless of allow-list rules.
@@ -102,17 +98,16 @@ linear issues update ENG-102 --blocked-by ENG-101
 Before creating tickets, search for existing related work:
 
 ```bash
-# Find existing work on this topic
-linear search "authentication" --team ENG
+# Find existing work on this topic. NOTE: `search issues` has no --team flag — it
+# searches the whole workspace. Scope by team with `issues list --team ENG` or the api.
+linear-cli search issues "authentication"
 
-# Check if dependencies already exist
-linear search "OAuth" --has-dependencies --team ENG
-
-# Look for potential blockers
-linear search "user database" --team ENG
+# Look for related work / potential blockers, then inspect dependencies via the graph
+linear-cli search issues "user database"
+~/.claude/scripts/linear-deps-graph.sh --team ENG    # {nodes, edges} — see /triage for jq recipes
 ```
 
-**Pro tip:** Use `/link-deps` skill after creating tickets to discover and establish dependencies.
+**Pro tip:** After creating tickets, establish dependencies directly with `linear-cli relations add <BLOCKER> <BLOCKED> -r blocks` (blocker first; the `blocked-by` enum is broken on 0.3.26).
 
 ## Best Practices
 
@@ -120,5 +115,5 @@ linear search "user database" --team ENG
 2. **Include test commands** - Always specify how to verify completion
 3. **Be explicit about scope** - Prevent scope creep with clear boundaries
 4. **Use Labels** - Add `agent-ready` label for tickets ready for AI implementation
-5. **Establish dependencies** - Use `--blocked-by` and `--depends-on` to show work order
+5. **Establish dependencies** - Use `linear-cli relations add <BLOCKER> <BLOCKED> -r blocks` to show work order
 6. **Search first** - Check for existing related issues before creating duplicates

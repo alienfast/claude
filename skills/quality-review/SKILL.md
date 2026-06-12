@@ -63,7 +63,7 @@ Pass `--input` only when the user typed an explicit ID (e.g., `/quality-review P
 **Issue requirements** (only if an issue was resolved):
 
 ```bash
-linear issues get PL-13 --format full
+linear-cli issues get PL-13
 ```
 
 Cache the output for the entire run — do not re-fetch on each review cycle.
@@ -310,7 +310,7 @@ Reply semantics:
 - `none` → file nothing; remaining items become `Deferred dropped` in the verdict block.
 - Numeric list → file the listed numbers verbatim, **excluding any that reference the "Auto-fixed in-session" context group** — those items are already fixed and not fileable (the same exclusion `suggested` applies); silently skip such numbers rather than filing a redundant issue.
 
-For each chosen item, create the issue with the parent link set atomically. Use `linear-stdin.sh` to safely pass the description (which contains backticks, colons, and other shell-significant characters from file:line refs and rationale). Use `mktemp` for the body file so concurrent `/quality-review` runs in different sessions or worktrees do not race on a shared path. **macOS BSD `mktemp` does not replace `XXXXXX` if a suffix follows it**, so omit the extension on the template; Linear accepts the body without one. Ensure `tmp/` exists first:
+For each chosen item, create the issue and link its parent via `linear-create-child.sh` (it creates the issue, links the parent with `relations parent`, and **verifies the link** — `linear-cli issues create` has no `--parent` flag and its `--data` silently drops `parentId`, and a hand-rolled after-the-fact `issues update` is fragile: it can be skipped, silently fail, or orphan the new issue with no "Sub-issues" entry under the parent — see standards/linear-workflow.md "Spawned Issues Must Link to Their Parent"). Use `mktemp` for the body file so concurrent `/quality-review` runs in different sessions or worktrees do not race on a shared path. **macOS BSD `mktemp` does not replace `XXXXXX` if a suffix follows it**, so omit the extension on the template. Ensure `tmp/` exists first:
 
 ```bash
 mkdir -p tmp
@@ -319,29 +319,25 @@ mkdir -p tmp
 body_file=$(mktemp tmp/deferred-XXXXXX)
 # ...write body to "$body_file" via the Write tool...
 
-# 2. Create the issue with --parent set at create time so the sub-issue link is
-#    atomic. A separate `linear i update --parent` follow-up is fragile — it can
-#    be skipped, silently fail, or have its <ISSUE-ID> placeholder mis-substituted,
-#    leaving the new issue orphaned (no "Sub-issues" entry under the parent).
-#    See standards/linear-workflow.md "Spawned Issues Must Link to Their Parent".
+# 2. Create the issue under the resolved parent (the helper links it + verifies).
 #    --state Planned: deferred items have a known design intent and a documented
 #    location/rationale (sub-step 1's consolidated list). They should not need
 #    triage — they're triaged the moment we file them. Filing them into Triage
 #    instead would queue them for re-evaluation that's already been done.
-#    If no issue was resolved in Step 1, omit the `--parent` line entirely
-#    (do not invent a parent).
-new_id=$(~/.claude/scripts/linear-stdin.sh "$body_file" i create "<short title>" --team <team> --state Planned --parent <ISSUE-ID> -d - | grep -oE '[A-Z]+-[0-9]+' | head -1)
+#    If no issue was resolved in Step 1, pass "-" as the parent (a top-level issue) —
+#    do not invent a parent.
+new_id=$(~/.claude/scripts/linear-create-child.sh <ISSUE-ID> <team> Planned "<short title>" "$body_file")
 ```
 
 If `--state Planned` is rejected (the team uses different state names), follow this explicit fallback algorithm:
 
-1. Derive the team key from the issue ID prefix (e.g., `PL-13` → team `PL`). Then probe: `linear teams states PL`.
+1. Derive the team key from the issue ID prefix (e.g., `PL-13` → team `PL`). Then probe: `linear-cli statuses list -t PL`.
 2. Pick the first state whose name matches `/^(planned|backlog|to.?do)$/i` (case-insensitive, exact match — NOT a prefix match). **Deliberately exclude `ready` from this regex**: a prefix match on `ready` would latch onto `Ready For Release` or `Ready For Review` on teams that have those states, silently filing new deferred issues into a release/review state.
 3. If none match, surface the available states to the user and ask which to use (`Available: Backlog, In Review, Done … which is the "ready-to-work, not-yet-prioritized" state for this team?`) rather than silently falling through to the team default — most teams default to `Triage`, which defeats the purpose of filing deferred items that are already triaged.
 
 Do NOT silently fall through to the default.
 
-After creation, verify the parent link took (`linear i view "$new_id"` should show the parent). If it did not, surface the failure rather than proceeding — an orphaned deferred issue defeats the purpose of filing it.
+After creation, verify the parent link took (`linear-cli issues get "$new_id" -o json | jq -r '.parent.identifier'` should print the parent's ID). If it did not, surface the failure rather than proceeding — an orphaned deferred issue defeats the purpose of filing it.
 
 Items the user explicitly declined to file in this prompt go to `Deferred dropped` — record them as a list for the verdict block. (Items that never reached this prompt because Step 6 terminated early in sub-step 5 are routed to `Open items` instead — see sub-step 5.)
 
@@ -393,7 +389,7 @@ The persisted file is the canonical `/quality-review` → `/finish` handoff. The
 - **`pnpm check` repeatedly fails** after multiple `developer` delegations (Step 2 gate): surface to the user with the failing output. Do not proceed to review.
 - **Sub-step 5 corrective pass leaves `pnpm check` failing or regressions unaddressed**: the deferred-item fixes broke the application and the single corrective `developer` pass did not restore it. Set the run verdict to `terminated-with-open-items`, route per sub-step 5's verdict-population rules, and surface the failing output to the user along with the `Open items` list. Do not loop further or roll back automatically — let the user decide whether to revert, re-run `/quality-review`, or escalate to architect.
 - **No changed files detected**: warn the user and exit. Nothing to review.
-- **Issue ID provided but `linear` CLI not authenticated**: prompt `linear auth login`, then continue without issue context if the user skips.
+- **Issue ID provided but `linear-cli` not authenticated**: prompt `linear-cli auth oauth`, then continue without issue context if the user skips.
 - **`quality-reviewer` agent returns malformed findings**: a response is malformed if ANY of the following hold:
   - Missing the `## Review Findings` heading.
   - Missing any of the five required subheadings (in order: `### Critical`, `### High`, `### Medium`, `### Nice-to-Have / Out-of-Scope`, `### Approved`). Match by line-prefix with a narrow tail: the heading word(s) must be followed by either end-of-line OR ` (` (single space + opening paren, for the optional parenthetical like `(must fix before done)`). Examples that match: `### Critical`, `### Critical (must fix before done)`. Examples that do NOT match (treated as malformed under criterion 4 below): `### Critical findings`, `### Critical:`, `### CRITICAL`. Subheadings appearing out of order also count as malformed (downstream consumers scan positionally).

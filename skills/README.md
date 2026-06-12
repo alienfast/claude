@@ -148,13 +148,13 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 
 - 5-tier candidate ranking: cycle + unblocked > cycle + ready > unblocked + priority > sibling > backlog
 - Works standalone (fresh day/week) or post-finish (with just-completed context)
-- Respects triage/cycle-plan decisions as highest-signal indicators
+- Respects triage decisions as highest-signal indicators
 - Analyzes transitive unblocking from dependency graph, not just direct blockers
 
 **Structure**:
 
 - Self-contained workflow in `SKILL.md`
-- Uses `linear deps`, `linear i list --cycle current`, `linear search --blocked-by`
+- Uses `linear-deps-graph.sh` for the dependency graph, an `api` active-cycle filter, and `linear-cli issues list`
 
 ### quality-review
 
@@ -179,7 +179,7 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 
 - Self-contained workflow in `SKILL.md`
 - Delegates to `quality-reviewer` and `developer` agents
-- Uses `linear issues get` for requirement context when an issue is resolvable
+- Uses `linear-cli issues get` for requirement context when an issue is resolvable
 
 ## Creating New Skills
 

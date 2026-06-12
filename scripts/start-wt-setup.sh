@@ -36,12 +36,15 @@
 
 set -eo pipefail
 
+# linear-cli installs to ~/.cargo/bin, which is not on a non-interactive PATH.
+export PATH="$HOME/.cargo/bin:$PATH"
+
 if [ $# -ne 1 ]; then
   echo "Usage: $0 <issue-id>" >&2
   exit 1
 fi
 
-for cmd in git gh linear jq; do
+for cmd in git gh linear-cli jq; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "ERROR: required command '$cmd' not found in PATH" >&2
     exit 1
@@ -76,7 +79,7 @@ fi
 git config extensions.worktreeConfig true
 
 # Fetch issue title and compose branch name.
-issue_title=$(linear i get "$issue_id" --output json | jq -r '.title // ""')
+issue_title=$(linear-cli issues get "$issue_id" -o json | jq -r '.title // ""')
 if [ -z "$issue_title" ]; then
   echo "ERROR: could not fetch title for $issue_id" >&2
   exit 1

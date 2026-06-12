@@ -118,9 +118,14 @@ pr_is_merged() {
 # Best-effort Linear state type for an issue (completed|canceled|started|…); empty on any failure.
 linear_state_type() {
   local issue="$1"
-  have linear || return 0
+  # linear-cli installs to ~/.cargo/bin, which is not on a non-interactive PATH.
+  export PATH="$HOME/.cargo/bin:$PATH"
+  have linear-cli || return 0
   have jq || return 0
-  linear i get "$issue" --output json 2>/dev/null | jq -r '.state.type // empty' 2>/dev/null || true
+  # `issues get -o json` omits state.type (only state.name); query it via the API.
+  linear-cli api query -q -o json -v id="$issue" \
+    'query($id:String!){issue(id:$id){state{type}}}' 2>/dev/null \
+    | jq -r '.data.issue.state.type // empty' 2>/dev/null || true
 }
 
 # Evaluate one worktree dir. mode=list prints the verdict only; mode=reap also removes when eligible.
@@ -157,7 +162,7 @@ evaluate_worktree() {
   dirty=0
   [ -n "$(git -C "$dir" status --porcelain 2>/dev/null)" ] && dirty=1
 
-  # Completion evidence. The local merged check is free; only consult gh/linear when not locally
+  # Completion evidence. The local merged check is free; only consult gh/linear-cli when not locally
   # merged AND the tree is clean (a dirty worktree is never auto-reaped, so the network can't change
   # the outcome to a reap — skip it).
   reason=""

@@ -5,7 +5,7 @@ description: Finish a Linear issue — check off requirements, add completion co
 
 # Finish Issue
 
-Automates the post-completion workflow for a Linear issue using the `linear` CLI. The mechanical steps (worktree-mode detection, issue-ID resolution, Linear posts, git commit/push) are delegated to scripts in `~/.claude/scripts/`; this skill is the orchestrator + LLM-judgment surface (reading the description, composing the completion comment).
+Automates the post-completion workflow for a Linear issue using the `linear-cli` CLI. The mechanical steps (worktree-mode detection, issue-ID resolution, Linear posts, git commit/push) are delegated to scripts in `~/.claude/scripts/`; this skill is the orchestrator + LLM-judgment surface (reading the description, composing the completion comment).
 
 ## Arguments
 
@@ -96,14 +96,14 @@ Emits seven `KEY=value` lines: `VERDICT_FILE`, `VERDICT`, `CYCLES`, `SUB_ISSUES`
 
 `SUB_ISSUES` is the parent issue's **current `children` array from Linear** — i.e., every sub-issue that exists under this parent right now, not necessarily ones filed by this `/quality-review` run. Step 4 surfaces this list as context (labeled accordingly), not as a "filed this run" claim.
 
-`SUB_ISSUES_ERROR` is populated only if `linear i get` failed (CLI unauthenticated, missing issue, network blip). Step 1.5 does NOT abort on this — `linear auth login` is offered in Step 2's error handling if needed, and the rest of `/finish` can proceed without sub-issue context. Surface the warning text in chat once when populated.
+`SUB_ISSUES_ERROR` is populated only if `linear-cli issues get` failed (CLI unauthenticated, missing issue, network blip). Step 1.5 does NOT abort on this — `linear-cli auth oauth` is offered in Step 2's error handling if needed, and the rest of `/finish` can proceed without sub-issue context. Surface the warning text in chat once when populated.
 
 `VERDICT_STALE=1` means the verdict file's mtime predates HEAD's commit time — additional commits landed AFTER `/quality-review` ran, so the verdict does not reflect current code. Step 8 escalates passing-but-stale to refuse-with-override (same shape as `malformed`), preventing the gate from sailing through on an out-of-date verdict. The `VERDICT_STALE_REASON` field carries diagnostic text for the override prompt.
 
 ### Step 2: Get Issue Details
 
 ```bash
-linear issues get PL-12 --format full
+linear-cli issues get PL-12
 ```
 
 Read the description carefully. Note:
@@ -115,7 +115,7 @@ Read the description carefully. Note:
 ### Step 3: Read Current Description as JSON
 
 ```bash
-linear issues get PL-12 --output json
+linear-cli issues get PL-12 --output json
 ```
 
 Identify each `- [ ]` checkbox and decide which were completed this session. Don't post anything yet — Step 5 sends the updated description and the completion comment together.
@@ -211,35 +211,35 @@ In all other cases (no worktree, or `ACTION == "merge"`), gate the transition on
 
 **Who performs the `Ready For Release` transition (read before any branch below).** The transition belongs to whoever *completes the lifecycle*, so Linear never shows `Ready For Release` for code that is not yet merged:
 
-- **Standard flow (`ACTION` empty):** Step 8 runs `linear issues update --state "Ready For Release"` inline (the commands in the branches below) — there is no merge to wait for.
-- **`ACTION == "merge"`:** Step 8 runs the verdict **gate only** (the proceed / abort / override decisions below) and does **NOT** run `linear issues update`. The merge owns the transition: Step 9 runs it via `~/.claude/scripts/mark-ready-for-release.sh <ISSUE-ID>` **only after `finish-merge.sh` exits 0** (the merge actually landed), and the launchd drainer runs the same script when it lands an async deferral. So wherever a branch below says "proceed with the state update", in `merge` mode that means **proceed to Step 9 without changing Linear state** — the gate passed; the merge (now, or later via the queue) transitions it. On a deferred merge (exit 3) the issue therefore stays **In Progress**, which is the truth: it is not released until it is merged. **Override-comment wording in merge mode:** the override comments in the branches below — posted when the user accepts a stale/failing verdict — still post here at gate time, but in `merge` mode they must record *authorization*, not a completed transition. Replace the literal `marked Ready For Release` in any such comment body with `authorized Ready For Release (the merge applies it when it lands)` — otherwise the comment re-tells the very lie this ordering exists to prevent (asserting a release state while the code is unmerged and the issue is still In Progress). The standard flow (`ACTION` empty) keeps `marked Ready For Release` — there the state really is changed here.
+- **Standard flow (`ACTION` empty):** Step 8 runs `linear-cli issues update --state "Ready For Release"` inline (the commands in the branches below) — there is no merge to wait for.
+- **`ACTION == "merge"`:** Step 8 runs the verdict **gate only** (the proceed / abort / override decisions below) and does **NOT** run `linear-cli issues update`. The merge owns the transition: Step 9 runs it via `~/.claude/scripts/mark-ready-for-release.sh <ISSUE-ID>` **only after `finish-merge.sh` exits 0** (the merge actually landed), and the launchd drainer runs the same script when it lands an async deferral. So wherever a branch below says "proceed with the state update", in `merge` mode that means **proceed to Step 9 without changing Linear state** — the gate passed; the merge (now, or later via the queue) transitions it. On a deferred merge (exit 3) the issue therefore stays **In Progress**, which is the truth: it is not released until it is merged. **Override-comment wording in merge mode:** the override comments in the branches below — posted when the user accepts a stale/failing verdict — still post here at gate time, but in `merge` mode they must record *authorization*, not a completed transition. Replace the literal `marked Ready For Release` in any such comment body with `authorized Ready For Release (the merge applies it when it lands)` — otherwise the comment re-tells the very lie this ordering exists to prevent (asserting a release state while the code is unmerged and the issue is still In Progress). The standard flow (`ACTION` empty) keeps `marked Ready For Release` — there the state really is changed here.
 - **`ACTION == "pr"`:** Step 8 is skipped entirely (handled above).
 
 **Step 8 termination contract — applies to ALL branches below.** Per `standards/lifecycle-tags.md`, every terminal path of `/finish` Step 8 ends with exactly one tagged final line. (The Preflight has its own independent terminator — `BLOCKED-ON-REVIEW` on plan-mode rejection or `ExitPlanMode` tool failure — and never reaches Step 8.) Mechanical mapping (do not skip):
 
-- A branch that completed `linear issues update --state "Ready For Release"` AND `ACTION` from Step 0 is empty (standard flow, no Step 9 to follow) → emit `RELEASED: <ISSUE-ID> — <one-line summary>` as the last LLM-authored line.
+- A branch that completed `linear-cli issues update --state "Ready For Release"` AND `ACTION` from Step 0 is empty (standard flow, no Step 9 to follow) → emit `RELEASED: <ISSUE-ID> — <one-line summary>` as the last LLM-authored line.
 - A branch that passed the verdict gate AND `ACTION == "merge"` → do NOT change Linear state and do NOT emit a tag here (per "Who performs the transition" above, merge mode defers the state update). Step 9 owns BOTH the Ready-For-Release transition (after the merge lands) and the terminal line (`SHIPPED-MERGE:` on a completed merge, or `DEFERRED-MERGE:` when `finish-merge.sh` exits 3 and the merge is queued — the issue stays In Progress until it lands). (`ACTION == "pr"` never reaches a state update — Step 8 is skipped for it — so it isn't in these bullets; Step 9 owns `SHIPPED-PR:`. Discriminate on `ACTION`, not `SOURCE_BRANCH`: a non-worktree `pr` has an empty `SOURCE_BRANCH` yet still flows to Step 9.)
 - A branch that exited via the user picking `abort` or `re-run` at the gate prompt → emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — <one-line reason>` as the last LLM-authored line. State was NOT changed.
-- A branch that warned-and-proceeded (`none-found`) → same as the first/second bullets depending on `ACTION`, **unless `linear issues update` itself fails, in which case bullet 5 supersedes**.
-- **A branch where `linear issues update` itself failed** (API error, auth dropped mid-session, team's terminal state name differs from `Ready For Release`) → see the **State-update failure** section below for the recovery + terminator rule. **This bullet supersedes bullets 1, 2, and 4 whenever the state update doesn't succeed** — never emit `RELEASED:` on a failed update.
+- A branch that warned-and-proceeded (`none-found`) → same as the first/second bullets depending on `ACTION`, **unless `linear-cli issues update` itself fails, in which case bullet 5 supersedes**.
+- **A branch where `linear-cli issues update` itself failed** (API error, auth dropped mid-session, team's terminal state name differs from `Ready For Release`) → see the **State-update failure** section below for the recovery + terminator rule. **This bullet supersedes bullets 1, 2, and 4 whenever the state update doesn't succeed** — never emit `RELEASED:` on a failed update.
 
 The per-branch instructions below indicate which terminator each branch uses; trust the contract above for the literal tag wording.
 
-**State-update failure recovery (applies to every branch that attempts `linear issues update --state "Ready For Release"`).** If the call exits non-zero:
+**State-update failure recovery (applies to every branch that attempts `linear-cli issues update --state "Ready For Release"`).** If the call exits non-zero:
 
 1. Inspect the error. If it's a "no such state" rejection (the team uses a different terminal state name), apply this probe-and-match fallback — analogous to `/start` Step 8.5's CANCELED/ABANDONED fallback and `/quality-review` sub-step 6's fallback:
-   - Derive the team key from the issue ID prefix (e.g., `PL-13` → team `PL`). Then probe: `linear teams states PL`.
+   - Derive the team key from the issue ID prefix (e.g., `PL-13` → team `PL`). Then probe: `linear-cli statuses list -t PL`.
    - Pick the first state whose name matches `/^ready[ _-]?for[ _-]?(release|deploy|ship)$/i` (exact match — NOT a prefix match — to avoid latching onto `Ready For Review`; the `[ _-]?` separator class matches `Ready For Release`, `Ready_For_Release`, `Ready-For-Release`, `ReadyForRelease`).
-   - If found, retry `linear issues update <ISSUE-ID> --state "<matched-name>"`. If it succeeds, emit the standard-flow terminator `RELEASED:`. **This whole recovery applies only to the standard flow** (`ACTION` empty) — per "Who performs the transition" above, `ACTION == "merge"` does not run `linear issues update` in Step 8 at all, so there is no Step-8 update to recover here; the merge owns the transition (Step 9 / the drainer via `mark-ready-for-release.sh`, which carries this same fallback).
+   - If found, retry `linear-cli issues update <ISSUE-ID> --state "<matched-name>"`. If it succeeds, emit the standard-flow terminator `RELEASED:`. **This whole recovery applies only to the standard flow** (`ACTION` empty) — per "Who performs the transition" above, `ACTION == "merge"` does not run `linear-cli issues update` in Step 8 at all, so there is no Step-8 update to recover here; the merge owns the transition (Step 9 / the drainer via `mark-ready-for-release.sh`, which carries this same fallback).
    - If no match, OR if the retry also fails, fall through to step 2.
    - **Note on bare `Ready`:** the regex deliberately requires `Ready For <release|deploy|ship>` and does NOT match a bare `Ready` state. A team's `Ready` state is too ambiguous (could mean ready-for-review, ready-for-QA, etc.) to auto-route into — the issue falls through to step 2's BLOCKED-ON-REVIEW. To use bare `Ready` as a release state, rename it to `Ready For Release` or add canonical config.
-2. Surface the error to the user and emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — linear issues update failed: <reason>. State NOT changed; this issue remains In Progress.` as the terminator. **Distill `<reason>` to a single line**: if the CLI returned a multi-line error (stack trace, JSON error body), take the first informative line (typically the error message) and drop the rest — the tag must fit on one line so the agents-list parser picks it up correctly. Do NOT silently emit `RELEASED:` (it would lie about the state) and do NOT continue to Step 9 (worktree flow can't ship an issue whose state didn't transition).
+2. Surface the error to the user and emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — linear-cli issues update failed: <reason>. State NOT changed; this issue remains In Progress.` as the terminator. **Distill `<reason>` to a single line**: if the CLI returned a multi-line error (stack trace, JSON error body), take the first informative line (typically the error message) and drop the rest — the tag must fit on one line so the agents-list parser picks it up correctly. Do NOT silently emit `RELEASED:` (it would lie about the state) and do NOT continue to Step 9 (worktree flow can't ship an issue whose state didn't transition).
 
 - **`passed-clean` / `passed-after-fixes`** — proceed, BUT first check `VERDICT_STALE`:
   - `VERDICT_STALE=0` → proceed with the state update:
 
     ```bash
-    linear issues update PL-12 --state "Ready For Release"
+    linear-cli issues update PL-12 --state "Ready For Release"
     ```
 
     **Terminator:** `RELEASED:` (non-worktree) or none (worktree; Step 9 emits).
@@ -406,5 +406,5 @@ After the PR is created, present the closing message. The tagged final line (per
 
 - If the issue is already Ready For Release or Done, warn the user and ask if they want to proceed (add comment only)
 - If there are no uncommitted changes and code is already pushed, skip the git steps
-- If `linear` CLI is not authenticated, prompt: `linear auth login`
+- If `linear-cli` is not authenticated, prompt: `linear-cli auth oauth`
 - If the issue identifier can't be found, ask the user explicitly

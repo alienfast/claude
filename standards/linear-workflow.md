@@ -2,7 +2,7 @@
 
 ## Passing File Content to Linear CLI
 
-**Never use shell operators (`<`, `|`, `$()`, heredocs) in Bash commands with the `linear` CLI.** Claude Code's permission wildcards don't match through shell operators, so these commands always trigger permission prompts regardless of allow-list rules.
+**Never use shell operators (`<`, `|`, `$()`, heredocs) in Bash commands with the `linear-cli` CLI.** Claude Code's permission wildcards don't match through shell operators, so these commands always trigger permission prompts regardless of allow-list rules.
 
 For the two most common operations — updating a description or adding a comment — prefer `~/.claude/scripts/linear-post.sh`, which wraps the stdin plumbing and picks the right flag for each kind:
 
@@ -30,9 +30,9 @@ For other operations (most notably `i create` with a file body), use the underly
 3. `~/.claude/scripts/linear-post.sh <comment|description> <issue-id> tmp/<file>.md`
    (or `~/.claude/scripts/linear-stdin.sh tmp/<file>.md <linear-args> -d -` for non-comment/description ops)
 
-Short inline values can be passed directly: `linear i create "Bug" --team PL -d "Brief description"`
+Short inline values can be passed directly: `linear-cli issues create "Bug" --team PL -d "Brief description"`
 
-**This overrides any examples in the linear skill** that use `cat file | linear`, `< file`, or `$(cat <<EOF)`. Those patterns will trigger permission prompts.
+**This overrides any examples in the linear skill** that use `cat file | linear-cli`, `< file`, or `$(cat <<EOF)`. Those patterns will trigger permission prompts.
 
 ## Workflow States
 
@@ -47,12 +47,12 @@ When evaluating whether an issue's blockers are resolved (for triage, dependency
 
 ## Implication for Skills
 
-Any skill that checks whether blockers are resolved (triage, deps, next, cycle-plan) should treat "Ready For Release" identically to "Done" when determining if an issue is workable.
+Any skill that checks whether blockers are resolved (triage, next) should treat "Ready For Release" identically to "Done" when determining if an issue is workable.
 
 ## Spawned Issues Must Link to Their Parent
 
-Any Linear issue created as a follow-up from another issue's workflow (deferred items from `/quality-review`, sub-tasks from `/prd`, etc.) MUST be created with `--parent <originating-issue-id>` on the `linear i create` call itself.
+Any Linear issue created as a follow-up from another issue's workflow (deferred items from `/quality-review`, sub-tasks from `/prd`, etc.) MUST be linked to its originating issue. Use `~/.claude/scripts/linear-create-child.sh <parent> <team> <state> <title> <body-file>` — `linear-cli issues create` has no `--parent` flag (and its `--data` silently drops `parentId`), so the helper creates the issue, links the parent with `relations parent`, and **verifies the link, failing hard on an orphan**.
 
-Do not split creation and linking into two CLI calls (`linear i create ...` then `linear i update <new> --parent <orig>`). The second call is easy to skip when filing several issues in a row, easy to silently fail (the new issue already exists, so the workflow looks successful), and easy to mis-substitute when `<ISSUE-ID>` is a literal placeholder. Any of those failure modes leaves the new issue orphaned in Linear's UI — no "Sub-issues" entry under the parent, no breadcrumb on the child.
+Do not hand-roll create-then-link in a skill (`linear-cli issues create ...` followed by a separate `relations parent`/`issues update --data '{"parentId":...}'`). An un-verified second call is easy to skip when filing several issues in a row, easy to silently fail (the new issue already exists, so the workflow looks successful), and easy to mis-substitute when `<ISSUE-ID>` is a literal placeholder — leaving the issue orphaned in Linear's UI (no "Sub-issues" entry under the parent, no breadcrumb on the child). The helper exists precisely so the link is always made AND verified in one invocation; always route through it.
 
 If the originating context has no issue ID, file the new issue without `--parent` — never invent a parent.

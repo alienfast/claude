@@ -66,13 +66,7 @@
       "Bash(kubectl get:*)",
       "Bash(kubectl logs:*)",
       "Bash(less -X)",
-      "Bash(linear deps *)",
-      "Bash(linear i get *)",
-      "Bash(linear i list *)",
-      "Bash(linear issues get *)",
-      "Bash(linear issues list *)",
-      "Bash(linear search *)",
-      "Bash(linear:*)",
+      "Bash(linear-cli:*)",
       "Bash(ls:*)",
       "Bash(lsof:*)",
       "Bash(make:*)",
@@ -137,7 +131,12 @@
       "mcp__descope-docs__search-descope-docs",
       "mcp__descope-docs__ask-question-about-descope",
       "Bash(~/.claude/scripts/next-candidates.sh)",
-      "Bash(~/.claude/scripts/linear-post.sh comment *)"
+      "Bash(~/.claude/scripts/linear-post.sh comment *)",
+      "Bash(~/.claude/scripts/linear-post.sh description *)",
+      "Bash(~/.claude/scripts/linear-context.sh *)",
+      "Bash(~/.claude/scripts/linear-deps-graph.sh *)",
+      "Bash(~/.claude/scripts/linear-create-child.sh *)",
+      "Bash(~/.claude/scripts/mark-ready-for-release.sh *)"
     ],
     "deny": [],
     "ask": [

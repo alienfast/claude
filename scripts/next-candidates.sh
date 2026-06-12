@@ -19,6 +19,10 @@
 
 set -eo pipefail
 
+# linear-cli installs to ~/.cargo/bin, which is not on a non-interactive PATH.
+export PATH="$HOME/.cargo/bin:$PATH"
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+
 # ---------- arg parsing ----------
 
 team_arg=""
@@ -53,7 +57,7 @@ if [ -n "$completed" ]; then
   fi
 fi
 
-for cmd in linear jq awk; do
+for cmd in linear-cli jq awk; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "ERROR: required command '$cmd' not found in PATH" >&2
     exit 3
@@ -80,33 +84,69 @@ tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
 
 list_file="$tmpdir/list.json"
-list_err="$tmpdir/list.err"
 deps_file="$tmpdir/deps.json"
 deps_err="$tmpdir/deps.err"
+deps_raw="$tmpdir/deps.raw.json"
 cycle_file="$tmpdir/cycle.json"
+cycle_raw="$tmpdir/cycle.raw.json"
 cycle_err="$tmpdir/cycle.err"
 
-linear i list --team "$team_key" --limit 250 --output json >"$list_file" 2>"$list_err" &
+# Paginated team-issue fetch via the api. `issues list` omits `estimate`, returns
+# assignee.name (a display name on real workspaces — NOT the email the ranking compares
+# against), and silently caps at the page size; the api gives estimate + assignee.email
+# and pages through everything. Writes the array already in the shape the ranking
+# pipeline expects (state→name string, assignee→email string) directly to $out.
+fetch_team_issues() {
+  local team="$1" out="$2" after='' all='[]' page nodes has
+  local q='query($team:String!,$after:String){issues(filter:{team:{key:{eq:$team}}, state:{type:{nin:["completed","canceled"]}}}, first:250, after:$after){nodes{identifier title estimate priority state{name} assignee{email}} pageInfo{hasNextPage endCursor}}}'
+  while :; do
+    if [ -z "$after" ]; then
+      page=$(linear-cli api query -q -o json -v team="$team" "$q" 2>/dev/null)
+    else
+      page=$(linear-cli api query -q -o json -v team="$team" -v after="$after" "$q" 2>/dev/null)
+    fi
+    [ -n "$page" ] || return 1
+    [ "$(printf '%s' "$page" | jq 'has("errors")')" = "true" ] && return 1
+    nodes=$(printf '%s' "$page" | jq -c '.data.issues.nodes // []')
+    all=$(jq -n --argjson a "$all" --argjson b "$nodes" '$a + $b')
+    has=$(printf '%s' "$page" | jq -r '.data.issues.pageInfo.hasNextPage // false')
+    after=$(printf '%s' "$page" | jq -r '.data.issues.pageInfo.endCursor // empty')
+    { [ "$has" = "true" ] && [ -n "$after" ]; } || break
+  done
+  printf '%s' "$all" | jq '[ .[]
+    | {identifier, title, state:(.state.name // "?"), priority:(.priority // 0),
+       estimate:(.estimate // 0), assignee:(.assignee.email // null)} ]' > "$out"
+}
+
+fetch_team_issues "$team_key" "$list_file" &
 list_pid=$!
 
-linear deps --team "$team_key" --output json >"$deps_file" 2>"$deps_err" &
+# Dependency graph via the api-backed helper (paginated internally; no `deps` command).
+"$SCRIPT_DIR/linear-deps-graph.sh" --team "$team_key" >"$deps_raw" 2>"$deps_err" &
 deps_pid=$!
 
-# Cycle fetch allowed to fail (team may have no active cycle).
-linear i list --team "$team_key" --cycle current --limit 250 --output json >"$cycle_file" 2>"$cycle_err" &
+# Current-cycle issue ids via the active-cycle filter (a cycle's issue count is small,
+# so a single page is fine). Allowed to fail / be empty (team may have no active cycle).
+linear-cli api query -q -o json -v team="$team_key" \
+  'query($team:String!){issues(filter:{team:{key:{eq:$team}}, cycle:{isActive:{eq:true}}}, first:250){nodes{identifier}}}' \
+  >"$cycle_raw" 2>"$cycle_err" &
 cycle_pid=$!
 
-wait "$list_pid" || { echo "ERROR: linear i list (team $team_key) failed:" >&2; cat "$list_err" >&2; exit 2; }
-wait "$deps_pid" || { echo "ERROR: linear deps (team $team_key) failed:" >&2; cat "$deps_err" >&2; exit 2; }
-if ! wait "$cycle_pid"; then
-  # No active cycle is not fatal — tiers 2/3 simply collapse.
-  : > "$cycle_file"
-  printf '[]' > "$cycle_file"
-fi
+wait "$list_pid" || { echo "ERROR: team-issue fetch (team $team_key) failed (auth? network?)" >&2; exit 2; }
+wait "$deps_pid" || { echo "ERROR: linear-deps-graph.sh (team $team_key) failed:" >&2; cat "$deps_err" >&2; exit 2; }
+wait "$cycle_pid" || printf '{}' >"$cycle_raw"   # no active cycle is not fatal — tiers 2/3 collapse
+
+# Normalize deps + cycle into the pipeline shapes (the list is already normalized above).
+#   deps  → {nodes:[{identifier, state:<name>}], edges:[{from,to,type}]}
+#   cycle → array of {identifier}
+jq '{nodes: [ (.nodes // [])[] | {identifier, state: (.state.name // .state // "?")} ],
+     edges: (.edges // [])}' "$deps_raw" >"$deps_file"
+jq '[ (.data.issues.nodes // [])[] | {identifier} ]' "$cycle_raw" >"$cycle_file" 2>/dev/null \
+  || printf '[]' >"$cycle_file"
 
 # ---------- my email ----------
 
-me_email=$(linear auth status 2>/dev/null | awk '/^User:/ { print $2; exit }' || true)
+me_email=$(linear-cli api query -q -o json 'query{viewer{email}}' 2>/dev/null | jq -r '.data.viewer.email // empty' || true)
 
 # ---------- jq pipeline: workable filter + tiering ----------
 
@@ -117,9 +157,9 @@ ACTIVE_STATES='["In Progress"]'
 
 # Build a canonical state map from BOTH the deps graph (covers blockers that
 # may live outside the workable list) and the team list (richer fields). The
-# `state` field is a string in both endpoints, so no object/string coercion
-# needed here — but `linear i get` returns {name,...} so we coerce in the
-# parent walk later.
+# fetch step above normalized `state` to a name string in both files, so no
+# object/string coercion is needed here — but `linear-cli issues get` returns
+# {name,...} so we coerce in the parent walk later.
 state_map_json=$(jq -s '
   (.[0].nodes // []) as $nodes
   | (.[1] // []) as $issues
@@ -276,12 +316,12 @@ if [ "$parent_walk" -eq 1 ] && [ -n "$top_ids" ]; then
   pids=()
   while IFS= read -r id; do
     [ -z "$id" ] && continue
-    (linear i get "$id" --output json >"$fetch_dir/$id.json" 2>/dev/null || true) &
+    (linear-cli issues get "$id" -o json >"$fetch_dir/$id.json" 2>/dev/null || true) &
     pids+=($!)
   done <<< "$top_ids"
   for pid in "${pids[@]}"; do wait "$pid" || true; done
 
-  # Step 2: extract parent chains (climb via repeated linear i get on each
+  # Step 2: extract parent chains (climb via repeated linear-cli issues get on each
   # ancestor). Cache hits skip the fetch. Bounded by max_depth=10.
   max_depth=10
 
@@ -307,10 +347,10 @@ if [ "$parent_walk" -eq 1 ] && [ -n "$top_ids" ]; then
         cur_json="$cached"
       else
         if [ ! -s "$fetch_dir/$cur.json" ]; then
-          (linear i get "$cur" --output json >"$fetch_dir/$cur.json" 2>/dev/null || true)
+          (linear-cli issues get "$cur" -o json >"$fetch_dir/$cur.json" 2>/dev/null || true)
         fi
         if [ ! -s "$fetch_dir/$cur.json" ]; then break; fi
-        # Normalize state to a string (linear i get returns {name, ...}).
+        # Normalize state to a string (linear-cli issues get returns {name, ...}).
         cur_json=$(jq -c '{
           identifier: .identifier,
           title: .title,
@@ -318,7 +358,7 @@ if [ "$parent_walk" -eq 1 ] && [ -n "$top_ids" ]; then
           parent_id: (.parent.identifier // null)
         }' "$fetch_dir/$cur.json")
         # Update cache.
-        tmp_cache=$(mktemp)
+        tmp_cache=$(mktemp "$tmpdir/cache-XXXXXX")
         jq --arg k "$cur" --argjson v "$cur_json" '. + {($k): $v}' "$parent_cache_file" > "$tmp_cache"
         mv "$tmp_cache" "$parent_cache_file"
       fi

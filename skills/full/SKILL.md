@@ -103,7 +103,7 @@ Compose the args string for `/finish` based on mode:
 | `SHIPPED-MERGE` | `wt` mode without `pr` (`/finish` Step 9 `ACTION == "merge"` block) | Stop. Terminal. Worktree removed by `/finish`. **Anomaly in non-`wt` mode** — should not occur because `finish-detect-mode.sh` exit 2 would have rejected `merge`. |
 | `SHIPPED-PR` | **Either** mode with `pr` (`/finish` Step 9 `ACTION == "pr"` block) — `wt` PR (base = source branch, worktree preserved) or in-place PR (base = default branch, no worktree) | Stop. Terminal. The PR is the lifecycle boundary; in `wt` mode the worktree is preserved for post-merge cleanup. **Anomaly when `pr` was NOT passed** — `SHIPPED-PR` without a `pr` token means `/finish` took an unexpected path; treat as terminal but surface the mismatch in chat. |
 | `DEFERRED-MERGE` | `wt` mode without `pr` (`/finish` Step 9 `ACTION == "merge"`, `finish-merge.sh` exit 3) | Stop. Terminal. The merge hit a transient block and was self-enqueued to the local merge queue; a launchd drainer retries until it lands and marks it Ready For Release then. Issue **remains In Progress** until the merge lands; worktree intact. **Self-resolving — do NOT retry `/finish` or touch other sessions' changes.** **Anomaly in non-`wt` mode** — `merge` can't occur without a worktree; treat as terminal but surface the mismatch. |
-| `BLOCKED-ON-REVIEW` | Either mode | Stop. Terminal. State unchanged; branch (and worktree, if `wt`) intact. (E.g., user picked `abort` at the stale-verdict prompt, or `linear issues update` failed.) |
+| `BLOCKED-ON-REVIEW` | Either mode | Stop. Terminal. State unchanged; branch (and worktree, if `wt`) intact. (E.g., user picked `abort` at the stale-verdict prompt, or `linear-cli issues update` failed.) |
 
 That tagged line is `/full`'s terminal output. Do not wrap it, do not add a closing summary, do not re-emit the issue title.
 
@@ -133,4 +133,4 @@ That tagged line is `/full`'s terminal output. Do not wrap it, do not add a clos
 - **Multiple issue IDs** — error: `/full accepts exactly one issue identifier.`
 - **`pr` + `no push`** — error: `/finish pr requires pushing the branch. Remove 'no push' or use plain /full <ISSUE-ID> [wt].` See Arguments fail-fast rule 1.
 - **`/start` errors mid-flight (e.g., baseline `pnpm check` fails, worktree setup fails in `wt` mode)** — those are `/start`'s contracts to surface. The macro never reaches Step 2; nothing to do.
-- **`/finish` errors mid-flight (e.g., merge precondition failure, `linear issues update` fails)** — those are `/finish`'s contracts to surface (BLOCKED-ON-REVIEW with the failure reason). The macro does not re-attempt.
+- **`/finish` errors mid-flight (e.g., merge precondition failure, `linear-cli issues update` fails)** — those are `/finish`'s contracts to surface (BLOCKED-ON-REVIEW with the failure reason). The macro does not re-attempt.

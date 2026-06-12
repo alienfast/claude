@@ -1,391 +1,78 @@
 ---
 name: linear
-description: Linear issue tracking - MUST READ before using Linear commands
+description: Linear via linear-cli — MUST READ before running Linear commands, especially for reading comments or dependencies (the obvious commands silently miss both)
 ---
 
-# Linear Issue Tracking - Complete Reference
+# Linear (linear-cli) — Quick Reference
 
-**READ THIS FIRST** - Token-efficient CLI for managing issues, dependencies, and cycles.
+Linear is driven by **Finesssee `linear-cli`** (Rust; binary `linear-cli`, installed to `~/.cargo/bin`). This is a short reference for the **non-obvious** parts — for everything else use `linear-cli <cmd> --help`, `linear-cli common`, or `linear-cli agent`.
 
----
+Auth: `linear-cli auth oauth` (browser) or `LINEAR_API_KEY`; check with `linear-cli auth status`. The full issue lifecycle is automated by the in-repo skills (`/start`, `/finish`, `/full`, `/checkpoint`, `/next`, `/quality-review`, `/prd`, `/triage`) — no install step.
 
-⚠️  **INSTALL ALL SKILLS FOR FULL WORKFLOW AUTOMATION**
+## ⚠️ Gotchas that bite (read these)
 
-Run `linear skills install --all` to get specialized workflows:
-- `/prd` - Create agent-friendly tickets with PRDs
-- `/triage` - Prioritize backlog by staleness and blockers
-- `/cycle-plan` - Plan cycles using velocity analytics
-- `/retro` - Generate sprint retrospectives
-- `/deps` - Analyze dependency chains and blockers
-- `/link-deps` - Discover and link related issues
+1. **Anchored (inline) comments are invisible to the obvious commands.** A comment made by *highlighting text in the issue description* is stored on the description's `documentContent`, NOT on `issue.comments`. `linear-cli comments list <ID>` and `issues get` return only standalone comments and will report "no comments" while reviewer corrections sit on the description. **To read an issue with its full comment thread, use the digest:**
 
-Without these skills, you're only using basic commands. Install them to unlock full agentic capabilities.
+   ```bash
+   ~/.claude/scripts/linear-context.sh PL-13          # markdown digest: desc + deps + standalone AND anchored comments
+   ```
 
----
+   Raw form (what the digest does): resolve the issue's `documentContent.id`, then
+   `comments(filter:{documentContent:{id:{eq:<that id>}}})` via `linear-cli api query`.
 
-## Authentication Modes
+2. **No dependency commands or flags.** There is no `deps` command and no `search --has-blockers/--blocked-by/--has-circular-deps`. Get the graph as `{nodes, edges}` and filter with `jq`:
 
-When you run `linear auth login`, you choose:
+   ```bash
+   ~/.claude/scripts/linear-deps-graph.sh PL-13        # local graph (issue + neighbors)
+   ~/.claude/scripts/linear-deps-graph.sh --team PL    # whole-team graph (active issues)
+   ```
 
-- **User mode**: `--assignee me` assigns to your personal Linear account
-- **Agent mode**: `--assignee me` assigns to the OAuth app (delegate), visible as a separate entity
+   Per-issue relations also exist directly: `linear-cli relations list <ID>`.
 
-Check current mode:
+3. **`issues create` has no `--parent` flag** (and its `--data` silently drops `parentId`). Use the helper — it creates the issue, links the parent with `relations parent`, and verifies the link:
+
+   ```bash
+   ~/.claude/scripts/linear-create-child.sh <parent|-> <team> <state|-> <title> <body-file>
+   ```
+
+4. **Unassign** = `linear-cli issues assign <ID>` with the user omitted.
+
+5. **Workflow states** = `linear-cli statuses list -t <TEAM>` (there is no `teams states`).
+
+6. **Escape hatch.** Anything the dedicated commands can't do: `linear-cli api query`/`api mutate` run raw GraphQL against the Linear API (this is why we use linear-cli — the previous CLI had no such hatch).
+
+## Command map
+
 ```bash
-linear auth status   # Shows: Mode: User or Mode: Agent
-```
-
-**Important:** If you see "Auth mode not set", re-run `linear auth login` to configure.
-
-## Command Reference
-
-```bash
-# Setup
-linear init                              # Set default team (.linear.yaml)
-linear onboard                           # Show teams, states, quick reference
-linear auth login|logout|status          # OAuth authentication (sets user/agent mode)
-
 # Issues (alias: i)
-linear i list [flags]                    # List issues
-linear i get <ID>                        # Get details (CEN-123)
-linear i create <title> [flags]          # Create issue
-linear i update <ID> [flags]             # Update issue
-linear i comment <ID> -b "text"          # Add comment
-linear i react <ID> 👍                   # Add reaction
+linear-cli issues get <ID> [-o json]          # single issue (state is {name}; --comments adds STANDALONE comments only)
+linear-cli issues list --team <KEY> [--limit N] [--state X] [--assignee me] [-o json]
+linear-cli issues create "<title>" --team <KEY> [--state X] [-d -]   # description via stdin with -d -
+linear-cli issues update <ID> [--state X] [--assignee me|<user>] [--priority N] [--data -]
+linear-cli issues assign <ID> [<user>]        # omit <user> to UNASSIGN
+linear-cli issues comment <ID> --body -       # add a comment (body via stdin)
 
-# Projects (alias: p)
-linear p list [--mine]                   # List projects
-linear p create <name> [flags]           # Create project
+# Comments / relations / search / statuses
+linear-cli comments list <ID>                 # STANDALONE only — see gotcha #1 for anchored
+linear-cli relations add <BLOCKER> <BLOCKED> -r blocks   # "A blocked by B" = relations add B A -r blocks (the blocked-by enum is broken on 0.3.26); also -r related|duplicate
+linear-cli relations parent <CHILD> <PARENT>             # set parent (issues create has no --parent flag)
+linear-cli search issues "<query>" [--filter 'state.name=Backlog']   # workspace-wide; NO --team flag (use `issues list --team` to scope)
+linear-cli statuses list -t <KEY>
 
-# Cycles (alias: c)
-linear c list [--active]                 # List cycles
-linear c get <number>                    # Get cycle (requires init)
-linear c analyze --team <KEY>            # Velocity analytics
-
-# Teams, Users
-linear teams list                        # List teams
-linear teams states <KEY>                # Workflow states
-linear users list [--team <KEY>]         # List users
-
-# Search & Dependencies
-linear search <query> [flags]            # Semantic search across all entities
-linear deps <ID>                         # Dependency graph
-linear deps --team <KEY>                 # All team dependencies
+# Projects / users / uploads
+linear-cli projects get|list|create ...
+linear-cli users list ; linear-cli whoami
+linear-cli uploads fetch "<uploads.linear.app URL>" -f <file>   # authenticated download
 ```
 
-## Output Formats
-
-**All commands support JSON output for automation:**
-
-```bash
-# Text output (default) - token-efficient ASCII
-linear i list
-linear i get CEN-123
-
-# JSON output - machine-readable
-linear i list --output json
-linear i get CEN-123 --output json
-
-# Control detail level with --format
-linear i list --format minimal --output json   # Essential fields (~50 tokens)
-linear i list --format compact --output json   # Key metadata (~150 tokens, default)
-linear i list --format full --output json      # Complete details (~500 tokens)
-
-# Pipe to jq for filtering
-linear i list --priority 1 --output json | jq '.[] | select(.state == "In Progress")'
-
-# Export for processing
-linear cycles analyze --team CEN --output json > velocity.json
-```
-
-**When to use JSON:**
-- Parsing data programmatically
-- Filtering results with jq
-- Storing/processing bulk data
-- Integrating with other tools
-
-**Supported commands:**
-- `issues list`, `issues get`
-- `cycles list`, `cycles get`, `cycles analyze`
-- `projects list`, `projects get`
-- `teams list`, `teams get`, `teams labels`, `teams states`
-- `users list`, `users get`, `users me`
-- `search` (all operations)
-
-## Semantic Search
-
-**The search is SEMANTIC** - finds related issues even without exact matches.
-
-```bash
-# Basic semantic search
-linear search "authentication"           # Finds: auth, login, OAuth, SSO, etc.
-
-# Cross-entity search
-linear search "sprint planning" --type all     # Search issues, cycles, projects, users
-
-# Entity-specific
-linear search "database migration" --type issues
-linear search "john" --type users
-```
-
-## Dependency Management
-
-### Finding Blocked Work (Critical for Unblocking)
-
-```bash
-# Find ALL blocked issues (run this weekly!)
-linear search --has-blockers --team CEN
-
-# Find high-priority blocked work
-linear search --priority 1 --has-blockers --team CEN
-
-# What's blocked by a specific bottleneck?
-linear search --blocked-by CEN-123
-
-# What blocks a critical feature?
-linear search --blocks CEN-456
-```
-
-### Dependency Analysis
-
-```bash
-# Visualize full dependency graph for issue
-linear deps CEN-123
-
-# See all team dependencies (detect circular deps)
-linear deps --team CEN
-
-# Find issues with circular dependencies
-linear search --has-circular-deps --team CEN
-
-# Find deep dependency chains
-linear search --max-depth 5 --team CEN
-```
-
-## Cycle Analytics & Velocity
-
-**Analyze past cycles to predict capacity:**
-
-```bash
-# Analyze last 10 cycles
-linear c analyze --team CEN --count 10
-
-# Output shows:
-# - Completed vs planned points
-# - Velocity trend
-# - Completion rate
-# - Recommendations for next cycle capacity
-```
-
-**Use before sprint planning to set realistic goals!**
-
-## Powerful Filter Combinations
-
-```bash
-# High-priority in-progress work assigned to me
-linear i list --priority 1 --state "In Progress" --assignee me
-
-# Backlog items with blockers (prioritize removing blockers!)
-linear search --state Backlog --has-blockers --team CEN
-
-# Customer-facing bugs in current cycle
-linear i list --labels customer,bug --cycle 65 --format full
-
-# Unassigned high-priority work
-linear search --priority 1 --assignee none --team CEN
-
-# Work depending on other issues (check before starting)
-linear search --has-dependencies --state "In Progress" --team CEN
-```
-
-## Creating Issues with Dependencies
-
-```bash
-# Simple issue
-linear i create "Fix login bug" --team CEN --priority 1
-
-# Full issue with dependencies
-linear i create "Add OAuth integration" \
-  --team CEN \
-  --state "In Progress" \
-  --priority 2 \
-  --assignee me \
-  --parent CEN-100 \
-  --depends-on CEN-99 \
-  --blocked-by CEN-98 \
-  --labels backend,security \
-  --estimate 5 \
-  --cycle 65 \
-  --project "Auth Revamp" \
-  --due 2026-02-01
-
-# With description from file (use linear-stdin.sh to avoid permission prompts)
-~/.claude/scripts/linear-stdin.sh spec.md i create "Feature title" --team CEN -d -
-```
-
-## Passing File Content to Linear CLI
-
-**All description and body flags support stdin via `-`.** Use `~/.claude/scripts/linear-stdin.sh` to pass file content — it wraps the stdin redirect so Bash permission wildcards match correctly.
-
-```bash
-# Usage: ~/.claude/scripts/linear-stdin.sh <file> <linear-args...>
-
-# Create issue with description from file
-~/.claude/scripts/linear-stdin.sh tmp/description.md i create "Feature title" \
-  --team CEN \
-  --priority 1 \
-  -d -
-
-# Update issue description
-~/.claude/scripts/linear-stdin.sh tmp/linear-description-cen-123.md i update CEN-123 -d -
-
-# Add comment from file
-~/.claude/scripts/linear-stdin.sh tmp/linear-comment-cen-123.md i comment CEN-123 -b -
-```
-
-**Standard workflow** for any command that passes file content:
-
-1. Use the `Write` tool to save content to `tmp/<descriptive-name>.md`
-2. Run `~/.claude/scripts/linear-stdin.sh tmp/<file>.md <linear-args> -d -` (or `-b -` for comments)
-
-**Why not use shell redirects directly?** Claude Code's Bash permission wildcards don't match through shell operators (`<`, `|`, `$()`). The helper script wraps the redirect internally so permissions work.
-
-**For short inline values** (no file needed):
-
-```bash
-# Short descriptions/comments can be passed directly as arguments
-linear i create "Fix login bug" --team CEN --priority 1 -d "Brief description here"
-linear i comment CEN-123 -b "Quick status update"
-```
-
-## Output Formats (Token Efficiency)
-
-```bash
-# Minimal - most token-efficient (IDs only)
-linear i list --format minimal
-
-# Compact - balanced (default)
-linear i list --format compact
-
-# Full - all details (use for single issues)
-linear i get CEN-123 --format full
-linear search "auth" --limit 5 --format full
-```
-
-## Real-World Workflows
-
-### Weekly Unblocking Routine
-```bash
-# 1. Find all blocked work
-linear search --has-blockers --team CEN --format full
-
-# 2. For each blocker, check status
-linear i get CEN-123 --format full
-
-# 3. Update blockers or reassign blocked work
-linear i update CEN-123 --state "In Progress" --assignee me
-```
-
-### Sprint Planning
-```bash
-# 1. Check velocity
-linear c analyze --team CEN --count 5
-
-# 2. Find backlog candidates
-linear search --state Backlog --team CEN --format compact
-
-# 3. Check dependencies before committing
-linear deps --team CEN
-
-# 4. Assign to cycle
-linear i update CEN-456 --cycle 66 --assignee alice@co.com
-```
-
-### Dependency Discovery (Before Creating Issues)
-```bash
-# 1. Search for related work
-linear search "authentication refactor" --team CEN
-
-# 2. Check what depends on foundation work
-linear search --depends-on CEN-100
-
-# 3. Link new issue to dependencies
-linear i create "Add JWT refresh" --depends-on CEN-100,CEN-101
-```
-
-### Finding Work Order
-```bash
-# 1. Visualize dependencies
-linear deps --team CEN
-
-# 2. Start with issues that have no blockers
-linear search --state Backlog --team CEN | grep -v "Blocked by"
-
-# 3. Work that unblocks the most
-linear search --blocking <critical-feature-id>
-```
-
-## Common Patterns
-
-```bash
-# Find work for specific person
-linear i list --assignee alice@company.com --format compact
-
-# High-priority work in active cycle
-linear i list --priority 1 --cycle current --team CEN
-
-# All bugs
-linear i list --labels bug --team CEN
-
-# Overdue issues
-linear i list --state "In Progress" --team CEN # Check due dates manually
-
-# Issues I created
-linear i list --creator me --team CEN
-```
-
-## Tips for LLMs
-
-1. **Always run `linear init` first** - sets default team
-2. **Use semantic search liberally** - finds related work without exact keywords
-3. **Check blockers weekly** - `linear search --has-blockers` prevents stalled work
-4. **Analyze velocity before planning** - `linear c analyze` gives realistic estimates
-5. **Visualize dependencies** - `linear deps --team <KEY>` shows work order
-6. **Use --format full sparingly** - token-expensive, use for single issues only
-7. **Combine filters** - search is powerful with multiple constraints
-8. **Issue IDs work everywhere** - CEN-123 format, no team context needed
-9. **Cycle numbers need init** - Run `linear init` before using cycle numbers
-
-## Flag Reference
-
-**Issue Flags:**
-- `-t, --team <KEY>` - Team (from init or manual)
-- `-s, --state <name>` - Workflow state
-- `-p, --priority <0-4>` - 0=none, 1=urgent, 2=high, 3=normal, 4=low
-- `-a, --assignee <email|me>` - Assign to user
-- `-c, --cycle <number>` - Cycle number
-- `-P, --project <name>` - Project name
-- `-e, --estimate <points>` - Story points
-- `-l, --labels <list>` - Comma-separated
-- `-d, --description <text|->` - Description (- for stdin)
-- `--parent <ID>` - Parent issue
-- `--depends-on <IDs>` - Comma-separated dependencies
-- `--blocked-by <IDs>` - Comma-separated blockers
-- `--due <date>` - Due date (YYYY-MM-DD)
-- `--attach <file>` - Attach file
-
-**Search Flags:**
-- `--type <entity>` - issues, cycles, projects, users, all
-- `--blocked-by <ID>` - Issues blocked by this
-- `--blocks <ID>` - Issues that block this
-- `--has-blockers` - Any blockers
-- `--has-dependencies` - Any dependencies
-- `--has-circular-deps` - Circular dependency chains
-- `--max-depth <n>` - Max dependency depth
-- `-n, --limit <n>` - Results limit
-- `-f, --format <type>` - minimal, compact, full
-
-**Output Formats:**
-- `--format minimal` - IDs only (most token-efficient)
-- `--format compact` - Balanced (default)
-- `--format full` - All details (use sparingly)
+Output flags (agent-friendly): `-o json|ndjson`, `-q` (quiet), `--id-only`, `--compact`, `--fields <a,b>`.
+
+## In-repo helper scripts
+
+| Script | Purpose |
+|---|---|
+| `linear-context.sh <ID>` | Full issue digest **including anchored comments** (gotcha #1). |
+| `linear-deps-graph.sh <ID> \| --team <KEY>` | Dependency graph as `{nodes, edges}` (gotcha #2). |
+| `linear-create-child.sh <parent\|-> <team> <state\|-> <title> <body-file>` | Parent-linked issue create — create → `relations parent` → verify (gotcha #3). |
+| `linear-post.sh <comment\|description> <ID> <body-file>` | Post a comment or replace a description from a file. |
+| `mark-ready-for-release.sh <ID>` | Move to Ready-For-Release **and unassign**. |

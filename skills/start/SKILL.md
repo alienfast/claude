@@ -5,7 +5,7 @@ description: Start working on a Linear issue — check blockers, assign, move to
 
 # Start Issue
 
-Automates the full workflow for starting and implementing a Linear issue using the `linear` CLI.
+Automates the full workflow for starting and implementing a Linear issue using the `linear-cli` CLI.
 
 ## Working Application Contract
 
@@ -107,10 +107,10 @@ For each unresolved blocker:
 
 The digest covers most context. Reach for these only when its summary is insufficient for the work at hand:
 
-**Full comment bodies** (digest shows only first line of each comment):
+**Full standalone comment bodies** (the digest shows *anchored* comments in full, but truncates *standalone* comments to their first line):
 
 ```bash
-linear i comments PL-13
+linear-cli comments list PL-13
 ```
 
 **Project description** (digest does not include the project body; the digest's `**Project ID:**` line is the project UUID). Use the project ID directly from the Step 1 digest:
@@ -118,22 +118,21 @@ linear i comments PL-13
 ```bash
 # Read the **Project ID:** value from the digest you printed in Step 1.
 # If the digest had no Project ID line, the issue has no project — skip.
-linear p get <project-uuid-from-digest>
+linear-cli projects get <project-uuid-from-digest>
 ```
 
 **Inline images** — `uploads.linear.app` URLs from the digest's Attachments section require authentication; do NOT use `WebFetch` or `curl`:
 
 ```bash
-linear attachments download "https://uploads.linear.app/..." --output tmp/
-# → tmp/linear-img-<hash>.png
+linear-cli uploads fetch "https://uploads.linear.app/..." -f tmp/linear-img.png
 ```
 
-Then `Read` the downloaded path to view the image.
+Then `Read` the downloaded path (`tmp/linear-img.png`) to view the image.
 
 ### Step 4: Assign & Move to In Progress
 
 ```bash
-linear issues update PL-13 --assignee me --state "In Progress"
+linear-cli issues update PL-13 --assignee me --state "In Progress"
 ```
 
 ### Step 5: Ensure Correct Git Branch
@@ -276,7 +275,7 @@ Acceptance: [How to verify success — MUST include "pnpm check passes"]
 
 ```bash
 # Get current description
-linear issues get PL-13 --output json
+linear-cli issues get PL-13 --output json
 ```
 
 Update completed checkboxes (`- [ ]` → `- [x]`) and push the update:
@@ -325,10 +324,10 @@ Steps:
 2. Move the Linear issue state to a "canceled" terminal state. Try the canonical name first, then fall back per `/quality-review` sub-step 6's fallback pattern:
 
    ```bash
-   linear issues update <ISSUE-ID> --state Canceled
+   linear-cli issues update <ISSUE-ID> --state Canceled
    ```
 
-   If the team's canceled-state name differs (rejected), derive the team key from the issue ID prefix (e.g., `PL-13` → team `PL`), then probe `linear teams states PL` and pick the first state whose name matches `/^(canceled|cancelled|won.?t.?do|abandoned)/i` (case-insensitive, prefix). If none match, surface the available states to the user and ask which to use — do not silently fall through to the team default.
+   If the team's canceled-state name differs (rejected), derive the team key from the issue ID prefix (e.g., `PL-13` → team `PL`), then probe `linear-cli statuses list -t PL` and pick the first state whose name matches `/^(canceled|cancelled|won.?t.?do|abandoned)/i` (case-insensitive, prefix). If none match, surface the available states to the user and ask which to use — do not silently fall through to the team default.
 3. Surface the cleanup commands to the user (do NOT run them automatically — the worktree might contain in-progress notes worth saving):
 
    ```bash
@@ -354,10 +353,10 @@ Steps:
 2. Move the Linear issue state back to a "ready-to-work" state. Try the canonical name first, then fall back per `/quality-review` sub-step 6's fallback pattern:
 
    ```bash
-   linear issues update <ISSUE-ID> --state Planned
+   linear-cli issues update <ISSUE-ID> --state Planned
    ```
 
-   If the team's planned-state name differs (rejected), derive the team key from the issue ID prefix (e.g., `PL-13` → team `PL`), then probe `linear teams states PL` and pick the first state whose name matches `/^(planned|backlog|to.?do)$/i` (exact match on these four; NOT a prefix match) — preferring `Planned` if present, since it preserves the "we intend to do this" signal more strongly than `Backlog`. **Deliberately exclude `ready` from the regex** — a prefix match on `ready` would latch onto `Ready For Release` or `Ready For Review` on teams that have those states, silently moving an abandoned issue into a release/review state. If none match, surface the available states to the user and ask which to use — do not silently fall through to the team default.
+   If the team's planned-state name differs (rejected), derive the team key from the issue ID prefix (e.g., `PL-13` → team `PL`), then probe `linear-cli statuses list -t PL` and pick the first state whose name matches `/^(planned|backlog|to.?do)$/i` (exact match on these four; NOT a prefix match) — preferring `Planned` if present, since it preserves the "we intend to do this" signal more strongly than `Backlog`. **Deliberately exclude `ready` from the regex** — a prefix match on `ready` would latch onto `Ready For Release` or `Ready For Review` on teams that have those states, silently moving an abandoned issue into a release/review state. If none match, surface the available states to the user and ask which to use — do not silently fall through to the team default.
 3. **Preserve the worktree** — the whole point of `ABANDONED` (vs `CANCELED`) is that resumption is expected. Do not run `git worktree remove` and do not delete the branch.
 4. Emit the tagged final line and stop:
 
@@ -419,5 +418,5 @@ When implementation and review are complete, present a summary to the user that 
 - If the issue is already In Progress assigned to someone else, warn the user and ask whether to reassign
 - If the issue is already Done or Ready For Release, warn the user and ask if they want to reopen it
 - If there are unresolved blockers, list them and ask the user how to proceed
-- If `linear` CLI is not authenticated, prompt: `linear auth login`
+- If `linear-cli` is not authenticated, prompt: `linear-cli auth oauth`
 - If a git branch for this issue already exists, switch to it instead of creating a new one

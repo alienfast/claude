@@ -18,12 +18,12 @@ Use this skill when:
 
 1. **Fetch the Backlog**
    ```bash
-   linear issues list --team ENG
+   linear-cli issues list --team ENG
    ```
 
 2. **Analyze Dependencies**
    ```bash
-   linear deps --team ENG
+   ~/.claude/scripts/linear-deps-graph.sh --team ENG
    ```
 
 3. **Identify Issues**
@@ -82,40 +82,50 @@ Healthy: 25 (55%)
 
 ```bash
 # List all issues for a team
-linear issues list --team ENG
+linear-cli issues list --team ENG
 
-# Check dependencies
-linear deps --team ENG
+# Check dependencies (emits {nodes, edges} JSON — see Discovery Commands below)
+~/.claude/scripts/linear-deps-graph.sh --team ENG
 
 # Update priority
-linear issues update ENG-123 --priority 2
+linear-cli issues update ENG-123 --priority 2
 
 # Add a comment about triage
-linear issues comment ENG-123 --body "Triaged: Needs unblocking before sprint"
+linear-cli issues comment ENG-123 --body "Triaged: Needs unblocking before sprint"
 ```
 
-## Discovery Commands (NEW)
+## Discovery Commands
 
-Use search to discover triage-worthy issues:
+`linear-cli` has no dependency-aware search flags, so derive blocked/blocking/blocked-by from the team dependency graph (`linear-deps-graph.sh` emits `{nodes, edges}`) with `jq`, and use `search issues` for keyword/state. Fetch the graph once and reuse it:
 
 ```bash
-# Find all blocked issues that need attention
-linear search --has-blockers --state "In Progress" --team ENG
+TERMINAL='["Done","Canceled","Cancelled","Duplicate","Ready For Release"]'
+GRAPH=$(~/.claude/scripts/linear-deps-graph.sh --team ENG)
 
-# Find high priority work that's blocked
-linear search --priority 1 --has-blockers --team ENG
+# Find all blocked issues (>=1 unresolved blocker) that need attention
+printf '%s' "$GRAPH" | jq -r --argjson term "$TERMINAL" '
+  (.nodes | map({(.identifier): .state.name}) | add) as $sm
+  | [.edges[] | select(.type=="blocks")] | group_by(.to)
+  | map({issue: .[0].to, blockers: [.[].from]})
+  | .[] | select(any(.blockers[]; . as $b | ($term | index($sm[$b] // "?")) == null))
+  | "\(.issue) ⟵ blocked by \(.blockers | join(", "))"'
 
-# Find issues in circular dependencies (always needs fixing)
-linear search --has-circular-deps --team ENG
+# Find work blocked by a specific bottleneck (e.g. ENG-100)
+printf '%s' "$GRAPH" | jq -r '[.edges[] | select(.type=="blocks" and .from=="ENG-100") | .to][]'
 
-# Find work blocked by a specific bottleneck
-linear search --blocked-by ENG-100 --team ENG
+# Best-effort circular dependencies — mutual A↔B blocks. (Longer cycles are not
+# detected; this catches the common two-issue case. Escalate anything it surfaces.)
+printf '%s' "$GRAPH" | jq -r '
+  [.edges[] | select(.type=="blocks")] as $e
+  | [$e[] as $x | $e[] | select(.from==$x.to and .to==$x.from and .from < .to) | "\(.from) ↔ \(.to)"] | unique[]'
 
-# Search for stale work by keyword
-linear search "authentication" --state "Backlog" --team ENG
+# Search for work by keyword, filtered by state. NOTE: `search issues` has NO --team
+# flag — it searches the whole workspace; --filter runs on returned fields (state.name),
+# not team. To scope by team, use `issues list --team ENG` (above) or the api.
+linear-cli search issues "authentication" --filter 'state.name=Backlog'
 ```
 
-**Pro tip:** Run `linear search --has-blockers --team ENG` weekly to identify and unblock stuck work.
+**Pro tip:** Run the blocked-issues recipe weekly to identify and unblock stuck work.
 
 ## Best Practices
 

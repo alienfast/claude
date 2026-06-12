@@ -55,8 +55,8 @@ The script's tier reasons (e.g. "in current cycle + newly unblocked", "sibling u
 
 - Exit 1 — arg error. Read stderr and fix the invocation.
 - Exit 2 — Linear/network failure. Surface the error message verbatim and stop.
-- Exit 3 — missing dependency (`linear`, `jq`). Tell the user to install it.
-- If `linear auth status` shows logged out, prompt: `linear auth login`.
+- Exit 3 — missing dependency (`linear-cli`, `jq`). Tell the user to install it.
+- If `linear-cli auth status` shows logged out, prompt: `linear-cli auth oauth`.
 
 ## Notes on the Algorithm
 

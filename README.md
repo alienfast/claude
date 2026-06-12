@@ -96,11 +96,11 @@ Specialized personas the main thread delegates to — directly, or through skill
 
 Automated multi-step workflows invoked by trigger phrases or slash commands.
 
-**Linear Integration:** ([see CLI](https://github.com/joa23/linear-cli))
+**Linear Integration:** ([see CLI](https://github.com/Finesssee/linear-cli))
 
 | Skill | Description |
 |-------|-------------|
-| [linear](skills/linear/) | Issue tracking CLI with semantic search and velocity analytics |
+| [linear](skills/linear/) | `linear-cli` quick-reference — the gotchas (anchored comments, dependency graph, parent-linked create) + helper scripts |
 | [start](skills/start/) | Start a Linear issue — check blockers, assign, create branch, plan, execute, auto-review |
 | [checkpoint](skills/checkpoint/) | Save progress — commit WIP and post progress update to Linear |
 | [quality-review](skills/quality-review/) | Adversarial review + triage/fix loop until convergence (gates `pnpm check`) |
@@ -109,10 +109,6 @@ Automated multi-step workflows invoked by trigger phrases or slash commands.
 | [next](skills/next/) | Suggest best next issue using cycle, dependency, and triage signals |
 | [triage](skills/triage/) | Analyze backlog for staleness, blockers, and priority suggestions |
 | [prd](skills/prd/) | Create agent-friendly tickets with PRDs and success criteria |
-| [cycle-plan](skills/cycle-plan/) | Plan cycles using velocity analytics and historical capacity |
-| [retro](skills/retro/) | Analyze completed cycles for retrospectives |
-| [deps](skills/deps/) | Visualize issue dependency chains and circular dependencies |
-| [link-deps](skills/link-deps/) | Discover and link related issues as dependencies |
 | [reap-worktrees](skills/reap-worktrees/) | Inspect and reclaim leftover `/start wt` worktrees (PR/branch merged, or issue Done/Canceled) |
 | [merge-queue](skills/merge-queue/) | Inspect and drain `/finish` merges that were deferred, then retried by the launchd drainer |
 

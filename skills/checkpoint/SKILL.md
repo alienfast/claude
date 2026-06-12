@@ -59,7 +59,7 @@ If there are no staged or unstaged changes (working tree is clean), warn the use
 ### Step 4: Get Issue Details
 
 ```bash
-linear issues get PL-42 --format full
+linear-cli issues get PL-42
 ```
 
 Read the description. Note:
@@ -73,7 +73,7 @@ If any `- [ ]` checkboxes have been completed, update them now.
 
 ```bash
 # Get current description as JSON
-linear issues get PL-42 --output json
+linear-cli issues get PL-42 --output json
 ```
 
 For each `- [ ]` checkbox in the description:
@@ -199,6 +199,6 @@ Do not emit any trailing prose after the tagged line.
 - **On main/master**: Refuse — "Checkpoint is for feature branches. Switch to a feature branch first."
 - **No changes**: Warn — "Nothing to checkpoint. Working tree is clean." Exit.
 - **No issue found**: Ask the user for the issue identifier.
-- **`linear` CLI not authenticated**: Prompt `linear auth login`.
+- **`linear-cli` not authenticated**: Prompt `linear-cli auth oauth`.
 - **Push fails**: Warn but don't fail — the commit is saved locally. User can push later.
 - **Linear post fails (Step 8 `linear-post.sh` exits non-zero)**: Surface the error to the user, preserve the staging file (`tmp/linear-checkpoint-<issue-id-lowercased>.md`), and proceed to Step 9 — which inspects the exit code and emits `IN-PROGRESS:` with an inline WARNING that Linear was NOT updated and a recovery command. Do not silently emit a clean `IN-PROGRESS:` (the agents-list would then claim success while Linear has no record of the checkpoint).

@@ -23,7 +23,7 @@
 #   SUB_ISSUES=<comma-separated PL-XX list of parent's current children, or empty>
 #     (NOTE: these are all current children of the parent — not necessarily
 #     filed by THIS /quality-review run. /finish must label accordingly.)
-#   SUB_ISSUES_ERROR=<warning text if `linear i get` failed, else empty>
+#   SUB_ISSUES_ERROR=<warning text if `linear-cli issues get` failed, else empty>
 #   VERDICT_STALE=<0|1>
 #     1 → verdict file's mtime predates HEAD's commit time. The user landed
 #         additional commits AFTER /quality-review ran, so the verdict no
@@ -37,6 +37,9 @@
 #   2 = missing ISSUE-ID argument or not in a git repo
 
 set -eo pipefail
+
+# linear-cli installs to ~/.cargo/bin, which is not on a non-interactive PATH.
+export PATH="$HOME/.cargo/bin:$PATH"
 
 if [ $# -ne 1 ]; then
   echo "ERROR: usage: $(basename "$0") <ISSUE-ID>" >&2
@@ -101,14 +104,14 @@ if [ -n "$verdict_file" ]; then
   fi
 fi
 
-# Query sub-issues via linear CLI. Use --format full --output json to get the
-# children array. Tolerate the case where the issue doesn't exist, the CLI
-# isn't authenticated, or the issue has no children — none of those should
-# abort /finish (auth prompt fires in Step 2; missing-issue is surfaced
-# elsewhere). Emit empty SUB_ISSUES and a warning instead.
+# Query sub-issues via linear-cli `issues get -o json`, whose `.children` is a
+# {nodes:[...]} connection. Tolerate the case where the issue doesn't exist, the CLI
+# isn't authenticated, or the issue has no children — none of those should abort
+# /finish (auth prompt fires in Step 2; missing-issue is surfaced elsewhere). Emit
+# empty SUB_ISSUES and a warning instead.
 sub_issues=""
 sub_issues_error=""
-if json=$(linear i get "$issue_id" --format full --output json 2>/dev/null); then
+if json=$(linear-cli issues get "$issue_id" -o json 2>/dev/null); then
   sub_issues=$(printf '%s' "$json" | python3 -c '
 import json, sys
 try:
@@ -116,11 +119,13 @@ try:
 except Exception:
     sys.exit(0)
 ch = d.get("children") or []
-ids = [c.get("identifier") for c in ch if c.get("identifier")]
+if isinstance(ch, dict):          # linear-cli returns {nodes:[...]}; tolerate a bare list too
+    ch = ch.get("nodes") or []
+ids = [c.get("identifier") for c in ch if isinstance(c, dict) and c.get("identifier")]
 print(",".join(ids))
 ' 2>/dev/null || true)
 else
-  sub_issues_error="linear i get $issue_id failed (linear CLI installed? auth? missing issue?) — SUB_ISSUES unavailable"
+  sub_issues_error="linear-cli issues get $issue_id failed (linear-cli installed? auth? missing issue?) — SUB_ISSUES unavailable"
   echo "WARN: $sub_issues_error" >&2
 fi
 

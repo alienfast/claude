@@ -9,15 +9,23 @@
 #              underlying linear-stdin.sh uses `< "$file"` which treats `-`
 #              as a literal filename.
 #
-# Wraps linear-stdin.sh with the correct subcommand and flag for each kind:
-#   comment      → linear issues comment <id> --body -
-#   description  → linear issues update  <id> --description -
+# Maps each kind to its linear-cli invocation:
+#   comment      → linear-cli issues comment <id> --body -      (body via stdin)
+#   description  → linear-cli issues update  <id> --data  -      (JSON via stdin)
+#
+# linear-cli's `--description` flag takes no stdin, so the description path wraps the
+# file as a `{description: ...}` JSON object and feeds it to `--data -`. This keeps
+# arbitrarily large descriptions off the command line (no ARG_MAX risk) and preserves
+# newlines/quotes. The comment path uses `--body -`, which reads stdin natively.
 #
 # Centralizes the boilerplate that previously appeared in /start (plan post,
 # progress checkpoints, description checkoff) and /finish (completion
 # comment, description checkoff). Errors to stderr; non-zero exit on failure.
 
 set -eo pipefail
+
+# linear-cli installs to ~/.cargo/bin, which is not on a non-interactive PATH.
+export PATH="$HOME/.cargo/bin:$PATH"
 
 if [ $# -ne 3 ]; then
   echo "Usage: $0 <comment|description> <issue-id> <body-file>" >&2
@@ -40,7 +48,9 @@ case "$kind" in
     exec "$SCRIPT_DIR/linear-stdin.sh" "$body_file" issues comment "$issue_id" --body -
     ;;
   description)
-    exec "$SCRIPT_DIR/linear-stdin.sh" "$body_file" issues update "$issue_id" --description -
+    command -v jq >/dev/null 2>&1 || { echo "ERROR: jq not found on PATH" >&2; exit 1; }
+    # Wrap the file content as {description: <body>} and feed it to --data - (stdin).
+    jq -Rs '{description: .}' "$body_file" | linear-cli issues update "$issue_id" --data -
     ;;
   *)
     echo "ERROR: unknown kind '$kind'; expected 'comment' or 'description'" >&2
