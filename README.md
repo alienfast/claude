@@ -48,6 +48,25 @@ Per issue, the loop is two commands — `/start` then `/finish`:
 
 Or collapse both into one: `/full PL-12` runs `/start` → `/quality-review` → `/finish` end to end, gated on the review verdict, pausing only for plan approval and the deferred-items decision. Append `wt` to run it in an isolated worktree.
 
+### Parallelism
+
+The `wt` token is what makes fan-out safe. Spin up several concurrent Claude agents — one per issue — and let each drive a `wt` run at the same time:
+
+```text
+agent 1:  /full wt PL-1
+agent 2:  /full wt PL-2
+agent 3:  /full wt PL-3
+```
+
+Each runs end to end independently, and the machinery keeps them from colliding:
+
+- **Isolation by worktree.** `/start wt` checks out the issue's branch in its own git worktree under `<repo>/.claude/worktrees/<issue>`, so every agent gets a private working tree and branch — edits, installs, and checkpoints never step on each other or on your main checkout.
+- **Serialized merge.** When each `/finish` lands, it advances the shared source branch under a per-repo lock ([scripts/with-repo-lock.py](scripts/with-repo-lock.py)): the worktree branch is first brought up to source's tip _inside its own worktree_ (any conflicts resolved there, never in the main checkout), then source moves by a clean `git merge --ff-only` or an atomic `git update-ref`. Concurrent finishes block briefly and merge in turn, so source is only ever advanced cleanly.
+- **Deferred, never forced.** A merge that can't advance right now — e.g. the main checkout is sitting on the shared branch with another session's WIP — is enqueued rather than failed: it leaves the worktree intact and a launchd drainer retries every ~15 min until it lands. Inspect with `/merge-queue`; conflicts are never resolved unattended.
+- **Self-cleanup.** Finished worktrees are reclaimed by the hourly reaper — check with `/reap-worktrees`.
+
+For heavy fan-out, keep your main checkout parked on a quiet branch (not the shared integration branch) so every merge advances source by a ref-only update and the queue rarely engages. The full merge protocol lives in [standards/git.md](standards/git.md).
+
 ### Standalone skills
 
 Reach for these as needed — between loop steps or on their own:
