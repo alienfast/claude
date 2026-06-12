@@ -221,26 +221,27 @@ Generate a categorized line-count breakdown to quantify the PR's impact. This se
 **Step 1: Get the raw totals** (with rename detection):
 
 ```bash
-git diff --shortstat -M "$BASE"...HEAD
+git diff --shortstat -M -l0 "$BASE"...HEAD
 ```
 
 **Step 2: Categorize by purpose** using `git diff --numstat`.
 
-**Run the awk program *verbatim*, inside the single quotes shown** — do **not** re-wrap it in double
-quotes, or the shell expands awk's `$1`/`$2`/`$3` to empty (`added+=;`, `if ( ~ /lock…/)`) and awk dies
-with a syntax error. (This only bites on this inline path, where the one-liner is transcribed into a Bash
-call; the `analyze-pr.sh` helper is immune — its copy of the program lives in a file.) The block below
-captures the table, reconciles its `TOTAL` against the same numstat (filtered by the *same* `$3` test, so
-renames like `{a => b}/pnpm-lock.yaml` are handled identically on both sides), and on a mismatch prints an
-error and **exits without emitting the table** — so a stripped or half-run program can't quietly ship a
-wrong total. It is a total-reconciliation check, not a per-category validator:
+The categorization program lives in [`scripts/code-impact.awk`](scripts/code-impact.awk) and is run with
+`awk -f` — **do not paste the program inline.** Keeping it in a file is what removes the old shell-quoting
+hazard: transcribed into a Bash one-liner, awk's `$1`/`$2`/`$3` get expanded away by the shell and the
+counts silently corrupt. `awk -f` never passes the program through the shell, so the fields are safe. The
+block below captures the table, reconciles its `TOTAL` against the same numstat (filtered by the *same*
+`$3` test, so renames like `{a => b}/pnpm-lock.yaml` are handled identically on both sides), and on a
+mismatch prints an error and **exits without emitting the table** — cheap insurance that the awk file
+resolved and ran. It is a total-reconciliation check, not a per-category validator:
 
 ```bash
-impact=$(git diff --numstat -M "$BASE"...HEAD | awk '{if ($3 ~ /lock\.yaml$|lock\.json$|\.lock$/) next; added+=$1; removed+=$2; file=$3; if (file ~ /\.stories\./) {sa+=$1; sr+=$2} else if (file ~ /mock|Mock/) {ma+=$1; mr+=$2} else if (file ~ /generated|packages\/graphql\//) {ga+=$1; gr+=$2} else if (file ~ /ops\//) {ia+=$1; ir+=$2} else if (file ~ /\.(yml|yaml|json|css|scss|svg|md)$/) {la+=$1; lr+=$2} else {ca+=$1; cr+=$2}} END {printf "%-20s %8s %8s %8s\n", "Category", "Added", "Removed", "Net"; printf "%-20s %8d %8d %8d\n", "App code", ca, cr, ca-cr; printf "%-20s %8d %8d %8d\n", "Stories", sa, sr, sa-sr; printf "%-20s %8d %8d %8d\n", "Mocks", ma, mr, ma-mr; printf "%-20s %8d %8d %8d\n", "Generated", ga, gr, ga-gr; printf "%-20s %8d %8d %8d\n", "Ops/Infra", ia, ir, ia-ir; printf "%-20s %8d %8d %8d\n", "Config/Assets", la, lr, la-lr; printf "%-20s %8d %8d %8d\n", "TOTAL", added, removed, added-removed}')
-expected=$(git diff --numstat -M "$BASE"...HEAD | awk '$3 ~ /lock\.yaml$|lock\.json$|\.lock$/ {next} {s+=$1+$2} END{print s+0}')
+AWK="$HOME/.claude/skills/pr-update/scripts/code-impact.awk"
+impact=$(git diff --numstat -M -l0 "$BASE"...HEAD | awk -f "$AWK")
+expected=$(git diff --numstat -M -l0 "$BASE"...HEAD | awk '$3 ~ /lock\.yaml$|lock\.json$|\.lock$/ {next} {s+=$1+$2} END{print s+0}')
 got=$(echo "$impact" | awk '/^TOTAL/{print $2+$3}')
 if [[ "${expected:-0}" -gt 0 && "${got:-0}" -ne "${expected:-0}" ]]; then
-  echo "ERROR: Code Impact totals ($got) don't reconcile with the diff ($expected) — the awk \$1/\$2/\$3 fields were stripped. Re-run the one-liner VERBATIM inside single quotes (never double quotes)." >&2
+  echo "ERROR: Code Impact total ($got) does not reconcile with the diff ($expected) — check that $AWK exists and ran." >&2
   exit 1
 fi
 echo "$impact"
@@ -248,12 +249,14 @@ echo "$impact"
 
 **Notes:**
 
-- Use `-M` flag for rename detection (prevents inflated counts from file renames)
-- "App code" captures source code files (ts, tsx, rb, etc.) — config/asset files (yml, json, css, lock, svg, md) are separated into "Config/Assets" to keep the signal clean
-- Adjust category patterns to match project structure:
+- Use `-M -l0` for rename detection: `-M` matches moved files so renames don't inflate counts, and `-l0` lifts git's default ~1000-file rename cap so moves still net out on large diffs (otherwise git gives up and a pure move double-counts as add + remove)
+- "App code" captures source code files (ts, tsx, rb, etc.) — config/asset files (yml, json, css, lock, svg, md) are separated into "Config/Assets" to keep the signal clean, and test code is split into its own **Unit tests** / **E2E tests** buckets so production churn reads true
+- Category patterns live in `code-impact.awk` (first-match-wins, most-specific first) — edit them there to match project structure:
   - `\.stories\.` — Storybook story files
   - `mock|Mock` — Test mocks
   - `generated|packages\/graphql\/` — Generated code (GraphQL codegen, etc.)
+  - `packages\/e2e\/` — E2E tests (whole Playwright package: specs, page objects, fixtures, support, config)
+  - `\.test\.[jt]sx?$|_spec\.rb$` — Unit tests (Vitest `*.test.ts[x]` + RSpec `*_spec.rb`)
   - `ops\/` — Infrastructure/operations
   - `lock\.yaml$|lock\.json$|\.lock$` — Lock files (skipped entirely)
   - `\.(yml|yaml|json|css|scss|svg|md)$` — Config, locales, styles, assets
@@ -454,6 +457,8 @@ why it matters. No file paths, no code, minimal jargon. Lead with impact.]
 | Category | Added | Removed | Net |
 |---|---|---|---|
 | App code | X | X | X |
+| Unit tests | X | X | X |
+| E2E tests | X | X | X |
 | Stories | X | X | X |
 | Mocks | X | X | X |
 | Generated | X | X | X |

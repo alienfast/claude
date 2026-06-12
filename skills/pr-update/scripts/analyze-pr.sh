@@ -139,9 +139,10 @@ fi
 
 # Code impact summary
 echo "📈 Code Impact Summary:"
-git diff --shortstat -M "$BASE"...HEAD
+git diff --shortstat -M -l0 "$BASE"...HEAD
 echo ""
-git diff --numstat -M "$BASE"...HEAD | awk '{if ($3 ~ /lock\.yaml$|lock\.json$|\.lock$/) next; added+=$1; removed+=$2; file=$3; if (file ~ /\.stories\./) {sa+=$1; sr+=$2} else if (file ~ /mock|Mock/) {ma+=$1; mr+=$2} else if (file ~ /generated|packages\/graphql\//) {ga+=$1; gr+=$2} else if (file ~ /ops\//) {ia+=$1; ir+=$2} else if (file ~ /\.(yml|yaml|json|css|scss|svg|md)$/) {la+=$1; lr+=$2} else {ca+=$1; cr+=$2}} END {printf "%-20s %8s %8s %8s\n", "Category", "Added", "Removed", "Net"; printf "%-20s %8d %8d %8d\n", "App code", ca, cr, ca-cr; printf "%-20s %8d %8d %8d\n", "Stories", sa, sr, sa-sr; printf "%-20s %8d %8d %8d\n", "Mocks", ma, mr, ma-mr; printf "%-20s %8d %8d %8d\n", "Generated", ga, gr, ga-gr; printf "%-20s %8d %8d %8d\n", "Ops/Infra", ia, ir, ia-ir; printf "%-20s %8d %8d %8d\n", "Config/Assets", la, lr, la-lr; printf "%-20s %8d %8d %8d\n", "TOTAL", added, removed, added-removed}'
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+git diff --numstat -M -l0 "$BASE"...HEAD | awk -f "$SCRIPT_DIR/code-impact.awk"
 echo ""
 
 echo "========================================"
