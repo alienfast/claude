@@ -63,6 +63,19 @@ pnpm dlx skills add vercel-labs/agent-skills \
   $AI_AGENTS \
   -y
 
+# Remove the old joa23/Light Linear `linear-cli` Homebrew formula if present. It installs its own
+# `linear-cli` binary that shadows the Finesssee cargo binary on PATH (whichever brew/cargo dir comes
+# first wins), so a stale brew copy silently breaks the Linear skills. Idempotent: only act when the
+# formula is actually installed / the tap actually present, so re-runs are no-ops.
+if brew list linear-cli >/dev/null 2>&1; then
+  echo "Removing old Homebrew linear-cli (joa23/Light Linear)..."
+  brew uninstall linear-cli
+fi
+if brew tap | grep -q '^joa23/linear-cli$'; then
+  echo "Untapping joa23/linear-cli..."
+  brew untap joa23/linear-cli
+fi
+
 echo "Installing linear-cli (Finesssee — https://github.com/Finesssee/linear-cli)..."
 # Rust CLI with a raw-GraphQL `api` escape hatch. We use it (not joa23/Light Linear)
 # because Light Linear cannot read description-anchored comments or unassign issues,
