@@ -19,14 +19,15 @@ Without a convention, final summaries are prose ("PR merged; worktree cleaned up
 
 ## Tag vocabulary
 
-Nine tags cover the lifecycle. Every session ends with exactly one.
+Ten tags cover the lifecycle. Every session ends with exactly one.
 
 | Tag | Issued by | Meaning | Typical next action |
 | --- | --- | --- | --- |
 | `IN-PROGRESS` | `/start` mid-flight (e.g., `/checkpoint`) | Implementation or review still running | wait, or resume in a new session |
 | `READY-FOR-FINISH` | `/start` Step 10 (passing verdict) | Implementation + review passed cleanly; awaiting commit/push/state-transition | run `/finish` |
 | `BLOCKED-ON-REVIEW` | `/start` Step 10 OR `/finish` Preflight/Step 8 (non-passing/unavailable/malformed verdict, OR user picked `abort`/`re-run` at the gate, OR user rejected the plan-mode preflight, OR `ExitPlanMode` tool failure at preflight) | `/quality-review` did not reach a clean pass, OR the user explicitly bailed at `/finish`'s gate or preflight, OR `ExitPlanMode` failed (tool/harness error) at preflight. Covers `terminated-with-open-items`, `escalated-to-architect`, verdict-unavailable, malformed, Step 8 `abort`/`re-run` responses, plan-mode preflight rejection, and `ExitPlanMode` tool failure | re-run `/quality-review`, escalate to architect, or investigate failure |
-| `SHIPPED-MERGE` | `/finish` Step 9 (`ACTION=merge`) | Worktree branch merged into source, worktree removed, issue Ready For Release | done |
+| `BLOCKED-ON-RECOVERY` | `/finish` Step 0/Step 8.7 (`finish-detect-mode.sh` exit 4) | The worktree was **hijacked by a parallel session** (branch swapped, HEAD reset off its baseline, or source-branch config wiped while the immune identity sidecar still proves it's a `/start wt` worktree). `/finish` stopped before merging: either the user declined the offered `finish-recover.sh` recovery, or recovery itself failed (apply conflict, `pnpm check` red, or setup error). State unchanged; the corrupted worktree is preserved | confirm/run `finish-recover.sh`, resolve the recovery conflict in the recovered worktree, or investigate manually. A successful recovery ends with `SHIPPED-MERGE`, not this tag |
+| `SHIPPED-MERGE` | `/finish` Step 9 (`ACTION=merge`) | Worktree branch merged into source, worktree removed, issue Ready For Release. Also the terminal tag of a **successful** corruption recovery (recovered work merged) | done |
 | `SHIPPED-PR` | `/finish` Step 9 (`ACTION=pr`) | PR opened (base = source branch in `wt` mode, else repo default branch); worktree preserved only in `wt` mode | review/merge the PR (then `git worktree remove` if it was a `wt` PR) |
 | `DEFERRED-MERGE` | `/finish` Step 9 (`ACTION=merge`, `finish-merge.sh` exit 3) | Worktree merge couldn't advance source *right now* (transient: main checkout on source with WIP, source checked out elsewhere, main mid-operation, or contention) but was self-enqueued to the local merge queue; a launchd drainer retries until it lands and marks it Ready For Release then. Issue **remains In Progress** until the merge lands (it is not released until merged). Worktree intact | none — self-resolves. Check `/merge-queue`; act only if it later flags a conflict |
 | `RELEASED` | `/finish` Step 8 (non-worktree flow) | Plain `/finish` complete, issue Ready For Release | done |
@@ -41,6 +42,8 @@ READY-FOR-FINISH: PL-317 — resolveApolloErrorMessage suffix dropped, 6 files u
 BLOCKED-ON-REVIEW: PL-323 — 2 High findings unresolved after 5 cycles, user accepted current state. Re-run /quality-review or file follow-up issues before /finish.
 
 SHIPPED-MERGE: PL-313 — merged into nextjs-descope-user, worktree removed, Ready For Release.
+
+BLOCKED-ON-RECOVERY: PL-454 — worktree hijacked by a parallel session (branch-swapped); intended work salvaged to a patch. Confirm finish-recover.sh to re-fork off nextjs-descope-user and merge.
 
 SHIPPED-PR: PL-319 — PR opened, base=main head=pl-319-foo. Review/merge then git worktree remove .claude/worktrees/pl-319.
 
@@ -67,6 +70,6 @@ IN-PROGRESS: PL-321 — implementation paused at /checkpoint, 3 of 5 requirement
 ## Cross-references
 
 - `~/.claude/skills/start/SKILL.md` — Step 10 (READY-FOR-FINISH, BLOCKED-ON-REVIEW); Step 8.5 (CANCELED, ABANDONED); `/checkpoint` interaction (IN-PROGRESS).
-- `~/.claude/skills/finish/SKILL.md` — Step 8 (RELEASED, when non-worktree); Step 9 (SHIPPED-MERGE, SHIPPED-PR, DEFERRED-MERGE).
+- `~/.claude/skills/finish/SKILL.md` — Step 8 (RELEASED, when non-worktree); Step 9 (SHIPPED-MERGE, SHIPPED-PR, DEFERRED-MERGE); Step 0/8.7 (BLOCKED-ON-RECOVERY on a hijacked worktree; `finish-recover.sh`).
 - `~/.claude/skills/checkpoint/SKILL.md` — IN-PROGRESS on save.
 - `~/.claude/skills/merge-queue/SKILL.md` — inspect/drain the deferred-merge queue behind DEFERRED-MERGE.

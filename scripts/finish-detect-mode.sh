@@ -14,11 +14,19 @@
 #   WT_DIR=<git toplevel>
 #   REPO_ROOT=<parent of .git common dir>
 #   NO_PUSH=<0|1>
+#   CORRUPTION=<0|1>                  (1 only on exit 4)
+#   IDENTITY_SOURCE=<job-dir|repo-fallback|git-config|none>
+#   On exit 4 also: CORRUPTION_REASON, EXPECTED_BRANCH, EXPECTED_BASELINE, EXPECTED_SOURCE_BRANCH
 #
 # Exit codes:
 #   0 success
 #   1 incompatible argument combination
 #   2 merge requested outside a /start wt worktree
+#   4 corruption: the worktree no longer matches the identity /start stamped
+#     (branch swapped, HEAD reset off the baseline, or source-branch config wiped
+#     while an immune sidecar still proves this is a /start wt worktree). The
+#     /finish skill routes this to finish-recover.sh. Detected only when a
+#     VERIFIABLE identity exists; legacy/pre-stamp worktrees fall through to 0/2.
 
 set -eo pipefail
 
@@ -71,6 +79,59 @@ else
   repo_root=""
 fi
 
+# --- Worktree-identity check: detect a worktree hijacked by a parallel session. ---
+# Load the immune identity stamped at /start (sidecar → git config) and compare it
+# to the worktree's CURRENT state. A mismatch means another session reset this
+# worktree's branch/HEAD or wiped its config; we surface that as exit 4 (routed to
+# finish-recover.sh) instead of the opaque exit-2 "not a worktree" below. Detection
+# is gated on a VERIFIABLE identity, so legacy/pre-stamp worktrees and non-worktrees
+# fall through to the unchanged logic.
+# shellcheck source=/dev/null
+. "$(dirname "$0")/wt-identity.sh"
+corruption=0
+corruption_reason=""
+identity_source="none"
+expected_branch=""
+expected_baseline=""
+expected_source_branch=""
+if [ -n "$wt_dir" ] && wt_identity_load "$wt_dir"; then
+  identity_source="$WTID_SOURCE"
+  expected_branch="$WTID_BRANCH"
+  expected_baseline="$WTID_BASELINE"
+  expected_source_branch="$WTID_SOURCE_BRANCH"
+  wt_identity_verify "$wt_dir"
+  corruption="$WTID_CORRUPTION"
+  corruption_reason="$WTID_CORRUPTION_REASON"
+  # If the live config source-branch was wiped but the sidecar still carries it,
+  # prefer the sidecar value so the recovery context still names the real source.
+  if [ -z "$source_branch" ] && [ -n "$expected_source_branch" ]; then
+    source_branch="$expected_source_branch"
+  fi
+fi
+
+if [ "$corruption" = "1" ]; then
+  echo "CORRUPTION: worktree '$wt_dir' no longer matches the identity /start stamped." >&2
+  echo "  reason: $corruption_reason (identity from: $identity_source)" >&2
+  echo "  expected branch:   $expected_branch" >&2
+  echo "  current  branch:   $worktree_branch" >&2
+  echo "  expected baseline: $expected_baseline" >&2
+  echo "  A parallel session likely reset this worktree. /finish routes this to recovery (finish-recover.sh)." >&2
+  action_out="$action"; [ -z "$action_out" ] && action_out="merge"
+  printf 'ACTION=%s\n' "$action_out"
+  printf 'SOURCE_BRANCH=%s\n' "$source_branch"
+  printf 'WORKTREE_BRANCH=%s\n' "$worktree_branch"
+  printf 'WT_DIR=%s\n' "$wt_dir"
+  printf 'REPO_ROOT=%s\n' "$repo_root"
+  printf 'NO_PUSH=%s\n' "$no_push"
+  printf 'CORRUPTION=1\n'
+  printf 'CORRUPTION_REASON=%s\n' "$corruption_reason"
+  printf 'IDENTITY_SOURCE=%s\n' "$identity_source"
+  printf 'EXPECTED_BRANCH=%s\n' "$expected_branch"
+  printf 'EXPECTED_BASELINE=%s\n' "$expected_baseline"
+  printf 'EXPECTED_SOURCE_BRANCH=%s\n' "$expected_source_branch"
+  exit 4
+fi
+
 if [ -z "$source_branch" ] && [ "$action" = "merge" ]; then
   echo "ERROR: 'merge' is only valid inside a /start wt worktree." >&2
   echo "Current branch is '$worktree_branch' but no start.source-branch is recorded." >&2
@@ -90,3 +151,5 @@ printf 'WORKTREE_BRANCH=%s\n' "$worktree_branch"
 printf 'WT_DIR=%s\n' "$wt_dir"
 printf 'REPO_ROOT=%s\n' "$repo_root"
 printf 'NO_PUSH=%s\n' "$no_push"
+printf 'CORRUPTION=0\n'
+printf 'IDENTITY_SOURCE=%s\n' "$identity_source"

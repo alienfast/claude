@@ -33,13 +33,13 @@ Violating this contract — by shipping broken code, by claiming failures were p
 
 If the args contain `wt`:
 
-1. **Run the worktree setup script.** It encapsulates the procedural setup: argument validation, source-branch capture, per-worktree config enable, issue title fetch + branch name composition, worktree create/attach/reuse with branch-collision detection, source-branch recording, and digest pre-fetch into the worktree's `tmp/`.
+1. **Run the worktree setup script.** It encapsulates the procedural setup: argument validation, source-branch capture, per-worktree config enable, issue title fetch + branch name composition, worktree create/attach/reuse with branch-collision detection, source-branch recording, a **tamper-evident identity stamp** (branch + baseline SHA + owner session, written to per-worktree git config AND immune sidecars — `$CLAUDE_JOB_DIR` plus a repo-level `.claude/worktree-identity/` fallback so a *different* session's `/finish` can still detect a hijacked worktree), and digest pre-fetch into the worktree's `tmp/`. The git-mutating create + stamp runs inside `start-wt-create.sh` **under a repo lock** (`with-repo-lock.py`, the same key `/finish merge` uses), so concurrent `/start wt` runs can no longer race the create and clobber each other's worktree branch/HEAD/config.
 
    ```bash
    ~/.claude/scripts/start-wt-setup.sh PL-13
    ```
 
-   **Read the tool output carefully.** Stdout contains five `KEY=value` lines you must carry forward into sub-step 2:
+   **Read the tool output carefully.** Stdout contains these `KEY=value` lines; carry the first five forward into sub-step 2 (the rest are informational):
 
    ```text
    WT_ABS=<absolute worktree path>
@@ -47,9 +47,12 @@ If the args contain `wt`:
    SOURCE_BRANCH=<the branch the worktree forks from>
    ISSUE_ID=<normalized (uppercased) issue ID>
    DIGEST_FILE=<absolute path to pre-fetched digest, or empty if fetch failed>
+   BASELINE_SHA=<fork-point commit; the identity anchor /finish verifies>   # informational
+   OWNER_SESSION=<owning session id, or empty>                              # informational
+   IDENTITY_SIDECAR=<path of the immune identity sidecar, or empty>         # informational
    ```
 
-   Stderr contains diagnostics (drift warnings, progress, errors). **If the script's exit code is non-zero, stop.** Do not proceed to sub-step 2 — the worktree is in an indeterminate state and the script has already cleaned up via its EXIT trap. Surface the script's stderr to the user.
+   Stderr contains diagnostics (drift warnings, progress, errors). It may briefly print `[finish-queue] waiting for <repo> ...` while another session holds the repo lock — that is the serialization working, not a hang; wait for it. It may also print a `WARN:` advising you to park the main checkout off the shared source branch (`git checkout --detach`) when it sees the main checkout on the source branch with other worktrees already active — heed it for parallel `/full wt` runs (it keeps every merge on the contention-free ref-only path). **If the script's exit code is non-zero, stop.** Do not proceed to sub-step 2 — the worktree is in an indeterminate state and the locked helper has already cleaned up via its EXIT trap. Surface the script's stderr to the user.
 
    **Foot-gun warning.** Do not manually set `start.source-branch` at common (non-`--worktree`) scope. The Step 5 short-circuit treats any value as evidence of a `/start wt` worktree, so a stray manual config would silently bypass branch creation in a regular `/start` session. The setup script writes only at per-worktree scope.
 

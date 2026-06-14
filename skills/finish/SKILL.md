@@ -54,16 +54,48 @@ Normalize the user's args before calling the script:
 ~/.claude/scripts/finish-detect-mode.sh [merge|pr] [--no-push]
 ```
 
-The script probes worktree state, validates incompatible argument combinations, and emits six `KEY=value` lines on stdout: `ACTION`, `SOURCE_BRANCH`, `WORKTREE_BRANCH`, `WT_DIR`, `REPO_ROOT`, `NO_PUSH`. **Read those values and carry them forward** — Step 9 substitutes them into bash commands as literal strings (each Bash tool call is a fresh shell).
+The script probes worktree state, validates incompatible argument combinations, and emits these `KEY=value` lines on stdout: `ACTION`, `SOURCE_BRANCH`, `WORKTREE_BRANCH`, `WT_DIR`, `REPO_ROOT`, `NO_PUSH`, plus `CORRUPTION` and `IDENTITY_SOURCE` (and, only on exit 4, `CORRUPTION_REASON` / `EXPECTED_BRANCH` / `EXPECTED_BASELINE` / `EXPECTED_SOURCE_BRANCH` — see exit 4 above and Step 0.5). **Read those values and carry them forward** — Step 9 substitutes them into bash commands as literal strings (each Bash tool call is a fresh shell).
 
 **Exit codes:**
 
 - 1 — incompatible args (e.g., `merge` + `pr`, or `pr` + `no push`). Surface the error and stop.
 - 2 — `merge` requested outside a `/start wt` worktree. Surface and stop. (`pr` is **not** rejected here — it works from any branch; see below.)
+- 4 — **worktree corruption detected.** A parallel session hijacked this worktree (branch swapped, HEAD reset off its stamped baseline, or `start.source-branch` config wiped) while the immune identity sidecar still proves it's a `/start wt` worktree — the PL-454/PL-460 failure mode. The script emits `CORRUPTION=1`, `CORRUPTION_REASON`, `IDENTITY_SOURCE`, and `EXPECTED_BRANCH` / `EXPECTED_BASELINE` / `EXPECTED_SOURCE_BRANCH` alongside the usual context. **Do NOT run the normal flow** — merging would ship a hijacked tree. Jump straight to **Step 0.5**, carrying those `EXPECTED_*` values forward.
 
 When `SOURCE_BRANCH` is set (we're in a worktree), the script defaults `ACTION` to `merge`; `/finish pr` is the way to opt into the PR flow with `base = SOURCE_BRANCH`. Outside a worktree, `pr` is allowed (it emits `ACTION=pr` with an empty `SOURCE_BRANCH`, and Step 9 targets the repo's default branch), while `merge` is rejected (exit 2).
 
 If both `SOURCE_BRANCH` and `ACTION` are empty, this is the standard `/finish` flow.
+
+### Step 0.5: Worktree Corruption Recovery (only when `finish-detect-mode.sh` exits 4)
+
+A parallel `/start wt` session reset this worktree out from under us — exactly what happened to PL-454 and PL-460 when ~8 `/full wt` ran in parallel. The session's intended work is typically uncommitted edits that survived the reset, recoverable by `finish-recover.sh`: it salvages that work to a patch, re-forks a fresh branch off the **current** source tip, re-applies, gates on `pnpm check`, commits, and merges.
+
+**Posture: detect-and-stop with ONE confirmation.** Recovery infers which-files-are-mine heuristically when the branch was reset, so never run it unattended.
+
+1. **Surface the corruption** from Step 0's output: `CORRUPTION_REASON`, `IDENTITY_SOURCE`, `EXPECTED_BRANCH` vs the current `WORKTREE_BRANCH`, `EXPECTED_BASELINE`, `EXPECTED_SOURCE_BRANCH`. State plainly what recovery will do (salvage → fresh `.claude/worktrees/<id>-recovered` off `EXPECTED_SOURCE_BRANCH` → re-apply → `pnpm check` → commit → merge → retire the corrupted worktree).
+
+2. **Ask the user (single message, then wait):**
+
+   > Worktree for `<ISSUE-ID>` was hijacked by a parallel session (`<CORRUPTION_REASON>`). Recover automatically? Reply `yes` to run `finish-recover.sh`, or `abort` to stop and inspect manually.
+
+   On `abort`: stop with `BLOCKED-ON-RECOVERY: <ISSUE-ID> — worktree hijacked (<CORRUPTION_REASON>); recovery declined. Corrupted worktree preserved at <WT_DIR>.` No state change. Do not run any further step.
+
+3. **On `yes`:** Write the work-commit message (must contain the issue ID, e.g. `PL-13: <summary>`) to `<REPO_ROOT>/tmp/finish-commit-<issue-id-lowercased>.md` using the **Write** tool (absolute path). Then run from the MAIN checkout:
+
+   ```bash
+   cd '<REPO_ROOT from Step 0>'
+   ~/.claude/scripts/finish-recover.sh '<WT_DIR>' '<EXPECTED_BASELINE>' '<EXPECTED_SOURCE_BRANCH>' '<EXPECTED_BRANCH>' '<REPO_ROOT>/tmp/finish-commit-<issue-id-lowercased>.md'
+   ```
+
+   Route on `finish-recover.sh`'s exit code (it prints `RECOVER_DIFF_STRATEGY=<strategy>` on stderr — quote it in the closing line):
+
+   - **0** — recovered + merged. The merge owns the Ready-For-Release transition (as in Step 9 exit-0): run `~/.claude/scripts/mark-ready-for-release.sh <ISSUE-ID>`, then emit `SHIPPED-MERGE: <ISSUE-ID> — worktree was hijacked; work salvaged (<strategy>), re-forked off <EXPECTED_SOURCE_BRANCH>, merged, Ready For Release.` Terminal.
+   - **2** — conflict applying/merging in `.claude/worktrees/<id>-recovered`. Resolve there (read the conflicted files listed on stderr, fix, `git -C '.claude/worktrees/<id>-recovered' add <files>`, `pnpm check`), then **re-run the same `finish-recover.sh` line** (it resumes the recovered worktree). If genuinely unresolvable, emit `BLOCKED-ON-RECOVERY: <ISSUE-ID> — recovery conflict in .claude/worktrees/<id>-recovered; resolve and re-run finish-recover.sh.`
+   - **3** — merge deferred to the queue (transient). Emit `DEFERRED-MERGE: <ISSUE-ID> — recovered work queued (<reason>); will retry automatically. Check with /merge-queue.` (The drainer marks Ready For Release when it lands.)
+   - **4** — `pnpm check` failed in the recovered worktree. Emit `BLOCKED-ON-RECOVERY: <ISSUE-ID> — pnpm check failed in the recovered worktree; fix in .claude/worktrees/<id>-recovered and re-run finish-recover.sh.`
+   - **1** — setup failure (source branch gone, nothing salvageable). Surface the script's stderr and emit `BLOCKED-ON-RECOVERY: <ISSUE-ID> — recovery setup failed: <first stderr line>. Inspect <WT_DIR> manually.`
+
+Step 0.5 is terminal for the corruption case — do NOT continue to Steps 1–9. (The work being recovered is the same code `/quality-review` already passed in `/start`, so no separate verdict gate runs here; the user's `yes` is the gate.)
 
 ### Step 1: Identify the Issue
 

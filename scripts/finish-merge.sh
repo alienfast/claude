@@ -54,6 +54,10 @@
 #       in another worktree, main mid-operation, or continuous contention). The
 #       script self-enqueues to the local merge queue (scripts/merge-queue.sh) for
 #       automatic retry and leaves the worktree intact. NOT a failure.
+#   4 — corruption: the worktree no longer matches the identity /start stamped (a
+#       parallel session reset its branch/HEAD or wiped its config). Routed to the
+#       /finish recovery path (finish-recover.sh); the merge was never attempted.
+#       Suppressed via _WT_SKIP_IDENTITY_CHECK=1 when recovery re-invokes this.
 
 set -eo pipefail
 
@@ -140,6 +144,29 @@ fi
 if [ ! -d "$wt_dir" ]; then
   echo "ERROR: worktree at $wt_dir no longer exists. A concurrent session may have removed it." >&2
   exit 1
+fi
+
+# Precondition 0 (identity, defense-in-depth): the worktree still matches the
+# identity /start stamped. finish-detect-mode.sh already ran this, but a parallel
+# session could hijack the worktree (reset its branch/HEAD, wipe its config) in the
+# window between detect and merge — and merging that blindly is exactly the failure
+# this guards. On verified corruption we exit 4 (the /finish recovery path,
+# finish-recover.sh) rather than letting precondition 3 below hard-fail it as a
+# generic branch mismatch (exit 1). Skipped when invoked BY recovery (the recovered
+# worktree is freshly stamped + clean) and a silent no-op for legacy/pre-stamp
+# worktrees (no verifiable identity → wt_identity_load returns non-zero).
+if [ "${_WT_SKIP_IDENTITY_CHECK:-0}" != "1" ] && [ -f "$HOME/.claude/scripts/wt-identity.sh" ]; then
+  # shellcheck source=/dev/null
+  . "$HOME/.claude/scripts/wt-identity.sh"
+  if wt_identity_load "$wt_dir"; then
+    wt_identity_verify "$wt_dir"
+    if [ "$WTID_CORRUPTION" = "1" ]; then
+      echo "CORRUPTION: worktree at $wt_dir no longer matches its /start identity (${WTID_CORRUPTION_REASON})." >&2
+      echo "  expected branch '$WTID_BRANCH', baseline '$WTID_BASELINE' (identity from: $WTID_SOURCE)." >&2
+      echo "  A parallel session reset this worktree. Recover with finish-recover.sh instead of merging." >&2
+      exit 4
+    fi
+  fi
 fi
 
 # Precondition 3: worktree is checked out on the expected branch. The merge

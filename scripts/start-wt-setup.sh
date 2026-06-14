@@ -10,11 +10,16 @@
 #   3. Enables extensions.worktreeConfig (idempotent).
 #   4. Fetches the issue title; composes a kebab-case branch name following
 #      the convention <gh-username>/<id-lower>-<short-kebab-title>.
-#   5. Creates, attaches, or reuses a worktree at .claude/worktrees/<id-lower>.
-#      Detects branch-already-checked-out-elsewhere and refuses with a clear
-#      error (avoiding the silent `git worktree add` failure mode).
-#   6. Records the source branch in per-worktree git config so /finish can
-#      locate it (`git config --worktree start.source-branch`).
+#   5. Creates, attaches, or reuses a worktree at .claude/worktrees/<id-lower>,
+#      and stamps a tamper-evident identity on it (branch, baseline SHA, source
+#      branch, owner session) to BOTH per-worktree git config and an immune
+#      sidecar outside .git. Steps 5–6 run inside start-wt-create.sh UNDER a repo
+#      lock (with-repo-lock.py, same key /finish merge uses) so concurrent /start
+#      runs can't race the worktree-existence-check → `git worktree add` TOCTOU
+#      that let parallel sessions clobber each other's worktree branch/HEAD/config.
+#      Detects branch-already-checked-out-elsewhere and refuses with a clear error.
+#   6. Records the source branch in per-worktree git config so /finish can locate
+#      it (`git config --worktree start.source-branch`), plus the identity above.
 #   7. Pre-fetches the issue digest via linear-context.sh and saves it into
 #      the worktree's tmp/ — so the in-worktree subagent's Step 1 can read
 #      it directly instead of round-tripping back to Linear.
@@ -75,6 +80,20 @@ if [ -z "$source_branch" ]; then
   exit 1
 fi
 
+# Advisory (never blocks): if the main checkout is parked on the branch this
+# worktree will fork from / merge back into, AND other worktrees already exist
+# (i.e. parallel /full wt activity), every concurrent /finish merge will take
+# finish-merge.sh's working-tree-touching `git merge --ff-only` path instead of
+# the contention-free ref-only update — the exact setup behind the parallel-run
+# corruption. We only warn; auto-detaching the main checkout would mutate the
+# user's working tree, which multi-session safety forbids.
+existing_wts=$(find .claude/worktrees -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+if [ "${existing_wts:-0}" -gt 0 ]; then
+  echo "WARN: main checkout is on '$source_branch' (the shared source branch) while $existing_wts worktree(s) are active." >&2
+  echo "  For parallel /full wt runs, park the main checkout off the source branch (e.g. 'git checkout --detach')" >&2
+  echo "  so every merge takes finish-merge.sh's ref-only fast path and can't contend on the main working tree." >&2
+fi
+
 # Enable per-worktree config (idempotent).
 git config extensions.worktreeConfig true
 
@@ -106,64 +125,47 @@ branch="${gh_user}/${issue_lower}${kebab:+-$kebab}"
 wt_dir=".claude/worktrees/${issue_lower}"
 mkdir -p .claude/worktrees
 
-if [ -d "$wt_dir" ]; then
-  # Reuse. Verify it's a worktree on the expected branch.
-  current_wt_branch=$(git -C "$wt_dir" branch --show-current 2>/dev/null || true)
-  if [ "$current_wt_branch" != "$branch" ]; then
-    echo "ERROR: $wt_dir exists but is on '$current_wt_branch' (expected '$branch'). Investigate manually." >&2
-    exit 1
-  fi
-  # Warn about drift from source branch.
-  behind=$(git -C "$wt_dir" rev-list --count "$branch..$source_branch" 2>/dev/null || echo "?")
-  ahead=$(git -C "$wt_dir" rev-list --count "$source_branch..$branch" 2>/dev/null || echo "?")
-  if [ "$behind" != "0" ] && [ "$behind" != "?" ]; then
-    if [ "$ahead" != "0" ] && [ "$ahead" != "?" ]; then
-      echo "NOTE: worktree branch has DIVERGED from $source_branch: $ahead ahead, $behind behind." >&2
-    else
-      echo "NOTE: worktree branch is $behind commit(s) behind $source_branch." >&2
-    fi
-    echo "  Consider: git -C \"$wt_dir\" rebase $source_branch" >&2
-  fi
-  echo "Resuming worktree: $wt_dir" >&2
-elif git rev-parse --verify "$branch" >/dev/null 2>&1; then
-  # Branch exists but no worktree directory. Check if it's checked out elsewhere.
-  existing_wt=$(git worktree list --porcelain | awk -v b="refs/heads/$branch" '
-    /^worktree / { sub(/^worktree /, ""); wt = $0 }
-    /^branch / && $2 == b { print wt; exit }
-  ')
-  if [ -n "$existing_wt" ]; then
-    echo "ERROR: branch '$branch' is already checked out at '$existing_wt'." >&2
-    echo "Either work from that location, or rename / remove that checkout first:" >&2
-    echo "  git worktree remove '$existing_wt'      # if it's a worktree we no longer need" >&2
-    echo "  git -C '$existing_wt' switch <other>    # if main checkout, switch off the branch" >&2
-    exit 1
-  fi
-  # Dangling branch — safe to attach.
-  git worktree add "$wt_dir" "$branch" >&2
-  CREATED_WT=1
-else
-  # Fresh: create both worktree dir and branch off current HEAD.
-  git worktree add "$wt_dir" -b "$branch" HEAD >&2
-  CREATED_WT=1
+# --- Locked critical section: create/reuse the worktree and stamp its identity. ---
+# Resolve the repo lock key exactly as finish-merge.sh does (absolute git common
+# dir), so /start wt and /finish merge mutually exclude on the same parent repo.
+# Only this git-mutating span is locked; the slow digest fetch + pnpm install below
+# stay lock-free so parallel starts still overlap on them. with-repo-lock.py
+# execvp's its command (which is WHY start-wt-create.sh is a separate script), and
+# prints `[finish-queue] waiting for <repo> ...` on stderr if another holder has
+# the slot — surface that to the user and wait; it is not a hang.
+common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || {
+  echo "ERROR: not inside a git repository (cwd: $PWD)" >&2
+  exit 1
+}
+case "$common_dir" in
+  /*) repo_key="$common_dir" ;;
+  *)  repo_key=$(cd "$common_dir" 2>/dev/null && pwd -P) ;;
+esac
+if [ -z "$repo_key" ]; then
+  echo "ERROR: could not resolve repo lock key (git-common-dir='$common_dir')" >&2
+  exit 1
 fi
 
-# If we just created the worktree (vs reused), arm a cleanup trap. Any failure
-# between here and the final stdout emission removes the half-prepared worktree
-# so the user can re-run cleanly. Trap is cleared at the end on success.
-if [ "${CREATED_WT:-0}" = "1" ]; then
-  trap '
-    echo "ERROR: setup failed mid-flow; removing partially-prepared worktree $wt_dir" >&2
-    git worktree remove --force "$wt_dir" 2>/dev/null || rm -rf "$wt_dir"
-    # Prune orphaned .git/worktrees/<id>/ admin dir left behind by rm-rf path.
-    git worktree prune 2>/dev/null || true
-  ' EXIT
+# Capture stdout (the KEY=value contract). The helper's stderr — progress, drift
+# NOTEs, lock-wait lines — flows straight through to the user. A non-zero helper
+# exit propagates here via `set -e` (the create failed and the helper self-cleaned).
+create_out=$("$SCRIPT_DIR/with-repo-lock.py" "$repo_key" \
+  bash "$SCRIPT_DIR/start-wt-create.sh" \
+  "$issue_id" "$issue_lower" "$branch" "$source_branch" "$wt_dir")
+
+# Parse the helper's KEY=value output. Values contain no newlines and (per branch /
+# path conventions) no characters needing escaping.
+_wt_get() { printf '%s\n' "$create_out" | sed -n "s/^$1=//p" | head -1; }
+wt_abs=$(_wt_get WT_ABS)
+CREATED_WT=$(_wt_get CREATED_WT)
+baseline_sha=$(_wt_get BASELINE_SHA)
+owner_session=$(_wt_get OWNER_SESSION)
+identity_sidecar=$(_wt_get IDENTITY_SIDECAR)
+
+if [ -z "$wt_abs" ]; then
+  echo "ERROR: worktree-create helper returned no WT_ABS; setup aborted." >&2
+  exit 1
 fi
-
-# Record source branch in per-worktree config.
-git -C "$wt_dir" config --worktree start.source-branch "$source_branch"
-
-# Compute absolute paths.
-wt_abs=$(cd "$wt_dir" && pwd)
 
 # Copy files listed in .worktreeinclude from the main checkout into the new
 # worktree. `git worktree add` only copies *tracked* files; anything gitignored
@@ -184,11 +186,16 @@ if [ "${CREATED_WT:-0}" = "1" ] && [ -f ".worktreeinclude" ]; then
       echo "WARN: .worktreeinclude entry '$entry' not found in main checkout; skipping" >&2
       continue
     fi
-    # Preserve relative path inside the worktree.
+    # Preserve relative path inside the worktree. Best-effort: the worktree is
+    # already fully created and identity-stamped by the locked helper, so an
+    # optional include-file copy failing must NOT abort setup (there is no longer
+    # a parent cleanup trap to tear the worktree down).
     dst="$wt_abs/$entry"
-    mkdir -p "$(dirname "$dst")"
-    cp -R "$entry" "$dst"
-    echo "Copied $entry → $dst" >&2
+    if mkdir -p "$(dirname "$dst")" && cp -R "$entry" "$dst"; then
+      echo "Copied $entry → $dst" >&2
+    else
+      echo "WARN: failed to copy .worktreeinclude entry '$entry' → $dst; continuing." >&2
+    fi
   done < ".worktreeinclude"
 fi
 
@@ -205,8 +212,9 @@ else
   digest_file=""
 fi
 
-# Setup succeeded; clear the cleanup trap so the worktree persists.
-trap - EXIT
+# (No cleanup trap to clear here — the locked start-wt-create.sh owns and clears
+# its own create-failure trap. Everything from here on is best-effort and must
+# never tear down the already-created, identity-stamped worktree.)
 
 # Register this repo with the worktree reaper (reap-worktrees.sh) so its periodic launchd pass knows
 # to scan here. The reaper reclaims worktrees the normal lifecycle leaves behind: a `/finish pr` whose
@@ -223,7 +231,7 @@ fi
 # worktree has none. The package *contents* are already in the global store (shared, content-addressed, APFS-cloned), so this is a linking-bound warm install —
 # no re-download. Runs only when node_modules is absent (covers fresh creation and resumed worktrees whose modules were never installed). Package-manager-aware
 # via lockfile detection, and non-fatal: a failure leaves a valid worktree the user can install into manually. Output goes to stderr so it never pollutes the
-# key=value contract on stdout. Placed after `trap - EXIT` so a failed install can never trigger the worktree-removal trap.
+# key=value contract on stdout. Lock-free by design — the warm install must not hold the repo lock (it is the slow step parallel starts overlap on).
 if [ ! -d "$wt_abs/node_modules" ]; then
   if [ -f "$wt_abs/pnpm-lock.yaml" ] && command -v pnpm >/dev/null 2>&1; then
     echo "Installing dependencies (pnpm, warm path)…" >&2
@@ -246,3 +254,7 @@ printf 'BRANCH=%s\n' "$branch"
 printf 'SOURCE_BRANCH=%s\n' "$source_branch"
 printf 'ISSUE_ID=%s\n' "$issue_id"
 printf 'DIGEST_FILE=%s\n' "$digest_file"
+# Identity stamped by start-wt-create.sh (observability; /finish reads the sidecar, not these).
+printf 'BASELINE_SHA=%s\n' "$baseline_sha"
+printf 'OWNER_SESSION=%s\n' "$owner_session"
+printf 'IDENTITY_SIDECAR=%s\n' "$identity_sidecar"
