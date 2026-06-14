@@ -136,7 +136,8 @@
       "Bash(~/.claude/scripts/linear-context.sh *)",
       "Bash(~/.claude/scripts/linear-deps-graph.sh *)",
       "Bash(~/.claude/scripts/linear-create-child.sh *)",
-      "Bash(~/.claude/scripts/mark-ready-for-release.sh *)"
+      "Bash(~/.claude/scripts/mark-ready-for-release.sh *)",
+      "Bash(~/.claude/scripts/detect-issue-id.sh --validate-only --input PL-458)"
     ],
     "deny": [],
     "ask": [
