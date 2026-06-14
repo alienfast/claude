@@ -29,8 +29,34 @@
 #       untracked non-ignored files. We NEVER pass --force, so untracked work is never destroyed;
 #       gitignored scratch (tmp/, node_modules) does not block removal.
 #     • no in-flight deferred merge: no <repo>/.claude/merge-queue/<issue>.json marker.
+#     • NOT a live/in-progress worktree — BOTH liveness guards must pass (added after PL-459, where
+#       this reaper removed a freshly-created worktree mid-implementation: a zero-commit branch is
+#       trivially an ancestor of its source, so the "merged" evidence fired on a worktree whose owning
+#       session had just set it up; its edits then landed in the main checkout because the worktree's
+#       .git was gone):
+#         - HAS COMMITTED WORK: the branch has ≥1 commit beyond its recorded start.baseline-sha. A
+#           zero-commit branch (tip == baseline) is never "completed work" — it is just-forked or
+#           unstarted, i.e. a session is (or is about to be) working in it. (Guard skipped when no
+#           baseline is recorded — pre-identity-stamp/legacy worktrees fall through to prior behavior.)
+#         - IDLE: no git activity in the worktree within WORKTREE_REAP_GRACE_MIN minutes (default 60) —
+#           the per-worktree index mtime is stale, indicating no live session is touching it. A live
+#           session's frequent git ops (checkpoints, add, status) keep the index fresh; it goes stale
+#           only after the session ends.
 #   ABANDONED-for-resumption worktrees (branch unmerged, PR open, issue still active) fail the
 #   evidence test and are preserved automatically — no special-casing needed.
+#
+# KNOWN LIMITATIONS (accepted trade-offs; both lean toward keeping work safe):
+#   • Liveness is approximated by index mtime, not a true session signal. A worktree whose work is
+#     ALREADY merged/PR-merged/issue-terminal AND that then goes git-idle past the grace while its
+#     session is still alive could still be reaped. This is narrow — a normally-active in-progress
+#     session has not reached terminal evidence yet, so it is kept as "active" by the evidence test;
+#     and active git ops keep the index fresh. The robust fix is a session-maintained heartbeat (the
+#     owning session's job-dir mtime was evaluated and rejected: it tracks dir creation, not activity,
+#     and WT_IDENTITY_OWNER's format is not a reliable job-dir key).
+#   • A zero-commit worktree at a terminal state (e.g. an issue canceled before any commit) is kept by
+#     the zero-progress guard indefinitely rather than reaped — surfaced by `list`, reap manually. We
+#     prefer this benign leak over weakening the guard, which would re-expose reaping a live just-forked
+#     worktree (the PL-459 failure).
 #
 # Subcommands:
 #   reap [<repo_root>]   Reap eligible worktrees. No arg → every registered repo (the launchd path).
@@ -50,9 +76,26 @@ WT_SUBDIR=".claude/worktrees"
 MQ_SUBDIR=".claude/merge-queue"
 WT_REGISTRY="$HOME/.claude/worktree-repos.txt"
 MQ_REGISTRY="$HOME/.claude/merge-queue-repos.txt"
+# Liveness grace (minutes): a worktree whose index was touched within this window is treated as having
+# a live session and is never reaped. Default 60 (= the launchd reap interval), so only worktrees idle
+# for a full cycle are eligible. Override via env for testing or a different cadence. VALIDATED to a
+# positive integer — a non-numeric or 0/negative value would otherwise make the arithmetic below
+# evaluate to 0 (silently disabling the guard) or raise a `set -e` error that aborts the whole run.
+REAP_GRACE_MIN="${WORKTREE_REAP_GRACE_MIN:-60}"
+case "$REAP_GRACE_MIN" in
+  '' | *[!0-9]* | 0 | 0[0-9]* )
+    echo "reap-worktrees.sh: WORKTREE_REAP_GRACE_MIN='$REAP_GRACE_MIN' is not a positive integer; using 60." >&2
+    REAP_GRACE_MIN=60 ;;
+esac
 
 err()  { echo "reap-worktrees.sh: $*" >&2; }
 have() { command -v "$1" >/dev/null 2>&1; }
+
+# Reuse the shared worktree-identity loader (defines wt_identity_load, which prefers a path-validated
+# sidecar and falls back to per-worktree git config). Guarded so a missing library never aborts the
+# reaper — recorded_baseline falls back to a direct git-config read when the loader is unavailable.
+# shellcheck source=/dev/null
+[ -f "$HOME/.claude/scripts/wt-identity.sh" ] && . "$HOME/.claude/scripts/wt-identity.sh"
 
 # Absolute common-git-dir for a repo — the lock key finish-merge.sh uses (its §"Lock key" comment),
 # so holding it here makes a reap mutually exclusive with any in-flight /finish merge of the same repo.
@@ -128,11 +171,42 @@ linear_state_type() {
     | jq -r '.data.issue.state.type // empty' 2>/dev/null || true
 }
 
+# The baseline (fork-point) commit /start recorded for this worktree, or empty if none is recorded.
+# Reuses wt_identity_load when available (it prefers a sidecar whose recorded WT_DIR matches this
+# worktree — so a stale same-issue sidecar can't supply a wrong baseline — and falls back to per-
+# worktree git config). Falls back to a direct git-config read if the loader isn't sourced. Empty ⇒
+# legacy/pre-stamp worktree, and the zero-commit guard then no-ops.
+recorded_baseline() {
+  local repo="$1" dir="$2" slug="$3"
+  if declare -f wt_identity_load >/dev/null 2>&1 && wt_identity_load "$dir" "$slug"; then
+    printf '%s' "$WTID_BASELINE"
+    return 0
+  fi
+  git -C "$dir" config --worktree --get start.baseline-sha 2>/dev/null || true
+}
+
+# True when the worktree's index was modified within REAP_GRACE_MIN minutes — a cheap liveness proxy
+# (a live session's git ops keep the index fresh; it goes stale only after the session ends). MUST be
+# called BEFORE any index-writing git op in evaluate_worktree (e.g. `git status`) to avoid self-poison.
+# Resolves the index via --absolute-git-dir (the worktree's own git dir, guaranteed absolute on git
+# >=2.13) — unambiguous, unlike `rev-parse --git-path index` whose relative form is .git-dir-relative.
+recent_activity() {
+  local dir="$1" gd idx mtime now grace
+  gd=$(git -C "$dir" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+  idx="$gd/index"
+  [ -f "$idx" ] || return 1
+  mtime=$(stat -f %m "$idx" 2>/dev/null || stat -c %Y "$idx" 2>/dev/null || true)
+  [ -n "$mtime" ] || return 1
+  now=$(date +%s)
+  grace=$(( REAP_GRACE_MIN * 60 ))
+  [ "$(( now - mtime ))" -lt "$grace" ]
+}
+
 # Evaluate one worktree dir. mode=list prints the verdict only; mode=reap also removes when eligible.
 # Assumes (reap mode) the per-repo lock is held by the caller.
 evaluate_worktree() {
   local repo="$1" dir="$2" mode="$3"
-  local slug issue branch source reason merged_ref ltype dirty
+  local slug issue branch source reason merged_ref ltype dirty baseline
 
   slug=$(basename "$dir")
   issue=$(printf '%s' "$slug" | tr '[:lower:]' '[:upper:]')
@@ -156,6 +230,26 @@ evaluate_worktree() {
   # Safety: a deferred merge owns this worktree — the drainer will remove it when the merge lands.
   if [ -f "$repo/$MQ_SUBDIR/$slug.json" ]; then
     printf '  %-12s %s\n' "$issue" "SKIP — merge queued; the merge-queue drainer owns this worktree."
+    return 0
+  fi
+
+  # Liveness guard A — zero committed work. A branch with no commits beyond its recorded baseline is
+  # not "completed work" (a done worktree always has commits) — it is just-forked or unstarted, so a
+  # session is, or is about to be, working in it. The completion-evidence test below would otherwise
+  # fire on it (a zero-commit branch is trivially an ancestor of source), reaping a live worktree and
+  # landing its edits in the main checkout (PL-459). No-op when no baseline is recorded (legacy).
+  baseline=$(recorded_baseline "$repo" "$dir" "$slug")
+  if [ -n "$baseline" ] && git -C "$dir" cat-file -e "${baseline}^{commit}" 2>/dev/null \
+     && [ "$(git -C "$dir" rev-list --count "${baseline}..HEAD" 2>/dev/null || echo 1)" = "0" ]; then
+    printf '  %-12s %s\n' "$issue" "KEEP — no commits since baseline (just-forked/unstarted); a live session likely owns it."
+    return 0
+  fi
+
+  # Liveness guard B — recent activity. The worktree's index was touched within REAP_GRACE_MIN minutes,
+  # so a session is actively using it. Checked BEFORE the `git status` below, which can rewrite the
+  # index and would otherwise reset this signal.
+  if recent_activity "$dir"; then
+    printf '  %-12s %s\n' "$issue" "KEEP — active within ${REAP_GRACE_MIN}m (index recently modified); deferring reap to avoid a live session."
     return 0
   fi
 
