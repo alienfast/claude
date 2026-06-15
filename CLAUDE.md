@@ -40,7 +40,7 @@ Type checking is hard-gated in `/quality-review` and re-gated in `/finish`; run 
 - Do not modify generated or build artifact files (e.g., `src/generated/`, `dist/`).
 - Do not create git commits unless explicitly requested — see [Git Standards](standards/git.md) for commit/push authorization.
 - Always Read a file before using Write or Edit on it. Write rejects writes to existing files that haven't been Read first. If Write fails, do NOT work around it with Bash (`cat`, `tee`, `echo >`, `sed`, `awk`) — Read the file first, then retry. Never create duplicate/debug files as workarounds.
-- When writing or editing comments, wrap at ~160 chars, never 80. See [Commenting Standards](standards/commenting.md).
+- When writing or editing comments: default to none; add one only when the WHY is non-obvious; size to what the reader needs, not the effort it took to discover; wrap at ~160 chars, never 80. Full guidance auto-injects on source edits — see [rules/comments.md](rules/comments.md).
 
 Own the code and move forward: modify in place, delete aggressively, embrace breaking changes, and never leave backups, duplicates, or compatibility layers behind. See [Technical Debt Prevention](standards/technical-debt-prevention.md) for the full rules.
 

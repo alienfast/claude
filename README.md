@@ -139,7 +139,7 @@ Universal rules governing agent behavior. See [standards/README.md](standards/RE
 |----------|--------|
 | [agent-coordination](standards/agent-coordination.md) | Parallel vs sequential execution patterns |
 | [git](standards/git.md) | Commit messages, destructive command blocking, multi-session safety |
-| [commenting](standards/commenting.md) | Default to no comments; when WHY-comments earn their place |
+| [comments](rules/comments.md) (rule, auto-injected) | Default to no comments; size to the reader; when WHY-comments earn their place |
 | [problem-solving](standards/problem-solving.md) | When to stop and ask vs proceed |
 | [technical-debt-prevention](standards/technical-debt-prevention.md) | No backups, no duplicates, delete aggressively |
 | [linear-workflow](standards/linear-workflow.md) | Terminal states, dependency rules, Linear CLI quoting gotchas |

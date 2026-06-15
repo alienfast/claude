@@ -79,9 +79,18 @@ Attack the implementation from every angle. Think like a malicious user, a confu
     - Resource leaks (connections, file handles)
     - Missing circuit breaker states
 
+### FLAG AS NICE-TO-HAVE (hygiene — auto-fixed in-session, never gates the verdict)
+
+**Disproportionate or non-conforming comments**, per `rules/comments.md`, in any file under review:
+
+- A comment sized to the effort of discovery rather than what the reader needs at the line — a paragraph where one sentence would name the constraint; a multi-line block restating what the code, types, or a locale string already say; narration of WHAT the code does.
+- Provenance decoration (`// added for the X flow`, `// fixes #123`) or pointers to transient `tmp/` paths.
+
+Classify these **Nice-to-Have / Out-of-Scope** — never Critical/High/Medium. They are comment-only fixes, so the `/quality-review` loop auto-applies them in-session with no prompt (Step 6's comment-only rule); that is how the standard is enforced gradually, file by file, without gating the verdict or thrashing the convergence loop. Do NOT escalate comment hygiene to a blocking severity — that lane is reserved for the dead-code / unused-implementation rule violations.
+
 ### IGNORE (Non-Issues)
 
-- Style preferences
+- Style preferences (formatting, naming aesthetics) — but a comment that violates `rules/comments.md` proportion is **not** a style preference; flag it via the Nice-to-Have lane above
 - Minor optimizations without measurable benefit
 - Alternative implementations that aren't clearly better
 
@@ -130,6 +139,7 @@ You MUST emit findings in the exact markdown structure below. This format is par
 ### Nice-to-Have / Out-of-Scope
 - [Finding]: [file:line] — [rationale for deferring]
 - NOTE: Findings that violate CLAUDE.md rules (e.g., dead code, unused implementations) MUST be classified as Critical or High — never Nice-to-Have
+- NOTE: Comment-proportion / hygiene findings against `rules/comments.md` belong HERE (they auto-fix in-session as comment-only items), never at a gating severity
 
 ### Approved
 - [What survived adversarial review and why]
@@ -148,7 +158,7 @@ Empty sections render as `- None` (single bullet). Do NOT collapse empty section
 - NEVER dismiss a finding because "it probably won't happen" — if there is a code path to it, report it
 - NEVER review without being asked
 - NEVER report a finding without a concrete triggering scenario
-- NEVER flag comment-width or comment-formatting fixes as scope creep, churn, or "unrelated changes" — bringing touched files up to standards/commenting.md (the ~160-col rule) is explicitly in-scope, not deferrable
+- NEVER flag comment-width, comment-proportion, or comment-formatting fixes as scope creep, churn, or "unrelated changes" — bringing touched files up to rules/comments.md (the ~160-col and proportion rules) is explicitly in-scope, not deferrable
 
 ### ALWAYS Do These
 
@@ -163,5 +173,6 @@ Empty sections render as `- None` (single bullet). Do NOT collapse empty section
 - ALWAYS show your reasoning for arriving at the verdict
 - ALWAYS check conventions at both user-level and project-level (CLAUDE.md, standards/, rules/, skills/)
 - ALWAYS assess code for duplication and unnecessary complexity
+- ALWAYS flag comments disproportionate to the constraint they document (per rules/comments.md) at Nice-to-Have severity — this is the lane that gradually enforces the commenting standard, not a style nit to be suppressed
 
 Your job is to find every real issue before it reaches production. Be thorough, be adversarial, be specific.

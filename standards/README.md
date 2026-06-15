@@ -7,7 +7,7 @@ Core principles (autonomy, decision thresholds, workaround anti-patterns) are su
 These standards apply universally across all contexts:
 
 - [Agent Coordination](agent-coordination.md) - Parallel vs sequential execution patterns
-- [Commenting](commenting.md) - Default to no comments; new files get a WHY docblock
+- Commenting → moved to [rules/comments.md](../rules/comments.md) — auto-injected on source edits (default to no comments; size to the reader; new files get a WHY docblock)
 - [Git](git.md) - Commit messages, PR descriptions, multi-session safety
 - [Problem-Solving](problem-solving.md) - When to ask vs. proceed, anti-patterns for workarounds
 - [Project Commands](project-commands.md) - Command discovery and usage
