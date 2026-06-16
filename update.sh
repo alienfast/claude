@@ -189,6 +189,13 @@ else
   echo "  skipped (macOS/launchd-only; this is $OSTYPE)."
 fi
 
+# Reconcile this repo's local devDependencies (markdownlint-cli2, typescript) against the committed
+# lockfile before the lint step below relies on them — a fresh clone has no node_modules, and a git
+# pull can bump the lockfile out from under a stale install. --frozen-lockfile keeps it deterministic.
+echo ""
+echo "Installing local project dependencies..."
+pnpm install --frozen-lockfile
+
 lint_and_fix "pnpm check-markdown"
 
 echo ""
