@@ -28,6 +28,18 @@ Before running generic commands, check for project-specific scripts:
 - ✓ PREFER: `pnpm check-markdown` (if available)
 - ✗ AVOID: `markdownlint` directly
 
+### Auto-fixing checkers apply changes as they report them
+
+`pnpm check` typically fans out to write-mode variants (`biome check --write`, `markdownlint-cli2 --fix`) that
+**mutate files in place**. Their diagnostic output describes fixes **already applied** — formatting, import
+organization, key sorting — not a TODO list. Two consequences:
+
+- After running one, your in-memory view of any file it changed is **stale**. Re-read before editing it.
+- Never hand-edit to satisfy a fix the tool already wrote — the Edit is built from pre-fix text and fails to
+  match. Only hand-fix diagnostics the tool reports as **not auto-fixable**.
+
+The auto-injected `rules/biome.md` and `rules/markdown.md` carry this same guidance at edit time.
+
 ### Testing
 
 - ✓ PREFER: `pnpm test` or project-specific test scripts

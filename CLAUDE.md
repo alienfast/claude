@@ -17,6 +17,7 @@ Rules in `~/.claude/rules/` are automatically applied based on file type:
 - `markdown.md` - Applied to `**/*.md`, `**/*.mdx` files
 - `package-manager.md` - Applied to `**/package.json` and lockfiles
 - `env-vars.md` - Applied to `**/*.ts`, `**/*.tsx`, `**/*.mts` files (required-env-var handling; `assertEnvVariable`, no silent defaults)
+- `biome.md` - Applied to `**/*.ts`, `**/*.tsx`, `**/*.js`, `**/*.jsx`, `**/*.mjs`, `**/*.cjs`, `**/*.json`, `**/*.jsonc` files (Biome projects only — self-nullifies elsewhere; auto-fix output is post-fix, not a TODO, so re-read before editing)
 
 These are generic, file-type-scoped, and shared across all projects via `alienfast/claude.git`. Projects layer their own domain rules in `<project>/.claude/rules/` — committed to the project repo and shared with the team (e.g. basefund's `descope.md`, `nextjs.md`, `apollo.md`, `mui-*.md`, `storybook.md`).
 
