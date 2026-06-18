@@ -80,8 +80,8 @@ npm run lint
   -d -
 
 # Create a sub-issue linked to a parent. `linear-cli issues create` has no --parent
-# flag (and its --data silently drops parentId), so use the helper — it creates the
-# issue, links the parent via `relations parent`, and verifies. Write the body to a file first.
+# flag (set the parent's UUID via `--data` parentId instead), but prefer the helper — it
+# links via `relations parent` and verifies the link, failing on an orphan. Write the body to a file first.
 #   ...write the description to tmp/sub-issue-description.md via the Write tool...
 ~/.claude/scripts/linear-create-child.sh ENG-100 ENG Planned "Add JWT refresh tokens" tmp/sub-issue-description.md
 

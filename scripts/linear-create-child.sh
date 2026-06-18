@@ -14,14 +14,15 @@
 # stdout (success): the new issue identifier (e.g., PL-451), single line.
 # stderr (failure): one-line diagnostic.
 #
-# Why a helper: `linear-cli issues create` has no `--parent` flag, and its `--data`
-# JSON input silently DROPS `parentId`/`description` on the current version (only the
-# title arg, --team, --state are honored). So this creates the issue with the
-# description via `-d -` (stdin), links the parent with `relations parent`, and then
-# VERIFIES the link — failing hard on an orphan. The verification is what makes this
-# safe despite being two API calls: the orphan the "create then forget to link"
-# anti-pattern risks cannot slip through. Centralizing it lets /prd and
-# /quality-review file parent-linked issues without inline shell plumbing.
+# Why a helper: `linear-cli issues create` has no `--parent` flag. You *can* set the
+# parent's UUID as `parentId` via `--data` JSON (it carries `description` too on 0.3.26),
+# but a bare create — `--data` or otherwise — never confirms the link took. So this
+# creates the issue with the description via `-d -` (robust stdin for large markdown
+# bodies, no JSON-escaping or ARG_MAX concerns), links the parent with `relations parent`,
+# and then VERIFIES the link — failing hard on an orphan. The verification is what makes
+# this safe: the orphan the "create then forget to link" anti-pattern risks cannot slip
+# through. Centralizing it lets /prd and /quality-review file parent-linked issues
+# without inline shell plumbing.
 #
 # Read-write: creates one Linear issue (and sets its parent).
 #
@@ -53,10 +54,9 @@ if [ ! -f "$body_file" ]; then
   exit 1
 fi
 
-# Create the issue. NOTE: `issues create --data` silently DROPS payload fields
-# (description, parentId) on this CLI version — only the title arg, --team, and
-# --state are honored. So the description must go through `-d -` (which create reads
-# from stdin), and the parent is linked in a second step via `relations parent`.
+# Create with the description via `-d -` (stdin), then link the parent separately via
+# `relations parent` so the link can be VERIFIED (below). The header explains why this
+# two-step path is preferred over a single `--data` create.
 create_args=(issues create "$title" --team "$team" -o json -d -)
 if [ -n "$state" ] && [ "$state" != "-" ]; then
   create_args+=(--state "$state")

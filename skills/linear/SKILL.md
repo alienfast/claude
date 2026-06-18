@@ -29,7 +29,7 @@ Auth: `linear-cli auth oauth` (browser) or `LINEAR_API_KEY`; check with `linear-
 
    Per-issue relations also exist directly: `linear-cli relations list <ID>`.
 
-3. **`issues create` has no `--parent` flag** (and its `--data` silently drops `parentId`). Use the helper — it creates the issue, links the parent with `relations parent`, and verifies the link:
+3. **`issues create` has no `--parent` flag** — to set the parent at create time, pass its UUID as `parentId` in `--data` JSON (verified on 0.3.26; `--data` carries `description` too). For follow-ups use the helper anyway: it links via `relations parent` and **verifies** the link (a bare `--data` create doesn't), failing hard on an orphan:
 
    ```bash
    ~/.claude/scripts/linear-create-child.sh <parent|-> <team> <state|-> <title> <body-file>
@@ -55,7 +55,7 @@ linear-cli issues comment <ID> --body -       # add a comment (body via stdin)
 # Comments / relations / search / statuses
 linear-cli comments list <ID>                 # STANDALONE only — see gotcha #1 for anchored
 linear-cli relations add <BLOCKER> <BLOCKED> -r blocks   # "A blocked by B" = relations add B A -r blocks (the blocked-by enum is broken on 0.3.26); also -r related|duplicate
-linear-cli relations parent <CHILD> <PARENT>             # set parent (issues create has no --parent flag)
+linear-cli relations parent <CHILD> <PARENT>             # set parent after create (issues create has no --parent flag; or set parentId via --data)
 linear-cli search issues "<query>" [--filter 'state.name=Backlog']   # workspace-wide; NO --team flag (use `issues list --team` to scope)
 linear-cli statuses list -t <KEY>
 
