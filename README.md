@@ -209,6 +209,8 @@ git pull
 
 ### 3. Install skills and tools
 
+> **Prerequisites:** Homebrew, Node, pnpm, git, and Claude Code must already be installed — the script bootstraps everything else and fails fast if Homebrew is missing.
+
 ```sh
 ~/.claude/update.sh
 ```
@@ -216,9 +218,11 @@ git pull
 This installs:
 
 - The TypeScript LSP plugin
+- `gh` and `jq` via Homebrew (installed or upgraded), then runs `gh auth login` if you aren't already authenticated
 - Vercel agent-browser and skill-creator
 - Vercel React best practices and composition patterns
-- Linear CLI via Homebrew (the Linear skills already ship with this repo)
+- `npm-check-updates` (`ncu`) as a pnpm global — required by the dependency-updater skill
+- Linear CLI via cargo (Finesssee — the Linear skills already ship with this repo), authenticating it if needed
 - launchd background daemons on macOS — the merge-queue drainer and worktree reaper
 - Runs markdown linting
 

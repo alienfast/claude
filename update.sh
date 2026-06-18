@@ -30,8 +30,70 @@ case ":$PATH:" in
   *) export PATH="$PNPM_HOME/bin:$PATH" ;;
 esac
 
+# Install a Homebrew formula if missing, upgrade it if present. Idempotent: present-and-current is a no-op.
+# Branch on `brew list` because `brew install` never upgrades and `brew upgrade` errors on a not-installed formula.
+# The asymmetry under `set -e` is deliberate: an upgrade failure is swallowed (`|| true` — the working older version
+# stays, so keep going), but an install failure aborts the bootstrap — a core tool that is entirely absent is not
+# something to continue past.
+ensure_brew() {
+  local formula
+  for formula in "$@"; do
+    if brew list "$formula" >/dev/null 2>&1; then
+      brew upgrade "$formula" >/dev/null 2>&1 || true
+    else
+      brew install "$formula"
+    fi
+  done
+}
+
+# Core CLI tools the skills assume on PATH: gh (start/finish/pr-update/dependency-updater/reap-worktrees) and jq
+# (preflight-gated with `exit 1` in several scripts). Prefer Homebrew (the linear-cli bootstrap below also needs it),
+# and run this before the slow pnpm/cargo work so a missing Homebrew surfaces early, not 90 lines into the cargo build.
+# macOS without Homebrew is a hard stop (brew is how the whole script installs system tools). Non-macOS degrades like
+# the rest of the script: just verify gh/jq are present (they come from the distro package manager, not brew) and warn.
+echo ""
+echo "Ensuring core CLI tools (gh, jq)..."
+if command -v brew >/dev/null 2>&1; then
+  ensure_brew gh jq
+elif [[ "$OSTYPE" == "darwin"* ]]; then
+  echo "  ❌ Homebrew is required but not found. Install it from https://brew.sh and re-run." >&2
+  exit 1
+else
+  for tool in gh jq; do
+    command -v "$tool" >/dev/null 2>&1 \
+      || echo "  ⚠️  $tool not found on PATH — install it via your package manager; skills that use it will fail until you do."
+  done
+fi
+
+# gh must be authenticated for the PR/start/finish flows (gh api user, gh pr create). Mirror the linear-cli auth step
+# below: check status, and only launch the interactive `gh auth login` when there is a TTY — in a non-interactive run
+# (CI, piped, ssh one-shot, a /full macro) it would hang on a prompt with no stdin, so warn and continue instead.
+# Scope the status check to github.com: bare `gh auth status` exits non-zero if ANY configured host is logged out,
+# which would force a needless re-login on machines that once added a now-expired enterprise host.
+if gh auth status --hostname github.com >/dev/null 2>&1; then
+  echo "  ✓ gh already authenticated"
+elif [ -t 0 ] && [ -t 1 ]; then
+  echo ""
+  echo "  gh is not authenticated — launching gh auth login..."
+  if ! gh auth login; then
+    echo ""
+    echo "  ⚠️  gh authentication did not complete. Run it yourself before using PR/start/finish skills:"
+    echo "        gh auth login"
+    echo "        gh auth status   # confirm"
+  fi
+else
+  echo ""
+  echo "  ⚠️  gh is not authenticated and no TTY is available for interactive login. Authenticate before using PR/start/finish skills:"
+  echo "        gh auth login"
+  echo "        gh auth status   # confirm"
+fi
+
+echo ""
 echo "Installing skills helper..."
 pnpm add -g skills
+
+echo "Installing npm-check-updates (ncu) — required global for the dependency-updater skill..."
+pnpm add -g npm-check-updates
 
 
 AI_AGENT_LIST=(codex github-copilot claude-code)
@@ -128,13 +190,14 @@ fi
 
 # 5. Authentication. Linear skills are part of this repo (skills/) and need no
 #    separate install, but linear-cli must be authenticated to be useful. Check
-#    status; if not logged in, run the interactive browser OAuth now (this script is
-#    run interactively from a terminal). LINEAR_API_KEY in the env also satisfies it.
+#    status; if not logged in and a TTY is available, run the interactive browser OAuth
+#    now; otherwise warn (a non-interactive run would hang on the prompt). LINEAR_API_KEY
+#    in the env also satisfies it.
 if linear-cli auth status >/dev/null 2>&1; then
   echo "  ✓ linear-cli already authenticated"
 elif [ -n "${LINEAR_API_KEY:-}" ]; then
   echo "  ✓ linear-cli will use LINEAR_API_KEY from the environment"
-else
+elif [ -t 0 ] && [ -t 1 ]; then
   echo ""
   echo "  linear-cli is not authenticated — launching browser OAuth..."
   if ! linear-cli auth oauth; then
@@ -143,6 +206,11 @@ else
     echo "        linear-cli auth oauth      # or: export LINEAR_API_KEY=<key>"
     echo "        linear-cli auth status     # confirm"
   fi
+else
+  echo ""
+  echo "  ⚠️  linear-cli is not authenticated and no TTY is available for interactive OAuth. Authenticate before using Linear skills:"
+  echo "        linear-cli auth oauth      # or: export LINEAR_API_KEY=<key>"
+  echo "        linear-cli auth status     # confirm"
 fi
 
 
