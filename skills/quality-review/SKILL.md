@@ -196,30 +196,35 @@ Runs once, only after the fix loop terminates with `passed-clean` or `passed-aft
 
 **1. Consolidate.** Collect every Nice-to-Have / Out-of-Scope finding reported across all review cycles. Deduplicate by `file:line + finding text`; if a finding was emitted without a file:line (a malformed-but-recoverable reviewer output, see Error Handling), fall back to deduplicating by finding text alone (trim, casefold, and collapse internal whitespace before comparison to absorb cosmetic differences). If the consolidated list is empty, skip the rest of this step.
 
-**2. Classify.** Label each item `fix-now` or `defer-as-issue` using the criteria below. `fix-now` items are **applied automatically in-session with no approval prompt** (sub-steps 4–5) — they are gated to obviously-correct, localized, no-API-change changes, so the user has opted into fixing them without per-item review. Only `defer-as-issue` items reach a user prompt (sub-step 6, the filing decision), where the user can still choose to file or drop each one.
+**2. Classify.** Assign each item exactly one of three outcomes — `fix-now`, `defer-as-issue`, or `note-only` — using the decision procedure below. Only `defer-as-issue` reaches a user prompt (sub-step 6, the filing decision), where the user can still choose to file or drop each one. `fix-now` items are **applied automatically in-session with no approval prompt** (sub-steps 4–5) — they are gated to obviously-correct, localized, no-API-change changes, so the user has opted into fixing them without per-item review. `note-only` items are neither fixed nor filed — they are recorded in the verdict's `Deferred dropped` field and never surfaced as a decision.
 
-**Fix now** — *all* of the following hold:
+**The filing prompt is expensive attention — reserve it for items substantial enough that a reasonable engineer would open a tracked issue.** Trivial polish must never reach it: it is fixed in place or dropped with a note. If you catch yourself describing the *item's own significance* as "minor", "trivial", "polish", "nice-to-have", or "fine as-is" in the same breath as recommending it be filed — **stop and re-examine.** That contradiction almost always means it is `fix-now` (if safe and within reach) or `note-only` (if out of scope), not `defer-as-issue`. The one exception: an item that genuinely clears gate 3 (a real decision, design, or broader test/perf/security strategy is required) but merely *lives in* incidentally "minor" code — e.g. "this rarely-used path needs a security-strategy decision before it can be fixed." There the significance is real and "minor" describes the location, not the item; it stays `defer-as-issue`. The test targets items whose own importance is minor, not every incidental use of the word.
 
-- One obviously-correct change (no decision between valid alternatives)
-- Localized (single file or small contiguous region)
-- No change to public APIs, schemas, exported types, or contracts
-- Small (~<30 lines diff, no new abstractions)
-- Attach a one-word kind tag: `[mechanical]`, `[naming-only]`, `[missing-guard]`, `[typo]`, `[dead-code]`, `[comment-fix]`, etc.
+**Decision procedure — evaluate top-to-bottom; first match wins:**
 
-**Defer as issue** — *any* of the following hold:
+1. **Comment-only fix** → `fix-now`. See the comment-only rule below, which overrides every gate that follows.
+2. **Clears all of these `fix-now` gates** → `fix-now`:
+   - One obviously-correct change — no decision between valid alternatives. *Following an established codebase pattern is **not** an open design choice:* "I'd have to look at how it's done elsewhere" satisfies *this* sub-gate. It does not waive the others — a pattern applied across many files still fails the localization sub-gate, and one that changes an exported contract still fails the contract sub-gate; either failure sends the item to gate 3.
+   - Localized (single file or small contiguous region).
+   - No change to public APIs, schemas, exported types, or contracts.
+   - Small (~<30 lines diff, no new abstractions).
+   - Attach a one-word kind tag: `[mechanical]`, `[naming-only]`, `[missing-guard]`, `[typo]`, `[dead-code]`, `[comment-fix]`, etc.
 
-- Requires a design choice between valid alternatives
-- Cross-cutting / touches multiple modules
-- Changes public APIs, schemas, or external contracts
-- Needs broader test, perf, or security strategy
-- Significant scope (refactor, new abstraction)
-- Attach a one-word kind tag: `[design TBD]`, `[cross-cutting]`, `[api-change]`, `[needs-perf-data]`, `[scope: multi-module]`, `[refactor]`, etc.
+   This is the **default home for trivial polish**. When genuinely torn between `fix-now` and `note-only` for a small, safe change, prefer `fix-now` — the standing preference is to improve the code, not surface it.
+3. **Genuinely ticket-worthy** — *any* of the following hold **and** a reasonable engineer would open a tracked issue for it → `defer-as-issue`:
+   - Requires a design choice between valid alternatives.
+   - Cross-cutting / touches multiple modules.
+   - Changes public APIs, schemas, or external contracts.
+   - Needs a broader test, perf, or security strategy.
+   - Significant scope (refactor, new abstraction) that cannot reasonably be resolved now.
+   - Attach a one-word kind tag: `[design TBD]`, `[cross-cutting]`, `[api-change]`, `[needs-perf-data]`, `[scope: multi-module]`, `[refactor]`, etc.
+4. **Otherwise** → `note-only`. The item is real but minor, and either not safe to auto-fix or genuinely out of scope, **and** not substantial enough to track. Record it (verbatim finding + file:line + one-line rationale) for the `Deferred dropped` verdict field; do not fix it, do not file it, do not prompt.
 
-If an item triggers criteria from both sides (e.g., mechanical but touches a public type), the **defer-as-issue** side wins — design implications dominate size (except comment-only fixes — see the override below).
+A `fix-now` candidate that fails a gate-2 safety check (e.g., a `[mechanical]` rename that also touches a public type) does **not** auto-apply — it falls through to gate 3, where the contract change makes it ticket-worthy → `defer-as-issue`. **Failing the fix-now gate never implies ticket-worthy on its own:** a minor item that is simply out of scope falls all the way through to `note-only`, not the prompt.
 
-**Comment-only fixes are always `fix-now` — never `defer-as-issue` and never fileable.** When a finding's correct fix edits *only* comment or doc-string text (the comment is stale, incorrect, or misleading and the code it describes is already correct), it touches no behavior, API, schema, or contract — so it is trivially safe to apply in-session, and filing a Linear issue to correct a comment is pure overhead. This **overrides** the defer-as-issue criteria, the tiebreaker above, and any "out of scope" reasoning — even when the comment lives in a file you would otherwise leave untouched (e.g. an already-run migration: correcting its comment changes no checksum and no behavior, even under a rule that migrations are immutable history). It applies **wherever** a comment-only finding surfaces, including ones first raised by the sub-step 5 re-review. **Two exclusions:** a fix that edits *both* code and a comment is not comment-only — apply the standard criteria; and a comment that is wrong *because the code is wrong* is a code defect — fix the code at its real severity, never paper over it by rewording the comment.
+**Comment-only fixes are always `fix-now` — never `defer-as-issue` and never fileable.** When a finding's correct fix edits *only* comment or doc-string text (the comment is stale, incorrect, or misleading and the code it describes is already correct), it touches no behavior, API, schema, or contract — so it is trivially safe to apply in-session, and filing a Linear issue to correct a comment is pure overhead. This **overrides** gates 2–4 of the procedure above and any "out of scope" reasoning — even when the comment lives in a file you would otherwise leave untouched (e.g. an already-run migration: correcting its comment changes no checksum and no behavior, even under a rule that migrations are immutable history). It applies **wherever** a comment-only finding surfaces, including ones first raised by the sub-step 5 re-review. **Two exclusions:** a fix that edits *both* code and a comment is not comment-only — apply the standard criteria; and a comment that is wrong *because the code is wrong* is a code defect — fix the code at its real severity, never paper over it by rewording the comment.
 
-**3. Present grouped lists.** Render the classification as two labeled sub-groups with continuous numbering across both. Omit a group header entirely if its group is empty (do not print "(none)").
+**3. Present grouped lists.** Render the two **actionable** sub-groups — `fix-now` and `defer-as-issue` — as labeled sub-groups with continuous numbering across both. Omit a group header entirely if its group is empty (do not print "(none)"). **`note-only` items are not rendered here** — they are neither fixed nor filed, so listing them would surface exactly the minor items this classification is meant to keep out of the user's view; they appear only in the verdict's `Deferred dropped` field.
 
 ```text
 Deferred items surfaced during review:
@@ -265,19 +270,19 @@ Before delegating, emit a one-line chat note listing the items being auto-applie
 
 - If the re-review surfaces new **Nice-to-Have** findings:
   - **Comment-only findings** (sub-step 2's comment-only rule) are never fileable. Fix each in its **own** `developer` delegation scoped to the comment text, then re-run `pnpm check` (cheap and turbo-cached — it catches a delegation that strayed beyond comment text). **On a clean check**, record them under `Deferred fixed in-session`; a clean-check comment-only edit touches only comment text, so it cannot be implicated in any Critical/High/Medium regression and stays listed as fixed regardless of how the next bullet resolves. **If the check fails**, the delegation strayed beyond comment text and is no longer comment-only — treat that breakage as a regression and handle it through the Critical/High/Medium bullet below, whose single corrective pass and verdict population then apply unchanged (the strayed change is routed to `Open items` if unrecovered, with no "fixed" label on a broken build). No further re-review cycle of its own is needed.
-  - All **other** new Nice-to-Have findings are appended to the remaining unfixed list for sub-step 6.
+  - Run all **other** new Nice-to-Have findings through sub-step 2's decision procedure. Those classified `defer-as-issue` are appended to the remaining unfixed list for sub-step 6. Those classified `note-only` — including a `fix-now`-shaped nit, which is **not** re-fixed here (this is a single confirmatory pass, not a new fix loop) — are recorded for `Deferred dropped` and **never** appended to the sub-step 6 list: surfacing a minor, non-fileable nit as a filing prompt is the exact regression sub-step 2 exists to prevent.
 - If the re-review surfaces new **Critical/High/Medium** findings (regressions caused by the deferred-item fixes), make exactly **one** corrective pass: delegate to `developer` to fix the regressions, then re-run `pnpm check`. Do **not** re-enter the Step 5 loop.
   - **Upgrade-on-success exception.** If the corrective pass produces a clean `pnpm check` AND the diff stays scoped to the regression area, an OPTIONAL single confirmatory `quality-reviewer` re-review MAY be spawned (scoped to just the corrective-pass files). If that re-review returns no new Critical/High/Medium findings, **restore the verdict to `passed-after-fixes`** rather than terminating with open items, and continue to sub-step 6. This prevents the regression-cap path from forcing a downgrade on a genuinely successful recovery.
   - If the confirmatory re-review is skipped, or surfaces new findings, or the corrective `pnpm check` still fails, or any of the original regressions remain unaddressed in the diff, terminate Step 6 immediately. On termination, populate the verdict block as follows:
   - **Verdict:** `terminated-with-open-items` (overriding the Step 4 verdict).
   - **Deferred fixed in-session:** deferred items whose fixes are not implicated in the regression. If causation cannot be cleanly attributed (the developer landed multiple fixes in one delegation and the re-review surfaced regressions from "this delta"), list **none** of them as fixed and route every auto-applied item to `Open items` — readers should not see "fixed" labels on changes that broke the application. This carve-out does **not** sweep in *clean-check* comment-only fixes from the independent delegation above: having passed their `pnpm check`, they touch no code in the implicated delta, so they remain listed under `Deferred fixed in-session`. (A comment-only delegation whose check *failed* is not one of these — per the Nice-to-Have bullet above it is itself treated as a regression and routed to `Open items`.)
-  - **Open items:** the surviving Critical/High/Medium regressions, **plus** the implicated deferred-item fixes per the rule above, **plus** any not-yet-offered unfixed Nice-to-Have items (the user never reached sub-step 6, so those items are not "dropped" — they are surfaced for manual follow-up).
-  - **Deferred dropped:** `none` (this field is reserved for items the user explicitly declined to file in sub-step 6).
+  - **Open items:** the surviving Critical/High/Medium regressions, **plus** the implicated deferred-item fixes per the rule above, **plus** any not-yet-offered `defer-as-issue` items (the user never reached sub-step 6, so those *fileable* items are not silently dropped — they are surfaced for manual follow-up). `note-only` items are **not** swept here — see `Deferred dropped` below.
+  - **Deferred dropped:** the `note-only` items, if any — from sub-step 2 or classified by the sub-step 5 re-review — their disposition was decided at classification and does not depend on reaching sub-step 6. (No user-declined items exist here: sub-step 6 was skipped.)
   - Skip sub-step 6.
 
 **6. Offer Linear issues for unfixed items.**
 
-**Entry gate — skip sub-step 6 entirely if no *fileable* items remain.** Fileable items are the `defer-as-issue` items plus any new Nice-to-Have findings appended by sub-step 5's re-review (comment-only findings are never appended and never fileable — see sub-step 2 and sub-step 5). Auto-applied `fix-now` items are already fixed and are not fileable. If both are empty there is nothing to file — skip the prompt and emit the Output-section verdict block (the schema under `## Output`, not the sub-step 6 template below). Skipping sub-step 6 does **not** exempt the auto-applied items from the verdict: they MUST still be listed in that block's `Deferred fixed in-session:` field. (This is the common case when every deferred item was `fix-now`: they all auto-apply and the run reaches Output with no prompt at all.)
+**Entry gate — skip sub-step 6 entirely if no *fileable* items remain.** Fileable items are the `defer-as-issue` items plus any new Nice-to-Have findings appended by sub-step 5's re-review (comment-only findings are never appended and never fileable — see sub-step 2 and sub-step 5). Auto-applied `fix-now` items are already fixed and are not fileable. If both are empty there is nothing to file — skip the prompt and emit the Output-section verdict block (the schema under `## Output`, not the sub-step 6 template below). Skipping sub-step 6 does **not** exempt the auto-applied items from the verdict: they MUST still be listed in that block's `Deferred fixed in-session:` field, and any `note-only` items — from sub-step 2 or classified by the sub-step 5 re-review — MUST still be listed under `Deferred dropped:`. (This is the common case when every deferred item was `fix-now` or `note-only`: nothing is fileable and the run reaches Output with no prompt at all.)
 
 Render the remaining unfixed items using the template below, then ask the question that follows. The render is REQUIRED regardless of prompt mechanism (markdown body, AskUserQuestion description, etc.) — do not collapse to a single sentence; assume the user is context-switching across parallel sessions and cannot scroll back to sub-step 3. Preserve original sub-step 3 numbering: auto-applied `fix-now` items are shown under "Auto-fixed in-session (for context)" with their original numbers (e.g., 1, 2), and the fileable `defer-as-issue` items keep theirs (e.g., 3, 4), with any new sub-step 5 re-review findings appended after. Omit a sub-group header entirely if empty; do not print "(none)".
 
@@ -339,7 +344,7 @@ Do NOT silently fall through to the default.
 
 After creation, verify the parent link took (`linear-cli issues get "$new_id" -o json | jq -r '.parent.identifier'` should print the parent's ID). If it did not, surface the failure rather than proceeding — an orphaned deferred issue defeats the purpose of filing it.
 
-Items the user explicitly declined to file in this prompt go to `Deferred dropped` — record them as a list for the verdict block. (Items that never reached this prompt because Step 6 terminated early in sub-step 5 are routed to `Open items` instead — see sub-step 5.)
+Items the user explicitly declined to file in this prompt go to `Deferred dropped`, **joining any `note-only` items — from sub-step 2 or classified by the sub-step 5 re-review** — record them all as one list for the verdict block. (Items that never reached this prompt because Step 6 terminated early in sub-step 5 are routed to `Open items` instead — see sub-step 5.)
 
 ## Output
 
@@ -351,7 +356,7 @@ Cycles: N (initial + N-1 re-reviews)
 Findings resolved: [list, or the bare word none if passed-clean]
 Deferred fixed in-session: [list of items applied in-session, including auto-applied fix-now items even when sub-step 6 was skipped; or the bare word none]
 Deferred filed as issues: [PL-XX, PL-YY (sub-issues of <PARENT>), or the bare word none]
-Deferred dropped: [list, or the bare word none]
+Deferred dropped: [items intentionally not filed — note-only items auto-classified too minor to track, plus items the user explicitly declined in sub-step 6; list, or the bare word none]
 Open items: [list, or the bare word none — populated only on terminated-with-open-items or escalated-to-architect; includes any deferred items not handled above]
 ```
 

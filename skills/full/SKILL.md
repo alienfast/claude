@@ -5,7 +5,7 @@ description: End-to-end Linear issue macro — runs /start then /finish in seque
 
 # Full Issue (Macro)
 
-A thin composition over `/start` and `/finish`. The two underlying skills are individually trustworthy and require user input at only two predictable points — plan approval (Step 6 of `/start`) and the deferred-items filing decision (during `/quality-review`, and only when there are non-trivial items to file as issues; trivial `fix-now` items auto-apply with no prompt). `/full` removes the manual `/finish` invocation at the end so that, once the deferred-items gate clears with a passing verdict, the issue ships without further input.
+A thin composition over `/start` and `/finish`. The two underlying skills are individually trustworthy and require user input at only two predictable points — plan approval (Step 6 of `/start`) and the deferred-items filing decision (during `/quality-review`, and only when there are non-trivial items to file as issues; trivial `fix-now` and `note-only` items are handled with no prompt). `/full` removes the manual `/finish` invocation at the end so that, once the deferred-items gate clears with a passing verdict, the issue ships without further input.
 
 Worktree mode is **opt-in**, mirroring `/start`: `/full PL-13` runs in-place on the current branch; `/full wt PL-13` creates and works inside a per-issue worktree. The `wt` token is the single switch — `/full` passes it through to `/start` unchanged.
 
@@ -54,7 +54,7 @@ Do NOT pass `pr` or `no push` — those are `/finish` arguments and `/start` rej
 3. **Gate 1 — plan approval via `EnterPlanMode`/`ExitPlanMode`** (user input)
 4. Implementation via delegation
 5. `/quality-review` invocation
-6. **Gate 2 — deferred-items filing inside `/quality-review`** (user input — fires only when there are non-trivial items to file as issues; trivial `fix-now` items auto-apply with no prompt)
+6. **Gate 2 — deferred-items filing inside `/quality-review`** (user input — fires only when there are non-trivial items to file as issues; trivial `fix-now` and `note-only` items are handled with no prompt)
 7. Step 10 tagged final line
 
 Wait for `/start`'s tagged final line — the LAST LLM-authored line of its output, after any intermediate `IN-PROGRESS` lines from sub-skills like `/checkpoint` — before beginning Step 2. Do not narrate progress, inject extra prompts, or race ahead.
