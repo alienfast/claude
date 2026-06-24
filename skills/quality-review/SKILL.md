@@ -389,6 +389,24 @@ When delegated from `/start`, this block becomes the "Adversarial review" sectio
 
 The persisted file is the canonical `/quality-review` → `/finish` handoff. The contents are the verdict block verbatim — downstream readers (`/finish` Step 1.5) parse the `Verdict:` line and the `Open items:` list.
 
+## Step 7: Session Reflection
+
+After the verdict block is composed **and persisted** (the Output section above is fully complete), invoke `/reflect` in session mode as the **final action** of the run:
+
+```text
+Skill(skill: "reflect")   # session mode (no args)
+```
+
+This is the continuous-improvement tail: `/reflect` examines *this session's process* (which `/quality-review` itself never sees — it reviews the diff, not the thrashing, silently-worked-around skills, or stale config the session exposed) and turns generalizable friction into shared-config improvements. See `~/.claude/skills/reflect/SKILL.md`.
+
+Rules for this step:
+
+- **Runs exactly once**, here at the end — never per review cycle. The fix loop (Step 5) and deferred-items triage (Step 6) must have fully terminated first.
+- **Runs regardless of verdict** — including `terminated-with-open-items` and `escalated-to-architect`. Those friction-heavy runs are the *highest*-value to reflect on. `/reflect`'s own detection gate keeps clean runs quiet (it emits `No improvements identified.` and returns cheaply), so this adds negligible cost to a smooth pass.
+- **Does not touch the verdict or the lifecycle tag.** It runs after the verdict is persisted; it never re-opens, re-rates, or re-persists the verdict, and it emits no lifecycle tag. When `/quality-review` is delegated from `/start` Step 9, this completes before `/start` Step 10 renders the verdict and emits `READY-FOR-FINISH`, so the lifecycle-tag handoff is unaffected. Keep `/reflect`'s output compact so it never buries the verdict block.
+- **No commit pollution.** `/reflect` only edits the working tree and never commits. User-level config edits land in the `~/.claude` repo (separate from the project repo). Project-level config edits stay uncommitted in the project tree and are surfaced by path; `/finish` stages issue files **by name** (never `git add -A`), so reflection's edits do not enter the issue commit — the user commits config changes deliberately.
+- **Best-effort, non-blocking.** If `/reflect` is unavailable or errors, note it in one line and finish normally. Reflection failing must never block or alter the review outcome.
+
 ## Error Handling
 
 - **`pnpm check` repeatedly fails** after multiple `developer` delegations (Step 2 gate): surface to the user with the failing output. Do not proceed to review.

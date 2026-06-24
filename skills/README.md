@@ -20,7 +20,7 @@ This directory contains reusable Claude Skills that can be invoked during conver
 
 Skills use a **progressive disclosure** model with three tiers of loading:
 
-1. **Tier 1 (Always Loaded)**: `SKILL.md` frontmatter (name, description, version) - always visible to Claude
+1. **Tier 1 (Always Loaded)**: `SKILL.md` frontmatter (name and description) - always visible to Claude
 2. **Tier 2 (Loaded on Invocation)**: `SKILL.md` content - loaded when skill is invoked
 3. **Tier 3 (Loaded on Demand)**: Supporting files in `resources/`, `templates/`, `scripts/` - loaded only when referenced
 
@@ -158,7 +158,7 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 
 ### quality-review
 
-**Description**: Adversarial implementation review with triage and fix loop. Hard-gates on `pnpm check`, delegates to the quality-reviewer agent for categorized findings, then loops triage/fix/re-review up to 3 cycles before escalating.
+**Description**: Adversarial implementation review with triage and fix loop. Hard-gates on `pnpm check`, delegates to the quality-reviewer agent for categorized findings, then loops triage/fix/re-review until convergence (no new Critical/High/Medium findings; 5-cycle soft ceiling), and reflects on the session at the tail.
 
 **When Invoked**:
 
@@ -171,7 +171,9 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 - Working Application Contract enforcement (`pnpm check` gate)
 - Categorized findings (Critical/High/Medium/Nice-to-Have/Approved)
 - Parallel domain-scoped reviewers for large changes
-- Mandatory re-review after fixes; 3-cycle termination cap
+- Mandatory re-review after fixes; converges when no new C/H/M findings surface (5-cycle soft ceiling)
+- Deferred-items triage (`fix-now` / `defer-as-issue` / `note-only`); auto-applies safe fixes, files the rest as sub-issues
+- Session-reflection tail (Step 7) — invokes `/reflect` to turn process friction into shared-config improvements
 - Standalone or delegated invocation; auto-detects scope from `git diff`
 - Optional Linear issue context for requirement-conformance checks
 
@@ -179,7 +181,32 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 
 - Self-contained workflow in `SKILL.md`
 - Delegates to `quality-reviewer` and `developer` agents
+- Invokes `reflect` (session mode) as its final step
 - Uses `linear-cli issues get` for requirement context when an issue is resolvable
+
+### reflect
+
+**Description**: Continuous-improvement reflection on the just-finished session. Captures generalizable lessons (thrashing, silently-worked-around skills, repeated corrections) and reconciles config that has drifted from reality, then auto-applies the small/safe shared-config edits and proposes the larger ones — reusing `/quality-review`'s `apply-now` / `propose` / `drop` triage, pointed at the config layer.
+
+**When Invoked**:
+
+- Auto-invoked at the tail of `/quality-review` (Step 7)
+- User says "reflect", "reflect on this session", "what did we learn"
+- User invokes `/reflect` (session) or `/reflect sweep [project-path]`
+
+**Key Features**:
+
+- Two directions: **Add** (new lesson → rule/note) and **Reconcile** (config contradicts reality → fix the stale line)
+- Two modes: **session** (reflect on this session in context) and **sweep** (audit a project's `CLAUDE.md`/rules against the actual codebase + cross-file dedup; manual or scheduled)
+- Targets **shared, team-visible config** (`CLAUDE.md` / `rules/` / `standards/` / skills); memory is last resort
+- Adversarial verify gate drops anything not generalizable, already-covered, or that wouldn't have helped — "zero improvements" is a success
+- Auto-applies only additive/clarifying edits to the working tree; **never commits** (the explicit-commit step stays the review gate)
+
+**Structure**:
+
+- Self-contained workflow in `SKILL.md` (routing table, triage gates, noise guard)
+- Delegates verification (session) and config-vs-codebase audit (sweep) to agents
+- Routes per `~/.claude/CLAUDE.md` "Where Knowledge Goes"; references `~/.claude/standards/problem-solving.md`
 
 ## Creating New Skills
 
@@ -205,7 +232,7 @@ Every `SKILL.md` must start with YAML frontmatter:
 ---
 name: "Your Skill Name"
 description: "What the skill does and when it's invoked. Include trigger phrases users might say."
-version: "1.0.0"
+version: "1.0.0"  # Optional: most workflow skills in this repo omit it
 allowed-tools: ["Bash", "Read", "Write"]  # Optional: restrict available tools
 ---
 ```
@@ -214,7 +241,7 @@ allowed-tools: ["Bash", "Read", "Write"]  # Optional: restrict available tools
 
 - `name` (required): Human-readable skill name (title case)
 - `description` (required): What + when the skill is used, including trigger phrases
-- `version` (required): Semantic version (1.0.0)
+- `version` (optional): Semantic version (1.0.0); most workflow skills in this repo omit it
 - `allowed-tools` (optional): Whitelist of tools this skill can use
 
 ### Naming Conventions
@@ -302,7 +329,7 @@ description: "I help you update your dependencies"
 
 Don't load everything upfront:
 
-- **Tier 1**: Frontmatter (name, description, version) - always visible
+- **Tier 1**: Frontmatter (name and description) - always visible
 - **Tier 2**: Main SKILL.md content - loaded on invocation
 - **Tier 3**: Supporting files - loaded only when referenced
 

@@ -2,6 +2,7 @@
   "name": ".claude",
   "packageManager": "pnpm@11.7.0",
   "scripts": {
+    "check": "pnpm check-markdown",
     "check-markdown": "markdownlint-cli2 --fix '**/*.md'"
   },
   "devDependencies": {

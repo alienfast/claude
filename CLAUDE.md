@@ -89,6 +89,8 @@ Route by what the information is:
 
 Memory is the destination of last resort: if it's worth keeping and the team would benefit, promote it to shared config instead.
 
+The `/reflect` skill automates this routing: at the `/quality-review` tail it turns session friction (thrashing, silently-worked-around skills, repeated corrections) into shared-config edits — auto-applying the small/safe ones to the working tree (never committed) and proposing the rest. `/reflect sweep` audits a project's config against the actual codebase and de-duplicates accumulated drift.
+
 ### Multi-Session Safety
 
 Memory files follow the same principles as git working tree protection:
