@@ -26,18 +26,20 @@ If neither applies, run in standalone mode.
 
 ### Step 2: Run the ranking script
 
-Run from inside the project directory so the script can read `.linear.yaml` for the team key. Use the appropriate form:
+The script resolves the team key from `--team` or `$LINEAR_TEAM`, erroring if neither is set. Unless `$LINEAR_TEAM` is exported in the environment, pass `--team <TEAM>` explicitly — derive `<TEAM>` from the `<COMPLETED-ID>` prefix (e.g. `PL-260` → `PL`) or the current branch name (`kross/pl-260-foo` → `PL`). Use the appropriate form:
 
 ```bash
 # Standalone
-~/.claude/scripts/next-candidates.sh
+~/.claude/scripts/next-candidates.sh --team <TEAM>
 
 # Post-finish (transitively unblock from <COMPLETED-ID>)
-~/.claude/scripts/next-candidates.sh --completed <COMPLETED-ID>
+~/.claude/scripts/next-candidates.sh --team <TEAM> --completed <COMPLETED-ID>
 
 # Show more than the default 3
-~/.claude/scripts/next-candidates.sh --limit 5
+~/.claude/scripts/next-candidates.sh --team <TEAM> --limit 5
 ```
+
+If `$LINEAR_TEAM` is exported, `--team` may be omitted from each form.
 
 The script emits a markdown-formatted ranked list with tier, parent chain, and reasoning per candidate. It exits 0 even when no workable candidates exist (it prints `_No workable issues in team <KEY>._`).
 

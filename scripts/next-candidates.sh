@@ -4,7 +4,7 @@
 # Usage:
 #   next-candidates.sh [--team KEY] [--completed PL-XX] [--limit N] [--no-parent-walk]
 #
-# Resolves the team key from --team, $LINEAR_TEAM, or .linear.yaml in cwd.
+# Resolves the team key from --team or $LINEAR_TEAM.
 # Fans out three parallel Linear CLI calls (workable list, deps graph, current
 # cycle), filters to issues with all blockers resolved, buckets into 6 tiers
 # (assigned-to-me → newly-unblocked-in-cycle → cycle-ready → newly-unblocked →
@@ -57,7 +57,7 @@ if [ -n "$completed" ]; then
   fi
 fi
 
-for cmd in linear-cli jq awk; do
+for cmd in linear-cli jq; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "ERROR: required command '$cmd' not found in PATH" >&2
     exit 3
@@ -70,11 +70,8 @@ team_key="$team_arg"
 if [ -z "$team_key" ] && [ -n "${LINEAR_TEAM:-}" ]; then
   team_key="$LINEAR_TEAM"
 fi
-if [ -z "$team_key" ] && [ -f ".linear.yaml" ]; then
-  team_key=$(awk '/^team:/ { sub(/^team:[[:space:]]*/,""); gsub(/["'"'"']/,""); print; exit }' .linear.yaml)
-fi
 if [ -z "$team_key" ]; then
-  echo "ERROR: team key not resolved (pass --team, set \$LINEAR_TEAM, or run from a dir with .linear.yaml)" >&2
+  echo "ERROR: team key not resolved (pass --team or set \$LINEAR_TEAM)" >&2
   exit 1
 fi
 
