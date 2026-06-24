@@ -1,11 +1,8 @@
 ---
 paths:
-  - "**/*.ts"
-  - "**/*.tsx"
-  - "**/*.js"
-  - "**/*.jsx"
-  - "**/*.mjs"
-  - "**/*.cjs"
+  - "**/*"
+  - "**/.*"
+  - "**/.*/**"
 ---
 
 # Comments
@@ -66,11 +63,11 @@ boundary inside a long block.
 ## Scope: fixing comments while you're in the file
 
 Bringing comments in a file up to this standard is **in-scope** for any
-edit that touches the file. The PostToolUse comment-width hook flags
-violations file-wide on every Edit — fixing them is the intended
-response, not churn. Do not split these fixes into a separate PR.
+edit that touches the file. This rule is injected whenever you touch a
+file, so pre-existing violations are visible to you — fixing them is the
+intended response, not churn. Do not split these fixes into a separate PR.
 
-Reviewers and orchestrators must NOT classify comment-width or
+Reviewers and orchestrators must NOT classify comment-proportion or
 comment-formatting fixes as "scope creep," "unrelated changes," or
 "churn outside scope," and must NOT instruct the developer to revert
 them. The only exception is a comment fix in a file the change does not

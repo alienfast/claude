@@ -139,7 +139,6 @@ Universal rules governing agent behavior. See [standards/README.md](standards/RE
 |----------|--------|
 | [agent-coordination](standards/agent-coordination.md) | Parallel vs sequential execution patterns |
 | [git](standards/git.md) | Commit messages, destructive command blocking, multi-session safety |
-| [comments](rules/comments.md) (rule, auto-injected) | Default to no comments; size to the reader; when WHY-comments earn their place |
 | [problem-solving](standards/problem-solving.md) | When to stop and ask vs proceed |
 | [technical-debt-prevention](standards/technical-debt-prevention.md) | No backups, no duplicates, delete aggressively |
 | [linear-workflow](standards/linear-workflow.md) | Terminal states, dependency rules, Linear CLI quoting gotchas |
@@ -155,6 +154,7 @@ Path-specific conventions applied automatically when editing matching files.
 
 | Rule | Applies To |
 |------|-----------|
+| [comments](rules/comments.md) | all files (`**/*`) — default to no comments; size to the reader; no provenance decoration |
 | [typescript](rules/typescript.md) | `**/*.ts`, `**/*.tsx` |
 | [react](rules/react.md) | `**/*.tsx`, `**/*.jsx` |
 | [markdown](rules/markdown.md) | `**/*.md`, `**/*.mdx` |
@@ -269,6 +269,8 @@ Add a markdown file to `standards/`. It will be referenced by agents automatical
 ### Adding rules
 
 Add a markdown file to `rules/` and register the glob pattern in `CLAUDE.md` under "Path-Specific Rules."
+
+Scope the `paths:` glob to where the rule's principle actually applies: use `**/*` (plus `**/.*` and `**/.*/**` to also cover dotfiles and dot-directories like `.github/`) when the rule is language-agnostic — e.g. comments — and reserve a curated extension list for genuinely language-specific rules. A curated list silently exempts every file type it omits, and the gap stays invisible until a violation slips through an unlisted type (this is how the comment rule once missed a Dockerfile).
 
 ## References
 

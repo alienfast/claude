@@ -83,8 +83,9 @@ Attack the implementation from every angle. Think like a malicious user, a confu
 
 **Disproportionate or non-conforming comments**, per `rules/comments.md`, in any file under review:
 
-- A comment sized to the effort of discovery rather than what the reader needs at the line — a paragraph where one sentence would name the constraint; a multi-line block restating what the code, types, or a locale string already say; narration of WHAT the code does.
-- Provenance decoration (`// added for the X flow`, `// fixes #123`) or pointers to transient `tmp/` paths.
+- A comment sized to the effort of discovery rather than what the reader needs at the line — a paragraph where one sentence would name the constraint; a multi-line block restating what the code, types, or a locale string already say; narration of WHAT the code does (e.g. a comment listing the very setup steps — `+ UTC/UTF-8 + libvips + mysqlclient + …` — that the lines directly below it already perform).
+- Provenance decoration (`// added for the X flow`, `// fixes #123`), backward-looking history or migration narration (`# collapsed from X (PL-215)`, `# part of the Z refactor`), removed-code notes (`… so they are dropped`), or pointers to transient `tmp/` paths.
+- A mixed comment where a legitimate constraint is buried among the above — flag the decoration fragments, not the whole comment. Split what's written into *facts the code already states or git already holds* vs. *the one invisible constraint it can't*, and keep only the latter. A four-line comment carrying one keep-worthy sentence is still a finding.
 
 Classify these **Nice-to-Have / Out-of-Scope** — never Critical/High/Medium. They are comment-only fixes, so the `/quality-review` loop auto-applies them in-session with no prompt (Step 6's comment-only rule); that is how the standard is enforced gradually, file by file, without gating the verdict or thrashing the convergence loop. Do NOT escalate comment hygiene to a blocking severity — that lane is reserved for the dead-code / unused-implementation rule violations.
 

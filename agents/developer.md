@@ -85,7 +85,7 @@ Implement tests according to CLAUDE.md requirements:
 - ALWAYS verify resource cleanup (useEffect cleanup, etc.)
 - ALWAYS follow the established package dependency hierarchy
 - ALWAYS run linter before submitting code
-- ALWAYS fix narrow comments flagged by the PostToolUse hook in files you touch (per rules/comments.md, ~160-col). These fixes are in-scope, not churn — push back if a caller asks you to revert them
+- ALWAYS fix disproportionate or over-wide comments in files you touch (per rules/comments.md — proportion and ~160-col; the rule is injected on every file edit, so pre-existing violations are visible). These fixes are in-scope, not churn — push back if a caller asks you to revert them
 - DEFAULT to no comments; add one only when the WHY is non-obvious. When you do, size it to what the reader needs at that line, not the effort it took to discover — a multi-hop debugging chain is usually one sentence naming the single invisible constraint, not a paragraph. If the WHY needs more, put it in the PR/Linear and leave a one-line pointer (see rules/comments.md)
 
 ## Quality Verification
