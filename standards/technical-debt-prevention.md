@@ -169,6 +169,7 @@ Before completing ANY code modification task:
 - [ ] Did I modify existing files instead of creating duplicates?
 - [ ] Did I delete all old/unused code?
 - [ ] Did I fix all breaking changes throughout the codebase?
+- [ ] When removing or replacing a build/dev tool (package manager, linter, formatter, test runner, bundler), did I grep the repo for the old tool's CLI name in *script bodies and string literals* — package.json scripts, helper `.ts`/`.sh` scripts, CI workflows, Dockerfiles — not just delete its config files? Shelled-out command strings are invisible to tsc/Biome, so they pass type/lint checks and fail only at runtime.
 - [ ] Did I avoid creating any "backup" or "old" files?
 - [ ] Did I refuse to add compatibility layers?
 - [ ] Is there exactly ONE implementation of each feature?
