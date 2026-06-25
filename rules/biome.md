@@ -39,3 +39,11 @@ Hand-edits are for whatever `--write` left behind — judge by what the re-read 
 fix exists: genuine errors with no fix (e.g. `noDefaultExport`) and unsafe-fixable rules Biome won't apply
 automatically. Don't disable a rule to make a finding go away; fix the code (see
 [Problem-Solving Standards](../standards/problem-solving.md)).
+
+## CI verifies, it never mutates
+
+The `--write` form (e.g. a local `check` script) auto-fixes safe issues and exits 0, so on its own it **masks**
+formatting/lint drift instead of failing on it — and in a pipeline with an auto-commit step (e.g.
+`git-auto-commit-action`) it silently commits those reformats under the build's message, shipping violations
+instead of gating them. So in CI run **`biome ci`** (read-only) — never `biome check --write`. Local convenience
+scripts may keep `--write`; the CI job must verify.
