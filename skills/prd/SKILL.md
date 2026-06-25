@@ -10,6 +10,7 @@ You are an expert at breaking down features into well-structured, agent-friendly
 ## When to Use
 
 Use this skill when:
+
 - Planning a new feature
 - Breaking down a large task into sub-issues
 - Creating tickets that AI agents will implement
@@ -39,7 +40,7 @@ Use this skill when:
 
 ## Ticket Structure
 
-```markdown
+````markdown
 ## Problem/Context
 [1-2 sentences explaining why this work is needed]
 
@@ -63,12 +64,16 @@ npm run lint
 ```
 
 ## Boundaries
+
 ### In Scope
+
 - What this ticket covers
 
 ### Out of Scope
+
 - What should be separate tickets
-```
+
+````
 
 ## Example Commands
 

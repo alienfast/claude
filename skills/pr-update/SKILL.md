@@ -539,7 +539,7 @@ Check if a file exists:
 
 ### ❌ Documenting Removed Features
 
-```
+```text
 # Commit history shows:
 # - Commit A: Add feature X
 # - Commit B: Remove feature X
@@ -551,21 +551,21 @@ Check if a file exists:
 
 ### ❌ Vague Descriptions
 
-```
+```text
 # WRONG: "Updated database configuration"
 # RIGHT: "Set default_authentication_plugin to mysql_native_password for Cloud SQL Proxy v2 compatibility"
 ```
 
 ### ❌ Missing Verification
 
-```
+```text
 # WRONG: Assume a feature exists because you saw it in commit messages
 # RIGHT: git show HEAD:path/to/file.ts | grep "feature_name"
 ```
 
 ### ❌ Broken Links
 
-```
+```text
 # WRONG: [config.ts](/Users/kross/project/src/config.ts)
 # RIGHT: [config.ts](src/config.ts)
 ```

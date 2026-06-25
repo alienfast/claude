@@ -14,13 +14,13 @@ Quick reference for finding official migration guides and handling framework-spe
 
 | Deprecated | Replacement | Guide |
 |------------|-------------|-------|
-| `React.createClass` | Function components or `class extends React.Component` | [Link](https://react.dev/reference/react/Component) |
-| `componentWillMount` | `useEffect` with empty deps or constructor | [Link](https://react.dev/reference/react/Component#componentwillmount) |
-| `componentWillReceiveProps` | `useEffect` with dependencies | [Link](https://react.dev/reference/react/Component#componentwillreceiveprops) |
-| `componentWillUpdate` | `useEffect` | [Link](https://react.dev/reference/react/Component#componentwillupdate) |
-| `UNSAFE_*` lifecycle methods | Modern alternatives | [Link](https://react.dev/blog/2018/03/27/update-on-async-rendering) |
-| `findDOMNode` | Refs | [Link](https://react.dev/reference/react-dom/findDOMNode) |
-| `ReactDOM.render` | `ReactDOM.createRoot` (React 18+) | [Link](https://react.dev/blog/2022/03/08/react-18-upgrade-guide#updates-to-client-rendering-apis) |
+| `React.createClass` | Function components or `class extends React.Component` | [React.Component reference](https://react.dev/reference/react/Component) |
+| `componentWillMount` | `useEffect` with empty deps or constructor | [componentWillMount docs](https://react.dev/reference/react/Component#componentwillmount) |
+| `componentWillReceiveProps` | `useEffect` with dependencies | [componentWillReceiveProps docs](https://react.dev/reference/react/Component#componentwillreceiveprops) |
+| `componentWillUpdate` | `useEffect` | [componentWillUpdate docs](https://react.dev/reference/react/Component#componentwillupdate) |
+| `UNSAFE_*` lifecycle methods | Modern alternatives | [Async rendering update](https://react.dev/blog/2018/03/27/update-on-async-rendering) |
+| `findDOMNode` | Refs | [findDOMNode docs](https://react.dev/reference/react-dom/findDOMNode) |
+| `ReactDOM.render` | `ReactDOM.createRoot` (React 18+) | [React 18 client rendering APIs](https://react.dev/blog/2022/03/08/react-18-upgrade-guide#updates-to-client-rendering-apis) |
 
 ### React Router Migrations
 

@@ -1,11 +1,10 @@
-# React Component Generator
-
 ---
-
 name: "react-component-generator"
 description: "Generates React components following established conventions. Use when creating new React components, hooks, or when refactoring existing components to match standards."
 version: "1.0.0"
 ---
+
+# React Component Generator
 
 ## Skill Purpose
 

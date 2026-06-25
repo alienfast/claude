@@ -2,7 +2,7 @@
 
 Use this template when adding new features or capabilities.
 
-```markdown
+````markdown
 ## Executive Summary
 
 [2–4 plain sentences for a business audience: what this feature lets users or the
@@ -164,4 +164,4 @@ feature:
 - [ ] Deploy to production
 - [ ] Feature flag: [If using gradual rollout]
 
-```
+````

@@ -6,6 +6,10 @@
     "default": true,
     // MD013 (line-length): we wrap prose at ~160, not 80.
     "MD013": false,
+    // MD024 (no-duplicate-heading): allow the same subheading text under different parents (e.g. "Official Resources" per framework); still flags true duplicates within one section.
+    "MD024": { "siblings_only": true },
+    // MD038 (no-space-in-code-span): our skill/spec docs quote literal string fragments in code spans where a leading/trailing space is significant (e.g. " no push", " merge", " ("). --fix strips those spaces and silently corrupts the documented contract (e.g. turns " (" into "(" right beside prose that says "single space + opening paren"). Off.
+    "MD038": false,
     // MD060 (table-column-style): newly default-on in markdownlint 0.40 and has NO auto-fixer, so `--fix` can never repair it — every existing
     // table (delimiter rows without the single-space padding the data rows use) fails forever. With style "any" it also flip-flops between
     // "compact" and "aligned" per table, so there is no stable target to hand-fix toward. Purely cosmetic; our GFM tables are already readable. Off.
@@ -37,7 +41,11 @@
     "session-env/**",
     "sessions/**",
     "shell-snapshots/**",
-    "skills/**",
+    // Vendored skills installed via update.sh (vercel-labs/*) — update.sh overwrites them, so linting/fixing here is churn that gets blown away. Authored skills under skills/ are linted.
+    "skills/agent-browser/**",
+    "skills/skill-creator/**",
+    "skills/vercel-composition-patterns/**",
+    "skills/vercel-react-best-practices/**",
     "tasks/**",
     "teams/**",
     "telemetry/**",

@@ -11,7 +11,7 @@ Use this template when fixing bugs or resolving issues.
 > production — this is **not** a production bug fix. Drop the bug-fix framing and use
 > the feature/refactor template instead.
 
-```markdown
+````markdown
 ## Executive Summary
 
 [2–4 plain sentences for a business audience: what was going wrong for users or the
@@ -173,4 +173,4 @@ If this fix causes issues:
 - [Updated troubleshooting guide](docs/troubleshooting.md)
 - [Added to known issues (if partial fix)](docs/known-issues.md)
 
-```
+````

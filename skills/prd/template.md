@@ -5,7 +5,6 @@ Use this template when creating new feature tickets.
 ## Problem/Context
 <!-- 1-2 sentences: Why is this work needed? What user problem does it solve? -->
 
-
 ## Requirements
 
 ### Must Have
@@ -22,7 +21,6 @@ Use this template when creating new feature tickets.
 
 ## Technical Approach
 <!-- High-level implementation notes (optional for agent tickets) -->
-
 
 ## Verification
 <!-- Commands to run to verify the work -->

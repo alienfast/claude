@@ -2,7 +2,7 @@
 
 Use this template for infrastructure changes, deployments, and cloud resources.
 
-```markdown
+````markdown
 ## Executive Summary
 
 [2–4 plain sentences for a business audience: what this infrastructure change means
@@ -292,4 +292,4 @@ resource:
 - Updated `infrastructure-package` to x.y.z
 - Added `cloud-provider-sdk` for [specific feature]
 
-```
+````

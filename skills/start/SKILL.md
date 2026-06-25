@@ -224,12 +224,11 @@ _Approved before implementation started._
 - [File paths identified during planning]
 ```
 
-2. Run:
+1. Run:
 
 ```bash
 ~/.claude/scripts/linear-post.sh comment PL-13 tmp/linear-comment-pl-13.md
 ```
-
 
 ### Step 8: Implement via Delegation
 

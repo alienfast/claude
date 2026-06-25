@@ -10,6 +10,7 @@ You are an expert at analyzing and prioritizing software backlogs.
 ## When to Use
 
 Use this skill when:
+
 - The backlog needs cleanup
 - Prioritization decisions need to be made
 - Looking for stale or blocked issues
@@ -17,11 +18,13 @@ Use this skill when:
 ## Process
 
 1. **Fetch the Backlog**
+
    ```bash
    linear-cli issues list --team ENG
    ```
 
 2. **Analyze Dependencies**
+
    ```bash
    ~/.claude/scripts/linear-deps-graph.sh --team ENG
    ```
@@ -38,23 +41,26 @@ Use this skill when:
 ## Analysis Framework
 
 ### Staleness Check
+
 - Last updated > 30 days ago = Stale
 - Last updated > 60 days ago = Very stale (consider closing)
 - No activity + no assignee = Orphaned
 
 ### Dependency Health
+
 - Blocked by completed issues = Unblock
 - Circular dependencies = Flag for resolution
 - Long blocking chains = Risk
 
 ### Priority Assessment
+
 - P1/P2 but blocked = Escalate blocker
 - P3/P4 with no activity = Consider closing
 - No priority set = Needs triage
 
 ## Output Format
 
-```
+```text
 BACKLOG TRIAGE: Team ENG
 ════════════════════════════════════════
 

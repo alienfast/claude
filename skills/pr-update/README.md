@@ -25,7 +25,7 @@ Always verify features exist in `HEAD` before documenting them. If a feature was
 
 ## Structure
 
-```
+```text
 pr-update/
 ├── SKILL.md              # Main skill instructions
 ├── README.md             # This file
