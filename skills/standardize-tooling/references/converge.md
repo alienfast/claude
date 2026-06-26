@@ -58,8 +58,14 @@ npm-published). `~/projects/gltfjsx` is the single-package + published + tsdown 
 - Registry sub-branch: if `ALIENFAST_REGISTRY=github`, the target consumes `@alienfast/*` from GitHub
   Packages — mirror basefund's `registries: { '@alienfast': https://npm.pkg.github.com/ }` and inject the
   token at install time (Docker `pnpm_config_//…` env, CI `pnpm config set` from `$GITHUB_TOKEN`, dev user
-  `~/.npmrc`). Do **not** commit an `.npmrc` with env-var auth — pnpm ≥ 11.5.3 ignores it (GHSA-3qhv-2rgh-x77r).
-  If `ALIENFAST_REGISTRY=npm` (resolves from public npm), no registry config is needed.
+  `~/.npmrc`). Move the scope→registry mapping out of the project's existing `.npmrc` (or the `.yarnrc.yml`
+  `npmScopes` block) into `pnpm-workspace.yaml registries:`, then **delete the committed `.npmrc`** — the
+  `.yarnrc.yml` is already removed as a pnpm leftover, but `.npmrc` is not, and pnpm ≥ 11.5.3 ignores
+  env-var auth in a committed `.npmrc` anyway (GHSA-3qhv-2rgh-x77r). If `ALIENFAST_REGISTRY=npm` (resolves
+  from public npm), no registry config is needed.
+- The `ALIENFAST_REGISTRY` signal reads the *current* package manager's registry config and lockfiles
+  (`.npmrc`, `.yarnrc.yml`, `yarn.lock`, …), not just `pnpm-lock.yaml` — so it is correct **before** the pnpm
+  migration, when no `pnpm-lock.yaml` exists yet.
 
 ## Biome (no ESLint, no Prettier)
 

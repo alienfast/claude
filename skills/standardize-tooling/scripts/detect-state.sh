@@ -84,11 +84,16 @@ emit BUNDLER "$bundler"
 
 # --- Private @alienfast registry consumption ---------------------------------
 # Does the target depend on @alienfast/* and, if so, where do those tarballs resolve from?
-# npm.pkg.github.com in the lockfile => private GitHub Packages (needs `registries:` + token injection).
+# npm.pkg.github.com anywhere the *current* package manager records the scope => private GitHub
+# Packages (needs `registries:` + token injection). Check registry-config files AND every lockfile,
+# not just pnpm-lock.yaml — a pre-migration project on yarn/npm has no pnpm-lock.yaml yet, so keying
+# off it alone is a false negative (the mapping lives in .npmrc / .yarnrc.yml / the yarn|npm lockfile).
 alienfast="none"
 if grep -rqE '"@alienfast/' "$TARGET"/package.json "$TARGET"/{apps,packages,ops}/*/package.json 2>/dev/null; then
-  if grep -qE 'npm\.pkg\.github\.com' "$TARGET/pnpm-lock.yaml" 2>/dev/null; then alienfast="github"
-  else alienfast="npm"; fi
+  alienfast="npm"
+  for f in .npmrc .yarnrc.yml .yarnrc pnpm-workspace.yaml pnpm-lock.yaml yarn.lock package-lock.json; do
+    if [[ -f "$TARGET/$f" ]] && grep -qE 'npm\.pkg\.github\.com' "$TARGET/$f"; then alienfast="github"; break; fi
+  done
 fi
 emit ALIENFAST_REGISTRY "$alienfast"
 
