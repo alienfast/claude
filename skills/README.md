@@ -208,6 +208,31 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 - Delegates verification (session) and config-vs-codebase audit (sweep) to agents
 - Routes per `~/.claude/CLAUDE.md` "Where Knowledge Goes"; references `~/.claude/standards/problem-solving.md`
 
+### standardize-tooling
+
+**Description**: Converge a TypeScript project's dev tooling onto the house conventions — pnpm 11 (supply-chain cooldown, allow-builds, `@alienfast` registry), Biome (no ESLint/Prettier), markdownlint-cli2, madge, the standardized parallel `check` suite, tsdown for libraries, and OIDC token-less `auto` releases for published packages — then gate on `pnpm check`. Adaptive and idempotent: detects current state and applies only the gaps.
+
+**When Invoked**:
+
+- User says "standardize tooling", "update tooling", or "apply house tooling conventions"
+- User asks to migrate a project to pnpm / Biome / tsdown, or off yarn/npm + ESLint/Prettier + tsup
+- User invokes `/standardize-tooling`
+
+**Key Features**:
+
+- Declares a target end-state and converges the delta — not a fixed-order recipe
+- `scripts/detect-state.sh` emits `KEY=value` gap signals (package manager, linter, bundler, single-vs-mono, registry, published)
+- Reads canonical configs **live** from `~/projects/basefund` (primary), `gltfjsx`, and `vite-plugin-i18next-loader` — never frozen snapshots, so it can't go stale
+- Adapts to single-package vs monorepo and public-npm vs private `@alienfast` GitHub Packages registry
+- Gates on `pnpm check`; lists manual follow-ups (npmjs Trusted Publisher, stale secret deletion) separately
+
+**Structure**:
+
+- Workflow in `SKILL.md`; `scripts/detect-state.sh` for state detection
+- `references/converge.md` — source-of-truth map + per-attribute apply steps and gotchas
+- `references/publishing.md` — tsdown, `auto`, and OIDC trusted publishing (loaded only when published)
+- Hands off full dependency refreshes to `/dependency-updater` and CLAUDE.md to `/init`
+
 ## Creating New Skills
 
 ### Directory Structure
