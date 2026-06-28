@@ -42,3 +42,4 @@ todos
 /volumes
 /worktree-repos.txt
 daemon-auth-*
+.credentials.json

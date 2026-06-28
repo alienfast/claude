@@ -178,5 +178,7 @@
     "typescript-lsp@claude-plugins-official": true
   },
   "effortLevel": "xhigh",
-  "skipAutoPermissionPrompt": true
+  "theme": "dark",
+  "skipAutoPermissionPrompt": true,
+  "tui": "fullscreen"
 }
