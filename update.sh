@@ -5,8 +5,21 @@ set -e
 
 source "$HOME/.claude/lib/lint.sh"
 
+# OS detection drives the package-manager branches below. Git Bash / MSYS2 on Windows reports
+# OSTYPE=msys (uname → MINGW64_NT / MSYS_NT); macOS is darwin*. macOS installs system tools via
+# Homebrew; Windows has no brew, so there we install what the cross-platform managers (cargo, pnpm,
+# npm) can and verify-and-instruct (winget) for the rest. Anything else (Linux) degrades to
+# verify-and-warn, matching the pre-existing non-macOS fallbacks.
+case "$OSTYPE" in
+  darwin*)             CLAUDE_OS=macos ;;
+  msys*|cygwin*|win*)  CLAUDE_OS=windows ;;
+  *)                   CLAUDE_OS=other ;;
+esac
+
 echo "Updating Claude Code..."
-claude update
+# Non-fatal: a failed self-update (e.g. an npm-managed install on Windows where `claude update` is a
+# no-op or errors) must not abort the whole bootstrap.
+claude update || echo "  ⚠️  'claude update' failed or is unsupported here; continuing."
 
 echo "Updating plugin marketplaces..."
 claude plugin marketplace update
@@ -19,11 +32,19 @@ claude plugin install typescript-lsp
 # add -g` refuses to run when it isn't. Augment PATH unconditionally (the parent shell
 # always exports PNPM_HOME, so a `-z "$PNPM_HOME"` guard would skip this every time).
 if [ -z "$PNPM_HOME" ]; then
-  if [[ "$OSTYPE" == "darwin"* ]]; then
-    export PNPM_HOME="$HOME/Library/pnpm"
-  else
-    export PNPM_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/pnpm"
-  fi
+  case "$CLAUDE_OS" in
+    macos)   export PNPM_HOME="$HOME/Library/pnpm" ;;
+    # pnpm on Windows keeps globals under %LOCALAPPDATA%\pnpm; convert to a POSIX path for Git Bash.
+    # Require BOTH a non-empty LOCALAPPDATA and cygpath: `cygpath -u ""` exits 0 with empty output, and
+    # a failed `$(cygpath …)` substitution does not trip set -e — either would yield a bogus "/pnpm".
+    windows)
+      if [ -n "$LOCALAPPDATA" ] && command -v cygpath >/dev/null 2>&1; then
+        export PNPM_HOME="$(cygpath -u "$LOCALAPPDATA")/pnpm"
+      else
+        export PNPM_HOME="$HOME/.local/share/pnpm"
+      fi ;;
+    *)       export PNPM_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/pnpm" ;;
+  esac
 fi
 case ":$PATH:" in
   *":$PNPM_HOME/bin:"*) ;;
@@ -55,9 +76,20 @@ echo ""
 echo "Ensuring core CLI tools (gh, jq)..."
 if command -v brew >/dev/null 2>&1; then
   ensure_brew gh jq
-elif [[ "$OSTYPE" == "darwin"* ]]; then
+elif [ "$CLAUDE_OS" = macos ]; then
   echo "  ❌ Homebrew is required but not found. Install it from https://brew.sh and re-run." >&2
   exit 1
+elif [ "$CLAUDE_OS" = windows ]; then
+  # winget is a Store app-execution-alias that Git Bash usually can't invoke directly, so on Windows
+  # verify presence and print the exact PowerShell command to run rather than shelling out to winget.
+  for tool in gh jq; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      case "$tool" in
+        gh) echo "  ⚠️  gh not found — in PowerShell run: winget install -e --id GitHub.cli" ;;
+        jq) echo "  ⚠️  jq not found — in PowerShell run: winget install -e --id jqlang.jq" ;;
+      esac
+    fi
+  done
 else
   for tool in gh jq; do
     command -v "$tool" >/dev/null 2>&1 \
@@ -129,13 +161,17 @@ pnpm dlx skills add vercel-labs/agent-skills \
 # `linear-cli` binary that shadows the Finesssee cargo binary on PATH (whichever brew/cargo dir comes
 # first wins), so a stale brew copy silently breaks the Linear skills. Idempotent: only act when the
 # formula is actually installed / the tap actually present, so re-runs are no-ops.
-if brew list linear-cli >/dev/null 2>&1; then
-  echo "Removing old Homebrew linear-cli (joa23/Light Linear)..."
-  brew uninstall linear-cli
-fi
-if brew tap | grep -q '^joa23/linear-cli$'; then
-  echo "Untapping joa23/linear-cli..."
-  brew untap joa23/linear-cli
+# Homebrew-only cleanup — the shadowing formula only ever existed on macOS, so guard the whole block
+# (a bare `brew` call on Windows would spew "command not found").
+if [ "$CLAUDE_OS" = macos ] && command -v brew >/dev/null 2>&1; then
+  if brew list linear-cli >/dev/null 2>&1; then
+    echo "Removing old Homebrew linear-cli (joa23/Light Linear)..."
+    brew uninstall linear-cli
+  fi
+  if brew tap | grep -q '^joa23/linear-cli$'; then
+    echo "Untapping joa23/linear-cli..."
+    brew untap joa23/linear-cli
+  fi
 fi
 
 echo "Installing linear-cli (Finesssee — https://github.com/Finesssee/linear-cli)..."
@@ -149,13 +185,21 @@ echo "Installing linear-cli (Finesssee — https://github.com/Finesssee/linear-c
 # (brew or rustup), so that must be on PATH for this run and for future shells.
 export PATH="$HOME/.cargo/bin:$PATH"
 
-# 1. Rust toolchain (provides cargo). Install via Homebrew if absent.
+# 1. Rust toolchain (provides cargo). macOS installs it via Homebrew; on Windows/other we don't
+#    auto-run winget from Git Bash (see note above), so instruct via rustup and stop.
 if ! command -v cargo >/dev/null 2>&1; then
-  echo "  Rust toolchain not found — installing via Homebrew (brew install rust)..."
-  brew install rust
+  if [ "$CLAUDE_OS" = macos ]; then
+    echo "  Rust toolchain not found — installing via Homebrew (brew install rust)..."
+    brew install rust
+  else
+    echo "  ❌ cargo not found. Install Rust via rustup — https://rustup.rs" >&2
+    [ "$CLAUDE_OS" = windows ] && echo "       on Windows (PowerShell): winget install -e --id Rustlang.Rustup" >&2
+    echo "     then re-run this script." >&2
+    exit 1
+  fi
 fi
 if ! command -v cargo >/dev/null 2>&1; then
-  echo "  ❌ cargo still not found after 'brew install rust'. Install Rust manually (https://rustup.rs) and re-run." >&2
+  echo "  ❌ cargo still not found after install. Install Rust manually (https://rustup.rs) and re-run." >&2
   exit 1
 fi
 
