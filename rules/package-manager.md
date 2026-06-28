@@ -21,6 +21,12 @@ paths:
 - Do not downgrade a dependency to fix an issue without explicit user approval
 - When debugging and you think there is a problem with a dependency, check the latest APIs of the dependency based on the version currently being used
 
+## Lockfiles
+
+- Never hand-edit a generated lockfile (`pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`) — not to change a version, a registry/tarball URL, or to resolve a merge conflict. They carry integrity hashes the tool computed; a hand-edit leaves resolution/integrity state the package manager never verified.
+- To change what resolves: edit `package.json` / workspace config and run the package manager (`pnpm install`, `pnpm add`, `pnpm update <pkg>`) — let it regenerate the lockfile.
+- To discard unwanted lockfile changes or fix a conflict: delete the lockfile and reinstall, don't edit entries by hand.
+
 ## Command Usage
 
 - Use project scripts over direct tool invocation
