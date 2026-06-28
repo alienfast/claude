@@ -27,6 +27,17 @@ paths:
 - Prefer `pnpm typecheck` over `npx tsc --noEmit`
 - Use `pnpm audit` instead of `npm audit`
 
+### Non-interactive installs (agent/CI shells)
+
+`pnpm install` aborts with `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY` when it needs to purge `node_modules` (a
+hoist-pattern change, a workspace restructure, switching package managers) and there is no TTY to confirm. Run it
+as `CI=true pnpm install` so the purge proceeds unattended (equivalently, set `confirm-modules-purge=false` in
+`.npmrc`).
+
+Caveat: `CI=true` also implies `--frozen-lockfile`, so if you intentionally changed `package.json` deps a plain
+`CI=true pnpm install` then fails with `ERR_PNPM_OUTDATED_LOCKFILE`. Use `CI=true pnpm install --no-frozen-lockfile`
+to both auto-purge and update the lockfile.
+
 ## Version Management
 
 - Follow semantic versioning for all version-related decisions
