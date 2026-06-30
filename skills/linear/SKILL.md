@@ -41,6 +41,8 @@ Auth: `linear-cli auth oauth` (browser) or `LINEAR_API_KEY`; check with `linear-
 
 6. **Escape hatch.** Anything the dedicated commands can't do: `linear-cli api query`/`api mutate` run raw GraphQL against the Linear API (this is why we use linear-cli — the previous CLI had no such hatch).
 
+7. **Labels are typed and team-scoped.** `labels list` and `labels create` default to `--type project` — pass `-t issue` for issue labels (a project label can't be attached to an issue; probe with `linear-cli labels list -t issue -o json`). Issue labels are **team-scoped**: attaching one to an issue in another team fails with GraphQL `labelIds for incorrect team`, and `labels create` has **no `--team` flag**, so a team-scoped label can't be provisioned from the CLI — create it in the Linear UI. `scripts/linear-file-improvement.sh` encodes this (best-effort attach, exit 2 + WARN when the team lacks the label).
+
 ## Command map
 
 ```bash
@@ -58,6 +60,8 @@ linear-cli relations add <BLOCKER> <BLOCKED> -r blocks   # "A blocked by B" = re
 linear-cli relations parent <CHILD> <PARENT>             # set parent after create (issues create has no --parent flag; or set parentId via --data)
 linear-cli search issues "<query>" [--filter 'state.name=Backlog']   # workspace-wide; NO --team flag (use `issues list --team` to scope)
 linear-cli statuses list -t <KEY>
+linear-cli labels list -t issue|project [-o json]        # -t is label TYPE, not team; defaults to project (gotcha #7)
+linear-cli labels create "<name>" -t issue [-c <hex>]    # create an ISSUE label; no --team flag (gotcha #7)
 
 # Projects / users / uploads
 linear-cli projects get|list|create ...

@@ -1,6 +1,6 @@
 ---
 name: reflect
-description: Continuous-improvement reflection on the just-finished session — captures generalizable lessons and reconciles stale config, then auto-applies the small/safe shared-config edits and proposes the larger ones. Two modes — session (default; reflect on this session's friction) and sweep (audit a project's CLAUDE.md/rules against the actual codebase and de-duplicate). Use when the user says 'reflect', 'reflect on this session', 'what did we learn', 'reflect sweep', 'audit the config', or invokes /reflect. Auto-invoked at the tail of /quality-review.
+description: Continuous-improvement reflection on the just-finished session — captures generalizable lessons and reconciles stale config, then auto-applies the small/safe shared-config edits and proposes the larger ones — filing the proposals as an ai-generated Linear issue (Planned, self-assigned). Two modes — session (default; reflect on this session's friction) and sweep (audit a project's CLAUDE.md/rules against the actual codebase and de-duplicate). Use when the user says 'reflect', 'reflect on this session', 'what did we learn', 'reflect sweep', 'audit the config', or invokes /reflect. Auto-invoked at the tail of /quality-review.
 ---
 
 # Reflect
@@ -37,7 +37,7 @@ Per the "Where Knowledge Goes" doctrine in `~/.claude/CLAUDE.md`. Target **share
 | File-type-scoped rule ("always X in `.ts`") | `~/.claude/rules/<type>.md` (with `paths:` frontmatter) or `<project>/.claude/rules/<topic>.md` |
 | Universal cross-project rule or doctrine | `~/.claude/CLAUDE.md` or a `~/.claude/standards/<topic>.md` |
 | Project-specific convention / stale project fact | `<project>/CLAUDE.md` or `<project>/.claude/rules/<topic>.md` |
-| Broken skill behavior | fix the skill's `SKILL.md` directly; if it needs code/script changes → `propose` + offer a meta-issue |
+| Broken skill behavior | fix the skill's `SKILL.md` directly; if it needs code/script changes → `propose` (its diff is captured in the auto-filed continuous-improvement issue — see Step 6) |
 | Truly personal / transient (rare) | `~/.claude/projects/<project>/memory/` |
 
 When unsure between two destinations, prefer the **most specific** scope that still reaches everyone who needs it (project rule over global rule over CLAUDE.md prose), and route to `propose` so the user picks placement.
@@ -52,7 +52,7 @@ Classify each verified candidate as exactly one:
    - Removes or contradicts no other guidance.
    - Clearly generalizable and confirmed not already covered.
    - → apply to the working tree now, no prompt.
-2. **`propose`** — *any* of: a new rule/standard/skill **file**; a structural `CLAUDE.md` change; a skill bug needing code/script work; cross-cutting; or the wording/placement needs a judgment call. → surface a ready-to-paste diff; optionally offer to file a meta-issue.
+2. **`propose`** — *any* of: a new rule/standard/skill **file**; a structural `CLAUDE.md` change; a skill bug needing code/script work; cross-cutting; or the wording/placement needs a judgment call. → surface a ready-to-paste diff, and capture it in the auto-filed continuous-improvement issue (Step 6).
 3. **`drop`** — one-off, already covered, or not generalizable. → record a one-line reason; do not surface loudly.
 
 When genuinely torn between `apply-now` and `drop` for a small, safe, generalizable edit, prefer `apply-now` (the standing preference is to improve the config, not just note it). When torn between `apply-now` and `propose`, prefer `propose` (let the user place a borderline edit).
@@ -122,9 +122,35 @@ Emit one visibility line, e.g.:
 Applied 2 config improvements (uncommitted): rules/typescript.md — prefer X over Y; baseFund/CLAUDE.md — test setup is now scripts/setup-tests.sh, not manual.
 ```
 
-### Step 6 — Surface `propose` items
+### Step 6 — Surface and file `propose` items
 
-For each, show the destination and a ready-to-paste diff. If any is a tracked-worthy follow-up (a new skill, a broad refactor of config, a skill code-fix), offer to file a meta-issue — do not file without asking.
+First, for each `propose` item, show its destination and a ready-to-paste diff — an interactive run can paste straight away. Then, whenever there is **≥1 `propose` item**, capture them all in **one** auto-filed Linear issue, with **no prompt**, so the work survives autonomous runs (`/full` has no human to act on a surfaced diff — that is the gap this closes):
+
+1. **Resolve the team.** Derive it from the worked issue's ID prefix (e.g. `PL-13` → `PL`) — use the issue ID already in context, or `~/.claude/scripts/detect-issue-id.sh` to recover it from the branch. If no issue/team resolves (a standalone reflection in a non-issue context), **skip filing** — surface the diffs only and note it (see Error handling); never guess a team.
+2. **Build the body** into a unique tmp file — `mkdir -p tmp`, then `body_file=$(mktemp tmp/reflect-improvement-XXXXXX)` (no suffix — BSD `mktemp` only substitutes a template that ends in the `X`s). Shape:
+
+   ```text
+   Auto-filed by /reflect after working <ISSUE-ID>. These config/process improvements were
+   proposed (not auto-applied — apply-now edits already landed in the working tree).
+
+   ## Proposals
+   - [ ] **<target file>** — <one-line observation>
+         <ready-to-paste diff in a fenced diff block>
+   - [ ] ...
+   ```
+
+   Reference the originating issue as a bare `<ISSUE-ID>` (Linear auto-links it). Do **not** parent-link — a config/process improvement is standalone, not a child of the feature that surfaced it.
+3. **File it,** capturing the exit code:
+
+   ```bash
+   new_id=$(~/.claude/scripts/linear-file-improvement.sh <team> "<title>" "$body_file"); rc=$?
+   ```
+
+   The helper creates one standalone issue — status `Planned`, `--assignee me` (resolves to the session runner), label `ai-generated` (created if missing) — and echoes the identifier. Title e.g. `Continuous improvement from <ISSUE-ID>: <N> proposal(s)`.
+4. Branch on `rc` for the Output `Filed:` line, then move on — never block the reflection or the enclosing `/full` on filing:
+   - `0` → `Filed: <new_id>` (filed and labelled).
+   - `2` → `Filed: <new_id> (label not attached)` — filed, but the team has no attachable `ai-generated` label; surface the helper's WARN so the user can add the label.
+   - `1` (or empty `new_id`) → degrade per Error handling (`Filed: none — <reason>`).
 
 ### Step 7 — Output
 
@@ -177,6 +203,7 @@ Emit the Config Audit report (see Output).
 Reflection:
 - Applied (uncommitted): <N> — <file — one-line each, or none>
 - Proposed: <N> — <destination — one-line each, or none>
+- Filed: <PL-XX (Planned, self-assigned) — append `(label not attached)` when the team lacks the label; or none — reason if skipped>
 - Dropped: <N> (already-covered / one-off / not-generalizable)
 ```
 
@@ -198,3 +225,4 @@ Config Audit — <project>:
 - **Auto-fixer/lint touched a config file you were about to edit** → re-read before editing (the on-disk copy is post-fix); see `~/.claude/rules/markdown.md` and `~/.claude/rules/biome.md`.
 - **A proposed edit would remove or restructure existing guidance** → never `apply-now`; always `propose`, even if you are confident. Removal is the user's call. (A reconcile fix that *corrects a stale line's value in place* removes and restructures nothing — that stays `apply-now` per the gates above.)
 - **No issue / no project context** (standalone in a non-project dir) → session mode still works (it reflects on the conversation); sweep mode requires a project — ask for a path if none resolves. When `<project>` is unresolvable, any candidate whose correct home is a project-scoped file (`<project>/CLAUDE.md`, `<project>/.claude/rules/`) downgrades to `propose` (surface the suggested path for the user to place) — never `apply-now` to a guessed or user-level fallback path.
+- **Issue filing failed or no team resolved** (Step 6) → if `linear-file-improvement.sh` exits **1** (`linear-cli` unavailable, the create call failed, no `Planned`-like state) or no team could be derived from a worked issue, **surface the `propose` diffs as before and record `Filed: none — <reason>`**. Exit **2** is *not* a failure — the issue was filed (id on stdout) but its team has no attachable `ai-generated` label; record `Filed: <PL-XX> (label not attached)` and surface the WARN. Filing is best-effort: never block the reflection or the enclosing `/full` flow on it, and never guess a team to force a file.
