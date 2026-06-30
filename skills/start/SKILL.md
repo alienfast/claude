@@ -281,6 +281,8 @@ Requirements:
 Acceptance: [How to verify success — MUST include "pnpm check passes"]
 ```
 
+> **Background-job runs (edge case — foreground needs nothing).** In the normal foreground run these `developer` writes land in the worktree the session is already `cd`'d into, and the `worktree.bgIsolation` guard — which only protects *background* sessions' shared checkout — does not apply. Only if you launch `/start wt` / `/full wt` as a **background job** can a delegate's writes hit that guard; if they do, register isolation with `EnterWorktree(path=<WT_ABS>)` (the documented `path` form for an existing worktree) or set `worktree.bgIsolation: "none"`. Do **not** use the circulated "cd to the main checkout first, then `EnterWorktree`" recipe — the tool docs impose no such precondition, and the same-cwd refusal it assumes is untested.
+
 **After each delegation completes:**
 
 1. Verify the result (type checks, tests, dev server — whatever is appropriate)
