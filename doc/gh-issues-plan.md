@@ -45,6 +45,7 @@ Linear path through a lossy generic layer. Instead:
    ```json
    { "tracker": "linear", "team": "PL" }
    ```
+
    ```json
    { "tracker": "github", "repo": "owner/name",
      "statusLabels": { "inProgress": "status:in-progress", "readyForRelease": "status:ready" } }
