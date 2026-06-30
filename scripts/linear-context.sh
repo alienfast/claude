@@ -242,9 +242,16 @@ else
 fi
 
 printf '## Attachments\n\n'
-# Capture URLs liberally (up to whitespace), then strip common trailing punctuation
-# that wraps URLs in prose: ),],},>,,;.:!?
-attachments=$(printf '%s' "$description" \
+# Scan the description AND every comment body (standalone + anchored): inline images are
+# routinely pasted into comments, not the description. This section is also the only place
+# the FULL upload URL can surface — the Comments section truncates standalone bodies to 140
+# chars, which chops a long `![](uploads.linear.app/.../<uuid>)` mid-UUID into a 404ing URL.
+# Capture liberally (up to whitespace), then strip trailing prose punctuation: ),],},>,,;.:!?
+attachments=$( {
+    printf '%s\n' "$description"
+    printf '%s' "$issue_json"    | jq -r '(.comments.nodes // [])[] | (.body // "")'
+    printf '%s' "$anchored_json" | jq -r '.[] | (.body // "")'
+  } \
   | grep -oE 'https://uploads\.linear\.app/[^[:space:]]+' \
   | sed -E 's/[].,;:!?>})]+$//' \
   | sort -u || true)
