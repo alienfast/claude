@@ -21,7 +21,7 @@ Rules that flow from this contract:
 2. **Failures are never "pre-existing."** The baseline passed. Any failure after that is ours.
 3. **Failures are never "out of scope."** If our changes cause a check to fail, fixing it IS our scope.
 4. **Failures are never deferred.** We do not proceed with a broken application. We stop and fix.
-5. **The contract is in effect from Step 5's baseline through Step 9's review.** Steps 1–4 gather context, Step 6 runs plan mode (read-only by definition), Step 7 posts the plan, Step 10 summarizes — none modify code. Steps 5, 8, and 9 are the ones that can break the application; they run in-session and must keep `pnpm check` green. Step 8's `developer` / `debugger` / `quality-reviewer` / `architect` delegations must include this contract verbatim in the delegation prompt.
+5. **The contract is in effect from Step 5's baseline through Step 9's review.** Steps 1–4 gather context and claim the issue (assign + In Progress), Step 6 runs plan mode (read-only by definition), Step 7 posts the plan, Step 10 summarizes — none modify code. Steps 5, 8, and 9 are the ones that can break the application; they run in-session and must keep `pnpm check` green. Step 8's `developer` / `debugger` / `quality-reviewer` / `architect` delegations must include this contract verbatim in the delegation prompt.
 
 Violating this contract — by shipping broken code, by claiming failures were pre-existing, by deferring breakage to a follow-up ticket — is the single worst outcome of this workflow. A partially-implemented feature on a working application is infinitely better than a "complete" feature on a broken one.
 
@@ -106,7 +106,25 @@ For each unresolved blocker:
 - Ask the user whether to proceed anyway or address the blocker first
 - Do not silently skip
 
-### Step 3: Deepen Context (only as needed)
+### Step 3: Claim the Issue — Assign & Move to In Progress
+
+**Claim before you research.** This is the first action after availability is verified, and it happens **before** any deepen-context, codebase exploration, or implementation. Assigning + moving to In Progress immediately broadcasts to the team that the issue is owned; researching first leaves it looking unclaimed while work is already underway — a bad signal in a multi-person workspace.
+
+Verify availability from the Step 1 digest's `**State:**` and `**Assignee:**` line (already fetched — no extra call):
+
+- Already `In Progress` assigned to **someone else** → warn and ask whether to reassign (Error Handling) before claiming.
+- Already `Done` / `Ready For Release` / other terminal state → warn and ask whether to reopen (Error Handling) before claiming.
+- Already `In Progress` assigned to **me** → idempotent resumption; the issue is already claimed. Skip the update and continue (matches the Step 8 resumption note).
+
+Otherwise, claim it immediately:
+
+```bash
+linear-cli issues update PL-13 --assignee me --state "In Progress"
+```
+
+Only after the issue is claimed do you proceed to Step 4 (deepen context, only if needed) and the rest of the workflow.
+
+### Step 4: Deepen Context (only as needed)
 
 The digest covers most context. Reach for these only when its summary is insufficient for the work at hand:
 
@@ -131,12 +149,6 @@ linear-cli uploads fetch "https://uploads.linear.app/..." -f tmp/linear-img.png
 ```
 
 Then `Read` the downloaded path (`tmp/linear-img.png`) to view the image.
-
-### Step 4: Assign & Move to In Progress
-
-```bash
-linear-cli issues update PL-13 --assignee me --state "In Progress"
-```
 
 ### Step 5: Ensure Correct Git Branch
 
@@ -306,7 +318,7 @@ Update completed checkboxes (`- [ ]` → `- [x]`) and push the update:
 
 This ensures progress is visible in Linear even if the session is interrupted, and enables picking up where we left off.
 
-**Resumption.** `/start` is idempotent on the same issue: re-running `/start PL-13` after a `/checkpoint`-and-stop should detect the issue's existing `In Progress` state and the existing branch, skip the worktree-setup and assignment steps, and resume at the implementation phase. If Step 9 (review) had previously run, the existing `tmp/quality-review-verdict-<issue-id-lowercased>.md` file (e.g., `tmp/quality-review-verdict-pl-13.md`) is still consulted by `/finish` Step 1.5 — the user can decide to re-run `/quality-review` to refresh it, or skip ahead to `/finish` if the prior verdict still applies.
+**Resumption.** `/start` is idempotent on the same issue: re-running `/start PL-13` after a `/checkpoint`-and-stop should detect the issue's existing `In Progress` state and the existing branch, skip Step 0's worktree-setup, and pass *through* Step 3 — which recognizes the issue is already claimed by me and short-circuits, skipping only the `linear-cli ... update` call per its idempotent branch (do not skip Step 3 wholesale; its availability check still runs) — then resume at the implementation phase. If Step 9 (review) had previously run, the existing `tmp/quality-review-verdict-<issue-id-lowercased>.md` file (e.g., `tmp/quality-review-verdict-pl-13.md`) is still consulted by `/finish` Step 1.5 — the user can decide to re-run `/quality-review` to refresh it, or skip ahead to `/finish` if the prior verdict still applies.
 
 **After all implementation tasks are complete, proceed to Step 9.** Implementation is not finished until the review passes.
 
@@ -330,6 +342,13 @@ Steps:
    ```
 
    If the team's canceled-state name differs (rejected), derive the team key from the issue ID prefix (e.g., `PL-13` → team `PL`), then probe `linear-cli statuses list -t PL` and pick the first state whose name matches `/^(canceled|cancelled|won.?t.?do|abandoned)/i` (case-insensitive, prefix). If none match, surface the available states to the user and ask which to use — do not silently fall through to the team default.
+
+   After the state transition succeeds, clear the assignee so the Step 3 claim does not linger on a terminal issue (mirrors `mark-ready-for-release.sh`'s unassign-on-terminal behavior — a Canceled issue should not clutter anyone's "my issues" view):
+
+   ```bash
+   linear-cli issues assign <ISSUE-ID>   # no user arg unassigns
+   ```
+
 3. Surface the cleanup commands to the user (do NOT run them automatically — the worktree might contain in-progress notes worth saving):
 
    ```bash
