@@ -38,7 +38,7 @@ Type checking is hard-gated in `/quality-review` and re-gated in `/finish`; run 
 
 ## Guidelines
 
-- Save screenshots to `tmp/screenshots/` relative to the project root. Never save to `/tmp` or `/private/tmp`.
+- Write scratch / intermediate files — captured command output, run logs, script staging files, screenshots (`tmp/screenshots/`) — to a project-relative `tmp/` directory (`mkdir -p tmp` first), and add/delete files there freely. Never write scratch to bare system roots (`/tmp`, `/private/tmp`) or ad-hoc absolute paths like `/check_output.log`: these pollute the host and trip the harness's dangerous-path confirmation when you clean them up. A harness-assigned session scratchpad is the only exception. This applies to sub-agents too.
 - Create documentation only when explicitly requested.
 - Do not modify generated or build artifact files (e.g., `src/generated/`, `dist/`).
 - Do not create git commits unless explicitly requested — see [Git Standards](standards/git.md) for commit/push authorization.
