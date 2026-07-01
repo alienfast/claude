@@ -87,7 +87,11 @@ fi
 # the contention-free ref-only update — the exact setup behind the parallel-run
 # corruption. We only warn; auto-detaching the main checkout would mutate the
 # user's working tree, which multi-session safety forbids.
-existing_wts=$(find .claude/worktrees -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+# `|| true`: on a checkout that has never created a worktree, .claude/worktrees does
+# not yet exist (it's mkdir'd further down), so `find` exits non-zero. Under
+# `set -eo pipefail` an unguarded command-substitution assignment would propagate that
+# and abort the whole script silently. An empty/missing dir genuinely means 0 worktrees.
+existing_wts=$(find .claude/worktrees -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ' || true)
 if [ "${existing_wts:-0}" -gt 0 ]; then
   echo "WARN: main checkout is on '$source_branch' (the shared source branch) while $existing_wts worktree(s) are active." >&2
   echo "  For parallel /full wt runs, park the main checkout off the source branch (e.g. 'git checkout --detach')" >&2
