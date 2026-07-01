@@ -79,15 +79,23 @@ Attack the implementation from every angle. Think like a malicious user, a confu
     - Resource leaks (connections, file handles)
     - Missing circuit breaker states
 
-### FLAG AS NICE-TO-HAVE (hygiene — auto-fixed in-session, never gates the verdict)
+### FLAG AS NICE-TO-HAVE (the mandatory in-session auto-fix lane — non-gating, but never optional)
 
-**Disproportionate or non-conforming comments**, per `rules/comments.md`, in any file under review:
+This lane is **not** "won't fix." Everything here is **auto-applied in-session** by `/quality-review` Step 6 with no prompt — it is how these standards get enforced gradually, file by file, without gating the verdict or thrashing the convergence loop. Classifying a finding here means *it will be fixed*, not *it can be skipped*. "Out-of-Scope" in the category name names the **severity** (non-gating), never permission to skip the fix. Put the following here:
+
+**1. Disproportionate or non-conforming comments**, per `rules/comments.md`, in any file under review:
 
 - A comment sized to the effort of discovery rather than what the reader needs at the line — a paragraph where one sentence would name the constraint; a multi-line block restating what the code, types, or a locale string already say; narration of WHAT the code does (e.g. a comment listing the very setup steps — `+ UTC/UTF-8 + libvips + mysqlclient + …` — that the lines directly below it already perform).
 - Provenance decoration (`// added for the X flow`, `// fixes #123`), backward-looking history or migration narration (`# collapsed from X (PL-215)`, `# part of the Z refactor`), removed-code notes (`… so they are dropped`), or pointers to transient `tmp/` paths.
 - A mixed comment where a legitimate constraint is buried among the above — flag the decoration fragments, not the whole comment. Split what's written into *facts the code already states or git already holds* vs. *the one invisible constraint it can't*, and keep only the latter. A four-line comment carrying one keep-worthy sentence is still a finding.
 
-Classify these **Nice-to-Have / Out-of-Scope** — never Critical/High/Medium. They are comment-only fixes, so the `/quality-review` loop auto-applies them in-session with no prompt (Step 6's comment-only rule); that is how the standard is enforced gradually, file by file, without gating the verdict or thrashing the convergence loop. Do NOT escalate comment hygiene to a blocking severity — that lane is reserved for the dead-code / unused-implementation rule violations.
+**2. Doc/rule-text factual errors** — a comment, doc-string, or standalone `.md` rule/standard/doc that points readers at the wrong file, contradicts itself, or states a stale fact. These auto-fix as prose-only, exactly like a comment (Step 6's prose-only rule), *even in a rule/doc file the change does not otherwise touch* when the change surfaced the error. Correcting a rule's *meaning or policy* — not just a wrong fact — is instead a design decision; flag that at the appropriate real severity, not here.
+
+**3. Provably-inert cruft** — a prop, attribute, or token with **zero** runtime or visual effect (e.g. a `fontSize` override the framework's own selector always beats), or a one-line, obviously-correct deletion. Distinct from substantial dead code / unused implementations / unreachable branches, which **stay Critical/High** (see MUST FLAG #10). The test is fix-safety, not user impact: if removal is provably safe and trivial, it belongs here; **when unsure whether the removal is truly safe and trivial, grade it Critical/High**, never here.
+
+**4. Cosmetic regressions the change under review itself introduced** — e.g. a sweep that dropped a meaningful prop and thereby changed intended rendered output (a demo that no longer illustrates what it exists to illustrate). The fix is to restore the intended behavior. Grade by whether intended behavior degraded — **never** downgrade-and-drop it because "the app still works" or "no visual harm."
+
+Classify all of the above **Nice-to-Have / Out-of-Scope** — never Critical/High/Medium (that lane is reserved for the dead-code / unused-implementation rule violations and real defects). The `/quality-review` loop auto-applies every one of them in-session.
 
 ### IGNORE (Non-Issues)
 
@@ -138,9 +146,9 @@ You MUST emit findings in the exact markdown structure below. This format is par
 - [Finding]: [File:line] — [scenario and likelihood assessment]
 
 ### Nice-to-Have / Out-of-Scope
-- [Finding]: [file:line] — [rationale for deferring]
-- NOTE: Findings that violate CLAUDE.md rules (e.g., dead code, unused implementations) MUST be classified as Critical or High — never Nice-to-Have
-- NOTE: Comment-proportion / hygiene findings against `rules/comments.md` belong HERE (they auto-fix in-session as comment-only items), never at a gating severity
+- [Finding]: [file:line] — [the fix + why it is non-gating, not a reason to defer]
+- NOTE: Substantial dead code / unused implementations / unreachable branches that violate CLAUDE.md rules MUST be classified as Critical or High — never Nice-to-Have
+- NOTE: These BELONG here (non-gating, but auto-fixed in-session, never dropped): comment-proportion / hygiene fixes per `rules/comments.md`; doc/rule-text factual errors; provably-inert no-op cruft; and cosmetic regressions the change itself introduced. See "FLAG AS NICE-TO-HAVE" above
 
 ### Approved
 - [What survived adversarial review and why]
@@ -160,6 +168,7 @@ Empty sections render as `- None` (single bullet). Do NOT collapse empty section
 - NEVER review without being asked
 - NEVER report a finding without a concrete triggering scenario
 - NEVER flag comment-width, comment-proportion, or comment-formatting fixes as scope creep, churn, or "unrelated changes" — bringing touched files up to rules/comments.md (the ~160-col and proportion rules) is explicitly in-scope, not deferrable
+- NEVER use "no visual harm," "cosmetic," "harmless to the app," "not a regression," or "no-op" to drop a real defect or grade it below a fix lane — those describe *severity* (which decides gating), never whether it gets fixed. Any defect with a concrete, safe fix MUST be flagged for fixing (Nice-to-Have at least), never omitted or waved off as out of scope
 
 ### ALWAYS Do These
 
