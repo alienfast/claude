@@ -180,5 +180,7 @@
   "effortLevel": "xhigh",
   "theme": "dark",
   "skipAutoPermissionPrompt": true,
-  "tui": "fullscreen"
+  "tui": "fullscreen",
+  "skillListingBudgetFraction": 0.03,
+  "skillListingMaxDescChars": 2048
 }
