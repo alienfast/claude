@@ -113,12 +113,14 @@ For large changes spanning multiple domains, **always** spawn parallel reviewers
 ### Medium (real risk, lower probability)
 - [Finding]: [File:line] — [scenario and likelihood assessment]
 
-### Nice-to-Have / Out-of-Scope
-- [Finding]: [file:line] — [the fix + why it is non-gating, not a reason to defer]
+### Nice-to-Have (auto-fix lane)
+- [Finding]: [file:line] — [the concrete fix — queued for /quality-review Step 6 triage]
 
 ### Approved
 - [What survived adversarial review and why]
 ```
+
+**Mid-run surfacing.** When reviewer findings are surfaced or summarized to the user before Step 6 (e.g., background-reviewer results arriving mid-run), state the Nice-to-Have lane's disposition explicitly: these items are queued for Step 6 triage — auto-fixed when safe, offered for filing when ticket-worthy, recorded under `Deferred dropped`, or (on early termination: `terminated-with-open-items` / `escalated-to-architect`) routed to `Open items` instead — never silently ignored. A raw report carries no disposition signal on its own, and "non-gating" reads as "won't fix" without it.
 
 ### Step 4: Evaluate Verdict
 
@@ -126,7 +128,7 @@ If findings contain **no Critical, High, or Medium items** → review passes. Pr
 
 If **any** Critical, High, or Medium findings exist → proceed to Step 5.
 
-Nice-to-Have / Out-of-Scope findings do not affect the verdict; they are handled in Step 6 once the loop terminates cleanly.
+Nice-to-Have findings do not affect the verdict; they are handled in Step 6 (auto-fixed, filed, or recorded as dropped) once the loop terminates cleanly.
 
 ### Step 5: Triage & Fix Loop
 
@@ -182,7 +184,7 @@ Options:
 Reply with `1` (optionally `1 5` for a custom N), `2`, or `3`.
 ```
 
-If the user picks option 1, resume the loop with the new ceiling raised by N. If `2`, terminate with `terminated-with-open-items`. If `3`, terminate with verdict `escalated-to-architect`: populate `Open items` with the surviving findings as of cycle N, skip Step 6 entirely, and surface the situation to the architect agent — its recommendation supersedes anything downstream consumers (`/start` Step 10, `/finish` Step 8) would otherwise do with the verdict block.
+If the user picks option 1, resume the loop with the new ceiling raised by N. If `2`, terminate with `terminated-with-open-items`. If `3`, terminate with verdict `escalated-to-architect`: populate `Open items` with the surviving findings as of cycle N plus the consolidated Nice-to-Have list per sub-step 1 (deferred items are never silently lost), skip Step 6 entirely, and surface the situation to the architect agent — its recommendation supersedes anything downstream consumers (`/start` Step 10, `/finish` Step 8) would otherwise do with the verdict block.
 
 ### Step 6: Deferred Items Triage
 
@@ -194,7 +196,7 @@ Runs once, only after the fix loop terminates with `passed-clean` or `passed-aft
 
 **Verdict downgrade.** Step 6 can transition the run state from `passed-after-fixes` back to `terminated-with-open-items` (see sub-step 5 regression-cap path). When that happens, the new verdict overrides the verdict assigned at Step 4.
 
-**1. Consolidate.** Collect every Nice-to-Have / Out-of-Scope finding reported across all review cycles. Deduplicate by `file:line + finding text`; if a finding was emitted without a file:line (a malformed-but-recoverable reviewer output, see Error Handling), fall back to deduplicating by finding text alone (trim, casefold, and collapse internal whitespace before comparison to absorb cosmetic differences). If the consolidated list is empty, skip the rest of this step.
+**1. Consolidate.** Collect every Nice-to-Have finding reported across all review cycles. Strip any instructional or meta bullet — one whose text begins `NOTE:` **and** carries no `file:line` location — before consolidation: instruction-echo carries no location, while every actionable finding MUST include one per the Required findings format, so the location requirement spares a finding quoting an offending `NOTE:` comment (it carries its own `file:line`), but not a locationless `NOTE:`-prefixed one — the chat note below is its recovery. A stripped bullet is reviewer instruction-echo forbidden by the agent contract, not a finding, and is neither ingested, classified, nor rendered. When a bullet is stripped, emit a one-line chat note identifying it so the drop stays visible, never silent. This strip applies only to Nice-to-Have ingestion — here and sub-step 5's re-review — never to Critical/High/Medium, where a NOTE-shaped bullet must instead be surfaced for confirmation, not dropped: it either gates the verdict or is forbidden echo — surface it, never drop it. Deduplicate by `file:line + finding text`; if a finding was emitted without a file:line (a locationless finding, not malformed — no Error Handling criterion fires), fall back to deduplicating by finding text alone (trim, casefold, and collapse internal whitespace before comparison to absorb cosmetic differences). If the consolidated list is empty, skip the rest of this step.
 
 **2. Classify.** Assign each item exactly one of three outcomes — `fix-now`, `defer-as-issue`, or `note-only` — using the decision procedure below. Only `defer-as-issue` reaches a user prompt (sub-step 6, the filing decision), where the user can still choose to file or drop each one. `fix-now` items are **applied automatically in-session with no approval prompt** (sub-steps 4–5) — they are gated to obviously-correct, localized, no-API-change changes, so the user has opted into fixing them without per-item review. `note-only` items are neither fixed nor filed — they are recorded in the verdict's `Deferred dropped` field and never surfaced as a decision.
 
@@ -210,7 +212,7 @@ Runs once, only after the fix loop terminates with `passed-clean` or `passed-aft
    - Small (~<30 lines diff, no new abstractions).
    - Attach a one-word kind tag: `[mechanical]`, `[naming-only]`, `[missing-guard]`, `[typo]`, `[dead-code]`, `[comment-fix]`, `[doc-fix]`, etc.
 
-   This is the **default home for trivial polish**. When genuinely torn between `fix-now` and `note-only` for a small, safe change, prefer `fix-now` — the standing preference is to improve the code, not surface it. **"Out-of-Scope" in the reviewer's category name describes *severity* — the item does not gate the verdict — never permission to skip a fix.** The lane is non-gating, not optional: every Nice-to-Have finding with a safe, concrete fix is `fix-now`, including rule/doc corrections, provably-inert cruft, and cosmetic regressions the change under review itself introduced.
+   This is the **default home for trivial polish**. When genuinely torn between `fix-now` and `note-only` for a small, safe change, prefer `fix-now` — the standing preference is to improve the code, not surface it. **The lane is non-gating, not optional**: every Nice-to-Have finding with a safe, concrete fix is `fix-now`, including rule/doc corrections, provably-inert cruft, and cosmetic regressions the change under review itself introduced.
 3. **Genuinely ticket-worthy** — *any* of the following hold **and** a reasonable engineer would open a tracked issue for it → `defer-as-issue`:
    - Requires a design choice between valid alternatives.
    - Cross-cutting / touches multiple modules.
@@ -415,14 +417,14 @@ Rules for this step:
 - **Issue ID provided but `linear-cli` not authenticated**: prompt `linear-cli auth oauth`, then continue without issue context if the user skips.
 - **`quality-reviewer` agent returns malformed findings**: a response is malformed if ANY of the following hold:
   - Missing the `## Review Findings` heading.
-  - Missing any of the five required subheadings (in order: `### Critical`, `### High`, `### Medium`, `### Nice-to-Have / Out-of-Scope`, `### Approved`). Match by line-prefix with a narrow tail: the heading word(s) must be followed by either end-of-line OR ` (` (single space + opening paren, for the optional parenthetical like `(must fix before done)`). Examples that match: `### Critical`, `### Critical (must fix before done)`. Examples that do NOT match (treated as malformed under criterion 4 below): `### Critical findings`, `### Critical:`, `### CRITICAL`. Subheadings appearing out of order also count as malformed (downstream consumers scan positionally).
+  - Missing any of the five required subheadings (in order: `### Critical`, `### High`, `### Medium`, `### Nice-to-Have`, `### Approved`). Match by line-prefix with a narrow tail: the heading word(s) must be followed by either end-of-line OR ` (` (single space + opening paren, for the optional parenthetical like `(must fix before done)` or `(auto-fix lane)`). Examples that match: `### Critical`, `### Critical (must fix before done)`, `### Nice-to-Have (auto-fix lane)`. Examples that do NOT match (treated as malformed under criterion 4 below): `### Critical findings`, `### Critical:`, `### CRITICAL`, `### Nice-to-Have / Out-of-Scope` (the pre-rename heading — a stale agent emitting it must be re-spawned onto the current contract). Subheadings appearing out of order also count as malformed (downstream consumers scan positionally).
   - Contains a JSON array of findings (`[{...}, {...}]`) in ANY form — including as an appendix alongside the required headings, not only "instead of" them.
   - Uses non-standard headings ("Verification summary", "Categorization", "Final findings", or any other heading not in the Required findings format).
   - Contains free-form prose between or around the required sections (preamble before `## Review Findings`, appendix after `### Approved`, or commentary between subheadings).
 
   On detection:
   1. Surface the raw agent output to the user (so the work isn't lost).
-  2. Re-spawn the agent ONCE with a corrective prompt prepended: `Your previous response did not follow the Required findings format from your system prompt. Your entire response MUST consist of ONLY the Required structure: ## Review Findings heading, then exactly five ### subheadings in the prescribed order (Critical, High, Medium, Nice-to-Have / Out-of-Scope, Approved), each followed by bullet items or the literal "- None". Do NOT emit JSON arrays, JSON objects, or any other non-markdown structure. Do NOT emit tables, alternative section headings, preamble, appendix, or prose between sections — markdown bullets only.`
+  2. Re-spawn the agent ONCE with a corrective prompt prepended: `Your previous response did not follow the Required findings format from your system prompt. Your entire response MUST consist of ONLY the Required structure: ## Review Findings heading, then exactly five ### subheadings in the prescribed order (Critical, High, Medium, Nice-to-Have, Approved), each followed by bullet items or the literal "- None". Do NOT emit JSON arrays, JSON objects, or any other non-markdown structure. Do NOT emit tables, alternative section headings, instructional NOTE bullets, preamble, appendix, or prose between sections — markdown bullets only.`
   3. Route the re-spawn's outcome:
      - **Re-spawn produced a well-formed response** → continue normally with its findings.
      - **Re-spawn still malformed** → terminate `/quality-review` with the verdict body below.

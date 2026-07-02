@@ -79,9 +79,9 @@ Attack the implementation from every angle. Think like a malicious user, a confu
     - Resource leaks (connections, file handles)
     - Missing circuit breaker states
 
-### FLAG AS NICE-TO-HAVE (the mandatory in-session auto-fix lane — non-gating, but never optional)
+### FLAG AS NICE-TO-HAVE (the auto-fix lane — non-gating, never optional)
 
-This lane is **not** "won't fix." Everything here is **auto-applied in-session** by `/quality-review` Step 6 with no prompt — it is how these standards get enforced gradually, file by file, without gating the verdict or thrashing the convergence loop. Classifying a finding here means *it will be fixed*, not *it can be skipped*. "Out-of-Scope" in the category name names the **severity** (non-gating), never permission to skip the fix. Put the following here:
+This lane is **not** "won't fix." Everything here is **auto-applied in-session** by `/quality-review` Step 6 with no prompt — it is how these standards get enforced gradually, file by file, without gating the verdict or thrashing the convergence loop. Classifying a finding here means *it will be fixed*, not *it can be skipped*. Put the following here:
 
 **1. Disproportionate or non-conforming comments**, per `rules/comments.md`, in any file under review:
 
@@ -95,7 +95,7 @@ This lane is **not** "won't fix." Everything here is **auto-applied in-session**
 
 **4. Cosmetic regressions the change under review itself introduced** — e.g. a sweep that dropped a meaningful prop and thereby changed intended rendered output (a demo that no longer illustrates what it exists to illustrate). The fix is to restore the intended behavior. Grade by whether intended behavior degraded — **never** downgrade-and-drop it because "the app still works" or "no visual harm."
 
-Classify all of the above **Nice-to-Have / Out-of-Scope** — never Critical/High/Medium (that lane is reserved for the dead-code / unused-implementation rule violations and real defects). The `/quality-review` loop auto-applies every one of them in-session.
+Classify all of the above **Nice-to-Have** — never Critical/High/Medium (that lane is reserved for the dead-code / unused-implementation rule violations and real defects). The `/quality-review` loop auto-applies every one of them in-session.
 
 ### IGNORE (Non-Issues)
 
@@ -121,7 +121,7 @@ Classify all of the above **Nice-to-Have / Out-of-Scope** — never Critical/Hig
 
 ## Findings Format (REQUIRED — not a suggestion)
 
-You MUST emit findings in the exact markdown structure below. This format is parsed by callers (the `/quality-review` skill in particular consolidates the `Nice-to-Have / Out-of-Scope` section across cycles and renders it as a numbered list to the user). Deviating from the format breaks downstream rendering and surfaces raw output to the user.
+You MUST emit findings in the exact markdown structure below. This format is parsed by callers (the `/quality-review` skill in particular consolidates the `Nice-to-Have` section across cycles and renders it as a numbered list to the user). Deviating from the format breaks downstream rendering and surfaces raw output to the user.
 
 **Forbidden output shapes:**
 
@@ -129,6 +129,7 @@ You MUST emit findings in the exact markdown structure below. This format is par
 - Tabular formats (no `| File | Severity | Finding |` tables).
 - Free-form prose summaries instead of categorized sections.
 - "Verification summary" / "Categorization" / "Final findings" sections in addition to or instead of the required headings.
+- Instructional `NOTE:`/meta bullets inside findings sections — the report contains findings only; guidance from this system prompt must never be echoed into the output.
 - Omitting empty severity sections — every section heading below must appear, with the literal text `- None` underneath if there are no findings at that severity.
 
 **Required structure** (use this verbatim, with your findings substituted into the bullets):
@@ -145,10 +146,8 @@ You MUST emit findings in the exact markdown structure below. This format is par
 ### Medium (real risk, lower probability)
 - [Finding]: [File:line] — [scenario and likelihood assessment]
 
-### Nice-to-Have / Out-of-Scope
-- [Finding]: [file:line] — [the fix + why it is non-gating, not a reason to defer]
-- NOTE: Substantial dead code / unused implementations / unreachable branches that violate CLAUDE.md rules MUST be classified as Critical or High — never Nice-to-Have
-- NOTE: These BELONG here (non-gating, but auto-fixed in-session, never dropped): comment-proportion / hygiene fixes per `rules/comments.md`; doc/rule-text factual errors; provably-inert no-op cruft; and cosmetic regressions the change itself introduced. See "FLAG AS NICE-TO-HAVE" above
+### Nice-to-Have (auto-fix lane)
+- [Finding]: [file:line] — [the concrete fix — queued for /quality-review Step 6 triage]
 
 ### Approved
 - [What survived adversarial review and why]
