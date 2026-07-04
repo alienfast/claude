@@ -105,16 +105,16 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # shellcheck source=/dev/null
 [ -f "$HOME/.claude/scripts/wt-identity.sh" ] && . "$HOME/.claude/scripts/wt-identity.sh"
 
-# Absolute common-git-dir for a repo — the lock key finish-merge.sh uses (its §"Lock key" comment),
+# Absolute common-git-dir for a repo — the lock key finish-merge.sh uses (its "Lock key" comment),
 # so holding it here makes a reap mutually exclusive with any in-flight /finish merge of the same repo.
+# --path-format=absolute returns git's own absolute form, identical from any worktree or the main
+# checkout, and avoids the MSYS `pwd -P` divergence the old `cd … && pwd -P` had (see standards/git.md
+# "Windows Git Bash: comparing paths").
 repo_key_for() {
-  local repo="$1" common
-  common=$(git -C "$repo" rev-parse --git-common-dir 2>/dev/null) || return 1
-  [ -n "$common" ] || return 1
-  case "$common" in
-    /*) printf '%s\n' "$common" ;;
-    *)  ( cd "$repo" && cd "$common" 2>/dev/null && pwd -P ) ;;
-  esac
+  local repo="$1" key
+  key=$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+  { [ -n "$key" ] && [ "$key" != "/" ]; } || return 1
+  printf '%s\n' "$key"
 }
 
 # Repo default branch: origin/HEAD's target, else a local main/master, else "main".

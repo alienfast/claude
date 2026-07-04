@@ -92,15 +92,13 @@ fi
 
 # Repo lock key — same as finish-merge.sh / start-wt-create.sh, so the worktree
 # add here serializes against concurrent setups and merges on this parent repo.
-common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || {
+# --path-format=absolute yields the SAME key from any worktree or the main checkout (avoids the MSYS
+# `pwd -P` divergence — see standards/git.md "Windows Git Bash: comparing paths").
+repo_key=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || {
   echo "ERROR: not inside a git repository (cwd: $PWD)" >&2
   exit 1
 }
-case "$common_dir" in
-  /*) repo_key="$common_dir" ;;
-  *)  repo_key=$(cd "$common_dir" 2>/dev/null && pwd -P) ;;
-esac
-[ -n "$repo_key" ] || { echo "ERROR: could not resolve repo lock key." >&2; exit 1; }
+{ [ -n "$repo_key" ] && [ "$repo_key" != "/" ]; } || { echo "ERROR: could not resolve repo lock key (repo_key='$repo_key')." >&2; exit 1; }
 
 # --- 1. Resolve the CURRENT source tip (re-fork from here, not the stale baseline). ---
 git fetch --quiet 2>/dev/null || true

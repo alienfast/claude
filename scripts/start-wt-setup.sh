@@ -137,16 +137,15 @@ mkdir -p .claude/worktrees
 # execvp's its command (which is WHY start-wt-create.sh is a separate script), and
 # prints `[finish-queue] waiting for <repo> ...` on stderr if another holder has
 # the slot — surface that to the user and wait; it is not a hang.
-common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || {
+# Lock key: git's absolute common dir — identical from any worktree or the main checkout, so this
+# serializes on the SAME key /finish merge and reap use. --path-format=absolute avoids the MSYS `pwd -P`
+# format divergence (see standards/git.md "Windows Git Bash: comparing paths").
+repo_key=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || {
   echo "ERROR: not inside a git repository (cwd: $PWD)" >&2
   exit 1
 }
-case "$common_dir" in
-  /*) repo_key="$common_dir" ;;
-  *)  repo_key=$(cd "$common_dir" 2>/dev/null && pwd -P) ;;
-esac
-if [ -z "$repo_key" ]; then
-  echo "ERROR: could not resolve repo lock key (git-common-dir='$common_dir')" >&2
+if [ -z "$repo_key" ] || [ "$repo_key" = "/" ]; then
+  echo "ERROR: could not resolve repo lock key (repo_key='$repo_key', cwd: $PWD)" >&2
   exit 1
 fi
 

@@ -75,20 +75,18 @@ set -eo pipefail
 # _WITH_REPO_LOCK_HELD: Windows-only sentinel set by with-repo-lock.py for its
 # child (no exec-in-place there, so the PID-tied check below can never match).
 if [ "$_FINISH_MERGE_LOCK_PID" != "$$" ] && [ -z "${_WITH_REPO_LOCK_HELD:-}" ]; then
-  common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || {
+  # Lock key: git's own absolute form of the common dir. --path-format=absolute yields the SAME string
+  # from any linked worktree or the main checkout, so /start, /finish merge, and reap serialize on ONE
+  # key. It also sidesteps the MSYS `pwd -P` divergence the old `cd … && pwd -P` had — a worktree can
+  # resolve to a /tmp-style mount alias while the main checkout resolves to /c/… (see standards/git.md
+  # "Windows Git Bash: comparing paths"); with-repo-lock.py's realpath papered over that, but deriving
+  # a canonical key removes the reliance on that accident.
+  repo_key=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || {
     echo "ERROR: finish-merge.sh: not inside a git repository (cwd: $PWD)" >&2
     exit 1
   }
-  if [ -z "$common_dir" ]; then
-    echo "ERROR: finish-merge.sh: git rev-parse --git-common-dir returned empty (cwd: $PWD)" >&2
-    exit 1
-  fi
-  case "$common_dir" in
-    /*) repo_key="$common_dir" ;;
-    *)  repo_key=$(cd "$common_dir" 2>/dev/null && pwd -P) ;;
-  esac
   if [ -z "$repo_key" ] || [ "$repo_key" = "/" ]; then
-    echo "ERROR: finish-merge.sh: refusing degenerate repo_key='$repo_key' (common_dir='$common_dir')" >&2
+    echo "ERROR: finish-merge.sh: refusing degenerate repo_key='$repo_key' (cwd: $PWD)" >&2
     exit 1
   fi
   export _FINISH_MERGE_LOCK_PID=$$
