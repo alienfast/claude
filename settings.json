@@ -183,5 +183,5 @@
   "tui": "fullscreen",
   "skillListingBudgetFraction": 0.03,
   "skillListingMaxDescChars": 2048,
-  "model": "sonnet"
+  "model": "opus[1m]"
 }
