@@ -142,6 +142,14 @@ If a delegated task includes a multi-minute command (Rust/C++ compile, installer
 synchronously with a long Bash timeout (up to 600000ms) — or, if backgrounded, to poll its output file within the same turn. A subagent that ends its
 turn "waiting for a background task/Monitor" does not self-resume — the orchestrator must notice the stall and re-message it, which stalls the whole run.
 
+### Background-agent completion reports
+
+A background agent's completion often surfaces as a bare idle notification — the substantive report may arrive late, separately, or not at all. When delegating to background agents:
+
+- Instruct the agent in its prompt that its final action must be to SendMessage its completion report to the orchestrator ("main") — do not rely on the idle notification to carry findings.
+- On an idle notification with no report, ping the agent once for its report rather than re-running or re-verifying the work.
+- For small verification tasks, prefer synchronous delegation (`run_in_background: false`) — the report returns directly as the tool result, avoiding the loss window entirely.
+
 ### Tool Call Efficiency
 
 - Use single message for multiple independent Task calls
