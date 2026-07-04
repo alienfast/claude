@@ -141,7 +141,30 @@ echo "Updating vercel agent-browser..."
 # non-interactively. It is per-invocation (not persisted to global config), so it must
 # stay on this line.
 pnpm add -g agent-browser --allow-build=agent-browser
-agent-browser install
+# agent-browser ships prebuilt native binaries per platform but none for win32-arm64 (Windows-on-ARM
+# dev VMs). Its postinstall still downloads the win32-x64 binary, and Windows-on-ARM runs x64 exes
+# under built-in emulation — so alias x64 to the per-arch name the wrapper wants and retry. The
+# wrapper prints the exact path it looked for ("Expected: …"), so parse that rather than guessing
+# pnpm's store layout (pnpm root -g does not point at the real linked package dir). Never abort the
+# bootstrap under set -e for this optional tool — everything after it (linear-cli included) matters more.
+agent-browser install || {
+  ab_skip_msg="  ⚠️  agent-browser has no prebuilt binary for this platform — skipping; browser-automation skills won't work here."
+  ab_expected=$(agent-browser --version 2>&1 | sed -n 's/^Expected: //p' | tr -d '\r')
+  if [ "$CLAUDE_OS" = windows ] && [ -n "$ab_expected" ]; then
+    ab_expected=$(cygpath -u "$ab_expected")
+    ab_x64="$(dirname "$ab_expected")/agent-browser-win32-x64.exe"
+    if [ -f "$ab_x64" ]; then
+      echo "  No upstream binary for this arch — aliasing win32-x64 to $(basename "$ab_expected") (runs under x64 emulation)..."
+      cp "$ab_x64" "$ab_expected"
+      agent-browser install \
+        || echo "  ⚠️  agent-browser still failing under x64 emulation — skipping; browser-automation skills won't work here."
+    else
+      echo "$ab_skip_msg"
+    fi
+  else
+    echo "$ab_skip_msg"
+  fi
+}
 pnpm dlx skills add vercel-labs/agent-browser \
   -g \
   --skill agent-browser \
@@ -185,36 +208,58 @@ echo "Installing linear-cli (Finesssee — https://github.com/Finesssee/linear-c
 # (brew or rustup), so that must be on PATH for this run and for future shells.
 export PATH="$HOME/.cargo/bin:$PATH"
 
-# 1. Rust toolchain (provides cargo). macOS installs it via Homebrew; on Windows/other we don't
-#    auto-run winget from Git Bash (see note above), so instruct via rustup and stop.
-if ! command -v cargo >/dev/null 2>&1; then
-  if [ "$CLAUDE_OS" = macos ]; then
-    echo "  Rust toolchain not found — installing via Homebrew (brew install rust)..."
-    brew install rust
+# Windows: install the prebuilt x86_64 release binary via gh and skip the cargo chain — a source
+# compile needs a C toolchain cargo can't assume (ring wants clang on ARM64 hosts), and the x86_64
+# build runs natively on the all-x64 production machines and under Windows' built-in x64 emulation
+# on ARM64 dev VMs. Falls through to the cargo chain below only if the download fails.
+linear_cli_installed=false
+if [ "$CLAUDE_OS" = windows ]; then
+  echo "  Downloading prebuilt linear-cli release (x86_64-pc-windows-msvc)..."
+  linear_tmp=$(mktemp -d)
+  if gh release download --repo Finesssee/linear-cli --pattern '*x86_64-pc-windows-msvc.zip' --dir "$linear_tmp" --clobber \
+     && unzip -o -q "$linear_tmp"/*.zip -d "$linear_tmp" \
+     && mkdir -p "$HOME/.cargo/bin" \
+     && cp "$(find "$linear_tmp" -name linear-cli.exe | head -1)" "$HOME/.cargo/bin/linear-cli.exe"; then
+    linear_cli_installed=true
   else
-    echo "  ❌ cargo not found. Install Rust via rustup — https://rustup.rs" >&2
-    [ "$CLAUDE_OS" = windows ] && echo "       on Windows (PowerShell): winget install -e --id Rustlang.Rustup" >&2
-    echo "     then re-run this script." >&2
+    echo "  ⚠️  Prebuilt download failed — falling back to a cargo source build."
+  fi
+  rm -rf "$linear_tmp"
+fi
+
+if [ "$linear_cli_installed" = false ]; then
+  # 1. Rust toolchain (provides cargo). macOS installs it via Homebrew; on Windows/other we don't
+  #    auto-run winget from Git Bash (see note above), so instruct via rustup and stop.
+  if ! command -v cargo >/dev/null 2>&1; then
+    if [ "$CLAUDE_OS" = macos ]; then
+      echo "  Rust toolchain not found — installing via Homebrew (brew install rust)..."
+      brew install rust
+    else
+      echo "  ❌ cargo not found. Install Rust via rustup — https://rustup.rs" >&2
+      [ "$CLAUDE_OS" = windows ] && echo "       on Windows (PowerShell): winget install -e --id Rustlang.Rustup" >&2
+      echo "     then re-run this script." >&2
+      exit 1
+    fi
+  fi
+  if ! command -v cargo >/dev/null 2>&1; then
+    echo "  ❌ cargo still not found after install. Install Rust manually (https://rustup.rs) and re-run." >&2
     exit 1
   fi
-fi
-if ! command -v cargo >/dev/null 2>&1; then
-  echo "  ❌ cargo still not found after install. Install Rust manually (https://rustup.rs) and re-run." >&2
-  exit 1
-fi
 
-# 2. cargo-binstall — pulls a prebuilt linear-cli binary (via QuickInstall) instead of
-#    a slow source compile. Prefer the Homebrew formula; fall back to `cargo install`.
-if ! command -v cargo-binstall >/dev/null 2>&1; then
-  echo "  Installing cargo-binstall..."
-  brew install cargo-binstall 2>/dev/null || cargo install cargo-binstall
-fi
+  # 2. cargo-binstall — pulls a prebuilt linear-cli binary (via QuickInstall) instead of
+  #    a slow source compile. Homebrew-only: on non-mac, compiling binstall from source just to avoid
+  #    compiling linear-cli is a net loss, so step 3's `cargo install` fallback handles those platforms.
+  if ! command -v cargo-binstall >/dev/null 2>&1 && [ "$CLAUDE_OS" = macos ]; then
+    echo "  Installing cargo-binstall..."
+    brew install cargo-binstall 2>/dev/null || cargo install cargo-binstall
+  fi
 
-# 3. linear-cli — binstall (fast, prebuilt) with a source-compile fallback.
-if command -v cargo-binstall >/dev/null 2>&1; then
-  cargo binstall -y linear-cli || cargo install linear-cli
-else
-  cargo install linear-cli
+  # 3. linear-cli — binstall (fast, prebuilt) with a source-compile fallback.
+  if command -v cargo-binstall >/dev/null 2>&1; then
+    cargo binstall -y linear-cli || cargo install linear-cli
+  else
+    cargo install linear-cli
+  fi
 fi
 
 if ! command -v linear-cli >/dev/null 2>&1; then
