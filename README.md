@@ -77,6 +77,46 @@ Reach for these as needed — between loop steps or on their own:
 | `/quality-review` | On demand — adversarial review + triage/fix loop until convergence (also auto-runs inside `/start`) |
 | `/next` | Starting a day or week — suggests the best next issue to pick up |
 
+## Autonomous
+
+The developer workflow above is hands-on: you pick issues and drive `/full` per issue. `/auto` is the same machinery with the human taken out of the pick-and-ship loop, and `/loop` is what keeps it running unattended.
+
+- **`/auto`** ships **exactly one Linear issue per invocation**, end to end: finish any in-flight work, pick the best unblocked issue via `/next`, ship it via `/full auto wt`, record the outcome. Worktree mode is always on (so successive issues chain without stacking branches), and every underlying `auto` default chooses abort/preserve over guess — the worst acceptable outcome is "nothing happened and Linear says why," never "something wrong shipped." Invoking `/auto` **is** the run-scoped grant for the commits and pushes it makes (see [standards/git.md](standards/git.md)).
+- **`/loop /auto`** is the way you actually run it. `/loop` supplies the recurrence — its wakeup machinery re-invokes `/auto` for the next issue — while each `/auto` call stays a single, self-contained iteration. (Deliberately: in-prose "keep going" scaffolding is the documented failure mode of autonomous macros, so `/auto` leans on `/loop`'s reliable recurrence instead of inventing its own.)
+
+Point it at a seeded, prioritized backlog and walk away. It works the queue one issue at a time and **ends itself** — no runaway loop:
+
+- **`NO-CANDIDATES`** — the backlog drained. Seed more issues to resume.
+- **`AUTO-HALTED`** — the circuit breaker tripped (two consecutive failures, likely systemic) or an environment halt (e.g. a dirty tree it can't attribute). Each failing issue gets a Linear comment explaining why before the loop stops.
+
+`/loop /auto` never clears or compacts the session — the harness's automatic summarization keeps context in check as it grows (`/compact` and `/clear` are user commands the loop must never invoke). Because summarization can drop detail, the run's actual memory lives in `tmp/auto-state.json` (shipped / skipped / failed lists + the failure counter), not the conversation — so the run survives summarization across iterations, and the terminal halt stays sticky even under a fixed-interval `/loop 15m /auto`. A human starts a fresh run by deleting that file.
+
+```text
+   /loop /auto  ──  the autonomous driver: re-invokes /auto each iteration
+        │
+        ▼
+  ┌───────────────────────  one iteration  =  one issue  ───────────────────────┐
+  │                                                                             │
+  │  0  re-anchor + read  tmp/auto-state.json   (cross-iteration run memory)    │
+  │  1  preflight ......... finish any in-flight work / resume orphaned wt      │
+  │  2  /next ............. rank unblocked candidates, take the top one         │
+  │  3  /full auto wt <ISSUE>                                                   │
+  │        ├─ /start auto ........... branch · plan → Linear · implement        │
+  │        ├─ /quality-review auto .. adversarial review + fix loop             │
+  │        └─ /finish auto .......... commit · push · merge · Ready For Release  │
+  │  4  record outcome → tmp/auto-state.json,  emit one lifecycle tag           │
+  │                                                                             │
+  └──────────────────────────────────────┬──────────────────────────────────────┘
+                                          │
+              AUTO-CONTINUE  ─────────────┤  shipped / skipped / recorded-failure
+                                          ▼   → /loop wakes the next iteration
+              ─────────────────────────────────────────────────────────────────
+              NO-CANDIDATES  (backlog drained)          ─┐
+              AUTO-HALTED    (2 consecutive fails / env) ─┴─►  loop stops, awaits a human
+```
+
+`/auto` accepts one optional token, `pr`, which opens a PR per issue instead of merging (use only when the queued issues are independent, since the source branch won't advance until PRs land).
+
 ## What's Included
 
 ### Agents
@@ -106,6 +146,7 @@ Automated multi-step workflows invoked by trigger phrases or slash commands.
 | [quality-review](skills/quality-review/) | Adversarial review + triage/fix loop until convergence (gates `pnpm check`) |
 | [finish](skills/finish/) | Finish an issue — read verdict, commit/push, mark Ready For Release |
 | [full](skills/full/) | End-to-end macro: `/start` → `/quality-review` → `/finish`, gated on verdict |
+| [auto](skills/auto/) | Autonomous backlog iteration — ships one issue per invocation; run continuously as `/loop /auto` (see [Autonomous](#autonomous)) |
 | [next](skills/next/) | Suggest best next issue using cycle, dependency, and triage signals |
 | [triage](skills/triage/) | Analyze backlog for staleness, blockers, and priority suggestions |
 | [prd](skills/prd/) | Create agent-friendly tickets with PRDs and success criteria |
