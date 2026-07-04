@@ -1,6 +1,6 @@
 ---
 name: finish
-description: Finish a Linear issue — check off requirements, add completion comment, commit/push, mark Ready For Release. Use when the user says 'finish issue', 'done with this issue', 'complete PL-XX', or invokes /finish.
+description: Finish a Linear issue — check off requirements, add completion comment, commit/push, mark Ready For Release. Autonomous mode via the `auto` token (every prompt resolves to the conservative default — abort, never override; used by /auto). Use when the user says 'finish issue', 'done with this issue', 'complete PL-XX', or invokes /finish.
 ---
 
 # Finish Issue
@@ -14,7 +14,9 @@ Automates the post-completion workflow for a Linear issue using the `linear-cli`
 - `merge` — only meaningful inside a `/start wt` worktree. **Default when in a worktree.** Merge the worktree branch back into its recorded source branch, then remove the worktree.
 - `pr` — open a pull request for the current branch (works from **any** branch). Inside a `/start wt` worktree the base is the recorded source branch and the worktree is left in place; otherwise the base is the repo's GitHub default branch (in-place — no worktree touched). Optionally apply labels with `with label X` / `label X, Y`. The issue stays `In Progress` (the PR is open, not yet shipped).
 
-Examples: `/finish`, `/finish PL-12`, `/finish no push`, `/finish PL-12 no push`, `/finish merge`, `/finish pr PL-12`, `/finish pr with label pr-deploy`
+- `auto` — optional token (case-insensitive, position-agnostic). **Autonomous mode**: every user prompt in this skill resolves to its conservative default instead of asking — abort rather than override, proceed-without rather than create. Each prompt site below documents its auto default inline. Passed through by `/full auto` for the `/auto` loop; the `/auto` invocation is the commit/push grant (see standards/git.md).
+
+Examples: `/finish`, `/finish PL-12`, `/finish no push`, `/finish PL-12 no push`, `/finish merge`, `/finish auto PL-12 merge`, `/finish pr PL-12`, `/finish pr with label pr-deploy`
 
 ## Invariant
 
@@ -46,6 +48,7 @@ Do not retry, do not re-prompt, do not run any subsequent step. **Skip this pref
 
 Normalize the user's args before calling the script:
 
+- Look for the `auto` token (case-insensitive, position-agnostic) — it selects autonomous mode for this skill's prompt sites and is NOT passed to the script (its arg contract is `merge|pr|--no-push` only).
 - Look for `merge` and `pr` tokens (case-insensitive, position-agnostic) — pass through whichever is present (if both, the script errors).
 - Look for `no push` / `don't push` / `skip push` — translate to `--no-push` for the script.
 - Look for label requests (`with label X`, `label X, Y`, `--label X`) — collect them into a list and **carry it forward to Step 9** (pr mode only). Labels are NOT passed to the script — its arg contract is `merge|pr|--no-push` only. **If labels were requested but the resolved `ACTION` is not `pr`** (i.e., `merge` or the standard flow), labels have no PR to attach to — warn the user once (`Labels apply only to /finish pr; ignoring: <list>.`) rather than silently dropping them.
@@ -70,7 +73,7 @@ If both `SOURCE_BRANCH` and `ACTION` are empty, this is the standard `/finish` f
 
 A parallel `/start wt` session reset this worktree out from under us — exactly what happened to PL-454 and PL-460 when ~8 `/full wt` ran in parallel. The session's intended work is typically uncommitted edits that survived the reset, recoverable by `finish-recover.sh`: it salvages that work to a patch, re-forks a fresh branch off the **current** source tip, re-applies, gates on `pnpm check`, commits, and merges.
 
-**Posture: detect-and-stop with ONE confirmation.** Recovery infers which-files-are-mine heuristically when the branch was reset, so never run it unattended.
+**Posture: detect-and-stop with ONE confirmation.** Recovery infers which-files-are-mine heuristically when the branch was reset, so never run it unattended. **Auto mode:** do not ask and do not recover — stop immediately with `BLOCKED-ON-RECOVERY: <ISSUE-ID> — worktree hijacked (<CORRUPTION_REASON>); recovery requires a human. Corrupted worktree preserved at <WT_DIR>.`
 
 1. **Surface the corruption** from Step 0's output: `CORRUPTION_REASON`, `IDENTITY_SOURCE`, `EXPECTED_BRANCH` vs the current `WORKTREE_BRANCH`, `EXPECTED_BASELINE`, `EXPECTED_SOURCE_BRANCH`. State plainly what recovery will do (salvage → fresh `.claude/worktrees/<id>-recovered` off `EXPECTED_SOURCE_BRANCH` → re-apply → `pnpm check` → commit → merge → retire the corrupted worktree).
 
@@ -109,7 +112,7 @@ The script tries `--input` → current branch → latest commit subject, in that
 
 > Issue `<ISSUE-ID>` appears to live in worktree `<path>`. Are you running `/finish` from the wrong cwd? Reply `yes` to proceed here anyway, or `abort` and `cd` into the worktree first.
 
-Continue only on explicit `yes`. This catches the case where `/start wt` created a worktree, the user opened a fresh terminal in the main checkout, and ran `/finish PL-13` from there — which would otherwise push/commit on the wrong branch. Skip the check entirely when Step 0 detected a worktree (in which case `SOURCE_BRANCH` is set and we're already in the right place), when `ACTION` is `pr` (an explicit `/finish pr` is a deliberate choice to open a PR for the current branch — never a wrong-cwd accident), or when no issue ID was resolved (nothing to check against).
+Continue only on explicit `yes`. **Auto mode:** never proceed here — stop with `BLOCKED-ON-REVIEW: <ISSUE-ID> — issue appears to live in worktree <path>; wrong cwd for an unattended /finish. No state change.` This catches the case where `/start wt` created a worktree, the user opened a fresh terminal in the main checkout, and ran `/finish PL-13` from there — which would otherwise push/commit on the wrong branch. Skip the check entirely when Step 0 detected a worktree (in which case `SOURCE_BRANCH` is set and we're already in the right place), when `ACTION` is `pr` (an explicit `/finish pr` is a deliberate choice to open a PR for the current branch — never a wrong-cwd accident), or when no issue ID was resolved (nothing to check against).
 
 ### Step 1.5: Read Quality-Review Verdict + Sub-issues
 
@@ -205,7 +208,7 @@ Run `pnpm check` as a hard gate before committing:
 pnpm check
 ```
 
-If it **fails**: this is CRITICAL. Do not commit or push. Fix the failures first, then re-run until it passes.
+If it **fails**: this is CRITICAL. Do not commit or push. Fix the failures first, then re-run until it passes. **Auto mode:** bound to **2** fix delegations; if still red, stop with `BLOCKED-ON-REVIEW: <ISSUE-ID> — pnpm check failing at /finish gate after 2 unattended fix attempts. Nothing committed.`
 
 If it **passes**: proceed to commit.
 
@@ -238,6 +241,8 @@ The script handles all three states: pre-staged changes (commit + push), already
 ### Step 8: Mark Issue as Ready For Release
 
 **Skip when `ACTION == "pr"`.** In PR mode, the work is not yet shipped — review and merge are still pending. Leave the issue in `In Progress`; the transition to `Ready For Release` happens after the PR merges (manually, or via a follow-up `/finish` once the worktree branch is merged into source).
+
+**Auto mode — the gate below never prompts.** Every refuse-with-override branch (`VERDICT_STALE=1`, `terminated-with-open-items`, `escalated-to-architect`, `malformed`) resolves to `abort`: emit that branch's `abort` terminator (`BLOCKED-ON-REVIEW: ... — <reason>, auto mode refused the override. No state change.`) and stop. Never override, never re-run unattended. **`none-found` also aborts in auto mode** — the interactive flow's warn-and-proceed assumes a human read the warning; unattended, "no review artifact" means unreviewed code, which never ships (`BLOCKED-ON-REVIEW: <ISSUE-ID> — no /quality-review artifact; unattended runs never ship unreviewed. Run /quality-review then /finish manually.`). The failing tag is `/auto`'s signal to count a failure and surface the issue to a human.
 
 In all other cases (no worktree, or `ACTION == "merge"`), gate the transition on the `VERDICT` from Step 1.5. **Every `<...>` token in the prompt and comment bodies below is a substitution site** — replace each with the resolved value before emitting; never write a literal `<placeholder>` to chat or to Linear. The Step 4 substitution rule applies here too.
 
@@ -370,9 +375,9 @@ The script brings the worktree branch up to source's tip **inside the worktree**
 
 - **2 (merge conflict — resolve in the worktree)** — the script merged `<SOURCE_BRANCH>` into the worktree branch **inside `<WT_DIR>`** and hit conflicts. The main checkout is untouched and clean; the conflict lives in the worktree, which this session **owns** (edits there are permitted even under bgIsolation) and which is **private** (no lock needed — do **not** wrap these in `with-repo-lock.py`). Conflicted files are listed on the script's stderr as worktree-relative paths.
 
-  1. For each conflicted file: read it from `<WT_DIR>/<path>`, understand both sides of the conflict, apply the resolution. When one side clearly subsumes the other (e.g., the worktree branch removed code the source side modified), take the subsuming side. Ask the user only when the right answer is genuinely ambiguous.
+  1. For each conflicted file: read it from `<WT_DIR>/<path>`, understand both sides of the conflict, apply the resolution. When one side clearly subsumes the other (e.g., the worktree branch removed code the source side modified), take the subsuming side. Ask the user only when the right answer is genuinely ambiguous. **Auto mode:** when genuinely ambiguous, do not guess — run `git -C '<WT_DIR>' merge --abort` and stop with `BLOCKED-ON-REVIEW: <ISSUE-ID> — merge conflict needs a human (<files>). Worktree preserved.`
   2. `git -C '<WT_DIR>' add <resolved-files>`
-  3. Run `pnpm check` from `<WT_DIR>` — must be green before committing. If it fails: the conflict resolution introduced a regression. Per the Working Application Contract, do **not** commit and do **not** re-invoke. Surface the failing output to the user; let them decide between fixing the resolution further, aborting the merge (`git -C '<WT_DIR>' merge --abort`), or escalating to architect. The mid-merge state is preserved in the worktree for inspection.
+  3. Run `pnpm check` from `<WT_DIR>` — must be green before committing. If it fails: the conflict resolution introduced a regression. Per the Working Application Contract, do **not** commit and do **not** re-invoke. Surface the failing output to the user; let them decide between fixing the resolution further, aborting the merge (`git -C '<WT_DIR>' merge --abort`), or escalating to architect. The mid-merge state is preserved in the worktree for inspection. **Auto mode:** do not wait for a decision — run `git -C '<WT_DIR>' merge --abort` and stop with `BLOCKED-ON-REVIEW: <ISSUE-ID> — conflict resolution broke pnpm check; merge aborted, worktree preserved for a human.`
   4. `git -C '<WT_DIR>' commit -F '<WT_DIR>/tmp/git-merge-msg-<issue-id-lowercased>.md'` — reuse the prepared merge-commit message (e.g., `<WT_DIR>/tmp/git-merge-msg-pl-13.md`).
   5. **Re-invoke the same Step 2 `finish-merge.sh` line.** It re-acquires the lock and fast-forwards the main checkout, then removes the worktree and branch. If source advanced during your resolution, it re-merges the new delta — which may return **2 again** with a fresh conflict on that delta; if so, **repeat steps 1–5**. This is expected under concurrent `/finish merge` sessions and converges (each round reconciles only the latest source delta).
   6. Present the closing message above once the re-invocation exits 0.
@@ -389,7 +394,7 @@ The branch was pushed in Step 7 (the `no push` + `pr` combination was rejected i
      gh repo view --json defaultBranchRef -q .defaultBranchRef.name
      ```
 
-     If this fails (no GitHub remote, `gh` unauthenticated), surface the error and stop — there's nowhere to open the PR. Don't guess a base. The base is the default branch by design even when the branch was forked off another branch; the user can retarget the PR in GitHub if it should land elsewhere.
+     If this fails (no GitHub remote, `gh` unauthenticated), surface the error and stop with the terminator `BLOCKED-ON-REVIEW: <ISSUE-ID> — cannot resolve PR base (<first error line>). Branch pushed; open the PR manually.` — there's nowhere to open the PR. Don't guess a base. The base is the default branch by design even when the branch was forked off another branch; the user can retarget the PR in GitHub if it should land elsewhere.
 
 2. **Verify any requested labels exist** (only if Step 0 collected labels). Check each label with an exact-equality `jq` filter (a substring like `deploy` must NOT match an existing `pr-deploy`) — the command prints the label name if it exists and nothing if it doesn't:
 
@@ -397,7 +402,7 @@ The branch was pushed in Step 7 (the `no push` + `pr` combination was rejected i
    gh label list --limit 200 --json name -q '.[].name | select(. == "<label>")'
    ```
 
-   If a requested label is missing (empty output), do NOT silently drop it. Surface it and ask the user: proceed without that label / create it (`gh label create '<label>'`) / abort. Apply only labels that exist (or that the user just created).
+   If a requested label is missing (empty output), do NOT silently drop it. Surface it and ask the user: proceed without that label / create it (`gh label create '<label>'`) / abort. Apply only labels that exist (or that the user just created). **Auto mode:** proceed without the missing label; note the omission in the closing message.
 
 3. **Generate the PR title and body from the actual diff** — do NOT use `--fill` (it only echoes the commit message). Apply the `pr-update` skill's methodology directly: read [`~/.claude/skills/pr-update/SKILL.md`](../pr-update/SKILL.md) and follow its Analysis Process (§2–6), PR Title Formats, and Description Structure. **Skip pr-update's own base-resolution** (its §2 `if [[ -n "$pr_info" ]]; … BASE=…` prologue) and substitute the `<BASE>` you already resolved in sub-step 1 wherever its commands reference `$BASE` — in a worktree that base is `SOURCE_BRANCH`, **not** the default branch, and letting pr-update re-resolve `$BASE` would diff the worktree PR against the wrong base. This is a **by-reference** use of that methodology — read its sections and apply them here — **not** a `Skill`-tool dispatch of `pr-update`: `/finish` must stay the authority over the base, labels, and the terminal `SHIPPED-PR` tag, and must not trigger `pr-update`'s own interactive PR-state prompts. The branch is already pushed (Step 7), so no push here. (pr-update's own empty-`$BASE` guard lives in the §2 prologue you're skipping; sub-step 1 above is the backstop for this path — it already stops if it cannot resolve a base, so the substituted `<BASE>` is non-empty by the time you reach here.)
 
@@ -436,7 +441,7 @@ After the PR is created, present the closing message. The tagged final line (per
 
 ## Error Handling
 
-- If the issue is already Ready For Release or Done, warn the user and ask if they want to proceed (add comment only)
+- If the issue is already Ready For Release or Done, warn the user and ask if they want to proceed (add comment only). Auto mode: do not re-finish a terminal issue — stop with `BLOCKED-ON-REVIEW: <ISSUE-ID> — already <state>; nothing to finish.`
 - If there are no uncommitted changes and code is already pushed, skip the git steps
-- If `linear-cli` is not authenticated, prompt: `linear-cli auth oauth`
-- If the issue identifier can't be found, ask the user explicitly
+- If `linear-cli` is not authenticated, prompt: `linear-cli auth oauth` (auto mode: do not prompt — stop with `BLOCKED-ON-REVIEW: <ISSUE-ID or "current branch"> — linear-cli unauthenticated. Nothing committed, no state change.`)
+- If the issue identifier can't be found, ask the user explicitly (auto mode: stop with `BLOCKED-ON-REVIEW: current branch — no issue ID resolvable. No state change.`)

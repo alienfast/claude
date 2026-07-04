@@ -1,6 +1,6 @@
 ---
 name: quality-review
-description: Adversarial implementation review with triage and fix loop. Hard-gates on `pnpm check`, delegates to the quality-reviewer agent for categorized findings (Critical/High/Medium/Nice-to-Have/Approved), then triages and fixes findings via the developer agent. Loops until a re-review surfaces no new Critical/High/Medium findings (convergence), with a soft ceiling of 5 cycles before asking the user how to proceed; option 3 of that prompt terminates with verdict `escalated-to-architect`. Use when the user says 'review my work', 'check this implementation', 'adversarial review', 'quality review', or invokes /quality-review.
+description: Adversarial implementation review with triage and fix loop. Hard-gates on `pnpm check`, delegates to the quality-reviewer agent for categorized findings (Critical/High/Medium/Nice-to-Have/Approved), then triages and fixes findings via the developer agent. Loops until a re-review surfaces no new Critical/High/Medium findings (convergence), with a soft ceiling of 5 cycles before asking the user how to proceed; option 3 of that prompt terminates with verdict `escalated-to-architect`. Autonomous mode via the `auto` token (prompts resolve to documented defaults; used by /auto via /start auto). Use when the user says 'review my work', 'check this implementation', 'adversarial review', 'quality review', or invokes /quality-review.
 ---
 
 # Quality Review
@@ -11,10 +11,11 @@ Run an adversarial review of the current implementation, then triage and fix fin
 
 - Issue identifier (e.g., `PL-13`) — optional. Auto-detected from branch/commit when omitted; if no issue can be resolved, the skill runs without requirements-conformance context.
 - Positional file paths — optional override of the auto-detected scope.
+- `auto` — optional token (case-insensitive, position-agnostic). **Autonomous mode**: every prompt resolves to a documented default instead of asking — the Step 5 soft-ceiling prompt resolves to option 2 (`terminated-with-open-items`), sub-step 6's filing prompt resolves to `suggested`, and sub-step 6's state-name fallback files into the team default state (noted in the verdict block) rather than asking. Nothing else changes. Passed through by `/start auto` for the `/auto` loop.
 
-Examples: `/quality-review`, `/quality-review PL-13`, `/quality-review src/foo.ts src/bar.ts`, `/quality-review PL-13 packages/api/`
+Examples: `/quality-review`, `/quality-review PL-13`, `/quality-review auto PL-13`, `/quality-review src/foo.ts src/bar.ts`, `/quality-review PL-13 packages/api/`
 
-Reject any bare argument that is neither an issue-ID (`[A-Z]+-[0-9]+`) nor a path that exists on disk. In particular, the tokens `merge`, `pr`, `no push`, `don't push`, `skip push` are `/finish` arguments — if seen here, error with: `Argument 'X' is a /finish argument, not a /quality-review argument` rather than silently treating it as a file path that doesn't exist (which would just produce an empty scope and warn about nothing to review).
+Reject any bare argument that is neither an issue-ID (`[A-Z]+-[0-9]+`), the `auto` token, nor a path that exists on disk. In particular, the tokens `merge`, `pr`, `no push`, `don't push`, `skip push` are `/finish` arguments — if seen here, error with: `Argument 'X' is a /finish argument, not a /quality-review argument` rather than silently treating it as a file path that doesn't exist (which would just produce an empty scope and warn about nothing to review).
 
 ## Invariant
 
@@ -34,7 +35,7 @@ If the session is in plan mode when `/quality-review` is invoked standalone, cal
 - Rejected by the user: stop with `/quality-review aborted at preflight: user rejected plan-mode exit. No review ran; no verdict persisted.` Do NOT emit a lifecycle tag — `/quality-review` does not normally emit one, and no skill-stage code ran. The absence of a persisted verdict file is the signal a later `/finish` will see (`VERDICT=none-found`).
 - Tool-error / harness failure (not a user rejection — the tool itself returns an error, or the harness reports `ExitPlanMode` failed for a non-user-cancel reason): surface the error verbatim and stop with `/quality-review aborted at preflight: ExitPlanMode failed (<first line of error>). No review ran; no verdict persisted.` Do NOT continue to Step 1; plan mode is still active.
 
-**Delegated invocation note.** When `/quality-review` is invoked by `/start` Step 9, the parent session has already exited plan mode at `/start` Step 6, so this preflight is a no-op in that path. The hazard only applies to ad-hoc standalone invocations of `/quality-review`.
+**Delegated invocation note.** When `/quality-review` is invoked by `/start` Step 9, plan mode is not active — the parent session either already exited it at `/start` Step 6 or (in auto mode) never entered it — so this preflight is a no-op in that path. The hazard only applies to ad-hoc standalone invocations of `/quality-review`.
 
 **Skip this preflight only when plan mode is NOT active** (the common case).
 
@@ -47,6 +48,8 @@ If the session is in plan mode when `/quality-review` is invoked standalone, cal
 ```
 
 Pass `--input` only when the user typed an explicit ID (e.g., `/quality-review PL-13`). The script tries `--input` → current branch → latest commit subject, in that order. On exit 1 (no ID resolvable), proceed without issue context — the requirements-conformance bullet in the reviewer prompt is omitted.
+
+**Scope-mismatch guard.** When the issue ID was auto-detected (branch/commit — not typed by the user) and the scope comes from explicit positional file paths that are clearly not that issue's implementation (e.g., side work — config, docs, tooling — reviewed from a feature branch named for an unrelated issue), proceed WITHOUT issue context and state that in chat. Never persist a verdict keyed to an issue whose implementation the reviewed diff is not — the persisted file would overwrite that issue's real verdict at `tmp/quality-review-verdict-<issue>.md` with a fresher mtime, misleading `/finish` Step 8's gate and defeating its staleness check. A user-typed explicit issue ID is an instruction, not a detection — this guard does not apply.
 
 **Changed files** (in priority order):
 
@@ -184,6 +187,8 @@ Options:
 Reply with `1` (optionally `1 5` for a custom N), `2`, or `3`.
 ```
 
+**Auto mode:** do not ask — resolve the ceiling prompt to option 2 immediately (terminate with `terminated-with-open-items`, surviving findings as Open items). Five cycles without convergence in an unattended run is a signal for a human, not more unattended cycles; the failing verdict makes `/finish auto` abort and `/auto` count the issue as a failure, which is the intended surfacing path.
+
 If the user picks option 1, resume the loop with the new ceiling raised by N. If `2`, terminate with `terminated-with-open-items`. If `3`, terminate with verdict `escalated-to-architect`: populate `Open items` with the surviving findings as of cycle N plus the consolidated Nice-to-Have list per sub-step 1 (deferred items are never silently lost), skip Step 6 entirely, and surface the situation to the architect agent — its recommendation supersedes anything downstream consumers (`/start` Step 10, `/finish` Step 8) would otherwise do with the verdict block.
 
 ### Step 6: Deferred Items Triage
@@ -310,6 +315,8 @@ Every actionable item MUST include: finding text (verbatim from reviewer, not pa
 
 > For which of the unfixed items should I create Linear issues? Reply with comma-separated numbers (e.g., `3, 4`), `suggested` to file the defer-as-issue group, `all`, or `none`. Items declined here become `Deferred dropped` in the verdict block — they are not silently re-added to any other category.
 
+**Auto mode:** do not ask — still render the grouped list (it is the audit trail), then proceed as if the user replied `suggested`. Filing the classifier's defer-as-issue group keeps discovered work flowing back into Linear for later `/auto` iterations without over-filing. If the state-name fallback below would need to ask the user, file into the team's default state instead and note the deviation in the verdict block — in an unattended run a re-statable issue beats a dropped finding.
+
 Reply semantics:
 
 - `suggested` → file every item still in the "Suggested defer as issue" group at this point (items already fixed in sub-step 5 are excluded automatically). If the remaining group is empty, treat as `none`.
@@ -414,7 +421,7 @@ Rules for this step:
 - **`pnpm check` repeatedly fails** after multiple `developer` delegations (Step 2 gate): surface to the user with the failing output. Do not proceed to review.
 - **Sub-step 5 corrective pass leaves `pnpm check` failing or regressions unaddressed**: the deferred-item fixes broke the application and the single corrective `developer` pass did not restore it. Set the run verdict to `terminated-with-open-items`, route per sub-step 5's verdict-population rules, and surface the failing output to the user along with the `Open items` list. Do not loop further or roll back automatically — let the user decide whether to revert, re-run `/quality-review`, or escalate to architect.
 - **No changed files detected**: warn the user and exit. Nothing to review.
-- **Issue ID provided but `linear-cli` not authenticated**: prompt `linear-cli auth oauth`, then continue without issue context if the user skips.
+- **Issue ID provided but `linear-cli` not authenticated**: prompt `linear-cli auth oauth`, then continue without issue context if the user skips. Auto mode: do not prompt — continue without issue context immediately (the review still runs and the verdict still persists — the provided ID resolves locally without Linear auth, and persistence is local; only the requirements-conformance context is lost).
 - **`quality-reviewer` agent returns malformed findings**: a response is malformed if ANY of the following hold:
   - Missing the `## Review Findings` heading.
   - Missing any of the five required subheadings (in order: `### Critical`, `### High`, `### Medium`, `### Nice-to-Have`, `### Approved`). Match by line-prefix with a narrow tail: the heading word(s) must be followed by either end-of-line OR ` (` (single space + opening paren, for the optional parenthetical like `(must fix before done)` or `(auto-fix lane)`). Examples that match: `### Critical`, `### Critical (must fix before done)`, `### Nice-to-Have (auto-fix lane)`. Examples that do NOT match (treated as malformed under criterion 4 below): `### Critical findings`, `### Critical:`, `### CRITICAL`, `### Nice-to-Have / Out-of-Scope` (the pre-rename heading — a stale agent emitting it must be re-spawned onto the current contract). Subheadings appearing out of order also count as malformed (downstream consumers scan positionally).

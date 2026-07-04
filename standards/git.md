@@ -180,6 +180,16 @@ git -C /path/to/repo status
 
 `Bash(git:*)` is pre-approved, but `cd:*` is not — prefixing with `cd` makes the command match `cd` rather than `git`, so every invocation prompts.
 
+### Windows Git Bash: `ref:path` Arguments
+
+MSYS path conversion mangles some colon arguments: `git show origin/main:.gitignore` becomes `origin\main;.gitignore` (`fatal: ambiguous argument`).
+It triggers when the ref contains `/` and the path starts with a dot (`origin/main:package.json` passes, `origin/main:.claude/settings.json` fails),
+so it looks intermittent. Prefix any `ref:path` command with `MSYS_NO_PATHCONV=1` — harmless on macOS:
+
+```bash
+MSYS_NO_PATHCONV=1 git show origin/main:.gitignore
+```
+
 ### Why This Matters: Real Incident
 
 **October 2025 catastrophic failure:**
@@ -238,6 +248,10 @@ Commits and pushes are **separate, explicit grants**. Neither is implied by impl
 - "commit" → applies only to current set of changes; NOT a standing grant for the session; does NOT include push
 - "push" → applies only to currently-committed state; does NOT include future commits; does NOT imply commit
 - "commit and push" / "commit, push, and create a PR" → explicit multi-action grant; honor as written
+
+### Named exceptions: skill-scoped grants
+
+Invoking `/finish` is an explicit grant to commit and push that one issue's change set — the documented contract of the skill IS the grant. Invoking `/auto` (or `/loop /auto`) is the single **run-scoped standing grant**: it authorizes the `/finish auto` commit+push of every issue that run ships, because unattended shipping is `/auto`'s entire documented purpose. The grant is bounded — no force-pushes, no history rewrites, no committing work unattributable to a Linear issue — and every shipped change is audited via the issue's plan and completion comments. No other skill or phrasing creates a standing grant.
 
 ### Default Behavior
 

@@ -1,11 +1,13 @@
 ---
 name: full
-description: End-to-end Linear issue macro — runs /start then /finish in sequence, gated on the /quality-review verdict. Worktree mode is opt-in via the `wt` token, mirroring /start. Pauses only for plan approval and the deferred-items filing decision; otherwise autonomous. Use when the user says 'full PL-XX', 'ship PL-XX end-to-end', or invokes /full.
+description: End-to-end Linear issue macro — runs /start then /finish in sequence, gated on the /quality-review verdict. Worktree mode is opt-in via the `wt` token, mirroring /start. Pauses only for plan approval and the deferred-items filing decision; otherwise autonomous. The `auto` token removes those two gates too (documented defaults instead of prompts; used by /auto). Use when the user says 'full PL-XX', 'ship PL-XX end-to-end', or invokes /full.
 ---
 
 # Full Issue (Macro)
 
 A thin composition over `/start` and `/finish`. The two underlying skills are individually trustworthy and require user input at only two predictable points — plan approval (Step 6 of `/start`) and the deferred-items filing decision (during `/quality-review`, and only when there are non-trivial items to file as issues; trivial `fix-now` and `note-only` items are handled with no prompt). `/full` removes the manual `/finish` invocation at the end so that, once the deferred-items gate clears with a passing verdict, the issue ships without further input.
+
+**Auto mode (`auto` token)** removes even those two gates — not by suppressing them, but by policy: each underlying skill documents a default decision at every prompt site (`/start auto` skips plan approval and posts the plan to Linear as the audit record; `/quality-review auto` files the `suggested` deferred group; `/finish auto` aborts rather than overrides at every gate). `/full auto` is a pure pass-through: the token goes to both `/start` and `/finish` (and reaches `/quality-review` via `/start` Step 9). Used by the `/auto` loop, whose invocation carries the commit/push grant (standards/git.md).
 
 Worktree mode is **opt-in**, mirroring `/start`: `/full PL-13` runs in-place on the current branch; `/full wt PL-13` creates and works inside a per-issue worktree. The `wt` token is the single switch — `/full` passes it through to `/start` unchanged.
 
@@ -16,16 +18,17 @@ Worktree mode is **opt-in**, mirroring `/start`: `/full PL-13` runs in-place on 
 ## Arguments
 
 ```text
-/full <ISSUE-ID> [wt] [pr] [no push|don't push|skip push]
+/full <ISSUE-ID> [wt] [auto] [pr] [no push|don't push|skip push]
 ```
 
-All tokens are **position-agnostic and case-insensitive** (matching the convention `/start wt` and `/finish` use — `WT`, `Wt`, `PR`, `NO PUSH` are all accepted). Exactly one token must be a valid issue ID; everything else is an optional modifier.
+All tokens are **position-agnostic and case-insensitive** (matching the convention `/start wt` and `/finish` use — `WT`, `Wt`, `AUTO`, `PR`, `NO PUSH` are all accepted). Exactly one token must be a valid issue ID; everything else is an optional modifier.
 
 - `<ISSUE-ID>` — required, exactly one. Validated via `~/.claude/scripts/detect-issue-id.sh --validate-only --input <arg>` (enforces `^[A-Z]+-[0-9]+$` after uppercasing). Lowercase IDs (`pl-13`) are accepted; the script uppercases.
 - `wt` — optional. Pass-through to `/start`; selects worktree mode. Omit for in-place mode on the current branch.
+- `auto` — optional. Pass-through to BOTH `/start` and `/finish` (see Auto mode above). Compatible with every other token.
 - `pr` — optional. Pass-through to `/finish` Step 3 below; opens a PR instead of the default finalize. Works in **both** modes: with `wt` the PR base is the recorded source branch and the worktree is preserved; without `wt` (in-place) the base is the repo's default branch. The issue stays `In Progress` until the PR merges.
 - `no push` / `don't push` / `skip push` — optional. Pass-through to `/finish`; commit still happens, push is skipped. Compatible with both modes (worktree-merge accepts `no push` implicitly via the macro's gating in Step 3; `pr` does not, in either mode — see fail-fast below).
-- Any other token — error. Surface: `Unrecognized argument 'X'. /full accepts <ISSUE-ID>, optionally with 'wt', 'pr', or a 'no push' variant.`
+- Any other token — error. Surface: `Unrecognized argument 'X'. /full accepts <ISSUE-ID>, optionally with 'wt', 'auto', 'pr', or a 'no push' variant.`
 
 **Fail-fast validation — catch incompatible combinations before invoking `/start`.** These are mechanical refusals (errors, not interactive prompts), so they do NOT violate the "two gates only" design constraint:
 
@@ -42,6 +45,7 @@ Compose `/start`'s args from the mode:
 
 - `wt` mode → `args = "wt <ISSUE-ID>"`
 - in-place → `args = "<ISSUE-ID>"`
+- `auto` mode → prepend `auto ` to either form (e.g., `"auto wt <ISSUE-ID>"`)
 
 Do NOT pass `pr` or `no push` — those are `/finish` arguments and `/start` rejects unknown tokens.
 
@@ -66,6 +70,7 @@ Wait for `/start`'s tagged final line — the LAST LLM-authored line of its outp
 | Tag from /start | Action |
 | --- | --- |
 | `READY-FOR-FINISH` | Continue to Step 3. |
+| `SKIPPED-BLOCKED` | Stop. Terminal, and **expected in auto mode** — `/start auto` emits it instead of the blocker/reassign/reopen prompts. Nothing was claimed or modified; not an anomaly. `/auto` treats it as a skip. |
 | `BLOCKED-ON-REVIEW` | Stop. The tagged line `/start` already emitted is the macro's terminal output — do not re-render it, do not add prose. State unchanged; branch (and worktree, if `wt`) left intact for re-running `/quality-review`, escalating, or filing follow-ups. |
 | `CANCELED` | Stop. Inherit `/start` Step 8.5's behavior. In `wt` mode the cleanup commands are surfaced (not auto-run) so any uncommitted scratch notes in the worktree survive. In non-`wt` mode there is no worktree to clean; the branch remains until the user disposes of it. |
 | `ABANDONED` | Stop. `/start` Step 8.5 deliberately preserves session state for resumption (worktree in `wt` mode, branch in either). Do not clean up. |
@@ -76,7 +81,7 @@ Wait for `/start`'s tagged final line — the LAST LLM-authored line of its outp
 
 **Cwd safety check (worktree mode only).** Skip this paragraph entirely in non-`wt` mode — there is no worktree to be in, and `/finish` will run from the current branch as expected. When `wt` is in effect, `/start` Step 0 sub-step 2 `cd`s into the worktree at `<WT_ABS>`. The Bash tool's cwd persists across tool calls within a single session, but if cwd has been lost (verify with `pwd`), `cd '<WT_ABS>'` back into it before dispatching `/finish`. The `start.source-branch` config is recorded at per-worktree scope only (`/start` Step 0 sub-step 1, "Foot-gun warning" paragraph); running `/finish` from the main checkout would make `finish-detect-mode.sh` see no source branch, fall into the standard (non-worktree) flow, and surface `/finish` Step 1's "Cross-worktree sanity check" prompt — an unexpected user prompt the macro is supposed to avoid.
 
-Compose the args string for `/finish` based on mode:
+Compose the args string for `/finish` based on mode (in `auto` mode, prepend `auto ` to every form below):
 
 - **Non-`wt` mode without `pr`** — `args = "<ISSUE-ID>"`. Append ` no push` if the user passed it. `/finish` runs its standard flow (commit/push the current branch, mark `Ready For Release`).
 - **Non-`wt` mode with `pr`** — `args = "<ISSUE-ID> pr"`. `/finish` opens an in-place PR against the repo's default branch and leaves the issue `In Progress`. No `no push` is possible here (fail-fast in Arguments rejects the combination upstream).

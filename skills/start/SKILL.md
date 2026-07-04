@@ -1,6 +1,6 @@
 ---
 name: start
-description: Start working on a Linear issue — check blockers, assign, move to In Progress, create branch, plan implementation, execute with checkpoint updates, review and triage findings. Use when the user says 'start issue', 'work on PL-XX', 'begin PL-XX', or invokes /start.
+description: Start working on a Linear issue — check blockers, assign, move to In Progress, create branch, plan implementation, execute with checkpoint updates, review and triage findings. Autonomous mode via the `auto` token (skips plan approval; converts prompts to documented defaults; used by /auto). Use when the user says 'start issue', 'work on PL-XX', 'begin PL-XX', or invokes /start.
 ---
 
 # Start Issue
@@ -25,11 +25,23 @@ Rules that flow from this contract:
 
 Violating this contract — by shipping broken code, by claiming failures were pre-existing, by deferring breakage to a follow-up ticket — is the single worst outcome of this workflow. A partially-implemented feature on a working application is infinitely better than a "complete" feature on a broken one.
 
+## Auto Mode (`auto` token)
+
+`/start auto <ISSUE-ID>` runs the same workflow with **no user prompts** — every decision point that would normally ask the user resolves to a documented default. It exists for the `/auto` loop (via `/full auto`), where nobody is watching. The conversions, all specified inline at the step where each prompt lives:
+
+- Step 2 unresolved blocker → `SKIPPED-BLOCKED`, stop (nothing claimed)
+- Step 3 owned-by-someone-else or terminal state → `SKIPPED-BLOCKED`, stop (never reassign, never reopen)
+- Step 6 plan approval → skipped entirely; the plan is still composed and posted to Linear (Step 7), which becomes the audit record
+- Step 8.5 CANCELED-vs-ABANDONED ambiguity → default `ABANDONED`
+- Step 9 passes `auto` through to `/quality-review`
+
+Auto mode changes **no other contract** — the Working Application Contract, checkpointing, delegation rules, and tagged final lines all apply unchanged.
+
 ## Workflow
 
 ### Step 0: Worktree Mode (only when `wt` in args)
 
-**Argument parsing.** Tokens are case-insensitive (`wt`, `WT`, `Wt`) and position-agnostic. Parse in this order: **(1)** strip the recognized `wt` token; **(2)** verify exactly one non-token argument remains, otherwise error; **(3)** pass that remaining argument through `~/.claude/scripts/detect-issue-id.sh --validate-only --input <arg>` to normalize and validate (the script enforces `^[A-Z]+-[0-9]+$` and uppercases). Multiple IDs or duplicated `wt` tokens are errors.
+**Argument parsing.** Tokens are case-insensitive and position-agnostic; the recognized tokens are `wt` and `auto`. Parse in this order: **(1)** strip the recognized tokens; **(2)** verify exactly one non-token argument remains, otherwise error; **(3)** pass that remaining argument through `~/.claude/scripts/detect-issue-id.sh --validate-only --input <arg>` to normalize and validate (the script enforces `^[A-Z]+-[0-9]+$` and uppercases). Multiple IDs or duplicated tokens are errors.
 
 If the args contain `wt`:
 
@@ -67,7 +79,7 @@ If the args contain `wt`:
 
    - Step 1 reads the pre-fetched digest at `tmp/linear-context-<issue-id-lowercased>.md` (e.g., `tmp/linear-context-pl-13.md`).
    - Step 5 short-circuits via the recorded per-worktree git config.
-   - Step 6 (`EnterPlanMode`) surfaces the approval UI to the user.
+   - Step 6 (`EnterPlanMode`) surfaces the approval UI to the user (skipped in auto mode — see Auto Mode above).
    - Step 8 delegates implementation to `developer` subagents (those are appropriate — they're scoped tasks, not whole-workflow dispatch).
    - Step 9 (`/quality-review`) runs with visible findings, fix loop, and deferred-items triage.
 
@@ -106,15 +118,17 @@ For each unresolved blocker:
 - Ask the user whether to proceed anyway or address the blocker first
 - Do not silently skip
 
+**Auto mode:** do not ask. Emit the tagged final line `SKIPPED-BLOCKED: <ISSUE-ID> — blocked by <BLOCKER-ID> (<state>)` and stop. Nothing has been claimed or modified; `/auto` treats this as a skip (not a failure) and tries the next candidate. `/next` pre-filters blocked issues, so this fires only when the digest reveals a blocker `/next`'s ranking missed.
+
 ### Step 3: Claim the Issue — Assign & Move to In Progress
 
 **Claim before you research.** This is the first action after availability is verified, and it happens **before** any deepen-context, codebase exploration, or implementation. Assigning + moving to In Progress immediately broadcasts to the team that the issue is owned; researching first leaves it looking unclaimed while work is already underway — a bad signal in a multi-person workspace.
 
 Verify availability from the Step 1 digest's `**State:**` and `**Assignee:**` line (already fetched — no extra call):
 
-- Already `In Progress` assigned to **someone else** → warn and ask whether to reassign (Error Handling) before claiming.
-- Already `Done` / `Ready For Release` / other terminal state → warn and ask whether to reopen (Error Handling) before claiming.
-- Already `In Progress` assigned to **me** → idempotent resumption; the issue is already claimed. Skip the update and continue (matches the Step 8 resumption note).
+- Already `In Progress` assigned to **someone else** → warn and ask whether to reassign (Error Handling) before claiming. **Auto mode:** never reassign — emit `SKIPPED-BLOCKED: <ISSUE-ID> — In Progress, assigned to <assignee>` and stop.
+- Already `Done` / `Ready For Release` / other terminal state → warn and ask whether to reopen (Error Handling) before claiming. **Auto mode:** never reopen — emit `SKIPPED-BLOCKED: <ISSUE-ID> — already <state>` and stop.
+- Already `In Progress` assigned to **me** → idempotent resumption; the issue is already claimed. Skip the update and continue (matches the Step 8 resumption note). Applies in auto mode too.
 
 Otherwise, claim it immediately:
 
@@ -194,9 +208,11 @@ pnpm check
 ```
 
 - If it **passes**: the Working Application Contract is now in effect. The application works. From this moment forward, any failure in `pnpm check` is caused by our implementation and is our responsibility to fix. No exceptions.
-- If it **fails**: STOP. Do NOT proceed with planning. The application must be working before we begin. Investigate and fix the failures first — delegate to `developer` or `debugger` as needed. Re-run until the baseline is clean. The contract cannot be established on a broken baseline.
+- If it **fails**: STOP. Do NOT proceed with planning. The application must be working before we begin. Investigate and fix the failures first — delegate to `developer` or `debugger` as needed. Re-run until the baseline is clean. The contract cannot be established on a broken baseline. **Auto mode:** bound this to **2** fix delegations — a broken baseline in an unattended run is pre-existing, likely systemic breakage, not this issue's scope. If still red, post a Linear comment (baseline failure, first failing output lines), return the issue to availability per Step 8.5's ABANDONED mechanics, and emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — baseline pnpm check failing before any implementation; likely systemic. No changes made.` (`/auto` counts the failure; two such in a row trip its breaker — the correct response to a broken main.)
 
 ### Step 6: Enter Plan Mode
+
+**Auto mode: skip the plan-mode tools entirely.** There is no user present to approve, so do NOT call `EnterPlanMode`/`ExitPlanMode` (an unanswered approval prompt would stall the loop). Do the same planning work — items 1–4 of the list below — compose the plan in the Step 7 comment format, and proceed **directly to Step 7**: the plan posted to Linear is the audit record a human reviews after the fact. Everything below this paragraph is interactive mode only.
 
 **Call the `EnterPlanMode` tool** to transition into plan mode. Do not write the plan inline in chat — plan mode has a dedicated tool flow that surfaces an approval UI (in VSCode: a side pane that supports annotation), and the inline-text path bypasses it.
 
@@ -343,7 +359,7 @@ Steps:
    linear-cli issues update <ISSUE-ID> --state Canceled
    ```
 
-   If the team's canceled-state name differs (rejected), derive the team key from the issue ID prefix (e.g., `PL-13` → team `PL`), then probe `linear-cli statuses list -t PL` and pick the first state whose name matches `/^(canceled|cancelled|won.?t.?do|abandoned)/i` (case-insensitive, prefix). If none match, surface the available states to the user and ask which to use — do not silently fall through to the team default.
+   If the team's canceled-state name differs (rejected), derive the team key from the issue ID prefix (e.g., `PL-13` → team `PL`), then probe `linear-cli statuses list -t PL` and pick the first state whose name matches `/^(canceled|cancelled|won.?t.?do|abandoned)/i` (case-insensitive, prefix). If none match, surface the available states to the user and ask which to use — do not silently fall through to the team default. **Auto mode:** do not ask — leave the state unchanged, name the intended state in the Linear comment from sub-step 1 (a human re-states it later), and continue to the tagged line.
 
    After the state transition succeeds, clear the assignee so the Step 3 claim does not linger on a terminal issue (mirrors `mark-ready-for-release.sh`'s unassign-on-terminal behavior — a Canceled issue should not clutter anyone's "my issues" view):
 
@@ -379,7 +395,7 @@ Steps:
    linear-cli issues update <ISSUE-ID> --state Planned
    ```
 
-   If the team's planned-state name differs (rejected), derive the team key from the issue ID prefix (e.g., `PL-13` → team `PL`), then probe `linear-cli statuses list -t PL` and pick the first state whose name matches `/^(planned|backlog|to.?do)$/i` (exact match on these four; NOT a prefix match) — preferring `Planned` if present, since it preserves the "we intend to do this" signal more strongly than `Backlog`. **Deliberately exclude `ready` from the regex** — a prefix match on `ready` would latch onto `Ready For Release` or `Ready For Review` on teams that have those states, silently moving an abandoned issue into a release/review state. If none match, surface the available states to the user and ask which to use — do not silently fall through to the team default.
+   If the team's planned-state name differs (rejected), derive the team key from the issue ID prefix (e.g., `PL-13` → team `PL`), then probe `linear-cli statuses list -t PL` and pick the first state whose name matches `/^(planned|backlog|to.?do)$/i` (exact match on these four; NOT a prefix match) — preferring `Planned` if present, since it preserves the "we intend to do this" signal more strongly than `Backlog`. **Deliberately exclude `ready` from the regex** — a prefix match on `ready` would latch onto `Ready For Release` or `Ready For Review` on teams that have those states, silently moving an abandoned issue into a release/review state. If none match, surface the available states to the user and ask which to use — do not silently fall through to the team default. **Auto mode:** do not ask — leave the state unchanged (the issue stays In Progress), name the intended state in the Linear comment from sub-step 1, and continue to the tagged line.
 3. **Preserve the worktree** — the whole point of `ABANDONED` (vs `CANCELED`) is that resumption is expected. Do not run `git worktree remove` and do not delete the branch.
 4. Emit the tagged final line and stop:
 
@@ -387,13 +403,13 @@ Steps:
    ABANDONED: <ISSUE-ID> — <one-line reason>. Worktree preserved at .claude/worktrees/<issue-id-lowercased> for resumption.
    ```
 
-**Distinguishing the two:** if the user (or implementation discovery) determined the work is done or unneeded → `CANCELED`. If the user is pausing with intent to resume → `ABANDONED`. When in doubt, ask the user once which they intend; do not silently pick.
+**Distinguishing the two:** if the user (or implementation discovery) determined the work is done or unneeded → `CANCELED`. If the user is pausing with intent to resume → `ABANDONED`. When in doubt, ask the user once which they intend; do not silently pick. **Auto mode:** do not ask — when the evidence clearly shows the work already shipped or is unneeded, use `CANCELED`; in every other doubtful case default to `ABANDONED` (it preserves all state for a human to inspect).
 
 ### Step 9: Adversarial Review and Triage
 
 Use the `/quality-review` skill to run the adversarial implementation review and triage/fix loop, passing the current issue ID as context. The `/quality-review` skill enforces the `pnpm check` gate, delegates to `quality-reviewer`, and loops up to 5 review/fix cycles before escalating. When it returns a passing verdict (`passed-clean` or `passed-after-fixes`), proceed to Step 10. If it returns `terminated-with-open-items`, print the verdict block (as composed by `/quality-review`) to chat as a single message — no `AskUserQuestion` prompt at this point. Step 10 will re-render the same block as part of the structured summary; the duplication is intentional (chat-visibility now, structured artifact later).
 
-**Dispatch via the Skill tool.** Call `Skill(skill: "quality-review", args: "<ISSUE-ID>")` (e.g., `Skill(skill: "quality-review", args: "PL-13")`) — do NOT emit the literal `/quality-review PL-13` as chat text. Slash commands in chat output are not re-parsed by the harness; they render as plain text and the skill never runs. The Skill tool is the only programmatic invocation path. Pass the issue ID positionally so `/quality-review` Step 1 doesn't fall back to branch parsing.
+**Dispatch via the Skill tool.** Call `Skill(skill: "quality-review", args: "<ISSUE-ID>")` (e.g., `Skill(skill: "quality-review", args: "PL-13")`) — in auto mode, `args: "auto <ISSUE-ID>"` so `/quality-review`'s own prompts resolve to their auto defaults. Do NOT emit the literal `/quality-review PL-13` as chat text. Slash commands in chat output are not re-parsed by the harness; they render as plain text and the skill never runs. The Skill tool is the only programmatic invocation path. Pass the issue ID positionally so `/quality-review` Step 1 doesn't fall back to branch parsing.
 
 If `/quality-review` returns `escalated-to-architect`, surface the open items and the architect-agent recommendation in chat, then proceed to Step 10. Step 10 item 6's verdict-conditional Next-steps branch handles this verdict correctly (it emits the "architect recommendation supersedes — do NOT suggest /finish" line). Do not invent a separate exit path here — go through Step 10 like any other verdict.
 
@@ -438,8 +454,8 @@ When implementation and review are complete, present a summary to the user that 
 
 ## Error Handling
 
-- If the issue is already In Progress assigned to someone else, warn the user and ask whether to reassign
-- If the issue is already Done or Ready For Release, warn the user and ask if they want to reopen it
-- If there are unresolved blockers, list them and ask the user how to proceed
-- If `linear-cli` is not authenticated, prompt: `linear-cli auth oauth`
+- If the issue is already In Progress assigned to someone else, warn the user and ask whether to reassign (auto mode: `SKIPPED-BLOCKED`, never reassign)
+- If the issue is already Done or Ready For Release, warn the user and ask if they want to reopen it (auto mode: `SKIPPED-BLOCKED`, never reopen)
+- If there are unresolved blockers, list them and ask the user how to proceed (auto mode: `SKIPPED-BLOCKED`)
+- If `linear-cli` is not authenticated, prompt: `linear-cli auth oauth` (auto mode: do not prompt — stop with `BLOCKED-ON-REVIEW: <ISSUE-ID> — linear-cli unauthenticated. No state change.`)
 - If a git branch for this issue already exists, switch to it instead of creating a new one
