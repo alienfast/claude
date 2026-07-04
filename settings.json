@@ -182,5 +182,6 @@
   "skipAutoPermissionPrompt": true,
   "tui": "fullscreen",
   "skillListingBudgetFraction": 0.03,
-  "skillListingMaxDescChars": 2048
+  "skillListingMaxDescChars": 2048,
+  "model": "sonnet"
 }

@@ -73,7 +73,8 @@ In the release workflow:
 - Pin the runner Node to 24 (npm ≥ 11.5.1 is required for OIDC; `gltfjsx/release.yml` pins `24.18.0` for an
   unrelated `http.Agent` fix — copy its rationale comment only if the same regression applies).
 - **Bump GitHub Actions + Node versions** while here (`actions/checkout`, `actions/setup-node`,
-  `pnpm/action-setup`, `git-auto-commit-action`, etc.) to current majors.
+  `pnpm/action-setup`, `git-auto-commit-action`, etc.) to current majors. If any are SHA-pinned, resolve the
+  new pins per `~/.claude/standards/github-actions.md`.
 
 ### Manual prerequisite — flag it to the user
 

@@ -136,20 +136,43 @@ fi
 # from sailing through on a verdict produced before the latest changes.
 stale=0
 stale_reason=""
-# fmt_epoch <epoch> → ISO-8601 local time; falls back to raw epoch if both
-# date dialects fail (vanishingly rare; macOS BSD `date -r` works, GNU
-# `date -d @N` works).
+# fmt_epoch <epoch> → ISO-8601 local time; falls back to raw epoch if the matched dialect's
+# `date` call fails (vanishingly rare). Both call sites below invoke fmt_epoch inside $(...)
+# command substitutions, so the dialect is probed ONCE here at top level (into
+# _fmt_epoch_dialect) before either call — a lazy-init inside the function would run in a
+# subshell and never persist, re-probing on every call. We only ever invoke the matched
+# dialect's flag — never fall through to the other's — because on FreeBSD/macOS, GNU's `-d`
+# is BSD date's "set the kernel's DST state" flag: run as root it succeeds via settimeofday
+# (mutating kernel tz_dsttime) and prints the current time instead of failing, so cross-dialect
+# fallthrough would silently capture the wrong timestamp.
+if date --version >/dev/null 2>&1; then
+  _fmt_epoch_dialect=gnu
+else
+  _fmt_epoch_dialect=bsd
+fi
 fmt_epoch() {
-  date -r "$1" "+%Y-%m-%dT%H:%M:%S%z" 2>/dev/null \
-    || date -d "@$1" "+%Y-%m-%dT%H:%M:%S%z" 2>/dev/null \
-    || printf 'epoch %s' "$1"
+  if [ "$_fmt_epoch_dialect" = gnu ]; then
+    date -d "@$1" "+%Y-%m-%dT%H:%M:%S%z" 2>/dev/null || printf 'epoch %s' "$1"
+  else
+    date -r "$1" "+%Y-%m-%dT%H:%M:%S%z" 2>/dev/null || printf 'epoch %s' "$1"
+  fi
 }
 if [ -n "$verdict_file" ]; then
-  # mtime in epoch seconds (BSD vs GNU stat differ; try BSD first since
-  # macOS is the primary platform, then fall back to GNU).
-  vmtime=$(stat -f %m "$verdict_file" 2>/dev/null || stat -c %Y "$verdict_file" 2>/dev/null || echo 0)
+  # mtime in epoch seconds. GNU-first is asymmetrically safe: BSD `stat -c`
+  # rejects -c as an illegal option with no stdout output, so `||` cleanly
+  # falls through. The reverse order is NOT safe — GNU `stat -f` "accepts" -f
+  # as a flag (filesystem status, not BSD's format string) and treats %m as a
+  # filename; it fails (exit 1) but still prints a multiline filesystem block
+  # to stdout for the real file, which command substitution captures despite
+  # the nonzero exit, corrupting vmtime even though `||` looks like a no-op.
+  vmtime=$(stat -c %Y "$verdict_file" 2>/dev/null || stat -f %m "$verdict_file" 2>/dev/null || echo 0)
+  case "$vmtime" in ''|*[!0-9]*) vmtime=0 ;; esac
   head_ctime=$(git log -1 --format=%ct HEAD 2>/dev/null || echo 0)
-  if [ "$vmtime" -gt 0 ] && [ "$head_ctime" -gt 0 ] && [ "$vmtime" -lt "$head_ctime" ]; then
+  # vmtime (filesystem clock) and head_ctime (committer clock) are different clock domains; a 2min
+  # tolerance absorbs routine skew without weakening the gate against real staleness, which involves
+  # a human doing additional work after review — minutes to hours, not seconds.
+  skew_tolerance=120
+  if [ "$vmtime" -gt 0 ] && [ "$head_ctime" -gt 0 ] && [ "$vmtime" -lt "$((head_ctime - skew_tolerance))" ]; then
     stale=1
     stale_reason="verdict file last written $(fmt_epoch "$vmtime"); HEAD commit landed $(fmt_epoch "$head_ctime") — additional commits since /quality-review ran"
   fi

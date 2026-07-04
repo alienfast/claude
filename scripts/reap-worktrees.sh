@@ -87,6 +87,14 @@ case "$REAP_GRACE_MIN" in
     echo "reap-worktrees.sh: WORKTREE_REAP_GRACE_MIN='$REAP_GRACE_MIN' is not a positive integer; using 60." >&2
     REAP_GRACE_MIN=60 ;;
 esac
+# An all-digits value can still be too large: recent_activity()'s `REAP_GRACE_MIN * 60` is fixed-width
+# shell arithmetic, and a huge value would wrap (possibly negative) instead of erroring — silently
+# disabling liveness guard B. Cap at 7 digits (up to 9,999,999 minutes, ~19 years) and fall back the
+# same way as the non-numeric case above.
+if [ "${#REAP_GRACE_MIN}" -gt 7 ]; then
+  echo "reap-worktrees.sh: WORKTREE_REAP_GRACE_MIN='$REAP_GRACE_MIN' is out of range; using 60." >&2
+  REAP_GRACE_MIN=60
+fi
 
 err()  { echo "reap-worktrees.sh: $*" >&2; }
 have() { command -v "$1" >/dev/null 2>&1; }
@@ -195,7 +203,10 @@ recent_activity() {
   gd=$(git -C "$dir" rev-parse --absolute-git-dir 2>/dev/null) || return 1
   idx="$gd/index"
   [ -f "$idx" ] || return 1
-  mtime=$(stat -f %m "$idx" 2>/dev/null || stat -c %Y "$idx" 2>/dev/null || true)
+  # GNU-first is the safe order: BSD rejects -c cleanly (no stdout), while GNU "accepts" -f as
+  # filesystem-status and pollutes stdout despite failing — reversed order corrupts mtime silently.
+  mtime=$(stat -c %Y "$idx" 2>/dev/null || stat -f %m "$idx" 2>/dev/null || true)
+  case "$mtime" in ''|*[!0-9]*) mtime= ;; esac
   [ -n "$mtime" ] || return 1
   now=$(date +%s)
   grace=$(( REAP_GRACE_MIN * 60 ))

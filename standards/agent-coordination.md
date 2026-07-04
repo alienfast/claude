@@ -136,6 +136,12 @@ Task for developer: Build onboarding flow per architecture specifications
 - **Large dev tasks** (> 15 min): Execute individually with progress monitoring
 - **Resource-intensive**: Consider system load and agent limits (max 20 parallel agents)
 
+### Long-Running Commands in Delegations
+
+If a delegated task includes a multi-minute command (Rust/C++ compile, installer build, dev-server smoke test), tell the agent explicitly to run it
+synchronously with a long Bash timeout (up to 600000ms) — or, if backgrounded, to poll its output file within the same turn. A subagent that ends its
+turn "waiting for a background task/Monitor" does not self-resume — the orchestrator must notice the stall and re-message it, which stalls the whole run.
+
 ### Tool Call Efficiency
 
 - Use single message for multiple independent Task calls

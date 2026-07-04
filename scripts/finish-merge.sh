@@ -72,7 +72,9 @@ set -eo pipefail
 # Lock key = absolute path to the common git dir (e.g. /repo/.git), so every
 # worktree of the same parent repo shares one key, and distinct repos —
 # including bare repos under a common parent — never collide.
-if [ "$_FINISH_MERGE_LOCK_PID" != "$$" ]; then
+# _WITH_REPO_LOCK_HELD: Windows-only sentinel set by with-repo-lock.py for its
+# child (no exec-in-place there, so the PID-tied check below can never match).
+if [ "$_FINISH_MERGE_LOCK_PID" != "$$" ] && [ -z "${_WITH_REPO_LOCK_HELD:-}" ]; then
   common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || {
     echo "ERROR: finish-merge.sh: not inside a git repository (cwd: $PWD)" >&2
     exit 1
