@@ -56,6 +56,11 @@ branch="$3"
 source_branch="$4"
 wt_dir="$5"
 
+# Shared worktree library — sourced up here (not just before wt_identity_stamp) so wt_force_remove is
+# available to the create-failure trap below, which fires before the stamp.
+# shellcheck source=/dev/null
+. "$(dirname "$0")/wt-identity.sh"
+
 # Defensive re-check: we must be inside a work tree (the parent verified this, but
 # this script can be invoked directly under the lock, so don't assume).
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -118,8 +123,7 @@ fi
 if [ "$CREATED_WT" = "1" ]; then
   trap '
     echo "ERROR: worktree create failed mid-flow; removing partially-prepared worktree $wt_dir" >&2
-    git worktree remove --force "$wt_dir" 2>/dev/null || rm -rf "$wt_dir"
-    git worktree prune 2>/dev/null || true
+    wt_force_remove "$PWD" "$wt_dir"
   ' EXIT
 fi
 
@@ -144,9 +148,7 @@ wt_abs=$(cd "$wt_dir" && pwd)
 # recovered worktree with. wt_identity_stamp writes the mandatory per-worktree git
 # config (a failure there aborts under `set -e` and fires the create trap above)
 # plus the best-effort immune sidecars (job-dir + repo-level fallback), and sets
-# WTID_STAMP_OWNER / WTID_STAMP_SIDECAR for the emit below.
-# shellcheck source=/dev/null
-. "$(dirname "$0")/wt-identity.sh"
+# WTID_STAMP_OWNER / WTID_STAMP_SIDECAR for the emit below. (wt-identity.sh already sourced at top.)
 wt_identity_stamp "$wt_dir" "$wt_abs" "$issue_id" "$branch" "$source_branch" "$baseline_sha"
 owner="$WTID_STAMP_OWNER"
 strongest_sidecar="$WTID_STAMP_SIDECAR"

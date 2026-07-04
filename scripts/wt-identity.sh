@@ -239,6 +239,27 @@ wt_identity_stamp() {
   return 0
 }
 
+# Robustly remove a linked worktree dir on all platforms — notably Windows Git Bash, where a sibling
+# node/pnpm process (parallel /auto) can hold node_modules files open and long paths defeat a single
+# unlink. A bare `git worktree remove --force || rm -rf` deregisters first, then leaves the locked
+# content as an orphaned .claude/worktrees/<slug> (content but no .git pointer) that the reaper can't
+# reason about. This retries, always prunes, and RETURNS NON-ZERO with a loud WARN naming the residual
+# if the dir survives — surfacing it at removal time instead of letting a later prune finalize an
+# invisible orphan. Only removes the dir; callers keep their own branch-delete logic.
+# Args: wt_force_remove <git_ctx> <wt_dir>   (git_ctx = a path inside the repo for `git -C`)
+wt_force_remove() {
+  local ctx="$1" wt="$2" attempt
+  for attempt in 1 2; do
+    git -C "$ctx" worktree remove --force "$wt" 2>/dev/null || true
+    [ -d "$wt" ] && rm -rf "$wt" 2>/dev/null || true
+    git -C "$ctx" worktree prune 2>/dev/null || true
+    [ -d "$wt" ] || return 0
+    [ "$attempt" = 1 ] && sleep 1   # brief backoff: a transient lock is often a sibling process still exiting
+  done
+  echo "WARN: could not fully remove worktree '$wt' after retries (Windows locked files / long paths?). Residual content left as an unregistered STRAY dir — /reap-worktrees will surface it. Remove manually once no process holds it: rm -rf '$wt'" >&2
+  return 1
+}
+
 # Remove all identity sidecars for an issue (both locations). Best-effort cleanup
 # called after a successful merge/recovery. Args: wt_dir issue_lower
 wt_identity_cleanup() {

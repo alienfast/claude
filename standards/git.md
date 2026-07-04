@@ -190,6 +190,12 @@ so it looks intermittent. Prefix any `ref:path` command with `MSYS_NO_PATHCONV=1
 MSYS_NO_PATHCONV=1 git show origin/main:.gitignore
 ```
 
+### Windows Git Bash: comparing paths
+
+`pwd -P` is not canonical on MSYS — it normalizes differently depending on the input path format, so string-comparing two `pwd -P` outputs across differently-formatted inputs is unreliable. `cd C:/Users/…` and `cd /c/Users/…` are the same location but can resolve to different strings, and a path under a mount alias (`/tmp` → `AppData/Local/Temp`) resolves to `/tmp/…` from one entry form and `/c/Users/…/Temp/…` from another. Git compounds this: `git rev-parse --show-toplevel` (and `--absolute-git-dir`, `--git-common-dir`) emit Windows form (`C:/Users/…`) while surrounding shell code carries MSYS form (`/c/Users/…`).
+
+Do not test path identity by string-comparing resolved paths, and be wary of deriving a value one script `pwd -P`-resolves that another script compares against (e.g. a per-repo lock key from `cd "$common_dir" && pwd -P`) — the two can diverge by input format alone. Prefer a structural signal independent of path format: e.g. to tell a registered linked worktree from an orphaned dir, test the shape of `git rev-parse --absolute-git-dir` (`*/worktrees/*`) plus the worktree's own `.git` pointer, not `--show-toplevel` vs the directory string.
+
 ### Why This Matters: Real Incident
 
 **October 2025 catastrophic failure:**

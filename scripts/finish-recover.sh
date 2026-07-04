@@ -48,6 +48,11 @@ message_file="$5"
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 
+# Shared worktree library — sourced up here (not just before wt_identity_stamp at step 4) so
+# wt_force_remove is available to the earlier worktree removals in steps 2 and 6.
+# shellcheck source=/dev/null
+. "$SCRIPT_DIR/wt-identity.sh"
+
 if [ ! -s "$message_file" ]; then
   echo "ERROR: commit-message file '$message_file' is missing or empty (needs the issue ID)." >&2
   exit 1
@@ -123,8 +128,7 @@ if [ -d "$rec_wt" ]; then
     fi
   else
     echo "Stale recovered worktree at $rec_wt (on '${rec_cur:-detached}'); recreating." >&2
-    git worktree remove --force "$rec_wt" 2>/dev/null || rm -rf "$rec_wt"
-    git worktree prune 2>/dev/null || true
+    wt_force_remove "$PWD" "$rec_wt" || true
     git branch -D "$rec_branch" 2>/dev/null || true
     rec_state="fresh"
   fi
@@ -327,8 +331,7 @@ if [ "$rec_state" != "committed" ]; then
 fi
 
 # --- 4. Re-stamp identity on the recovered worktree (baseline = the new fork). ---
-# shellcheck source=/dev/null
-. "$SCRIPT_DIR/wt-identity.sh"
+# (wt-identity.sh already sourced near the top.)
 rec_issue_id=$(printf '%s' "${issue_lower}-recovered" | tr '[:lower:]' '[:upper:]')
 wt_identity_stamp "$rec_wt" "$rec_abs" "$rec_issue_id" "$rec_branch" "$source_branch" "$src_tip" || true
 
@@ -355,9 +358,7 @@ set -e
 # recovery is incomplete; leave everything intact for a re-run.
 if [ "$merge_rc" = "0" ] || [ "$merge_rc" = "3" ]; then
   wt_identity_cleanup "$wt_dir" "$issue_lower" || true   # uses $wt_dir to resolve main root — do before removal
-  git worktree remove --force "$wt_dir" 2>/dev/null \
-    || { rm -rf "$wt_dir" 2>/dev/null; git worktree prune 2>/dev/null; } \
-    || echo "WARN: could not remove corrupted worktree $wt_dir; remove it manually." >&2
+  wt_force_remove "$PWD" "$wt_dir" || true               # loud WARN + STRAY fallback handled inside
   [ -n "${PATCH:-}" ] && rm -f "$PATCH" 2>/dev/null || true   # work is committed on $rec_branch now
 fi
 

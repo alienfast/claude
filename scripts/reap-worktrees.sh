@@ -129,6 +129,25 @@ default_branch_for() {
   printf 'main\n'
 }
 
+# True iff <dir> is its OWN registered linked worktree. A linked worktree carries its own .git
+# gitdir-pointer FILE and its git dir is <main>/.git/worktrees/<name>; an orphaned remnant (a partial
+# Windows removal that deleted the pointer but couldn't unlink locked node_modules / long paths) has
+# no .git, so `git -C "$dir" rev-parse` silently resolves UP to the main checkout's .git — every git
+# query in evaluate_worktree would then read MAIN's state (notably a constantly-fresh index, which
+# recent_activity() misreads as "active"). We detect this via git's own structure (the absolute git
+# dir sits under a worktrees/ admin dir), NOT a path-string comparison: on Windows/MSYS `pwd -P`
+# normalizes inconsistently across C:/ vs /c/ vs mount aliases (e.g. /tmp), so resolved-path equality
+# is unreliable. The `.git`-pointer gate is what actually rejects an orphan (it has none, so rev-parse
+# would walk up to main); the pattern then confirms the resolved git dir is worktree-shaped —
+# `*/worktrees/*` covers both the standard layout (…/.git/worktrees/<name>) and submodule /
+# separate-git-dir repos (…/.git/modules/<name>/worktrees/<name>), rather than hard-coding a `.git` name.
+is_registered_worktree() {
+  local dir="$1" gd
+  [ -e "$dir/.git" ] || return 1
+  gd=$(git -C "$dir" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+  case "$gd" in */worktrees/*) return 0 ;; *) return 1 ;; esac
+}
+
 # Is <child> an ancestor of <parent>? False (not erroring) when <parent> doesn't resolve.
 is_ancestor() {
   local repo="$1" child="$2" parent="$3"
@@ -196,6 +215,8 @@ recorded_baseline() {
 # True when the worktree's index was modified within REAP_GRACE_MIN minutes — a cheap liveness proxy
 # (a live session's git ops keep the index fresh; it goes stale only after the session ends). MUST be
 # called BEFORE any index-writing git op in evaluate_worktree (e.g. `git status`) to avoid self-poison.
+# Caller (evaluate_worktree) guarantees a registered worktree via is_registered_worktree first, so
+# --absolute-git-dir resolves to THIS worktree's index, not the main checkout's ever-fresh one.
 # Resolves the index via --absolute-git-dir (the worktree's own git dir, guaranteed absolute on git
 # >=2.13) — unambiguous, unlike `rev-parse --git-path index` whose relative form is .git-dir-relative.
 recent_activity() {
@@ -222,10 +243,12 @@ evaluate_worktree() {
   slug=$(basename "$dir")
   issue=$(printf '%s' "$slug" | tr '[:lower:]' '[:upper:]')
 
-  # Must be a real linked worktree. A stray directory (admin dir pruned, manual rm) is left untouched
-  # and surfaced — we never `rm -rf` an arbitrary path.
-  if ! git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    printf '  %-12s %s\n' "$issue" "STRAY — not a git worktree ($dir); left for manual inspection."
+  # Must be its OWN registered linked worktree. A stray dir (admin pruned, manual rm, or a partial
+  # Windows removal that left content but deleted the .git pointer) resolves rev-parse UP to the main
+  # checkout, so every git query below would silently read MAIN's state (a fresh index → false
+  # "active", HEAD → main, etc.). Surface it with cleanup guidance and never `rm -rf` an arbitrary path.
+  if ! is_registered_worktree "$dir"; then
+    printf '  %-12s %s\n' "$issue" "STRAY — orphaned worktree remnant, not a registered worktree ($dir). Likely a partial removal (Windows locked files/long paths). Inspect for unsaved work, then: rm -rf '$dir' && git -C '$repo' worktree prune"
     return 0
   fi
 
