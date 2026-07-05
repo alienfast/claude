@@ -180,6 +180,48 @@ pnpm dlx skills add vercel-labs/agent-skills \
   $AI_AGENTS \
   -y
 
+# OpenAI Codex's ChatGPT VS Code extension ("codex app-server") ships a remote plugin sync
+# (~/.codex/.tmp/app-server-remote-plugin-sync-v1) that `git reset --hard`s THIS ~/.claude repo onto its
+# own curated snapshot (refs/codex/curated-sync) whenever the app-server launches — silently detaching
+# main from origin onto an orphan commit (the classic "N to pull, 1 to push" against unrelated history).
+# We install codex skills into this shared dir just above, so every teammate running the extension is
+# exposed. Turn the curated sync off in ~/.codex/config.toml so Codex stops managing this directory.
+# A running app-server still holds the old config in memory, so the final "restart vscode" note is what
+# makes it take effect. Idempotent: only touch an existing file, and only rewrite when the flag changes.
+echo ""
+echo "Disabling OpenAI Codex curated plugin sync (it hard-resets this repo)..."
+codex_cfg="$HOME/.codex/config.toml"
+if [ ! -f "$codex_cfg" ]; then
+  echo "  no ~/.codex/config.toml — Codex not configured here; nothing to do."
+else
+  codex_tmp=$(mktemp)
+  # Scope the flag flip to the [plugins."github@openai-curated"] table (sed can't do section-scoped
+  # edits); append the table if it's absent. Rerunning over the output is a fixed point (verified).
+  awk '
+    BEGIN { section=""; done=0; saw=0 }
+    /^[[:space:]]*\[/ {
+      if (section=="target" && !done) { print "enabled = false"; done=1 }
+      section = ($0 ~ /^[[:space:]]*\[plugins\."github@openai-curated"\][[:space:]]*$/) ? "target" : "other"
+      if (section=="target") saw=1
+      print; next
+    }
+    section=="target" && /^[[:space:]]*enabled[[:space:]]*=/ { if (!done) { print "enabled = false"; done=1 } next }
+    { print }
+    END {
+      if (section=="target" && !done) print "enabled = false"
+      if (!saw) { print ""; print "[plugins.\"github@openai-curated\"]"; print "enabled = false" }
+    }
+  ' "$codex_cfg" > "$codex_tmp"
+  if cmp -s "$codex_tmp" "$codex_cfg"; then
+    echo "  ✓ already disabled."
+  else
+    cp -p "$codex_cfg" "$codex_cfg.bak"
+    cat "$codex_tmp" > "$codex_cfg"   # truncate-in-place preserves the file's 0600 perms and inode
+    echo "  ✓ disabled — backup at ~/.codex/config.toml.bak (restart vscode/Codex for it to take effect)."
+  fi
+  rm -f "$codex_tmp"
+fi
+
 # Remove the old joa23/Light Linear `linear-cli` Homebrew formula if present. It installs its own
 # `linear-cli` binary that shadows the Finesssee cargo binary on PATH (whichever brew/cargo dir comes
 # first wins), so a stale brew copy silently breaks the Linear skills. Idempotent: only act when the
