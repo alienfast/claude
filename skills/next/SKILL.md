@@ -62,6 +62,8 @@ The script's tier reasons (e.g. "in current cycle + newly unblocked", "sibling u
 
 ## Notes on the Algorithm
 
+Only **Backlog / Planned / Todo** issues are workable candidates. Issues in **Triage** — Linear's unreviewed inbox — are excluded outright before any tiering, since they haven't been accepted for work yet (a Triage issue is never a valid "next"). Terminal states (Done, Canceled, Ready For Release, …) are likewise excluded.
+
 The script applies the same six-tier scheme the previous prose version of this skill described — see [scripts/next-candidates.sh](../../scripts/next-candidates.sh) for the exact logic. The high-level priority order:
 
 1. Already assigned to you (finish what you started)
