@@ -16,6 +16,25 @@ case "$OSTYPE" in
   *)                   CLAUDE_OS=other ;;
 esac
 
+# Detect the OpenAI Codex orphan-history clobber (the curated-sync disable further down is the cure).
+# If this repo's HEAD shares NO commit ancestry with origin/main, main has been reset onto an unrelated
+# snapshot — Codex's refs/codex/curated-sync — and is silently detached: a `git pull` here would try to
+# reconcile unrelated histories and a push could clobber origin. Warn loudly with the recovery command
+# but DON'T auto-reset (that would nuke any legitimate local commits). merge-base against the existing
+# origin/main ref needs no fetch — an orphan has no common ancestor even with a stale origin/main.
+claude_repo="$HOME/.claude"
+if git -C "$claude_repo" rev-parse --git-dir >/dev/null 2>&1 \
+   && git -C "$claude_repo" rev-parse --verify -q origin/main >/dev/null \
+   && ! git -C "$claude_repo" merge-base HEAD origin/main >/dev/null 2>&1; then
+  echo ""
+  echo "  ⚠️  ~/.claude HEAD shares no history with origin/main — it looks reset onto an unrelated"
+  echo "      snapshot (likely OpenAI Codex's refs/codex/curated-sync). Do NOT git pull/push here."
+  echo "      Recover, then re-run this script:"
+  echo "        git -C ~/.claude fetch origin"
+  echo "        git -C ~/.claude reset --hard origin/main"
+  echo ""
+fi
+
 echo "Updating Claude Code..."
 # Non-fatal: a failed self-update (e.g. an npm-managed install on Windows where `claude update` is a
 # no-op or errors) must not abort the whole bootstrap.
