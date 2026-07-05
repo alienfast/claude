@@ -101,6 +101,13 @@ Task for developer: Build onboarding flow per architecture specifications
 - **Sync Points**: Define where results need to be integrated
 - **Validation**: Test integration points after completion
 
+### Cross-agent interface contracts
+
+When two parallel agents build opposite sides of an interface (IPC command, HTTP endpoint, event/message shape), the pinned contract MUST be an exact
+literal example of the wire payload — every wrapper key, every field name, and a concrete typed value — plus the receiving signature. Never pin a prose
+type signature: each side resolves its ambiguity differently, and each side's mocked unit tests then encode its own assumption as green.
+Example: pin `{ "args": { "gameId": 13 } }` → `fn motion_start(args: MotionStartArgs)`, not "motion_start({ gameId: number })".
+
 ### For Sequential Tasks
 
 - **Handoff**: Clear completion criteria before next task starts

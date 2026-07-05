@@ -149,6 +149,7 @@ Findings:
 - [Finding 2]: [File:line] — [explanation]
 Requirements:
 - Address each finding precisely — no unrelated changes
+- When a finding involves classifying enum variants, error kinds, states, or cases into behavioral buckets (transient/terminal, retry/fail, etc.): enumerate EVERY variant from the defining source and classify each explicitly — never fix only the flagged variant(s) or write "etc.". Completing the partition is part of addressing the finding precisely, not an unrelated change; incomplete partitions are how the same defect resurfaces one variant at a time across re-review cycles.
 - Verify with type checks or tests as appropriate
 Acceptance: All listed findings resolved, no regressions.
 ```
