@@ -149,7 +149,10 @@ me_email=$(linear-cli api query -q -o json 'query{viewer{email}}' 2>/dev/null | 
 
 # State sets — keep terminal states defensive across teams.
 TERMINAL_STATES='["Done","Canceled","Cancelled","Duplicate","Ready For Release"]'
-WORKABLE_STATES='["Triage","Backlog","Planned","Todo"]'
+# Triage is deliberately NOT workable: it's the unreviewed-inbox bucket, so an issue there hasn't been
+# accepted for work yet and must never be surfaced as "next". (Parent epics can still be in Triage — the
+# parent-weight scale below keeps handling that; this exclusion is about a candidate's OWN state.)
+WORKABLE_STATES='["Backlog","Planned","Todo"]'
 ACTIVE_STATES='["In Progress"]'
 
 # Build a canonical state map from BOTH the deps graph (covers blockers that
