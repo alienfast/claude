@@ -58,10 +58,10 @@ Pass `--input` only when the user typed an explicit ID (e.g., `/quality-review P
 
    ```bash
    git diff --name-only "$(git merge-base HEAD origin/main)"...HEAD
-   git status --short
+   git status --porcelain -z --untracked-files=all --no-renames | tr '\0' '\n' | cut -c4-
    ```
 
-   Union the two sets. If the union is empty, warn the user and exit — there is nothing to review.
+   Same bare-path form `/start` Step 0 uses (`-z` avoids C-quoting/octal-escaping under `core.quotePath`; `cut -c4-` strips the fixed-width status prefix; `--no-renames` keeps every record to one field). Union the two sets. If the union is empty, warn the user and exit — there is nothing to review.
 
 **Issue requirements** (only if an issue was resolved):
 
@@ -70,6 +70,47 @@ linear-cli issues get PL-13
 ```
 
 Cache the output for the entire run — do not re-fetch on each review cycle.
+
+> **Worktree isolation (`wt` mode) — pin every delegation, verify every placement.** This skill can't see `/start`'s session-level `IS_WT` (Step 0), so it gates on the caller-independent form `/start` Step 8 item 1 names for exactly this purpose — reusing `/start`'s own derivation verbatim:
+>
+> ```bash
+> WT_ABS="$(git rev-parse --show-toplevel)"
+> MAIN_CHECKOUT="$(dirname "$(git -C "$WT_ABS" rev-parse --path-format=absolute --git-common-dir)")"
+>
+> # Hard precondition guard — `git -C ""` is a documented no-op (leaves cwd unchanged, exits 0), so an
+> # empty/wrong path here would silently measure the wrong tree instead of failing loudly. Only the
+> # first two lines of /start's equivalent guard apply here — NOT its third line asserting
+> # WT_ABS != MAIN_CHECKOUT. In /start, equality means worktree registration failed (a hard error). Here,
+> # equality is the legitimate not-a-worktree case — this skill running standalone outside any /start wt
+> # worktree — so the gate below (WT_ABS != MAIN_CHECKOUT) simply doesn't arm. Do not "fix" this
+> # asymmetry by importing /start's third line; it would hard-fail every plain non-worktree
+> # /quality-review run.
+> [ -n "$WT_ABS" ] && [ -d "$WT_ABS" ] || { echo "FAILED: WT_ABS unset or not a directory" >&2; exit 1; }
+> [ -n "$MAIN_CHECKOUT" ] && [ -d "$MAIN_CHECKOUT" ] || { echo "FAILED: MAIN_CHECKOUT unset or not a directory" >&2; exit 1; }
+> ```
+>
+> **`WT_ABS != MAIN_CHECKOUT` is the gate — necessary and sufficient.** Unequal means a separate main checkout exists this session and can be contaminated; that alone is enough to arm the mitigation below, regardless of any config value. Equal means there is no separate checkout in the picture at all (this session's cwd IS the main checkout), so `wt` mode is false — there is nothing a mis-bound delegate could contaminate beyond the tree it's already in.
+>
+> As corroboration only — never as a necessary condition — the per-worktree config confirms this is specifically a `/start wt` worktree with a recorded source branch:
+>
+> ```bash
+> WT_ABS="$(git rev-parse --show-toplevel)"
+> git -C "$WT_ABS" config --worktree --get start.source-branch
+> ```
+>
+> Do NOT require this probe to return a value before arming the mitigation: `standards/lifecycle-tags.md`'s `BLOCKED-ON-RECOVERY` row documents "source-branch config wiped" as a real hijack-corruption scenario, so a wiped config in a genuine, still-separate worktree would otherwise silently disarm the mitigation exactly when it matters most. A missing value here is worth noting, not trusting as "not a worktree."
+>
+> **Ensure the baseline is session-fresh before this skill's first delegation** — `/start` Step 0 sub-step 2 requires exactly this of "any skill that arms this mitigation," and a standalone `/quality-review` is the case it names explicitly. The item-1 placement check below reads `$BASELINE_FILE = $WT_ABS/tmp/main-dirty-baseline-<issue-id-lowercased>.txt` — anchored to `$WT_ABS` (derived above) rather than bare `tmp/`, since the blocks that read and write it run as separate Bash calls with no shared cwd — or, if Step 1 resolved no issue ID (which can only happen standalone, since `/start` Step 9 always dispatches this skill with an explicit issue ID), the fixed name `$WT_ABS/tmp/main-dirty-baseline-no-issue.txt` — and only `/start` Step 0 sub-step 2 creates that file; its `main_dirty_map` snippet is authoritative, do not restate it here.
+>
+> - **Delegated from `/start` Step 9:** Step 0 already took this session's baseline before Step 8 ran. Reuse it as-is — do NOT retake it here. Retaking now would fold Step 8's already-verified-clean activity into a brand-new baseline, blinding this skill's own checks to anything that slipped past Step 8's per-delegation verification in the interim.
+> - **Standalone** (the user invoked `/quality-review` directly): no session-fresh baseline exists yet. Take it now, before Step 2's first delegation, with Step 0 sub-step 2's snippet verbatim (same `main_dirty_map` function, same `LC_ALL=C` sort) — overwriting any stale file left on disk, per that section's "never reused across sessions" rule.
+> - **Telling them apart:** the reliable signal is session continuity — a delegated run has `/start` Step 0 moments earlier in this same conversation; a standalone run has no such history. When that history cannot be confirmed, treat it as standalone and retake: an unneeded retake before the first delegation costs one hash recompute, while reusing a baseline that turns out stale reproduces the exact bug this note exists to prevent (false accusations from paths main acquired since, misses from paths already dirty then). Concretely: retake whenever `$BASELINE_FILE` is absent, or its this-session provenance cannot be confirmed — never skip retaking merely because a file happens to exist on disk.
+>
+> When `wt` mode is detected, every delegation below is exposed to the hazard `/start` Step 8 documents — `EnterWorktree`'s isolation registration is best-effort, not a guarantee, and a delegate can write into the main checkout while reporting success and while `pnpm check` stays green (a worktree missing a delegate's changes still type-checks). `/start` Step 8 is the single source of truth for the response: its delegation-format template's READ-SCOPING and WRITE-PLACEMENT blocks, and its "After each delegation completes" item 1 placement check and stop-and-report contract — contamination is a STOP handed to a human, there is no automated recovery, and this skill never restores, extracts, or applies anything in either tree — do not restate those commands, pathspec rules, or reporting steps here. Split by agent type, mirroring `/start` Step 8: READ-SCOPING is a floor required on **every** delegation below regardless of agent type; the WRITE-PLACEMENT *prompt* block (the changed-path self-report instructions) applies only to this skill's write-capable delegations (`developer`) — its read-only delegations (`quality-reviewer`, `architect`) get no such block, since they change nothing and produce no changed-path list. The item-1 placement check itself is **not** scoped this way: mirroring `/start` Step 8's final form, it runs after **every** delegation below regardless of agent type — a read-only delegate can still write into the main checkout under a mis-bound registration, and the check costs the same one `git status`-equivalent pass either way. That is every delegation site in this skill: Step 2's `developer` fix delegation; Step 3's `quality-reviewer` review; Step 5 item 2's `developer` fix delegations, item 3's further-fix delegation, item 4's re-review, and option 3's `architect` escalation; Step 6 sub-step 5's `developer` deferred-item fix delegations (including the prose-only and corrective passes) and its `quality-reviewer` re-reviews (the mandatory one and the optional confirmatory one under the upgrade-on-success exception); and the Error Handling section's corrective `quality-reviewer` re-spawn.
+>
+> This matters most in the fix loop: a fix that lands in the wrong tree makes the re-review pass against code that was never actually in the worktree — and neither a green `pnpm check` nor a delegate's success report is evidence of correct placement.
+>
+> **Tag authority.** `/quality-review` is not a lifecycle-tag authority (see the preflight above and `standards/lifecycle-tags.md`'s emitter table). If contamination is detected inside one of this skill's own delegations: when an issue ID was resolved in Step 1, write the mis-landed bare repo-relative paths to `tmp/contamination-comment-<issue-id-lowercased>.md` (the `Write` tool) and post it — `~/.claude/scripts/linear-post.sh comment <ISSUE-ID> tmp/contamination-comment-<issue-id-lowercased>.md` — before terminating; this is the durable record a human needs to recover, and under `/auto` the only place it gets written (`/start` Step 8's own Linear comment lives in its own auto-mode branch, which contamination inside this skill's delegations never reaches). If no issue ID was resolved, there is nowhere to post — say so and surface to chat instead. Either way, do NOT emit `BLOCKED-ON-REVIEW` or any other lifecycle tag — terminate with `Verdict: terminated-with-open-items` and an `Open items:` line carrying the exact literal sentinel `/start` Step 10 keys off, e.g. `Open items: MAIN-CHECKOUT-CONTAMINATION — <bare repo-relative paths, comma-separated>; <any other open items>` (paths are the mis-landed ones reported above; omit the trailing `; ...` clause when nothing else is open) — the same machinery the Step 5 soft ceiling and Step 6 sub-step 5 regression cap already use to terminate this way, now with that one literal token added. The run still proceeds through the Output section's mandatory verdict persistence (skipping it would leave `/finish` Step 1.5 seeing `VERDICT=none-found` and proceeding on only a warning) but skips Step 7's `/reflect` — see Step 7's rules for the exception. `/start` Step 10 maps the persisted verdict to the single lifecycle tag for the session.
 
 ### Step 2: Working Application Gate
 
@@ -294,7 +335,7 @@ Before delegating, emit a one-line chat note listing the items being auto-applie
 
 Render the remaining unfixed items using the template below, then ask the question that follows. The render is REQUIRED regardless of prompt mechanism (markdown body, AskUserQuestion description, etc.) — do not collapse to a single sentence; assume the user is context-switching across parallel sessions and cannot scroll back to sub-step 3. Preserve original sub-step 3 numbering: auto-applied `fix-now` items are shown under "Auto-fixed in-session (for context)" with their original numbers (e.g., 1, 2), and the fileable `defer-as-issue` items keep theirs (e.g., 3, 4), with any new sub-step 5 re-review findings appended after. Omit a sub-group header entirely if empty; do not print "(none)".
 
-**Every `<...>` token below is a substitution site** — replace each with the resolved value before emitting; never emit the literal pipe-separated schema (`<passed-clean | passed-after-fixes>`) to the user. The verdict header line should read e.g. `Quality review verdict: passed-after-fixes (cycles: 3)`. The Step 4-class substitution rule applies here too.
+**Every `<...>` token below is a substitution site** — replace each with the resolved value before emitting; never emit the literal pipe-separated schema (`<passed-clean | passed-after-fixes>`) to the user. The verdict header line should read e.g. `Quality review verdict: passed-after-fixes (cycles: 3)`. This is the canonical substitution rule other steps in this skill and `/start` point back to.
 
 ```text
 Quality review verdict: <one of: passed-clean | passed-after-fixes>  (cycles: N)
@@ -412,7 +453,7 @@ This is the continuous-improvement tail: `/reflect` examines *this session's pro
 Rules for this step:
 
 - **Runs exactly once**, here at the end — never per review cycle. The fix loop (Step 5) and deferred-items triage (Step 6) must have fully terminated first.
-- **Runs regardless of verdict** — including `terminated-with-open-items` and `escalated-to-architect`. Those friction-heavy runs are the *highest*-value to reflect on. `/reflect`'s own detection gate keeps clean runs quiet (it emits `No improvements identified.` and returns cheaply), so this adds negligible cost to a smooth pass.
+- **Runs regardless of verdict** — including `terminated-with-open-items` and `escalated-to-architect`. Those friction-heavy runs are the *highest*-value to reflect on. `/reflect`'s own detection gate keeps clean runs quiet (it emits `No improvements identified.` and returns cheaply), so this adds negligible cost to a smooth pass. **One exception:** a `terminated-with-open-items` verdict caused by main-checkout contamination inside this skill's own delegations (the `wt`-mode blockquote above Step 2) skips this step — a session with a known-broken write binding must not dispatch `/reflect`'s own auto-applied working-tree edits.
 - **Does not touch the verdict or the lifecycle tag.** It runs after the verdict is persisted; it never re-opens, re-rates, or re-persists the verdict, and it emits no lifecycle tag. When `/quality-review` is delegated from `/start` Step 9, this completes before `/start` Step 10 renders the verdict and emits `READY-FOR-FINISH`, so the lifecycle-tag handoff is unaffected. Keep `/reflect`'s output compact so it never buries the verdict block.
 - **No commit pollution.** `/reflect` only edits the working tree and never commits. User-level config edits land in the `~/.claude` repo (separate from the project repo). Project-level config edits stay uncommitted in the project tree and are surfaced by path; `/finish` stages issue files **by name** (never `git add -A`), so reflection's edits do not enter the issue commit — the user commits config changes deliberately.
 - **Best-effort, non-blocking.** If `/reflect` is unavailable or errors, note it in one line and finish normally. Reflection failing must never block or alter the review outcome.
