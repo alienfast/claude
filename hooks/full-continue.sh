@@ -55,7 +55,7 @@ decide() {
         | ($v.message.content // [])[]?
         | select(.type == "text")
         | lastline(.text) as $ll
-        | select($ll | test("^(READY-FOR-FINISH|BLOCKED-ON-REVIEW|CANCELED|ABANDONED|SKIPPED-BLOCKED|RELEASED|SHIPPED-MERGE|SHIPPED-PR|DEFERRED-MERGE):"))
+        | select($ll | test("^(READY-FOR-FINISH|BLOCKED-ON-REVIEW|CANCELED|ABANDONED|SKIPPED-BLOCKED|RELEASED|SHIPPED-MERGE|SHIPPED-PR|DEFERRED-MERGE|INTERACTIVE-READY):"))
         | {i: $i, line: $ll} ] as $tags
 
     # /full invocations by ANY form, mirroring $finishes below: a slash command in a user
@@ -94,8 +94,12 @@ decide() {
     # polling. A normal (non-/full) stop has pending:false, and the caller bails after a single read.
     # The close set is EVERY /full-terminal outcome, including the no-/finish ones (CANCELED / ABANDONED /
     # SKIPPED-BLOCKED from /start): a window they end must close, or a later standalone /start in the same
-    # session inherits the dead window and gets force-dispatched into its auto/merge finish args.
-    | ([ $tags[] | select(.line | test("^(RELEASED|SHIPPED-MERGE|SHIPPED-PR|DEFERRED-MERGE|BLOCKED-ON-REVIEW|CANCELED|ABANDONED|SKIPPED-BLOCKED):")) ] | last) as $anyclose
+    # session inherits the dead window and gets force-dispatched into its auto/merge finish args. INTERACTIVE-READY
+    # is in the set for the SAME reason even though /full never emits it (/full rejects the `interactive` token,
+    # so it cannot appear inside a live /full window): it is a TERMINAL /start tag — unlike mid-flight IN-PROGRESS,
+    # which is deliberately absent — so a standalone `/start interactive` after a crashed, tagless /full must
+    # close that dead window too. Adding it is pure upside: it can only close a window that is already dead.
+    | ([ $tags[] | select(.line | test("^(RELEASED|SHIPPED-MERGE|SHIPPED-PR|DEFERRED-MERGE|BLOCKED-ON-REVIEW|CANCELED|ABANDONED|SKIPPED-BLOCKED|INTERACTIVE-READY):")) ] | last) as $anyclose
     | ($fulls | last) as $lastfull
     | (if $lastfull == null then false
        else (([ $finishes[] | select(.i > $lastfull.i) ] | length) == 0)
@@ -110,7 +114,7 @@ decide() {
          # Most recent macro-closing tag strictly before the current tag (same close set as $anyclose).
          | ([ $tags[]
               | select(.i < $t.i)
-              | select(.line | test("^(RELEASED|SHIPPED-MERGE|SHIPPED-PR|DEFERRED-MERGE|BLOCKED-ON-REVIEW|CANCELED|ABANDONED|SKIPPED-BLOCKED):")) ] | last) as $lastclose
+              | select(.line | test("^(RELEASED|SHIPPED-MERGE|SHIPPED-PR|DEFERRED-MERGE|BLOCKED-ON-REVIEW|CANCELED|ABANDONED|SKIPPED-BLOCKED|INTERACTIVE-READY):")) ] | last) as $lastclose
          | ([ $fulls[] | select(.i < $t.i) ] | last) as $openfull
          # An open /full = a /full command before the tag, more recent than any close (so a stale, already-
          # completed earlier /full does not count).
