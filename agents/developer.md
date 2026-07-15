@@ -75,6 +75,7 @@ Implement tests according to CLAUDE.md requirements:
 - NEVER bypass TypeScript type checking
 - NEVER ignore project dependency patterns
 - NEVER introduce technical debt unless explicity requested
+- NEVER write scratch/intermediate output — captured command output, run logs (e.g. a `pnpm check` or rspec redirect) — to bare system roots (`/tmp`, `/private/tmp`) or ad-hoc absolute paths like `/check_output.log`; write it to the project-relative `tmp/` directory instead (`mkdir -p tmp` first). Bare-root writes trip the harness's dangerous-path confirmation and stall unattended runs
 
 ## ALWAYS Do These
 

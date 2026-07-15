@@ -334,6 +334,8 @@ description: "I help you update your dependencies"
 - Should be referenced from main SKILL.md
 - Example: `scripts/verify-feature.sh`, `scripts/analyze-pr.sh`
 
+**Policy in markdown, machinery in scripts.** A skill's markdown carries decisions, routing, and prompts. Multi-line procedural bash belongs in a tested script — skill-local `scripts/` or the shared `~/.claude/scripts/` — with a verdict-line stdout contract: the first line is the verdict and the skill branches on it (see `~/.claude/scripts/wt-baseline.sh` — `CLEAN`/`CONTAMINATED`/`FAILED` — and `start-wt-verify.sh`). Inline bash the model must re-emit verbatim is a transcription-drift surface: more than a few lines, or any duplication across skills, means extract to a script. Scripts are not just length management.
+
 **README.md**: User-facing documentation (optional)
 
 - How to use the skill

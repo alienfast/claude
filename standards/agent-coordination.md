@@ -133,6 +133,10 @@ Example: pin `{ "args": { "gameId": 13 } }` → `fn motion_start(args: MotionSta
 
 ## Performance Optimization
 
+### Measure From the Transcript Before Optimizing
+
+When asked to optimize agent/skill/workflow latency, extract a measured timeline from the session transcript first — `~/.claude/projects/<project-slug>/<session-uuid>.jsonl` timestamps every event. Compute tool-call execution durations vs inter-event gaps (model-turn time) and attribute the wall-clock before proposing fixes: cost-profile intuition routinely misattributes it (e.g. blaming environment setup when the time went to a serial subagent or a long reasoning turn).
+
 ### Batching Guidelines
 
 - **Small research tasks** (< 5 min): Batch 10-15 together for maximum parallelism
