@@ -47,19 +47,24 @@ Auto mode changes **no other contract** — the Working Application Contract, ch
 
 If the args contain `wt`, **or a worktree already exists for this issue** (check `git worktree list --porcelain` for an entry at `.claude/worktrees/<issue-id-lowercased>` — the resumption case, invoked as plain `/start <ISSUE-ID>` with no token):
 
-1. **Run the worktree setup script.** It encapsulates the procedural setup: argument validation, source-branch capture, per-worktree config enable, issue title fetch + branch name composition, worktree create/attach/reuse with branch-collision detection, source-branch recording, a **tamper-evident identity stamp** (branch + baseline SHA + owner session, written to per-worktree git config AND immune sidecars — `$CLAUDE_JOB_DIR` plus a repo-level `.claude/worktree-identity/` fallback so a *different* session's `/finish` can still detect a hijacked worktree), and digest pre-fetch into the worktree's `tmp/`. The git-mutating create + stamp runs inside `start-wt-create.sh` **under a repo lock** (`with-repo-lock.py`, the same key `/finish merge` uses), so concurrent `/start wt` runs can no longer race the create and clobber each other's worktree branch/HEAD/config.
+1. **Run the worktree setup script.** It encapsulates the procedural setup: argument validation, source-branch capture, per-worktree config enable, issue fetch (title for branch-name composition, plus state/assignee for the Step 3 claim decision), worktree create/attach/reuse with branch-collision detection, source-branch recording, a **tamper-evident identity stamp** (branch + baseline SHA + owner session, written to per-worktree git config AND immune sidecars — `$CLAUDE_JOB_DIR` plus a repo-level `.claude/worktree-identity/` fallback so a *different* session's `/finish` can still detect a hijacked worktree), the **session-start dirty baseline capture** of the main checkout (via `~/.claude/scripts/wt-baseline.sh capture` — re-run every invocation, including resumption reuse, so the baseline is always fresh for THIS session), and digest pre-fetch into the worktree's `tmp/`. The git-mutating create + stamp runs inside `start-wt-create.sh` **under a repo lock** (`with-repo-lock.py`, the same key `/finish merge` uses), so concurrent `/start wt` runs can no longer race the create and clobber each other's worktree branch/HEAD/config.
+
+   **Before running it, load every deferred-tool schema this workflow needs in ONE `ToolSearch` call** — `select:EnterWorktree,EnterPlanMode,ExitPlanMode` (auto mode needs only `EnterWorktree`) — rather than separate loads here and at Step 6.
 
    ```bash
    ~/.claude/scripts/start-wt-setup.sh PL-13
    ```
 
-   **Read the tool output carefully.** Stdout contains these `KEY=value` lines; carry the first five forward into sub-step 2 (the rest are informational):
+   **Read the tool output carefully.** Stdout contains these `KEY=value` lines. Sub-steps 2–3 consume `WT_ABS`, `DIGEST_FILE`, `STATE`, `ASSIGNEE`, `BASELINE_FILE`, and `ISSUE_ID` directly; `BRANCH` and `SOURCE_BRANCH` aren't needed until later in the session (Step 8.5's cleanup commands, the `/finish` dispatch), but carry all eight forward regardless — the last three lines below are the only purely informational ones:
 
    ```text
    WT_ABS=<absolute worktree path>
    BRANCH=<the worktree branch name>
    SOURCE_BRANCH=<the branch the worktree forks from>
    ISSUE_ID=<normalized (uppercased) issue ID>
+   STATE=<issue state name, e.g. Planned>
+   ASSIGNEE=<assignee email, or empty if unassigned>
+   BASELINE_FILE=<absolute path to the captured dirty baseline, or empty if capture failed>
    DIGEST_FILE=<absolute path to pre-fetched digest, or empty if fetch failed>
    BASELINE_SHA=<fork-point commit; the identity anchor /finish verifies>   # informational
    OWNER_SESSION=<owning session id, or empty>                              # informational
@@ -70,99 +75,57 @@ If the args contain `wt`, **or a worktree already exists for this issue** (check
 
    **Foot-gun warning.** Do not manually set `start.source-branch` at common (non-`--worktree`) scope. The Step 5 short-circuit treats any value as evidence of a `/start wt` worktree, so a stray manual config would silently bypass branch creation in a regular `/start` session. The setup script writes only at per-worktree scope.
 
-2. **Enter the worktree with `EnterWorktree(path=<WT_ABS>)`.** Read `WT_ABS` from sub-step 1's stdout and pass it as the tool's `path`. Call this **while cwd is still the main checkout** — i.e. right here, before any `cd`. The `path` form switches the session into the existing worktree **and** registers it as the session's harness-level isolation root. A shell `cd` alone would move only the Bash cwd; it does **not** register isolation, so in a **background session** the worktree-isolation guard blocks a `developer` subagent's Write-tool edits (the guard tracks the `EnterWorktree` registration, not the shell cwd). Registering here makes subagent writes land in the worktree with the guard **on** — no lever, no settings change. Because we enter from the main checkout at first entry, this is *not* the rejected "cd back to main, then `EnterWorktree`" recovery recipe and never trips the same-cwd refusal. `EnterWorktree` also switches cwd (persisting across subsequent Bash calls for Steps 1–10), so no separate `cd` is needed; confirm with:
+2. **Enter the worktree with `EnterWorktree(path=<WT_ABS>)` — and, in the SAME message, `Read` the digest at `DIGEST_FILE`.** The two calls are independent (the digest path is already known from sub-step 1's output), so issue them as parallel tool calls in one message — this is Step 1's digest read, done a turn early. If `DIGEST_FILE=` came back empty, fall back to Step 1's generate-then-read after entering, as its own call.
+
+   Read `WT_ABS` from sub-step 1's stdout and pass it as the tool's `path`. Call this **while cwd is still the main checkout** — i.e. right here, before any `cd`. The `path` form switches the session into the existing worktree **and** registers it as the session's harness-level isolation root. A shell `cd` alone would move only the Bash cwd; it does **not** register isolation, so in a **background session** the worktree-isolation guard blocks a `developer` subagent's Write-tool edits (the guard tracks the `EnterWorktree` registration, not the shell cwd). Registering here makes subagent writes land in the worktree with the guard **on** — no lever, no settings change. Because we enter from the main checkout at first entry, this is *not* the rejected "cd back to main, then `EnterWorktree`" recovery recipe and never trips the same-cwd refusal. `EnterWorktree` also switches cwd (persisting across subsequent Bash calls for Steps 1–10), so no separate `cd` is needed — sub-step 3's `start-wt-verify.sh` call confirms cwd as its first stage.
+
+   If that confirmation fails (canonicalized `pwd -P` ≠ `realpath <WT_ABS>` — canonicalize both sides, since a symlinked path component otherwise makes a successful entry look like a failure), the `EnterWorktree` registration did not take — **STOP and surface** rather than continue. Steps 1–10 would otherwise run against the main checkout (wrong baseline SHA, wrong Step 5 branch short-circuit, wrong tree for every delegation), and a background session's `developer` writes would still hit the guard. Do **not** fall back to a bare shell `cd`: that would fix cwd but leave isolation unregistered — the original bug.
+
+   **Session-start dirty baseline — captured by sub-step 1's setup script, fresh every session, never reused across sessions.** The script runs `~/.claude/scripts/wt-baseline.sh capture <WT_ABS> <issue-id-lowercased>` on every invocation (fresh create AND resumption reuse), overwriting any previous session's file — so `BASELINE_FILE=` in its output names a snapshot of the main checkout's already-dirty state taken *this session*, before any delegation can exist. **This baseline is the primary contamination-detection signal, not a report-only footnote** — Step 8 item 1 diffs the main checkout's current dirty state against it (`wt-baseline.sh diff`) after every delegation to compute exactly what changed in the main checkout *this session*, independent of anything a delegate reports. The baseline tells us what changed; it never tells us what is safe to destroy — recovery stays fully manual (Step 8 item 1, "On contamination"). The measurement mechanics (content-hash lines so a stray write onto an *already-dirty* path is still caught, `LC_ALL=C` collation pinning, worktree/merge-queue pathspec exclusions, fail-closed hashing) live in `wt-baseline.sh` — the script is authoritative; do not re-implement them inline.
+
+   **Any skill that arms this mitigation — not only this invocation of `/start` — must ensure this baseline is fresh for ITS OWN session.** A standalone `/quality-review PL-13` run inside a worktree (a supported invocation with no `/start` this session) exercises the same Step 8 item 1 detection machinery; it must run `wt-baseline.sh capture` at the start of its own session, overwriting whatever was there — a stale baseline would silently misjudge everything dirtied between sessions as "already there."
+
+   **One honest limitation:** this baseline is per-*session*, not per-repo-lifetime. If a *previous* session already left contamination behind in the main checkout before this session's baseline was taken, that pre-existing contamination is captured as "already there" (its hash matches) and will NOT be re-flagged by this session's delta unless its content changes again — only new dirt or new changes introduced by *this session's* delegations are detected. **A missing or unreadable baseline at Step 8 detection time is a fail-closed condition** — see Step 8 item 1.
+
+3. **Run the verification script — Steps 2–5's actions in one call, with Step 6's exploration dispatched in the same message.** The digest (sub-step 2) and `STATE=`/`ASSIGNEE=` (sub-step 1) are already in hand, so make the decisions FIRST, before composing the call:
+
+   - **Blockers (Step 2's rules):** check the digest's Blockers section. Any unresolved blocker → do NOT run this script; fall back to Step 2's prompt (interactive) or its auto-mode `SKIPPED-BLOCKED` exit.
+   - **Availability (Step 3's rules):** owned-by-someone-else or terminal state → do NOT run this script; fall back to Step 3's prompts or auto-mode exits. Already In Progress and mine → run the script with `--no-claim` in place of `--claim` (idempotent resumption).
+
+   On the happy path, run exactly this — substituting `<WT_ABS>`, `<BASELINE_FILE>` (from sub-step 1), and the issue ID, and giving the Bash call an explicit timeout ≥ 300000ms (`pnpm check` runs inside the script and can exceed the 120s default on a cold cache):
 
    ```bash
-   pwd -P   # confirm cwd is the worktree (resolved, symlink-free path)
+   ~/.claude/scripts/start-wt-verify.sh '<WT_ABS>' <ISSUE-ID> --claim --baseline-file '<BASELINE_FILE>'
    ```
 
-   If `pwd -P` does not match the resolved `<WT_ABS>` (canonicalize both with `realpath` before comparing — a symlinked path component otherwise makes a successful entry look like a failure), the `EnterWorktree` registration did not take — **STOP and surface** rather than continue. Steps 1–10 would otherwise run against the main checkout (wrong baseline SHA, wrong Step 5 branch short-circuit, wrong tree for every delegation), and a background session's `developer` writes would still hit the guard. Do **not** fall back to a bare shell `cd`: that would fix cwd but leave isolation unregistered — the original bug.
+   - **Claim flag:** happy-path claim → `--claim`. Idempotent resumption (already In Progress and mine, per the Availability bullet above) → `--no-claim`.
+   - **`--baseline-file`:** pass it only when sub-step 1 emitted a non-empty `BASELINE_FILE=`. When sub-step 1's capture failed (`BASELINE_FILE=` came back empty), OMIT the flag entirely so the script re-captures on its own.
 
-   **Session-start dirty baseline — immediately after the confirmation above, retaken every session, never reused across sessions.** Snapshot the main checkout's already-dirty state now, before any delegation in this entire session can exist. **This baseline is the primary contamination-detection signal, not a report-only footnote** — Step 8 item 1 diffs the main checkout's current dirty state against it after every delegation to compute exactly what changed in the main checkout *this session*, independent of anything a delegate reports. The baseline tells us what changed; it never tells us what is safe to destroy — recovery stays fully manual (Step 8 item 1, "On contamination").
+   **In the SAME message, dispatch Step 6's exploration agents** (see Step 6 for how many and how to focus them). They are read-only and need only the digest and the worktree, both already in hand; the claim executes early in the script's run, seconds after dispatch, so Step 3's claim-before-research intent (broadcast ownership the moment work begins) is preserved. Do not wait for the script to return before exploring — a red baseline stops the workflow before any implementation regardless, and the exploration output is simply discarded in that case. When `IS_WT` is true, these are delegations like any other: every exploration prompt carries the READ-SCOPING block from Step 8's delegation format (Step 8's blockquote applies to EVERY delegation `/start` makes, in any step — not only Step 8's own), and the item-1 placement check (`wt-baseline.sh diff`) runs after the explorers return, before their findings are used.
 
-   Store one **content-hash line per dirty path** — `<sha256>  <path>`, or `ABSENT  <path>` for a path that's gone (deleted, or otherwise not a regular file on disk) — never a bare path list and never the raw status-prefixed, possibly-quoted `git status --short` form. A bare path SET would miss the dominant real-world case: a stray delegate write landing on a path the main checkout already had dirty (an engineer's WIP file, say). The path is a baseline member either way, so a set-membership diff sees nothing; hashing the content means a change to an already-dirty path produces a *different line* for that path, which a later diff still catches. `LC_ALL=C` sort — pinned explicitly, both here and in Step 8's re-computation — because `comm`'s merge-diff requires its two inputs sorted under the *same* collation, and BSD `comm` silently emits false "new" lines when they differ (reproduced with `src/A-b.ts` vs `src/a-b.ts` under mismatched locales).
+   **Two exceptions to same-message dispatch:** when you must omit `--baseline-file` (sub-step 1's capture failed), do NOT dispatch exploration in the same message — run the script alone first (its re-capture restores the baseline invariant), then dispatch exploration in the next message. And when resuming an issue whose approved plan is already posted (see **Resumption**, Step 8), skip the exploration dispatch entirely — that resumption path goes straight to Step 8 with no new exploration to feed; if that plan is later judged stale (see **Resumption**, Step 8), dispatch the exploration then — at Step 6, before `EnterPlanMode`.
 
-   Always (re)compute and overwrite — do NOT guard this on the file's absence: a resumed session must get a fresh baseline reflecting the main checkout's dirty state *at this session's start*, or the delta computed later would be measured against stale data from a previous session:
+   Failure handling by verdict (the first line of the script's stdout is the verdict — see its header docblock for the full contract):
 
-   **Anchor `$BASELINE_FILE` to `$WT_ABS`, never to bare `tmp/`.** This snippet, Step 5's backstop, and Step 8 item 1 each run as a *separate* Bash tool call — shell state does not persist across them — and they do not all share a cwd (Step 5's backstop in particular may run from a worktree **subdirectory**, not its root). A cwd-relative `tmp/...` path would have each block silently write or read a different file, so the write from one block would never be seen by another.
+   - `VERIFIED` → Steps 1–5 complete, the Working Application Contract is in effect; proceed to Step 6 (whose exploration is already running).
+   - `FAILED-CWD` → sub-step 2's STOP-and-surface. Auto mode: emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — EnterWorktree registration did not take (cwd mismatch); manual investigation required. No state change.` and stop.
+   - `FAILED-BASELINE` → STOP, fail closed (same posture as Step 8 item 1, triggered earlier). Auto mode: emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — session-start dirty baseline could not be captured; manual investigation required. No state change.` and stop.
+   - `FAILED-CLAIM` → the update command itself failing (auth expired, network, unknown state name) is distinct from Step 3's ordinary availability decisions (made BEFORE this script runs, per the bullets above) — STOP and surface; do not proceed unclaimed. Auto mode: emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — claim update failed (linear-cli error). No state change.` and stop.
+   - `FAILED-SOURCE-BRANCH` → empty output is unexpected here (sub-step 1 recorded the value this session); treat as a possible hijack/corruption signal — STOP and surface; do NOT continue to implementation. Auto mode: emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — start.source-branch missing from worktree config (possible parallel-session interference); manual investigation required.` (By this point the claim has already run — or, on the `--no-claim` idempotent-resumption path, the issue was already claimed by a prior session — so this entry carries no "No state change." clause either way.)
+   - `FAILED-CHECK` → Step 5's baseline-failure path (including its auto-mode 2-delegation bound).
+   - **Any other output** — a `FAILED-USAGE` verdict (a malformed invocation, which should never happen if this step composed the command correctly), no verdict line at all, or empty stdout — is a FAILED check: fail closed, STOP (same posture as Step 8 item 1's rule — never treat unrecognized or missing output as success).
 
-   ```bash
-   WT_ABS="$(pwd -P)"   # confirmed above to match sub-step 1's WT_ABS
-   MAIN_CHECKOUT="$(dirname "$(git -C "$WT_ABS" rev-parse --path-format=absolute --git-common-dir)")"
+4. **Continue in this same session — no subagent.** The user is already in an isolated agent-view session; the worktree — now registered via `EnterWorktree` — provides the isolation. Do **not** additionally wrap `/start` itself in an isolation *subagent*: the `EnterWorktree` registration is session-level and keeps plan-mode prompts and `/quality-review` output visible to the user, whereas a subagent wrapper would hide them. Steps 1–5 were satisfied by sub-steps 2–3 (digest read; blockers checked; claim; branch short-circuit; baseline check); the remaining steps run unchanged:
 
-   # Hard precondition guard — `git -C ""` is a documented no-op (leaves cwd unchanged, exits 0),
-   # so an empty/wrong path here would silently measure the wrong tree instead of failing loudly.
-   # See Step 8 item 1 for the full rationale; this same guard belongs in every block below that
-   # runs `git -C "$MAIN_CHECKOUT" ...`.
-   [ -n "$WT_ABS" ] && [ -d "$WT_ABS" ] || { echo "FAILED: WT_ABS unset or not a directory" >&2; exit 1; }
-   [ -n "$MAIN_CHECKOUT" ] && [ -d "$MAIN_CHECKOUT" ] || { echo "FAILED: MAIN_CHECKOUT unset or not a directory" >&2; exit 1; }
-   [ "$WT_ABS" != "$MAIN_CHECKOUT" ] || { echo "FAILED: WT_ABS == MAIN_CHECKOUT (isolation not registered)" >&2; exit 1; }
-
-   echo "WT_ABS=$WT_ABS"
-   echo "MAIN_CHECKOUT=$MAIN_CHECKOUT"
-   mkdir -p "$WT_ABS/tmp"
-   BASELINE_FILE="$WT_ABS/tmp/main-dirty-baseline-<issue-id-lowercased>.txt"   # use the actual lowercased issue ID
-   set -o pipefail
-
-   if command -v shasum >/dev/null 2>&1; then HASH_CMD=(shasum -a 256)
-   elif command -v sha256sum >/dev/null 2>&1; then HASH_CMD=(sha256sum)
-   else echo "FAILED: no shasum or sha256sum on PATH" >&2; exit 1; fi
-
-   # $1 = checkout root. Prints "<sha256>  <path>" per dirty path, or "ABSENT  <path>" for one
-   # that's gone. -z: NUL-delimited, no C-quoting/octal-escaping. --no-renames: keeps every record
-   # to a single "XY path" field (a rename record's second, unprefixed old-path field would
-   # otherwise survive the fixed 3-char strip below unstripped) — git reports a rename as a
-   # separate delete + add instead, which this loop hashes/ABSENTs individually, same as any
-   # other pair of paths. -- ':!.claude/worktrees' ':!.claude/merge-queue': excludes the worktrees
-   # directory itself (git doesn't recurse into it, but the untracked-directory entry would
-   # otherwise still be a map line, so a concurrent `/start wt` session creating/removing its own
-   # worktree would falsely appear as a change here) and the merge-queue marker directory
-   # (merge-queue.sh writes markers there with a bare mkdir -p and no self-ignoring .gitignore,
-   # unlike .claude/worktree-identity/ which self-ignores and needs no exclusion — so a deferred
-   # /finish merge or the launchd drainer creating/removing a marker would otherwise falsely
-   # appear too, in either direction). LC_ALL=C sort: see rationale above. A hashing failure
-   # (unreadable file) fails closed rather than emitting an empty-hash line, which would silently
-   # degrade the content-hash map back to bare path membership — exactly the case hashing exists
-   # to catch.
-   main_dirty_map() {
-     git -C "$1" status --porcelain -z --untracked-files=all --no-renames \
-       -- ':!.claude/worktrees' ':!.claude/merge-queue' \
-       | tr '\0' '\n' | cut -c4- \
-       | while IFS= read -r p; do
-           if [ -f "$1/$p" ]; then
-             h="$("${HASH_CMD[@]}" "$1/$p" | cut -d' ' -f1)"
-             [ -n "$h" ] || { echo "FAILED: empty hash for $p" >&2; exit 1; }
-             printf '%s  %s\n' "$h" "$p"
-           else printf 'ABSENT  %s\n' "$p"; fi
-         done | LC_ALL=C sort
-   }
-
-   main_dirty_map "$MAIN_CHECKOUT" > "$BASELINE_FILE"
-   baseline_rc=$?
-   if [ "$baseline_rc" -ne 0 ] || [ ! -r "$BASELINE_FILE" ]; then
-     echo "BASELINE CAPTURE FAILED (exit $baseline_rc, or $BASELINE_FILE missing/unreadable) — STOP, do not proceed to Step 1" >&2
-   fi
-   ```
-
-   A non-zero `baseline_rc` or an unreadable `$BASELINE_FILE` here means the baseline itself could not be captured — **STOP here and surface it**; do not proceed. This is the same fail-closed posture Step 8 item 1 applies at detection time, just triggered earlier, before there is anything yet to detect against.
-
-   Carry both echoed values (`WT_ABS`, `MAIN_CHECKOUT`) forward — Step 8 needs them before composing its first delegation, not just after the fact.
-
-   **Any skill that arms this mitigation — not only this invocation of `/start` — must ensure this baseline is fresh for ITS OWN session.** A standalone `/quality-review PL-13` run inside a worktree (a supported invocation with no `/start` this session) exercises the same Step 8 item 1 detection machinery; if it finds a `$BASELINE_FILE` already on disk from a previous session, it must NOT reuse it — that is exactly the "never reused across sessions" rule above, and a stale baseline would silently misjudge everything dirtied between sessions as "already there." It must re-run this exact snippet — same file name, `$WT_ABS/tmp/main-dirty-baseline-<issue-id-lowercased>.txt`, same `main_dirty_map` function — at the start of its own session, overwriting whatever was there.
-
-   **One honest limitation:** this baseline is per-*session*, not per-repo-lifetime. If a *previous* session already left contamination behind in the main checkout before this session's baseline was taken, that pre-existing contamination is captured in the baseline as "already there" (its hash matches) and will NOT be re-flagged by this session's delta unless its content changes again — only new dirt or new changes introduced by *this session's* delegations are detected. **Missing or unreadable `$BASELINE_FILE` at Step 8 detection time is a fail-closed condition** — see Step 8 item 1.
-
-3. **Continue to Step 1 in this same session — no subagent.** The user is already in an isolated agent-view session; the worktree — now registered via `EnterWorktree` — provides the isolation. Do **not** additionally wrap `/start` itself in an isolation *subagent*: the `EnterWorktree` registration is session-level and keeps plan-mode prompts and `/quality-review` output visible to the user, whereas a subagent wrapper would hide them. Steps 1–10 run unchanged:
-
-   - Step 1 reads the pre-fetched digest at `tmp/linear-context-<issue-id-lowercased>.md` (e.g., `tmp/linear-context-pl-13.md`).
-   - Step 5 short-circuits via the recorded per-worktree git config.
-   - Step 6 (`EnterPlanMode`) surfaces the approval UI to the user (skipped in auto mode — see Auto Mode above).
+   - Step 6 (`EnterPlanMode`) surfaces the approval UI to the user once exploration returns (skipped in auto mode — see Auto Mode above).
    - Step 8 delegates implementation to `developer` subagents (those are appropriate — they're scoped tasks, not whole-workflow dispatch).
    - Step 9 (`/quality-review`) runs with visible findings, fix loop, and deferred-items triage.
 
 If neither condition holds, proceed to Step 1 as today (in-place on the current branch).
 
 ### Step 1: Gather Issue Context
+
+**Worktree mode:** Step 0 sub-step 2 already read the pre-fetched digest, and sub-step 3's `start-wt-verify.sh` call folded Steps 2–5's actions in — if it returned `VERIFIED`, skip ahead to Step 6 (whose exploration is already running). Steps 1–5 below run as written in plain (in-place) mode, or when Step 0's happy path did not complete.
 
 The issue digest is a markdown summary of the issue, parent chain, dependency graph, comments summary, and attachment URLs. Generate or read it:
 
@@ -199,7 +162,7 @@ For each unresolved blocker:
 
 ### Step 3: Claim the Issue — Assign & Move to In Progress
 
-**Claim before you research.** This is the first action after availability is verified, and it happens **before** any deepen-context, codebase exploration, or implementation. Assigning + moving to In Progress immediately broadcasts to the team that the issue is owned; researching first leaves it looking unclaimed while work is already underway — a bad signal in a multi-person workspace.
+**Claim before you research.** This is the first action after availability is verified, and it happens **before** any deepen-context, codebase exploration, or implementation. Assigning + moving to In Progress immediately broadcasts to the team that the issue is owned; researching first leaves it looking unclaimed while work is already underway — a bad signal in a multi-person workspace. (Worktree mode: Step 0 sub-step 3 executes this claim early in its `start-wt-verify.sh` call, dispatched in the same message as Step 6's exploration agents — that concurrent dispatch is the documented exception to strict sequencing; the claim lands seconds after dispatch, and the availability check still precedes it.)
 
 Verify availability from the Step 1 digest's `**State:**` and `**Assignee:**` line (already fetched — no extra call):
 
@@ -243,52 +206,18 @@ Then `Read` the downloaded path (`tmp/linear-img.png`) to view the image.
 
 ### Step 5: Ensure Correct Git Branch
 
-**Worktree mode short-circuit.** Check at per-worktree scope (`--worktree`) so a manual `start.source-branch` at common scope can't false-trigger this from outside a `/start wt` worktree. If `git config --worktree --get start.source-branch` returns a value, the branch is already correct and the source branch is recorded for `/finish`. Skip the branch-selection logic below and jump directly to the **Baseline check** at the end of this step. **This is also the second `IS_WT` trigger** (see Step 0): when this probe returns a value, `IS_WT` is true for the rest of the session even though this invocation's args never carried `wt` — the mechanism that keeps Step 8's isolation mitigation armed on a resumed `/start <ISSUE-ID>`. This is a POSITIVE result arming `IS_WT`, always valid per Step 0's `IS_WT` rule — it never disarms anything.
+**Worktree mode short-circuit.** If Step 0 ran this session and its sub-step 3 `start-wt-verify.sh` call returned `VERIFIED`, Step 5 is complete; proceed to Step 6. This whole step applies whenever that isn't the case — Step 0 did not run this session, or it ran but its `start-wt-verify.sh` call did not execute (a blocker or availability issue routed to Step 2/Step 3's fallback prompts instead). Check at per-worktree scope (`--worktree`) so a manual `start.source-branch` at common scope can't false-trigger this from outside a `/start wt` worktree. If `git config --worktree --get start.source-branch` returns a value, the branch is already correct and the source branch is recorded for `/finish`. Skip the branch-selection logic below and jump directly to the **Baseline check** at the end of this step. **This is also the second `IS_WT` trigger** (see Step 0): when this probe returns a value, `IS_WT` is true for the rest of the session even though this invocation's args never carried `wt` — the mechanism that keeps Step 8's isolation mitigation armed on a resumed `/start <ISSUE-ID>`. This is a POSITIVE result arming `IS_WT`, always valid per Step 0's `IS_WT` rule — it never disarms anything.
 
-**If this probe is what arms `IS_WT` this session — Step 0's own worktree-existence gate did not fire** (e.g., cwd started this session already inside a leftover worktree directory such as `.claude/worktrees/pl-99/`, and the user ran a plain `/start <ISSUE-ID>`) **— no baseline has been captured yet.** Do not let Step 8's mitigation arm with nothing to diff against: a bare `IS_WT`-true with a missing `$BASELINE_FILE` fails Step 8 item 1 closed on the very first delegation, and the session can never do any work. Before doing anything else, capture it now. Unlike Step 0 sub-step 2 — where `pwd -P` is safe because it was just cross-checked against the setup script's own `WT_ABS` output — this path has no such cross-check: cwd may be a **subdirectory** of the worktree (e.g. `.claude/worktrees/pl-99/src`) rather than its root, so derive `WT_ABS` with the canonical `git rev-parse --show-toplevel` form instead of `pwd -P`; using `pwd -P` here would silently substitute the wrong root into every later delegation's READ-SCOPING:
+**If a non-happy-path decision at Step 2/Step 3 was overridden by the user** (proceed-anyway on a blocker, reassign, or reopen a terminal-state issue), return to Step 0 sub-step 3 and run `start-wt-verify.sh` then (with `--claim` or `--no-claim` per the availability outcome) — do not fall through to the branch-selection logic below.
+
+**If this probe is what arms `IS_WT` this session — Step 0's own worktree-existence gate did not fire** (e.g., cwd started this session already inside a leftover worktree directory such as `.claude/worktrees/pl-99/`, and the user ran a plain `/start <ISSUE-ID>`) **— no baseline has been captured yet.** Do not let Step 8's mitigation arm with nothing to diff against: a bare `IS_WT`-true with a missing baseline fails Step 8 item 1 closed on the very first delegation, and the session can never do any work. Before doing anything else, capture it now. Unlike Step 0's `start-wt-verify.sh` call (sub-step 3) — where `pwd -P` is safe because its first stage cross-checks it against the setup script's own `WT_ABS` output — this path has no such cross-check: cwd may be a **subdirectory** of the worktree (e.g. `.claude/worktrees/pl-99/src`) rather than its root, so derive `WT_ABS` with the canonical `git rev-parse --show-toplevel` form instead of `pwd -P`; using `pwd -P` here would silently substitute the wrong root into every later delegation's READ-SCOPING:
 
 ```bash
 WT_ABS="$(git rev-parse --show-toplevel)"
-MAIN_CHECKOUT="$(dirname "$(git -C "$WT_ABS" rev-parse --path-format=absolute --git-common-dir)")"
-
-# Hard precondition guard — see Step 8 item 1 for the full rationale: `git -C ""` is a documented
-# no-op (leaves cwd unchanged, exits 0), so an empty/wrong path here would silently measure the
-# wrong tree instead of failing loudly.
-[ -n "$WT_ABS" ] && [ -d "$WT_ABS" ] || { echo "FAILED: WT_ABS unset or not a directory" >&2; exit 1; }
-[ -n "$MAIN_CHECKOUT" ] && [ -d "$MAIN_CHECKOUT" ] || { echo "FAILED: MAIN_CHECKOUT unset or not a directory" >&2; exit 1; }
-[ "$WT_ABS" != "$MAIN_CHECKOUT" ] || { echo "FAILED: WT_ABS == MAIN_CHECKOUT (isolation not registered)" >&2; exit 1; }
-
-echo "WT_ABS=$WT_ABS"
-echo "MAIN_CHECKOUT=$MAIN_CHECKOUT"
-mkdir -p "$WT_ABS/tmp"
-BASELINE_FILE="$WT_ABS/tmp/main-dirty-baseline-<issue-id-lowercased>.txt"   # use the actual lowercased issue ID
-set -o pipefail
-
-if command -v shasum >/dev/null 2>&1; then HASH_CMD=(shasum -a 256)
-elif command -v sha256sum >/dev/null 2>&1; then HASH_CMD=(sha256sum)
-else echo "FAILED: no shasum or sha256sum on PATH" >&2; exit 1; fi
-
-main_dirty_map() {   # identical to Step 0 sub-step 2's function — see there for the full rationale
-  git -C "$1" status --porcelain -z --untracked-files=all --no-renames \
-    -- ':!.claude/worktrees' ':!.claude/merge-queue' \
-    | tr '\0' '\n' | cut -c4- \
-    | while IFS= read -r p; do
-        if [ -f "$1/$p" ]; then
-          h="$("${HASH_CMD[@]}" "$1/$p" | cut -d' ' -f1)"
-          [ -n "$h" ] || { echo "FAILED: empty hash for $p" >&2; exit 1; }
-          printf '%s  %s\n' "$h" "$p"
-        else printf 'ABSENT  %s\n' "$p"; fi
-      done | LC_ALL=C sort
-}
-
-main_dirty_map "$MAIN_CHECKOUT" > "$BASELINE_FILE"
-baseline_rc=$?
-if [ "$baseline_rc" -ne 0 ] || [ ! -r "$BASELINE_FILE" ]; then
-  echo "BASELINE CAPTURE FAILED (exit $baseline_rc, or $BASELINE_FILE missing/unreadable) — STOP" >&2
-fi
+~/.claude/scripts/wt-baseline.sh capture "$WT_ABS" <issue-id-lowercased>
 ```
 
-Continue below only once this succeeds.
+The script derives and guards `MAIN_CHECKOUT` itself and fails closed (`FAILED: ...`, exit 1) on any precondition it can't prove — including `WT_ABS == MAIN_CHECKOUT`, which here means isolation was never registered. Continue below only on `CAPTURED <file>`; on `FAILED` — **STOP and surface**.
 
 ```bash
 # Probe only — interpret the printed value, not the exit code. `|| true` is
@@ -329,19 +258,28 @@ git checkout -b <username>/pl-13-short-kebab-title
 pnpm check
 ```
 
+**Dispatch Step 6's exploration agents in the SAME message as this Bash call** (see Step 6 for how many and how to focus them) — they are read-only, the digest is already in hand, and a red baseline stops the workflow before any implementation regardless (the exploration output is simply discarded in that case). Waiting for the check before exploring serializes the two longest pre-plan waits for no benefit.
+
 - If it **passes**: the Working Application Contract is now in effect. The application works. From this moment forward, any failure in `pnpm check` is caused by our implementation and is our responsibility to fix. No exceptions.
 - If it **fails**: STOP. Do NOT proceed with planning. The application must be working before we begin. Investigate and fix the failures first — delegate to `developer` or `debugger` as needed (when `IS_WT` is true: these fix delegations carry the same READ-SCOPING/WRITE-PLACEMENT blocks and item-1 placement check as any other Step 8 delegation — see Step 8's blockquote). Re-run until the baseline is clean. The contract cannot be established on a broken baseline. **Auto mode:** bound this to **2** fix delegations — a broken baseline in an unattended run is pre-existing, likely systemic breakage, not this issue's scope. If still red, post a Linear comment (baseline failure, first failing output lines), return the issue to availability per Step 8.5's ABANDONED mechanics, and emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — baseline pnpm check failing before any implementation; likely systemic. No changes made.` (`/auto` counts the failure; two such in a row trip its breaker — the correct response to a broken main.)
 
 ### Step 6: Enter Plan Mode
 
+**Exploration starts BEFORE plan mode — dispatched in the same message as the baseline `pnpm check`** (Step 0 sub-step 3 in worktree mode; Step 5's baseline check in-place), so the two longest pre-plan waits overlap instead of serializing. The agents are read-only (`Explore` type) and need only the digest, already in hand. In worktree mode these agents get READ-SCOPING in their prompts and the Step 8 item-1 placement check after they return, like every other delegation. Scale the fan-out to the issue, splitting by AREA rather than by question:
+
+- **Narrow, well-located change** (one component, one file cluster): ONE agent — a fan-out would just re-find the same files.
+- **Multi-area issue** (e.g. component + theme + i18n + stories, or API + UI + tests): **2–3 focused agents in a single message**, each named a specific area and concrete starting points (paths, symbols, conventions to map). Wall-clock becomes the slowest agent instead of one agent's serial sweep; overlap in findings is fine. More than 3 buys little — synthesis cost grows faster than coverage.
+
+If exploration was not pre-dispatched (a non-happy-path re-entry, a plain-mode flow that skipped the note in Step 5, or a worktree resumption whose posted-but-stale plan suppressed sub-step 3's dispatch), dispatch it now — do not begin reading exploration targets yourself.
+
 **Auto mode: skip the plan-mode tools entirely.** There is no user present to approve, so do NOT call `EnterPlanMode`/`ExitPlanMode` (an unanswered approval prompt would stall the loop). Do the same planning work — items 1–4 of the list below — compose the plan in the Step 7 comment format, and proceed **directly to Step 7**: the plan posted to Linear is the audit record a human reviews after the fact. Everything below this paragraph is interactive mode only.
 
-**Call the `EnterPlanMode` tool** to transition into plan mode. Do not write the plan inline in chat — plan mode has a dedicated tool flow that surfaces an approval UI (in VSCode: a side pane that supports annotation), and the inline-text path bypasses it.
+**Call the `EnterPlanMode` tool once the exploration results are back** to transition into plan mode. Do not write the plan inline in chat — plan mode has a dedicated tool flow that surfaces an approval UI (in VSCode: a side pane that supports annotation), and the inline-text path bypasses it.
 
 While in plan mode:
 
 1. Use the issue description, checkboxes, and parent context as requirements
-2. Explore the codebase to understand relevant files, patterns, and dependencies
+2. Synthesize the exploration results into relevant files, patterns, and dependencies — dispatch a follow-up `Explore` only for genuine gaps
 3. Design a step-by-step implementation plan
 4. Identify which tasks are independent (parallelizable) vs dependent (sequential)
 5. Write the plan to the plan file specified in the plan-mode system message
@@ -400,9 +338,9 @@ If you catch yourself reading a source file or editing code, stop — delegate i
 
 **Parallel execution is the default, not the exception.** If two tasks don't depend on each other's output, launch them simultaneously in a single message with multiple Agent calls. This applies to implementation tasks, fix tasks, and review tasks equally. Sequential execution requires justification (e.g., task B needs task A's output). Refer to [Agent Coordination Standards](~/.claude/standards/agent-coordination.md) for the parallel vs sequential decision matrix.
 
-**Pre-delegation baseline.** Captured once, every session — in Step 0 sub-step 2, or in Step 5's backstop when cwd began the session inside another issue's worktree — never here. It is the primary contamination-detection signal: item 1 below diffs the main checkout's current dirty state — content hashes, not just which paths are dirty, so a stray write landing on top of an already-dirty path is caught too — against it after every delegation. See Step 0 for the snapshot mechanics.
+**Pre-delegation baseline.** Captured once, every session — by Step 0 sub-step 1's setup script (verified — or re-captured on sub-step 1 failure — in sub-step 3), or by Step 5's backstop when cwd began the session inside another issue's worktree — never here. It is the primary contamination-detection signal: item 1 below diffs the main checkout's current dirty state against it (`wt-baseline.sh diff` — content hashes, not just which paths are dirty, so a stray write landing on top of an already-dirty path is caught too) after every delegation. `~/.claude/scripts/wt-baseline.sh` is authoritative for the snapshot mechanics.
 
-**Derive and carry `WT_ABS` and `MAIN_CHECKOUT` before composing any delegation.** The READ-SCOPING/WRITE-PLACEMENT template below substitutes `<WT_ABS>` and `<MAIN_CHECKOUT>` into the very first delegation prompt this step composes — both values must be known before that composition, not derived lazily inside "After each delegation completes" (by then the first prompt would already have had nothing to substitute). Step 0 sub-step 2 echoed both this session, and those values are carried in the orchestrator's own context (for `<WT_ABS>`/`<MAIN_CHECKOUT>` prompt substitution) — not in shell state, which never survives across separate Bash tool calls. So re-derive them canonically in a fresh, self-contained bash block before composing the first delegation — the same derivation "After each delegation completes" item 1 uses:
+**Derive and carry `WT_ABS` and `MAIN_CHECKOUT` before composing any delegation.** The READ-SCOPING/WRITE-PLACEMENT template below substitutes `<WT_ABS>` and `<MAIN_CHECKOUT>` into the very first delegation prompt this step composes — both values must be known before that composition, not derived lazily inside "After each delegation completes" (by then the first prompt would already have had nothing to substitute). Step 0 sub-step 1 emitted `WT_ABS=` on stdout (and `wt-baseline.sh capture` printed `MAIN_CHECKOUT=` on stderr), and those values are carried in the orchestrator's own context (for `<WT_ABS>`/`<MAIN_CHECKOUT>` prompt substitution) — not in shell state, which never survives across separate Bash tool calls. So re-derive them canonically in a fresh, self-contained bash block before composing the first delegation — the same derivation "After each delegation completes" item 1 uses:
 
 ```bash
 WT_ABS="$(git rev-parse --show-toplevel)"
@@ -469,104 +407,29 @@ Acceptance: [How to verify success — MUST include "pnpm check passes"]
 
    Do not derive `IS_WT` here by running `git config --worktree --get start.source-branch` against cwd and treating a NEGATIVE result as proof `IS_WT` is false — if Step 0's `EnterWorktree` registration silently failed and cwd is still the main checkout, that cwd-scoped probe reads the *main* checkout's config, finds nothing, and concludes "plain `/start`" — skipping this entire check exactly when it matters most. Per Step 0's `IS_WT` rule, a negative probe result must never disarm; a positive result, from anywhere, only ever arms (safe). `git -C "$WT_ABS" config --worktree --get start.source-branch`, explicitly scoped to a known worktree root, is safe from anywhere within `/start`'s own `IS_WT` derivation. **This is NOT how `/quality-review` determines it's in a worktree, and must not become that.** `/quality-review`'s own gate is `WT_ABS != MAIN_CHECKOUT` — necessary and sufficient on its own — precisely because a wiped `start.source-branch` is a documented hijack scenario the config probe cannot see through; requiring the config probe there would make that hijack undetectable. Step 5's own copy of this probe runs the cwd-scoped form too and is unaffected by any of this: at the point Step 5 runs it, cwd genuinely IS the worktree by construction (Step 5 short-circuits before any branch-switching), so a positive result there is trustworthy and is exactly the second `IS_WT` trigger from Step 0 — it is a positive-arms case, not the unscoped-negative-disarms case this paragraph warns against.
 
-   **This check must be fully self-contained in the ONE bash block below.** Nothing is "carried" into it from an earlier paragraph in this step, from Step 0, or from Step 5 — those ran as separate Bash tool calls, and shell variables and functions do not persist across separate Bash tool calls. Every value the block reads (`WT_ABS`, `MAIN_CHECKOUT`, `BASELINE_FILE`, `MAIN_NOW`) is assigned inside it, and `main_dirty_map` is defined inside it too — a prior draft of this check relied on `MAIN_CHECKOUT` having been set by a different Bash call and silently read it as unset.
-
-   Do not derive `MAIN_CHECKOUT` with `git worktree list --porcelain | awk 'NR==1{print $2}'` — unquoted `awk` field-splitting truncates any path containing a space (common on macOS, e.g. `~/Library/CloudStorage/GoogleDrive-.../My Projects/repo`), and the resulting `git -C <truncated-path> status` then writes `fatal:` to stderr and **nothing to stdout** — which reads as "no contamination" if you only check stdout.
-
-   **Why the guard immediately below is non-negotiable: `git -C ""` is a documented no-op** — it leaves cwd unchanged and exits `0` rather than erroring. An unset or empty `MAIN_CHECKOUT` therefore does not fail loudly; every `git -C "$MAIN_CHECKOUT" ...` below would silently measure the **worktree** instead, `map_rc` would come back `0`, and the delta would look clean even with real contamination sitting in the main checkout. The three-line guard is the only thing standing between a broken variable and a fabricated clean bill of health.
+   **The check is one self-contained call to `~/.claude/scripts/wt-baseline.sh diff`** — the script derives and guards `MAIN_CHECKOUT` itself (including the `git -C ""`-is-a-no-op hazard and the space-in-path `awk` truncation hazard that older inline versions of this check had to defend against in prose), computes the current dirty map with the same content-hash mechanics as the capture, and classifies the delta. Nothing is "carried" into it from Step 0 or Step 5 — only the worktree root and the issue token are passed:
 
    ```bash
    WT_ABS="$(git rev-parse --show-toplevel)"
-   MAIN_CHECKOUT="$(dirname "$(git -C "$WT_ABS" rev-parse --path-format=absolute --git-common-dir)")"
-
-   # Hard precondition guard — see the paragraph above for why this must never be skipped.
-   [ -n "$WT_ABS" ] && [ -d "$WT_ABS" ] || { echo "FAILED: WT_ABS unset or not a directory" >&2; exit 1; }
-   [ -n "$MAIN_CHECKOUT" ] && [ -d "$MAIN_CHECKOUT" ] || { echo "FAILED: MAIN_CHECKOUT unset or not a directory" >&2; exit 1; }
-   [ "$WT_ABS" != "$MAIN_CHECKOUT" ] || { echo "FAILED: WT_ABS == MAIN_CHECKOUT (isolation not registered)" >&2; exit 1; }
-
-   set -o pipefail
-   MAIN_NOW="$WT_ABS/tmp/main-dirty-now-<issue-id-lowercased>.txt"   # use the actual lowercased issue ID (or
-                                                            # $WT_ABS/tmp/main-dirty-now-no-issue.txt when no
-                                                            # issue ID was resolved — see /quality-review)
-   BASELINE_FILE="$WT_ABS/tmp/main-dirty-baseline-<issue-id-lowercased>.txt"   # use the actual lowercased issue
-                                                            # ID (or $WT_ABS/tmp/main-dirty-baseline-no-issue.txt
-                                                            # when no issue ID was resolved — see
-                                                            # /quality-review) — Step 0/Step 5 wrote this
-                                                            # file in a different Bash tool call under the SAME
-                                                            # $WT_ABS; only the path is reused here, re-assigned
-                                                            # fresh — anchored, since this block's cwd need not
-                                                            # match Step 0/Step 5's (see Step 0 sub-step 2)
-
-   if command -v shasum >/dev/null 2>&1; then HASH_CMD=(shasum -a 256)
-   elif command -v sha256sum >/dev/null 2>&1; then HASH_CMD=(sha256sum)
-   else echo "FAILED: no shasum or sha256sum on PATH" >&2; exit 1; fi
-
-   # identical to Step 0 sub-step 2's function — see there for the full rationale. -- ':!.claude/worktrees'
-   # ':!.claude/merge-queue': excludes the worktrees directory (git doesn't recurse into it, but the
-   # untracked-directory entry itself still would appear) and the merge-queue marker directory
-   # (merge-queue.sh writes markers there with a bare mkdir -p and no self-ignoring .gitignore, so a
-   # deferred /finish merge or the launchd drainer touching a marker would otherwise falsely appear here
-   # too, in either direction) so neither shows up as a map line for a concurrent session's own activity.
-   # A hashing failure (unreadable file) fails closed rather than emitting an empty-hash line, which
-   # would silently degrade the content-hash map back to bare path membership.
-   main_dirty_map() {
-     git -C "$1" status --porcelain -z --untracked-files=all --no-renames \
-       -- ':!.claude/worktrees' ':!.claude/merge-queue' \
-       | tr '\0' '\n' | cut -c4- \
-       | while IFS= read -r p; do
-           if [ -f "$1/$p" ]; then
-             h="$("${HASH_CMD[@]}" "$1/$p" | cut -d' ' -f1)"
-             [ -n "$h" ] || { echo "FAILED: empty hash for $p" >&2; exit 1; }
-             printf '%s  %s\n' "$h" "$p"
-           else printf 'ABSENT  %s\n' "$p"; fi
-         done | LC_ALL=C sort
-   }
-
-   main_dirty_map "$MAIN_CHECKOUT" > "$MAIN_NOW"
-   map_rc=$?
-   if [ "$map_rc" -ne 0 ] || [ ! -r "$MAIN_NOW" ]; then
-     echo "FAILED: could not compute current dirty state (exit $map_rc, or $MAIN_NOW missing/unreadable)" >&2
-   fi
-
-   echo "== NEW/CHANGED (comm -13: in current state, not in baseline) =="
-   LC_ALL=C comm -13 "$BASELINE_FILE" "$MAIN_NOW"
-   comm13_rc=$?
-   if [ "$comm13_rc" -ne 0 ]; then
-     echo "FAILED: comm -13 errored (exit $comm13_rc)" >&2
-   fi
-
-   echo "== VANISHED (comm -23: in baseline, not in current state) =="
-   LC_ALL=C comm -23 "$BASELINE_FILE" "$MAIN_NOW"
-   comm23_rc=$?
-   if [ "$comm23_rc" -ne 0 ]; then
-     echo "FAILED: comm -23 errored (exit $comm23_rc)" >&2
-   fi
-
-   echo "map_rc=$map_rc comm13_rc=$comm13_rc comm23_rc=$comm23_rc"
+   ~/.claude/scripts/wt-baseline.sh diff "$WT_ABS" <issue-id-lowercased>   # or `no-issue` when no issue ID was resolved — see /quality-review
    ```
 
-   `$BASELINE_FILE` is Step 0 sub-step 2's `$WT_ABS/tmp/main-dirty-baseline-<issue-id-lowercased>.txt`, taken fresh this session — a content-hash map (`<sha256>  <path>`, or `ABSENT  <path>` for a path that's gone), not a bare path list. A bare path-SET delta would miss a stray write landing on a path that was ALREADY dirty at baseline: the path is a member of both sets either way, so a set-membership diff sees nothing. Hashing content means that case still produces a new line — same path, different hash. Both files are `LC_ALL=C` sorted (Step 0's function and this one pin the identical locale) — `comm` requires matching sort collation to diff correctly; a mismatch silently produces false "contamination" lines for nothing more than case-ordering differences (reproduced with `src/A-b.ts` vs `src/a-b.ts` under mismatched locales), which pinning `LC_ALL=C` on both sides rules out.
+   **Branch on the FIRST line of stdout — never on empty output** (both a broken redirect and a broken `comm` print only to stderr, indistinguishable from "clean" if you only look at stdout; the script's verdict line exists precisely so there is always something on stdout to branch on). A green `pnpm check` is not evidence either — a worktree missing a delegate's changes still type-checks.
 
-   **Missing or unreadable `$BASELINE_FILE` → fail closed.** The delta cannot be computed, so this session's stray writes cannot be distinguished from whatever was already dirty. STOP. Surface the main checkout's **entire** current dirty state (`git -C "$MAIN_CHECKOUT" status --porcelain --untracked-files=all`) with the caveat stated plainly: we cannot say which of these paths are ours. Do not claim any path is contamination and do not claim the tree is clean.
-
-   **A non-zero exit ANYWHERE in this block — `map_rc`, `comm13_rc`, `comm23_rc`, or a failed `[ -r "$MAIN_NOW" ]` check — is a FAILED check, never a clean one, and routes to the same STOP as contamination below.** This is not hypothetical: an unassigned or otherwise-broken `$MAIN_NOW` makes the redirect into it fail with nothing written and a non-zero exit; `comm` then also fails (one of its two file arguments doesn't exist); and BOTH failures print only to stderr while stdout stays empty — indistinguishable from "clean" if you only look at stdout. Check `map_rc`, `comm13_rc`, and `comm23_rc` explicitly; never infer success from empty stdout alone. A green `pnpm check` is not evidence either — a worktree missing a delegate's changes still type-checks.
-
-   - **Non-zero `map_rc`, non-zero `comm13_rc`, non-zero `comm23_rc`, or an unreadable `$MAIN_NOW`** → FAILED check. Treat identically to contamination — go to "On contamination" below with the failure itself in place of a path list.
-   - **Reconcile the two outputs by bare path before classifying anything** (both exit codes zero, `$MAIN_NOW` readable). Extract the bare path from every flagged line in both outputs (see "Extract the bare path" below). A path that appears in **both** `comm -13` and `comm -23` did NOT vanish — it changed in place (its baseline line and its current line differ only in hash, e.g. an already-dirty file a delegate appended to). Classify it once, as change-in-place, using its `comm -13` line (the current hash); never list the same path under "vanished" too.
-   - **A path in `comm -13` only** (not also in `comm -23`) → contamination: clean at baseline, dirty now. Go to "On contamination" below.
-   - **A path in `comm -23` only** (not also in `comm -13`) → contamination, and the more dangerous direction: baseline dirt that has genuinely vanished from the main checkout — a delegate may have overwritten another session's uncommitted work with HEAD content, and that work may already be gone. Go to "On contamination" below.
-   - **A path in both** → contamination, classified as change-in-place per the reconciliation rule above (never as "vanished"). Go to "On contamination" below.
-   - **Both outputs empty** → clean. Nothing changed in the main checkout this delegation. Continue.
+   - **`CLEAN`** (exit 0) → nothing changed in the main checkout this delegation. Continue.
+   - **`CONTAMINATED`** (exit 2) → one classified line per path follows; go to "On contamination" below with those paths:
+     - `NEW <path>` — clean at baseline, dirty now.
+     - `CHANGED-IN-PLACE <path>` — already dirty at baseline, content hash changed since (e.g. an already-dirty file a delegate appended to; caught because the baseline stores content hashes, not bare path membership).
+     - `VANISHED <path>` — dirty at baseline, gone from the current state — the most dangerous direction: a delegate may have overwritten another session's uncommitted work with HEAD content, and that work may already be gone.
+   - **`FAILED: <reason>`** (exit 1), any other output, or empty stdout → FAILED check, never a clean one. The delta could not be computed, so this session's stray writes cannot be distinguished from whatever was already dirty. Treat identically to contamination — go to "On contamination" below with the failure itself in place of a path list. If the failure was a missing/unreadable baseline, also surface the main checkout's **entire** current dirty state (`git -C <MAIN_CHECKOUT> status --porcelain --untracked-files=all`) with the caveat stated plainly: we cannot say which of these paths are ours. Do not claim any path is contamination and do not claim the tree is clean.
 
    **The delegate's WRITE-PLACEMENT report is corroboration only — never the gate.** Per WRITE-PLACEMENT above, the delegate reports its own path list and both trees' probe results but never adjudicates contamination itself; the check above needs nothing from that report regardless. A delegate that reports its work only in prose, or reports absolute paths instead of the required bare repo-relative ones (an easy confusion, since file-tool calls in the same prompt use absolute paths), no longer defeats detection — the delta above is computed independently of whatever the delegate said or didn't say. If the delegate's reported paths are absent from a `git -C "$WT_ABS" status --porcelain -- <path>` probe, treat that as corroborating evidence something is off (worth a note in the log) — not a gate on its own. **A `developer`/`debugger` delegation that returns with no path-list section at all is a protocol failure, not "changed nothing"** — note it in the log and rely on the delta above; a missing report is never license to skip this item.
 
    **On contamination: STOP and report; do not act.** Do not re-run the delegation, extract a diff, `git apply`, or `git restore` anything in either tree. No snapshot can prove a path holds *only* this delegate's stray write — another session can dirty the main checkout at any moment — and the extract-and-apply direction is just as dangerous in reverse: if another engineer had uncommitted work at that same path, `git -C "$MAIN_CHECKOUT" diff -- <path>` returns their work plus our stray write, indistinguishably; applying it would import their WIP into our worktree, where `/finish` would commit and merge it.
 
-   **Extract the bare path from each flagged line.** Each `comm -13` or `comm -23` line is `<sha256-or-ABSENT>  <path>` (two-space separated); the path is everything after the first double-space — `path="${line#*  }"` strips it correctly regardless of whether the prefix is a 64-char hash or the literal `ABSENT`. Do this for every line in **both** outputs before classifying — the reconciliation rule above needs the bare-path sets from both sides to tell change-in-place apart from genuinely new or genuinely vanished.
+   **State what a flagged path actually proves — do not overclaim.** A classified line (`NEW` / `CHANGED-IN-PLACE` / `VANISHED`, meanings above) proves only that the path changed in the main checkout during THIS session. Any of the three is consistent with a mis-bound delegate having written there — and that remains the most likely explanation — but it is not the ONLY one: a concurrent writer in a shared checkout (the engineer saving a file after our baseline was taken, or another `/start wt` session sharing the same main checkout) produces an identical signature and cannot be ruled out by this check alone. **Never state mis-landing as certainty** — not in this report, not in the auto-mode Linear comment, not in the tagged final line. If the delegate's own WRITE-PLACEMENT report listed the same path, note that as corroboration (it points at "our delegate" as the likely cause); if the delegate reported no such path, or returned no report at all, say that too — it neither confirms nor rules out a mis-bound write. Compose:
 
-   **State what a flagged line actually proves — do not overclaim.** A flagged line means one of three things happened in the main checkout during THIS session: (a) the path was clean at the Step 0 baseline and is dirty now (`comm -13` only), (b) the path was already dirty at the baseline and its on-disk content hash has since changed — change-in-place, flagged by BOTH outputs per the reconciliation rule above, not just `comm -23` — or (c) the path was dirty at the baseline and has since vanished from the current state (flagged by `comm -23` **alone**, not also by `comm -13`; the more dangerous direction to see, per the classification above, since it can mean a delegate already overwrote another session's uncommitted work with HEAD content). Any of the three is consistent with a mis-bound delegate having written there — and that remains the most likely explanation — but it is not the ONLY one: a concurrent writer in a shared checkout (the engineer saving a file after our baseline was taken, or another `/start wt` session sharing the same main checkout) produces an identical signature and cannot be ruled out by this check alone. **Never state mis-landing as certainty** — not in this report, not in the auto-mode Linear comment, not in the tagged final line. If the delegate's own WRITE-PLACEMENT report listed the same path, note that as corroboration (it points at "our delegate" as the likely cause); if the delegate reported no such path, or returned no report at all, say that too — it neither confirms nor rules out a mis-bound write. Compose:
-
-   - The exact flagged bare repo-relative path(s), extracted as above (or, on a FAILED-check STOP, the failure itself in place of a path list).
+   - The exact flagged bare repo-relative path(s) with their classifications, as the diff reported them (or, on a FAILED-check STOP, the failure itself in place of a path list).
    - Whether each flagged path appears in the delegate's own WRITE-PLACEMENT changed-path report, if one was returned — corroborating, not conclusive.
    - The two read-only inspection commands, for a human to run: `git -C "$MAIN_CHECKOUT" status --porcelain --untracked-files=all -- <path>` and `git -C "$MAIN_CHECKOUT" diff -- <path>`. **If the status output for a path starts with `??` (untracked), `git diff` prints nothing for it** — a mis-landed new file (the typical `developer` output: a new component plus test) is untracked, so the diff command alone would wrongly read as "nothing to recover." For any `??` path, tell the human to read the file directly instead (e.g. the `Read` tool, or `cat -- "$MAIN_CHECKOUT/<path>"`).
    - An explicit warning that the main checkout may hold **other sessions' uncommitted work at other paths, and that a flagged path itself may ALSO be a concurrent writer's change rather than this session's delegate** — so attribution, not just separation, must happen by hand — and that `git restore` is destructive and hook-blocked (`standards/git.md` "Working Tree Protection"); this skill will not run it and does not vouch for any path being safe to restore.
@@ -621,7 +484,9 @@ Update completed checkboxes (`- [ ]` → `- [x]`) and push the update:
 
 This ensures progress is visible in Linear even if the session is interrupted, and enables picking up where we left off.
 
-**Resumption.** `/start` is idempotent on the same issue: re-running `/start PL-13` after a `/checkpoint`-and-stop hits Step 0's widened gate (a worktree already exists for this issue — see Step 0), so Step 0 runs the same procedure as a fresh start rather than being skipped. Sub-step 1's setup script safely reuses the existing worktree and branch (its create/attach/reuse logic handles this), and sub-step 2 re-enters via `EnterWorktree(path=<WT_ABS>)` so the resumed session's isolation is registered (else a background resumption's `developer` writes hit the guard) and retakes the dirty baseline fresh for this session (see Step 0 — the baseline is never reused across sessions). Sub-step 2's cwd precondition applies exactly as written: **re-anchor cwd to the main checkout first** if a manual resumption launched with cwd already inside the worktree (that would trip the same-cwd refusal), passing the **absolute** path `git worktree list` reports for the issue-keyed `.claude/worktrees/<id>` (the tool rejects a relative path as not a registered worktree). After Step 0, pass *through* Step 3 — which recognizes the issue is already claimed by me and short-circuits, skipping only the `linear-cli ... update` call per its idempotent branch (do not skip Step 3 wholesale; its availability check still runs) — then resume at the implementation phase. If Step 9 (review) had previously run, the existing `tmp/quality-review-verdict-<issue-id-lowercased>.md` file (e.g., `tmp/quality-review-verdict-pl-13.md`) is still consulted by `/finish` Step 1.5 — the user can decide to re-run `/quality-review` to refresh it, or skip ahead to `/finish` if the prior verdict still applies.
+**Resumption.** `/start` is idempotent on the same issue: re-running `/start PL-13` after a `/checkpoint`-and-stop hits Step 0's widened gate (a worktree already exists for this issue — see Step 0), so Step 0 runs the same procedure as a fresh start rather than being skipped. Sub-step 1's setup script safely reuses the existing worktree and branch (its create/attach/reuse logic handles this) and retakes the dirty baseline fresh for this session (`wt-baseline.sh capture` runs on reuse too — the baseline is never reused across sessions), and sub-step 2 re-enters via `EnterWorktree(path=<WT_ABS>)` so the resumed session's isolation is registered (else a background resumption's `developer` writes hit the guard). Sub-step 2's cwd precondition applies exactly as written: **re-anchor cwd to the main checkout first** if a manual resumption launched with cwd already inside the worktree (that would trip the same-cwd refusal), passing the **absolute** path `git worktree list` reports for the issue-keyed `.claude/worktrees/<id>` (the tool rejects a relative path as not a registered worktree).
+
+After Step 0 — whose sub-step 3 `start-wt-verify.sh` call re-verifies cwd, re-baselines, and re-probes availability, running with `--no-claim` per its idempotent-resumption rule (the issue is already claimed by me) rather than skipping Step 3 wholesale (its availability check still runs) — check the digest's comments for an already-posted implementation plan. If one exists and still applies, skip Step 6/7 entirely (no new exploration — sub-step 3's own exploration dispatch is SKIPPED on this path, per its "Two exceptions" note) and resume directly at Step 8. Otherwise — the plan is judged STALE, or none was ever posted — continue at Step 6, but the exploration state differs by which: if a plan was posted but is STALE, sub-step 3 already skipped its exploration dispatch (per its "Two exceptions" note), so dispatch exploration now, at Step 6 before `EnterPlanMode` (Step 6's re-dispatch fallback covers exactly this case); if no plan was ever posted, sub-step 3 dispatched exploration as usual and it is already running. If Step 9 (review) had previously run, the existing `tmp/quality-review-verdict-<issue-id-lowercased>.md` file (e.g., `tmp/quality-review-verdict-pl-13.md`) is still consulted by `/finish` Step 1.5 — the user can decide to re-run `/quality-review` to refresh it, or skip ahead to `/finish` if the prior verdict still applies.
 
 **After all implementation tasks are complete, proceed to Step 9.** Implementation is not finished until the review passes.
 

@@ -6,7 +6,8 @@
 # Performs the procedural setup that was previously embedded in /start
 # Step 0's skill markdown:
 #   1. Validates issue ID format (case-insensitive; normalized to upper).
-#   2. Captures the current branch as the source branch.
+#   2. Captures the current branch as the source branch (falls back to the common-scope git config key
+#      `start.wt-source-branch` when HEAD is detached; see the parallel-run advisory below).
 #   3. Enables extensions.worktreeConfig (idempotent).
 #   4. Fetches the issue title; composes a kebab-case branch name following
 #      the convention <gh-username>/<id-lower>-<short-kebab-title>.
@@ -20,21 +21,34 @@
 #      Detects branch-already-checked-out-elsewhere and refuses with a clear error.
 #   6. Records the source branch in per-worktree git config so /finish can locate
 #      it (`git config --worktree start.source-branch`), plus the identity above.
-#   7. Pre-fetches the issue digest via linear-context.sh and saves it into
+#   7. Captures the session-start dirty baseline of the MAIN checkout via
+#      wt-baseline.sh (the contamination-detection anchor /start Step 8 diffs
+#      against). Best-effort here: on failure BASELINE_FILE= is emitted empty
+#      and Step 0 sub-step 3's start-wt-verify.sh call re-captures or stops (fail closed).
+#   8. Pre-fetches the issue digest via linear-context.sh and saves it into
 #      the worktree's tmp/ — so the in-worktree subagent's Step 1 can read
 #      it directly instead of round-tripping back to Linear.
-#   8. Emits plain key=value lines on stdout for human/model consumption:
+#   9. Emits plain key=value lines on stdout for human/model consumption:
 #        WT_ABS=<absolute worktree path>
 #        BRANCH=<branch name>
 #        SOURCE_BRANCH=<source branch>
 #        ISSUE_ID=<uppercased issue id>
+#        STATE=<issue state name, e.g. Planned>
+#        ASSIGNEE=<assignee email, or empty if unassigned>
+#        BASELINE_FILE=<absolute path to captured dirty baseline, or empty if capture failed>
 #        DIGEST_FILE=<absolute path to cached digest, or empty if pre-fetch failed>
 #
 #      The caller (skill markdown) reads these from the tool output and
 #      substitutes them into the next step's Agent prompt. The values are
-#      NOT shell-escaped — do not pipe to `eval`. They are safe to substitute
-#      into double-quoted bash strings (no characters that require escaping
-#      appear in branch names, paths, or issue IDs in practice).
+#      NOT shell-escaped — do not pipe to `eval`. The "safe to substitute into
+#      double-quoted bash strings" claim applies only to WT_ABS, BRANCH,
+#      SOURCE_BRANCH, ISSUE_ID, BASELINE_FILE, DIGEST_FILE, BASELINE_SHA,
+#      OWNER_SESSION, and IDENTITY_SIDECAR (no characters that require escaping
+#      appear in paths, branch names, or issue IDs in practice). STATE and
+#      ASSIGNEE are Linear-user-definable free text — a state name or email can
+#      contain quotes, `$`, or other shell metacharacters — and must NOT be
+#      substituted into shell commands; they are consumed for the orchestrator's
+#      own decisions (e.g. Step 3's claim check) only.
 #
 # Read-write: creates worktree, writes git config, writes the digest file.
 # Errors go to stderr; non-zero exit on any failure.
@@ -74,10 +88,25 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   exit 1
 fi
 
-source_branch=$(git branch --show-current)
+current_branch=$(git branch --show-current)
+source_branch="$current_branch"
 if [ -z "$source_branch" ]; then
-  echo "ERROR: HEAD is detached; cannot determine source branch" >&2
-  exit 1
+  # Detached HEAD has no branch to fork from. The escape hatch is a user-set common-scope config key —
+  # `|| true` because an unset key exits non-zero, which under `set -eo pipefail` would otherwise abort
+  # the whole script on this assignment.
+  source_branch=$(git config --get start.wt-source-branch 2>/dev/null || true)
+  if [ -z "$source_branch" ]; then
+    echo "ERROR: HEAD is detached; set the fork/merge branch explicitly with: git config start.wt-source-branch <branch>" >&2
+    exit 1
+  fi
+  # A typo'd config value (e.g. "mian") would otherwise propagate silently — stamped into the worktree
+  # identity, emitted as SOURCE_BRANCH=, and surfacing only as a failure at /finish merge time. Validate
+  # it names a real local branch now. Only this fallback path needs the check; a live current branch
+  # (the `git branch --show-current` case above) always exists.
+  git rev-parse --verify --quiet "refs/heads/$source_branch" >/dev/null || {
+    echo "ERROR: start.wt-source-branch names '$source_branch' but no such local branch exists" >&2
+    exit 1
+  }
 fi
 
 # Advisory (never blocks): if the main checkout is parked on the branch this
@@ -87,22 +116,31 @@ fi
 # the contention-free ref-only update — the exact setup behind the parallel-run
 # corruption. We only warn; auto-detaching the main checkout would mutate the
 # user's working tree, which multi-session safety forbids.
+# Gated on `current_branch` (HEAD actually on a branch) — when HEAD is detached, the source branch came
+# from the `start.wt-source-branch` fallback above, which means the user already parked the main checkout
+# off the source branch (the very advice this WARN gives); firing it anyway would be false and redundant.
 # `|| true`: on a checkout that has never created a worktree, .claude/worktrees does
 # not yet exist (it's mkdir'd further down), so `find` exits non-zero. Under
 # `set -eo pipefail` an unguarded command-substitution assignment would propagate that
 # and abort the whole script silently. An empty/missing dir genuinely means 0 worktrees.
 existing_wts=$(find .claude/worktrees -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ' || true)
-if [ "${existing_wts:-0}" -gt 0 ]; then
+if [ -n "$current_branch" ] && [ "${existing_wts:-0}" -gt 0 ]; then
   echo "WARN: main checkout is on '$source_branch' (the shared source branch) while $existing_wts worktree(s) are active." >&2
-  echo "  For parallel /full wt runs, park the main checkout off the source branch (e.g. 'git checkout --detach')" >&2
-  echo "  so every merge takes finish-merge.sh's ref-only fast path and can't contend on the main working tree." >&2
+  echo "  For parallel /full wt runs, first set 'git config start.wt-source-branch $source_branch' so this and future" >&2
+  echo "  worktrees can still resolve the source branch once HEAD is detached, then park the main checkout off the" >&2
+  echo "  source branch (e.g. 'git checkout --detach') so every merge takes finish-merge.sh's ref-only fast path and" >&2
+  echo "  can't contend on the main working tree." >&2
 fi
 
 # Enable per-worktree config (idempotent).
 git config extensions.worktreeConfig true
 
-# Fetch issue title and compose branch name.
-issue_title=$(linear-cli issues get "$issue_id" -o json | jq -r '.title // ""')
+# Fetch the issue once; title composes the branch name, state/assignee let the orchestrator
+# make the Step 3 claim decision without waiting on a digest read.
+issue_json=$(linear-cli issues get "$issue_id" -o json)
+issue_title=$(jq -r '.title // ""' <<<"$issue_json")
+issue_state=$(jq -r '.state.name // ""' <<<"$issue_json")
+issue_assignee=$(jq -r '.assignee.email // ""' <<<"$issue_json")
 if [ -z "$issue_title" ]; then
   echo "ERROR: could not fetch title for $issue_id" >&2
   exit 1
@@ -202,6 +240,27 @@ if [ "${CREATED_WT:-0}" = "1" ] && [ -f ".worktreeinclude" ]; then
   done < ".worktreeinclude"
 fi
 
+# Capture the session-start dirty baseline of the main checkout (wt-baseline.sh capture — the
+# contamination anchor /start Step 8 diffs against). Runs every invocation, including worktree reuse
+# on resumption, so the baseline is always fresh for THIS session (never reused across sessions).
+# Captured this early — before the digest fetch and warm install — so it predates any delegation by
+# the widest possible margin. Best-effort: a failure emits BASELINE_FILE= empty and Step 0 sub-step 3's
+# start-wt-verify.sh call re-captures or stops fail-closed; it must never tear down the created worktree.
+# Parse the script's own `CAPTURED <path>` stdout line rather than string-building the same path —
+# string-building could silently drift from whatever path the script actually wrote. The command
+# substitution captures only stdout; the script's stderr (MAIN_CHECKOUT=, dirty_paths=, and any
+# overwrite WARN) is left unredirected here, so it flows straight through to this script's own stderr.
+if capture_out=$("$SCRIPT_DIR/wt-baseline.sh" capture "$wt_abs" "$issue_lower"); then
+  baseline_file="${capture_out#CAPTURED }"
+  if [ -z "$baseline_file" ] || [ "$baseline_file" = "$capture_out" ]; then
+    echo "WARN: baseline capture output malformed (no CAPTURED line); treating as failed. The in-session verify script must re-capture before any delegation." >&2
+    baseline_file=""
+  fi
+else
+  echo "WARN: baseline capture failed; the in-session verify script must re-capture before any delegation." >&2
+  baseline_file=""
+fi
+
 # Pre-fetch the digest into the worktree's tmp/ for the subagent's Step 1.
 mkdir -p "$wt_abs/tmp"
 digest_file="$wt_abs/tmp/linear-context-${issue_lower}.md"
@@ -256,6 +315,9 @@ printf 'WT_ABS=%s\n' "$wt_abs"
 printf 'BRANCH=%s\n' "$branch"
 printf 'SOURCE_BRANCH=%s\n' "$source_branch"
 printf 'ISSUE_ID=%s\n' "$issue_id"
+printf 'STATE=%s\n' "$issue_state"
+printf 'ASSIGNEE=%s\n' "$issue_assignee"
+printf 'BASELINE_FILE=%s\n' "$baseline_file"
 printf 'DIGEST_FILE=%s\n' "$digest_file"
 # Identity stamped by start-wt-create.sh (observability; /finish reads the sidecar, not these).
 printf 'BASELINE_SHA=%s\n' "$baseline_sha"
