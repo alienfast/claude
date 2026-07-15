@@ -65,6 +65,21 @@ Pass `--input` only when the user typed an explicit ID (e.g., `/quality-review P
 
    Same bare-path form `/start` Step 0 uses (`-z` avoids C-quoting/octal-escaping under `core.quotePath`; `cut -c4-` strips the fixed-width status prefix; `--no-renames` keeps every record to one field). Union the two sets. If the union is empty, warn the user and exit — there is nothing to review.
 
+   **Worktree source-branch awareness.** Before defaulting to `origin/main` as the merge-base target, check whether this session is inside a `/start wt` worktree with a recorded source branch:
+
+   ```bash
+   WT_ABS="$(git rev-parse --show-toplevel)"
+   git -C "$WT_ABS" config --worktree --get start.source-branch
+   ```
+
+   If it returns a value, use that branch instead of `origin/main` for the merge-base diff:
+
+   ```bash
+   git diff --name-only "$(git merge-base HEAD <source-branch>)"...HEAD
+   ```
+
+   `origin/main` is very likely NOT this worktree's actual parent — diffing against it can return the entire accumulated history of a long-running feature branch (thousands of files) instead of the session's actual changes. Fall back to `origin/main` when the config is absent.
+
 **Issue requirements** (only if an issue was resolved):
 
 ```bash
