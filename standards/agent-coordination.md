@@ -160,6 +160,7 @@ A background agent's completion often surfaces as a bare idle notification — t
 - Instruct the agent in its prompt that its final action must be to SendMessage its completion report to the orchestrator ("main") — do not rely on the idle notification to carry findings.
 - On an idle notification with no report, ping the agent once for its report rather than re-running or re-verifying the work.
 - For small verification tasks, prefer synchronous delegation (`run_in_background: false`) — the report returns directly as the tool result, avoiding the loss window entirely.
+- **Omit `name` for one-shot dispatches you need back this turn** (adversarial review, exploration, planning). Passing `name` makes the agent an addressable, resumable teammate — its termination can surface as a bare idle notification with no recoverable findings, and pinging an already-terminated named agent does not recover the content (the remedy above doesn't rescue this case). Reserve `name` exclusively for agents you deliberately intend to resume across multiple conversation turns; unnamed one-shot Agent calls reliably return findings via the standard background-task pattern (an `output_file` plus a completion notification).
 
 ### Tool Call Efficiency
 
