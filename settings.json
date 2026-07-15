@@ -120,9 +120,9 @@
       "WebFetch",
       "WebFetch(domain:*)",
       "WebSearch",
-      "Write(//private/tmp/**)",
-      "Write(//tmp/**)",
-      "Write(/tmp/**)",
+      "Edit(//private/tmp/**)",
+      "Edit(//tmp/**)",
+      "Edit(/tmp/**)",
       "mcp__agent-browser__frame",
       "mcp__circleci",
       "mcp__ide__getDiagnostics",
@@ -182,6 +182,5 @@
   "skipAutoPermissionPrompt": true,
   "tui": "fullscreen",
   "skillListingBudgetFraction": 0.03,
-  "skillListingMaxDescChars": 2048,
-  "model": "opus[1m]"
+  "skillListingMaxDescChars": 2048
 }
