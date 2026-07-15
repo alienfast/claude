@@ -1,6 +1,8 @@
 ---
 name: quality-review
 description: Adversarial implementation review with triage and fix loop. Hard-gates on `pnpm check`, delegates to the quality-reviewer agent for categorized findings (Critical/High/Medium/Nice-to-Have/Approved), then triages and fixes findings via the developer agent. Loops until a re-review surfaces no new Critical/High/Medium findings (convergence), with a soft ceiling of 5 cycles before asking the user how to proceed; option 3 of that prompt terminates with verdict `escalated-to-architect`. Autonomous mode via the `auto` token (prompts resolve to documented defaults; used by /auto via /start auto). Use when the user says 'review my work', 'check this implementation', 'adversarial review', 'quality review', or invokes /quality-review.
+model: opus
+effort: max
 ---
 
 # Quality Review
