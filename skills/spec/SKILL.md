@@ -36,10 +36,10 @@ Error on any other token (including `auto` — see above).
 
 ### Step 1: Pick mode — surface uncertified candidates (no-arg form)
 
-Resolve `<TEAM>` from `$LINEAR_TEAM`, else the current branch's issue prefix, else ask. Run:
+Team scope resolves mechanically, exactly like `/next` Step 2: `$LINEAR_TEAM` if exported (single key or comma list), else omit `--team` and the script searches every team in the workspace — never ask which team. A user who explicitly names a team is the one exception (`--team <KEY>`). Run:
 
 ```bash
-~/.claude/scripts/next-candidates.sh --team <TEAM> --exclude-label specified --include-triage --include-blocked --limit 10
+~/.claude/scripts/next-candidates.sh --exclude-label specified --include-triage --include-blocked --limit 10
 ```
 
 Same ranking as `/next` — so the issues `/auto` would want next are certified first — plus the **Triage inbox**, which is precisely what grooming targets (unlike `/next`, where Triage is never workable). Blocked issues are included deliberately too: certifying a spec before its blocker resolves builds runway `/auto` can pick up the moment it unblocks. The ranking still favors cycle/unblocked work, though — Triage-inbox and blocked items rank low, so raise `--limit` when processing a large inbox. Present the ranked list and let the user pick one (AskUserQuestion, top candidates as options). Empty list → `Everything workable is already certified.` and stop.

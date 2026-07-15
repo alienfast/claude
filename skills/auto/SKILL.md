@@ -32,10 +32,15 @@ A Claude API error — overload (529), rate limit (429), or transient 5xx — fr
 ## Arguments
 
 ```text
-/auto [pr]
+/auto [pr] [TEAM[,TEAM...]]
 ```
 
-Tokens are case-insensitive. `pr` opens a PR per issue instead of merging (pass-through to `/full`). **Caveat:** in `pr` mode the source branch does not advance until PRs merge, so a dependent issue forks without its predecessor's code — use `pr` only when the queued issues are independent or a human is merging promptly. No issue ID is accepted — picking is `/next`'s job. Error on any other token: `Unrecognized argument 'X'. /auto accepts optional 'pr' only (worktree mode is always on).`
+Tokens are case-insensitive and order-insensitive.
+
+- `pr` opens a PR per issue instead of merging (pass-through to `/full`). **Caveat:** in `pr` mode the source branch does not advance until PRs merge, so a dependent issue forks without its predecessor's code — use `pr` only when the queued issues are independent or a human is merging promptly.
+- A team scope (`BF`, or a comma list `PL,BF`): restricts the whole run to those teams' certified backlogs — forwarded to Step 2's pick as `team:<KEYS>`. Without it, scope follows `/next`'s resolution (`$LINEAR_TEAM`, else every team in the workspace). **At most one** team token is accepted, and it MUST validate before it is trusted: uppercase it, then check every comma-part against the workspace's real team keys (`linear-cli teams list -o json`, case-insensitive). Any part that is not a real team key — `wt`, `auto`, `team`, a typo — is an unrecognized argument: emit the error below and STOP. An unattended run must never launch scoped to a nonexistent team (it would silently mark itself `drained` against an empty backlog). (`pr` is reserved for the PR flag, so `pr,BF` fails validation by design; a workspace whose team is literally keyed `PR` scopes via `$LINEAR_TEAM` instead.)
+
+No issue ID is accepted — picking is `/next`'s job. Error on anything else — a second team-shaped token, an issue ID, or a token failing team validation: `Unrecognized argument 'X'. /auto accepts optional 'pr' and one optional team scope that must match a real team key (e.g. BF or PL,BF); worktree mode is always on.`
 
 ## Workflow (one iteration)
 
@@ -68,9 +73,9 @@ Clean tree and no resumable worktree → proceed to Step 2.
 
 ### Step 2: Pick — dispatch /next
 
-Call `Skill(skill: "next", args: "specified")`. It ranks unblocked candidates for the team, restricted to issues carrying the `specified` label — only certified specs ship unattended (`standards/issue-spec.md`; `/prd` and `/spec` are the primary certification paths, plus `/reflect`'s auto-filed proposals and manual labeling).
+Call `Skill(skill: "next", args: "specified")` — appending ` team:<KEYS>` when this run has a team scope from Arguments (e.g. `args: "specified team:BF"`). It ranks unblocked candidates restricted to issues carrying the `specified` label — only certified specs ship unattended (`standards/issue-spec.md`; `/prd` and `/spec` are the primary certification paths, plus `/reflect`'s auto-filed proposals and manual labeling). Without an explicit scope, team resolution follows `/next`: `$LINEAR_TEAM` when the project exports it, otherwise every team in the workspace — so one run drains all certified backlogs.
 
-- **No candidates** → set `status: "drained"` in the state file and emit `NO-CANDIDATES: <team> backlog drained of certified issues — <shipped>/<skipped>/<failed> this run. Run /spec to certify backlog issues (or /prd to seed new ones), then delete tmp/auto-state.json and re-invoke /auto.` Under `/loop` self-pacing this ends the loop — do not schedule another wakeup.
+- **No candidates** → set `status: "drained"` in the state file and emit `NO-CANDIDATES: <team-scope> backlog drained of certified issues — <shipped>/<skipped>/<failed> this run. Run /spec to certify backlog issues (or /prd to seed new ones), then delete tmp/auto-state.json and re-invoke /auto.` (`<team-scope>` = the scope `/next` searched, e.g. `PL` or `PL+BF+MAR`.) Under `/loop` self-pacing this ends the loop — do not schedule another wakeup.
 - **Candidates exist** → take the **top-ranked** one. Do not prompt the user to choose. Skip any candidate already in this run's `shipped`, `skipped`, or `failed` lists (`shipped` included: a `DEFERRED-MERGE` issue remains In Progress until the queue drains it, and re-picking it would race the queued merge). If every candidate is excluded that way, treat as no-candidates — including setting `status: "drained"` (the entry gate must hold under fixed-interval `/loop` here too) — but say so: `NO-CANDIDATES: all remaining candidates were already attempted this run (<shipped>/<skipped>/<failed>). Delete tmp/auto-state.json to re-attempt.`
 
 ### Step 3: Ship — dispatch /full auto wt

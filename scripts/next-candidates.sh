@@ -2,15 +2,18 @@
 # next-candidates.sh — Rank workable Linear issues and suggest what to do next.
 #
 # Usage:
-#   next-candidates.sh [--team KEY] [--completed PL-XX] [--limit N] [--no-parent-walk]
-#                      [--label NAME] [--exclude-label NAME] [--include-triage]
-#                      [--include-blocked]
+#   next-candidates.sh [--team KEY[,KEY...]] [--completed PL-XX] [--limit N]
+#                      [--no-parent-walk] [--label NAME] [--exclude-label NAME]
+#                      [--include-triage] [--include-blocked]
 #
-# Resolves the team key from --team or $LINEAR_TEAM.
-# Fans out three parallel Linear CLI calls (workable list, deps graph, current
-# cycle), filters to issues with all blockers resolved, buckets into 6 tiers
-# (assigned-to-me → newly-unblocked-in-cycle → cycle-ready → newly-unblocked →
-# sibling-under-completed-parent → priority-fallback), then walks parent chains
+# Teams: --team is repeatable and accepts comma lists; $LINEAR_TEAM may also be a
+# comma list. With neither, EVERY team in the workspace is searched (discovered
+# via `linear-cli teams list`) and candidates are ranked in one merged list —
+# tiers, priority, and estimates are comparable across teams.
+# Fans out three parallel Linear CLI calls per team (workable list, deps graph,
+# current cycle), filters to issues with all blockers resolved, buckets into 6
+# tiers (assigned-to-me → newly-unblocked-in-cycle → cycle-ready → newly-unblocked
+# → sibling-under-completed-parent → priority-fallback), then walks parent chains
 # for the top-K candidates to apply parent-status weighting (In Progress epic >
 # Planned > Backlog > Triage). Emits a ranked markdown list to stdout.
 #
@@ -56,7 +59,7 @@ require_value() {
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --team) require_value --team "$#" "${2:-}"; team_arg="$2"; shift 2 ;;
+    --team) require_value --team "$#" "${2:-}"; team_arg="${team_arg:+$team_arg,}$2"; shift 2 ;;
     --completed) require_value --completed "$#" "${2:-}"; completed="$2"; shift 2 ;;
     --limit) require_value --limit "$#" "${2:-}"; limit="$2"; shift 2 ;;
     --no-parent-walk) parent_walk=0; shift ;;
@@ -65,7 +68,7 @@ while [ $# -gt 0 ]; do
     --include-triage) include_triage=1; shift ;;
     --include-blocked) include_blocked=1; shift ;;
     -h|--help)
-      sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *) echo "ERROR: unknown arg '$1'" >&2; exit 1 ;;
@@ -94,12 +97,40 @@ done
 
 # ---------- team resolution ----------
 
-team_key="$team_arg"
-if [ -z "$team_key" ] && [ -n "${LINEAR_TEAM:-}" ]; then
-  team_key="$LINEAR_TEAM"
+teams_raw="$team_arg"
+if [ -z "$teams_raw" ] && [ -n "${LINEAR_TEAM:-}" ]; then
+  teams_raw="$LINEAR_TEAM"
 fi
-if [ -z "$team_key" ]; then
-  echo "ERROR: team key not resolved (pass --team or set \$LINEAR_TEAM)" >&2
+if [ -z "$teams_raw" ]; then
+  # No team pinned anywhere → search the whole workspace. Sorted for deterministic output.
+  teams_raw=$(linear-cli teams list -o json -q 2>/dev/null \
+    | jq -r '[.. | objects | select(has("key")) | .key] | unique | sort | join(",")' 2>/dev/null || true)
+  if [ -z "$teams_raw" ]; then
+    echo "ERROR: no team resolved and workspace team discovery failed (auth? network?) — pass --team or set \$LINEAR_TEAM" >&2
+    exit 2
+  fi
+fi
+
+teams=()
+seen_teams=""
+teams_label=""
+# Commas AND whitespace both separate keys — "PL BF" must become two teams, never silently
+# concatenate into a bogus single key "PLBF" that scans an empty backlog.
+IFS=$' \t\n' read -ra _team_parts <<< "$(printf '%s' "$teams_raw" | tr ',' ' ')"
+for t in "${_team_parts[@]}"; do
+  t=$(printf '%s' "$t" | tr '[:lower:]' '[:upper:]')
+  [ -z "$t" ] && continue
+  if ! [[ "$t" =~ ^[A-Z0-9]+$ ]]; then
+    echo "ERROR: team key '$t' does not match ^[A-Z0-9]+\$" >&2
+    exit 1
+  fi
+  case ",$seen_teams," in *",$t,"*) continue ;; esac
+  seen_teams="${seen_teams:+$seen_teams,}$t"
+  teams+=("$t")
+  teams_label="${teams_label:+$teams_label, }$t"
+done
+if [ ${#teams[@]} -eq 0 ]; then
+  echo "ERROR: no valid team keys in '$teams_raw'" >&2
   exit 1
 fi
 
@@ -110,11 +141,7 @@ trap 'rm -rf "$tmpdir"' EXIT
 
 list_file="$tmpdir/list.json"
 deps_file="$tmpdir/deps.json"
-deps_err="$tmpdir/deps.err"
-deps_raw="$tmpdir/deps.raw.json"
 cycle_file="$tmpdir/cycle.json"
-cycle_raw="$tmpdir/cycle.raw.json"
-cycle_err="$tmpdir/cycle.err"
 
 # Paginated team-issue fetch via the api. `issues list` omits `estimate`, returns
 # assignee.name (a display name on real workspaces — NOT the email the ranking compares
@@ -149,30 +176,59 @@ fetch_team_issues() {
   rm -f "$pages_file"
 }
 
-fetch_team_issues "$team_key" "$list_file" &
-list_pid=$!
+# All three fetch kinds fan out per team in parallel (3 × N background jobs), then merge.
+# Deps graph goes via the api-backed helper (paginated internally; no `deps` command).
+# The cycle fetch uses the active-cycle filter (a cycle's issue count is small, so a
+# single page is fine) and is allowed to fail / be empty (team may have no active cycle).
+list_pids=()
+deps_pids=()
+cycle_pids=()
+for i in "${!teams[@]}"; do
+  t="${teams[$i]}"
+  fetch_team_issues "$t" "$tmpdir/list.$t.json" &
+  list_pids[$i]=$!
+  "$SCRIPT_DIR/linear-deps-graph.sh" --team "$t" >"$tmpdir/deps.raw.$t.json" 2>"$tmpdir/deps.err.$t" &
+  deps_pids[$i]=$!
+  linear-cli api query -q -o json -v team="$t" \
+    'query($team:String!){issues(filter:{team:{key:{eq:$team}}, cycle:{isActive:{eq:true}}}, first:250){nodes{identifier}}}' \
+    >"$tmpdir/cycle.raw.$t.json" 2>/dev/null &
+  cycle_pids[$i]=$!
+done
 
-# Dependency graph via the api-backed helper (paginated internally; no `deps` command).
-"$SCRIPT_DIR/linear-deps-graph.sh" --team "$team_key" >"$deps_raw" 2>"$deps_err" &
-deps_pid=$!
+# On a fatal per-team failure, reap the sibling background fetches first — they would
+# otherwise keep hitting the Linear API and spray write errors into the already-removed
+# tmpdir (the EXIT trap deletes it) after the primary error line.
+kill_fetches() {
+  local p
+  for p in "${list_pids[@]}" "${deps_pids[@]}" "${cycle_pids[@]}"; do
+    kill "$p" 2>/dev/null || true
+  done
+}
 
-# Current-cycle issue ids via the active-cycle filter (a cycle's issue count is small,
-# so a single page is fine). Allowed to fail / be empty (team may have no active cycle).
-linear-cli api query -q -o json -v team="$team_key" \
-  'query($team:String!){issues(filter:{team:{key:{eq:$team}}, cycle:{isActive:{eq:true}}}, first:250){nodes{identifier}}}' \
-  >"$cycle_raw" 2>"$cycle_err" &
-cycle_pid=$!
+for i in "${!teams[@]}"; do
+  t="${teams[$i]}"
+  wait "${list_pids[$i]}" || { kill_fetches; echo "ERROR: team-issue fetch (team $t) failed (auth? network?)" >&2; exit 2; }
+  wait "${deps_pids[$i]}" || { kill_fetches; echo "ERROR: linear-deps-graph.sh (team $t) failed:" >&2; cat "$tmpdir/deps.err.$t" >&2; exit 2; }
+  wait "${cycle_pids[$i]}" || printf '{}' >"$tmpdir/cycle.raw.$t.json"   # no active cycle is not fatal — tiers 2/3 collapse
+done
 
-wait "$list_pid" || { echo "ERROR: team-issue fetch (team $team_key) failed (auth? network?)" >&2; exit 2; }
-wait "$deps_pid" || { echo "ERROR: linear-deps-graph.sh (team $team_key) failed:" >&2; cat "$deps_err" >&2; exit 2; }
-wait "$cycle_pid" || printf '{}' >"$cycle_raw"   # no active cycle is not fatal — tiers 2/3 collapse
-
-# Normalize deps + cycle into the pipeline shapes (the list is already normalized above).
+# Merge per-team results and normalize into the pipeline shapes (team order = ranking-input
+# order; the tier sort downstream is what actually orders candidates).
+#   list  → one array (already normalized by fetch_team_issues)
 #   deps  → {nodes:[{identifier, state:<name>}], edges:[{from,to,type}]}
 #   cycle → array of {identifier}
-jq '{nodes: [ (.nodes // [])[] | {identifier, state: (.state.name // .state // "?")} ],
-     edges: (.edges // [])}' "$deps_raw" >"$deps_file"
-jq '[ (.data.issues.nodes // [])[] | {identifier} ]' "$cycle_raw" >"$cycle_file" 2>/dev/null \
+list_parts=()
+deps_parts=()
+cycle_parts=()
+for t in "${teams[@]}"; do
+  list_parts+=("$tmpdir/list.$t.json")
+  deps_parts+=("$tmpdir/deps.raw.$t.json")
+  cycle_parts+=("$tmpdir/cycle.raw.$t.json")
+done
+jq -s 'add' "${list_parts[@]}" > "$list_file"
+jq -s '{nodes: [ .[] | (.nodes // [])[] | {identifier, state: (.state.name // .state // "?")} ],
+        edges: [ .[] | (.edges // [])[] ]}' "${deps_parts[@]}" >"$deps_file"
+jq -s '[ .[] | (.data.issues.nodes // [])[] | {identifier} ]' "${cycle_parts[@]}" >"$cycle_file" 2>/dev/null \
   || printf '[]' >"$cycle_file"
 
 # ---------- my email ----------
@@ -191,49 +247,61 @@ TERMINAL_STATES='["Done","Canceled","Cancelled","Duplicate","Ready For Release"]
 # that renamed its triage state (e.g. "Inbox") still gets excluded/included correctly.
 WORKABLE_STATES='["Backlog","Planned","Todo"]'
 
+# The derived maps live on disk and reach jq via --slurpfile, not --argjson: the fetch
+# layer already avoids argv for the issue list (ARG_MAX), and a workspace-wide multi-team
+# run makes these maps scale the same way.
+
 # Build a canonical state map from BOTH the deps graph (covers blockers that
 # may live outside the workable list) and the team list (richer fields). The
 # fetch step above normalized `state` to a name string in both files, so no
 # object/string coercion is needed here — but `linear-cli issues get` returns
 # {name,...} so we coerce in the parent walk later.
-state_map_json=$(jq -s '
+state_map_file="$tmpdir/state_map.json"
+jq -s '
   (.[0].nodes // []) as $nodes
   | (.[1] // []) as $issues
   | ($nodes | map({key: .identifier, value: .state}))
     + ($issues | map({key: .identifier, value: .state}))
   | from_entries
-' "$deps_file" "$list_file")
+' "$deps_file" "$list_file" > "$state_map_file"
 
 # Blocker map: to_id -> [from_ids] where edge.type == "blocks".
-blocker_map_json=$(jq '
+blocker_map_file="$tmpdir/blocker_map.json"
+jq '
   (.edges // [])
   | map(select(.type == "blocks"))
   | group_by(.to)
   | map({key: .[0].to, value: (map(.from) | unique)})
   | from_entries
-' "$deps_file")
+' "$deps_file" > "$blocker_map_file"
 
 # Reverse map: from_id -> [to_ids] (for transitive unblocking BFS).
-reverse_blocker_map_json=$(jq '
+reverse_blocker_map_file="$tmpdir/reverse_blocker_map.json"
+jq '
   (.edges // [])
   | map(select(.type == "blocks"))
   | group_by(.from)
   | map({key: .[0].from, value: (map(.to) | unique)})
   | from_entries
-' "$deps_file")
+' "$deps_file" > "$reverse_blocker_map_file"
 
 # Cycle set: identifiers in current cycle (empty if cycle fetch failed/empty).
-cycle_set_json=$(jq '[.[] | .identifier]' "$cycle_file" 2>/dev/null || echo '[]')
-if [ -z "$cycle_set_json" ]; then cycle_set_json='[]'; fi
+cycle_set_file="$tmpdir/cycle_set.json"
+jq '[.[] | .identifier]' "$cycle_file" > "$cycle_set_file" 2>/dev/null || printf '[]' > "$cycle_set_file"
+[ -s "$cycle_set_file" ] || printf '[]' > "$cycle_set_file"
 
 # ---------- transitive unblocking (BFS) ----------
 
+newly_unblocked_file="$tmpdir/newly_unblocked.json"
 if [ -n "$completed" ]; then
-  newly_unblocked_json=$(jq -n \
+  jq -n \
     --arg root "$completed" \
-    --argjson rev "$reverse_blocker_map_json" \
-    --argjson sm "$state_map_json" \
+    --slurpfile rev_doc "$reverse_blocker_map_file" \
+    --slurpfile sm_doc "$state_map_file" \
     --argjson terminal "$TERMINAL_STATES" '
+      ($rev_doc[0]) as $rev
+    | ($sm_doc[0]) as $sm
+    |
       # Transitive reachability walk (BFS) from the completed issue over the reverse-blocker
       # map — it visits every descendant, not just newly-unblocked ones. The final filter
       # below drops nodes already in a terminal state; whether a candidate is actually
@@ -249,9 +317,9 @@ if [ -n "$completed" ]; then
         end;
       [bfs([$root]; []) | .[] | select(. != $root)]
       | map(select(($sm[.] // "Unknown") as $s | ($terminal | index($s)) == null))
-    ')
+    ' > "$newly_unblocked_file"
 else
-  newly_unblocked_json='[]'
+  printf '[]' > "$newly_unblocked_file"
 fi
 
 # ---------- candidate set ----------
@@ -261,16 +329,20 @@ fi
 candidates_json=$(jq \
   --argjson workable "$WORKABLE_STATES" \
   --argjson terminal "$TERMINAL_STATES" \
-  --argjson sm "$state_map_json" \
-  --argjson bm "$blocker_map_json" \
-  --argjson cycle "$cycle_set_json" \
-  --argjson newly "$newly_unblocked_json" \
+  --slurpfile sm_doc "$state_map_file" \
+  --slurpfile bm_doc "$blocker_map_file" \
+  --slurpfile cycle_doc "$cycle_set_file" \
+  --slurpfile newly_doc "$newly_unblocked_file" \
   --arg me "${me_email:-}" \
   --arg label "$label" \
   --arg xlabel "$exclude_label" \
   --arg triage "$include_triage" \
   --arg blocked "$include_blocked" '
-    def priority_label(p):
+    ($sm_doc[0]) as $sm
+    | ($bm_doc[0]) as $bm
+    | ($cycle_doc[0]) as $cycle
+    | ($newly_doc[0]) as $newly
+    | def priority_label(p):
       if p == 1 then "Urgent"
       elif p == 2 then "High"
       elif p == 3 then "Normal"
@@ -316,7 +388,9 @@ if [ "$candidate_count" -eq 0 ]; then
   filter_desc=""
   [ -n "$label" ] && filter_desc=" with label '$label'"
   [ -n "$exclude_label" ] && filter_desc="$filter_desc lacking label '$exclude_label'"
-  printf '## Suggested next\n\n_No workable issues%s in team %s._\n' "$filter_desc" "$team_key"
+  team_word="team"
+  [ ${#teams[@]} -gt 1 ] && team_word="teams"
+  printf '## Suggested next\n\n_No workable issues%s in %s %s._\n' "$filter_desc" "$team_word" "$teams_label"
   exit 0
 fi
 

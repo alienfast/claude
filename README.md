@@ -32,7 +32,7 @@ A research-augmented path for shipping something large, from raw idea to merged 
 
 | Step | Command | Notes |
 | ---- | ------- | ----- |
-| Linear setup | Set `$LINEAR_TEAM` (or pass `--team`) to the project's team key | One-time per project |
+| Linear setup | Optionally set `$LINEAR_TEAM` (single key or comma list, e.g. `PL,BF`) to pin the team scope | Unset = `/next` and `/spec` search every team in the workspace |
 | Create issues | `/prd @doc/plan-foo.md` | Review stages and accuracy before approving; approval creates the issues in Linear |
 | Triage | `/triage` | Reviews dependencies, identifies blockers, suggests priorities |
 | Prioritize | Move stage 1 to "Planned", stage 2 to "Backlog" | |

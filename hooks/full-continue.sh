@@ -52,19 +52,29 @@ decide() {
     | [ $E[]
         | .key as $i | .value as $v
         | select($v.type == "assistant" and ($v.isSidechain != true))
-        | ($v.message.content // [])[]
+        | ($v.message.content // [])[]?
         | select(.type == "text")
         | lastline(.text) as $ll
-        | select($ll | test("^(READY-FOR-FINISH|BLOCKED-ON-REVIEW|CANCELED|ABANDONED|RELEASED|SHIPPED-MERGE|SHIPPED-PR|DEFERRED-MERGE):"))
+        | select($ll | test("^(READY-FOR-FINISH|BLOCKED-ON-REVIEW|CANCELED|ABANDONED|SKIPPED-BLOCKED|RELEASED|SHIPPED-MERGE|SHIPPED-PR|DEFERRED-MERGE):"))
         | {i: $i, line: $ll} ] as $tags
 
-    # /full slash-command invocations (string-content user messages); capture their args.
-    | [ $E[]
+    # /full invocations by ANY form, mirroring $finishes below: a slash command in a user
+    # message, OR an assistant Skill tool_use — /auto Step 3 dispatches /full only the
+    # second way (the BF-390 unguarded hang), so both forms must match. Both sets merge
+    # and re-sort chronologically; args capture from either form.
+    | ([ $E[]
         | .key as $i | .value as $v
         | select($v.type == "user" and ($v.isSidechain != true))
         | utext($v.message.content) as $u
         | select($u | test("<command-name>/full</command-name>"))
-        | {i: $i, args: ($u | (capture("<command-args>(?<a>[^<]*)</command-args>") // {a: ""}) | .a)} ] as $fulls
+        | {i: $i, args: ($u | (capture("<command-args>(?<a>[^<]*)</command-args>") // {a: ""}) | .a)} ]
+       + [ $E[]
+        | .key as $i | .value as $v
+        | select($v.type == "assistant" and ($v.isSidechain != true))
+        | ($v.message.content // [])[]?
+        | select(.type == "tool_use" and .name == "Skill" and (.input.skill == "full"))
+        | {i: $i, args: ((.input.args // "") | tostring)} ]
+       | sort_by(.i)) as $fulls
 
     # All /finish dispatches by ANY form (Skill tool_use OR slash command), non-sidechain. Built once and
     # reused for both the post-tag self-clear and the pending gate. The block-reason this hook emits mentions
@@ -74,7 +84,7 @@ decide() {
         | select($v.isSidechain != true)
         | { i: $i,
             fin: ( (($v.type == "assistant")
-                     and (([ ($v.message.content // [])[] | select(.type == "tool_use" and .name == "Skill" and (.input.skill == "finish")) ] | length) > 0))
+                     and (([ ($v.message.content // [])[]? | select(.type == "tool_use" and .name == "Skill" and (.input.skill == "finish")) ] | length) > 0))
                    or (utext($v.message.content // []) | test("<command-name>/finish</command-name>")) ) }
         | select(.fin) ] as $finishes
 
@@ -82,7 +92,10 @@ decide() {
     # dispatch and NO macro-closing tag after it. Deliberately computed WITHOUT requiring a tag to be visible,
     # so it stays true during the flush-race window before READY-FOR-FINISH lands — exactly when we must keep
     # polling. A normal (non-/full) stop has pending:false, and the caller bails after a single read.
-    | ([ $tags[] | select(.line | test("^(RELEASED|SHIPPED-MERGE|SHIPPED-PR|DEFERRED-MERGE|BLOCKED-ON-REVIEW):")) ] | last) as $anyclose
+    # The close set is EVERY /full-terminal outcome, including the no-/finish ones (CANCELED / ABANDONED /
+    # SKIPPED-BLOCKED from /start): a window they end must close, or a later standalone /start in the same
+    # session inherits the dead window and gets force-dispatched into its auto/merge finish args.
+    | ([ $tags[] | select(.line | test("^(RELEASED|SHIPPED-MERGE|SHIPPED-PR|DEFERRED-MERGE|BLOCKED-ON-REVIEW|CANCELED|ABANDONED|SKIPPED-BLOCKED):")) ] | last) as $anyclose
     | ($fulls | last) as $lastfull
     | (if $lastfull == null then false
        else (([ $finishes[] | select(.i > $lastfull.i) ] | length) == 0)
@@ -94,10 +107,10 @@ decide() {
          ($tags | last) as $t
          | $t.line as $tagline
 
-         # Most recent macro-closing tag strictly before the current tag.
+         # Most recent macro-closing tag strictly before the current tag (same close set as $anyclose).
          | ([ $tags[]
               | select(.i < $t.i)
-              | select(.line | test("^(RELEASED|SHIPPED-MERGE|SHIPPED-PR|DEFERRED-MERGE|BLOCKED-ON-REVIEW):")) ] | last) as $lastclose
+              | select(.line | test("^(RELEASED|SHIPPED-MERGE|SHIPPED-PR|DEFERRED-MERGE|BLOCKED-ON-REVIEW|CANCELED|ABANDONED|SKIPPED-BLOCKED):")) ] | last) as $lastclose
          | ([ $fulls[] | select(.i < $t.i) ] | last) as $openfull
          # An open /full = a /full command before the tag, more recent than any close (so a stale, already-
          # completed earlier /full does not count).
@@ -122,14 +135,18 @@ decide() {
          | (if ($tagid | length) > 0 then $tagid else $fullid end) as $issue
 
          # Reconstruct /finish args from the original /full invocation — mirrors /full Step 3:
-         #   in-place -> "<id>"; wt -> "<id> merge"; wt+pr -> "<id> pr"; append " no push" when requested.
-         # The tag line alone is insufficient (it always reads "merge" in wt mode and never knows about
-         # pr/no-push). Space-padded token tests avoid matching an issue-id prefix such as "PR-123".
+         #   in-place -> "<id>"; wt -> "<id> merge"; wt+pr -> "<id> pr"; append " no push" when requested;
+         #   prefix "auto " when the /full ran autonomously (dropping it would swap the unattended
+         #   /finish into interactive mode mid-flight). The tag line alone is insufficient (it always
+         #   reads "merge" in wt mode and never knows about auto/pr/no-push). Space-padded token tests
+         #   avoid matching an issue-id prefix such as "PR-123" or "AUTO-12".
          | (" " + (($openfull.args // "") | ascii_downcase) + " ") as $fa
+         | ($fa | test(" auto ")) as $is_auto
          | ($fa | test(" wt ")) as $is_wt
          | ($fa | test(" pr ")) as $is_pr
          | ($fa | test("no push|don.t push|skip push")) as $is_nopush
-         | ($issue
+         | ((if $is_auto then "auto " else "" end)
+            + $issue
             + (if $is_pr then " pr" elif $is_wt then " merge" else "" end)
             + (if ($is_nopush and ($is_pr | not)) then " no push" else "" end)) as $finishargs
 
