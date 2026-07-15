@@ -247,7 +247,7 @@ git config --worktree --get start.source-branch 2>/dev/null
 git branch --show-current
 ```
 
-- **If already on a non-`main` branch**: stay on it and skip to Step 6.
+- **If already on a non-`main` branch**: stay on it and skip to Step 6. **Do NOT create a new branch** — not even when the current branch looks wrong for this issue (unrelated name, far ahead of `main`, or you'd prefer a "cleaner" dedicated branch). In a shared in-place checkout, `git checkout -b` moves the shared working tree's HEAD and can drag or strand a concurrent session's uncommitted work (see standards/git.md, "Branch operations mutate the SHARED working tree — never reach for them unasked"). If the branch genuinely seems wrong for this issue, STOP and ASK the user which branch to use — never decide unilaterally.
 - **If on `main`**: create or switch to a feature branch:
 
 ```bash

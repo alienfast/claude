@@ -93,6 +93,21 @@ Should I:
 3. Something else?"
 ```
 
+#### Branch operations mutate the SHARED working tree — never reach for them unasked
+
+The rules above cover file-level destruction (`restore`/`reset`/`clean`), and the hook blocks those. Branch operations are the other multi-session hazard — and the hook does NOT catch them: `git branch` is hook-allowed, and `git checkout`/`git switch` only trip it in the `--`-separated file-restore form, so `git checkout -b` / `git switch -c` / `git branch -D` all run unguarded. In a checkout shared by concurrent sessions they mutate state every session in that directory sees.
+
+- **`git checkout` / `checkout -b` moves the shared working tree.** Switching branches carries the *current* uncommitted changes — including another session's WIP — onto the target branch. A concurrent session that then commits, commits onto **whatever branch you switched to**, not the one it thinks it's on.
+- **A branch you "just created" can accrue other sessions' commits.** Between your `checkout -b` and a later `git branch -D`, a concurrent session can land a commit on your branch. The delete then de-references *their* commit — destructive despite you having committed nothing, and the hook won't stop it.
+- **Uncommitted changes you didn't create = an active concurrent session. Do not run ANY branch/checkout/switch operation.** Leave the branch and working tree exactly as-is — the same STOP that governs `restore`/`reset`, extended to branch state.
+
+Concrete rules:
+
+1. **Never create, switch, or delete a branch in a checkout you don't exclusively own without an explicit user instruction.** "The current branch looks wrong for this issue" (unrelated name, far ahead of `main`) is a reason to **STOP and ASK**, never to re-branch on your own judgment. (A `/start wt` worktree session exclusively owns its own worktree — creating/deleting its branch there is fine; this is about the shared main checkout.)
+2. **Before `git branch -D <b>`, verify `<b>` still points where you left it** (`git rev-parse <b>` == the SHA at creation). If it moved, a concurrent session committed onto it — do not delete; investigate and surface.
+
+(Scoped `git add <path>` staging — never `git add -A` in a shared checkout — is already covered under "Proper File Staging" below.)
+
 #### `/finish merge` is self-serializing per parent repo
 
 When multiple worktree sessions run `/finish merge` concurrently against the same parent repo, [scripts/finish-merge.sh](../scripts/finish-merge.sh) acquires an exclusive lock keyed by the repo's common git dir (via [scripts/with-repo-lock.py](../scripts/with-repo-lock.py)) before advancing source — one key per parent repo, shared across all its worktrees. Other sessions block on stderr (`[finish-queue] waiting for <common-git-dir> ...`) and acquire in turn.
