@@ -14,6 +14,7 @@ These standards apply universally across all contexts:
 - [Semantic Versioning](semver.md) - Version classification, compatibility rules, update strategies
 - [Technical Debt Prevention](technical-debt-prevention.md) - No backups, no duplicates, modify in place
 - [Linear Workflow](linear-workflow.md) - Terminal states, dependency resolution rules
+- [Issue Spec](issue-spec.md) - Certified-spec template, quality bar, and the `specified` label contract
 - [Lifecycle Tags](lifecycle-tags.md) - Final-line status tags for Linear-lifecycle skills
 - [Deprecation Handling](deprecation-handling.md) - Proactively update deprecated code; migration patterns and anti-patterns
 - [Version-Aware Planning](version-aware-planning.md) - Research and planning based on actual dependency versions

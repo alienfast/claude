@@ -37,7 +37,7 @@ Fourteen tags cover the lifecycle. Every session ends with exactly one.
 | `ABANDONED` | `/start` Step 8.5 (abandoned-after-start path) | User halted the session before completion; issue moved back to `Planned`, worktree preserved for resumption | resume later, or clean up manually if dropping permanently |
 | `SKIPPED-BLOCKED` | `/start` in `auto` mode (Steps 2–3 auto defaults) | Issue could not be started without a user decision (unresolved blocker, owned by someone else, or already in a terminal state); nothing was claimed or modified | resolve the blocker / ownership manually; `/auto` treats this as a skip, not a failure |
 | `AUTO-CONTINUE` | `/auto` | One loop iteration finished (issue shipped, or skipped/failed below the circuit-breaker threshold), or paused on a transient Claude-API failure (mid-issue or pre-pick; retry pending); the next `/loop` iteration proceeds/resumes | none — the loop continues |
-| `NO-CANDIDATES` | `/auto` | `/next` returned no workable candidates; the backlog is drained | none — the loop ends; seed more work in Linear to resume |
+| `NO-CANDIDATES` | `/auto` | `/next specified` returned no workable certified candidates; the backlog is drained | certify more work via `/spec` (or seed new certified issues via `/prd`), then delete `tmp/auto-state.json` and re-invoke `/auto` or `/loop /auto` |
 | `AUTO-HALTED` | `/auto` (Step 0 re-emission, Step 1 preflight, Step 4 breaker, Error Handling) | The loop stopped itself: 2 consecutive issue failures (likely systemic), an unsafe preflight (dirty working tree not attributable to a Linear issue, or attributable to an issue that already failed to finish this run), or an environment failure (`/next` broken, `linear-cli` unauthenticated). Sticky: re-invocations re-emit it until the run state is reset | investigate the failure summary, then delete `tmp/auto-state.json` and re-invoke `/auto` or `/loop /auto` |
 
 ## Worked examples
@@ -69,9 +69,9 @@ SKIPPED-BLOCKED: UI-7 — blocked by UI-4 (In Progress). Not claimed; /auto will
 
 AUTO-CONTINUE: UI-3 shipped (SHIPPED-MERGE). 2 shipped, 1 skipped this run; next /loop iteration proceeds.
 
-NO-CANDIDATES: UI backlog drained — 4 shipped, 1 skipped this run. Seed more issues to resume /auto.
+NO-CANDIDATES: UI backlog drained of certified issues — 4 shipped, 1 skipped this run. Run /spec to certify backlog issues (or /prd to seed new ones), then delete tmp/auto-state.json and re-invoke /auto.
 
-AUTO-HALTED: 2 consecutive failures (UI-5 BLOCKED-ON-REVIEW, UI-6 BLOCKED-ON-REVIEW) — likely systemic. See Linear comments on both issues.
+AUTO-HALTED: 2 consecutive failures (UI-5 BLOCKED-ON-REVIEW, UI-6 BLOCKED-ON-REVIEW) — likely systemic. See Linear comments on both issues; delete tmp/auto-state.json to start a fresh run.
 ```
 
 ## Rules

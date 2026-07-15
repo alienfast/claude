@@ -90,7 +90,7 @@ Route by what the information is:
 
 Memory is the destination of last resort: if it's worth keeping and the team would benefit, promote it to shared config instead.
 
-The `/reflect` skill automates this routing: at the `/quality-review` tail it turns session friction (thrashing, silently-worked-around skills, repeated corrections) into shared-config edits — auto-applying the small/safe ones to the working tree (never committed), proposing the rest, and filing those proposals as an `ai-generated` Linear issue (`Planned`, self-assigned) so they survive autonomous `/full` runs. `/reflect sweep` audits a project's config against the actual codebase and de-duplicates accumulated drift.
+The `/reflect` skill automates this routing: at the `/quality-review` tail it turns session friction (thrashing, silently-worked-around skills, repeated corrections) into shared-config edits — auto-applying the small/safe ones to the working tree (never committed), proposing the rest, and filing those proposals as a certified (`specified`) Linear issue (`Planned`) so they survive autonomous `/full` runs and are eligible for `/auto` pickup. `/reflect sweep` audits a project's config against the actual codebase and de-duplicates accumulated drift.
 
 ### Multi-Session Safety
 

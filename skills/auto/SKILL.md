@@ -1,11 +1,11 @@
 ---
 name: auto
-description: Autonomous Linear-backlog iteration — ships exactly ONE issue per invocation (preflight → /next → /full auto wt → record outcome), with a skip-and-circuit-breaker failure policy. Run continuously via `/loop /auto`; the loop ends itself on NO-CANDIDATES or AUTO-HALTED. Invoking /auto IS the run-scoped commit/push grant (standards/git.md). Use when the user says 'auto', 'work autonomously', 'work through the backlog', 'ship the next issue unattended', or invokes /auto (typically as /loop /auto).
+description: Autonomous Linear-backlog iteration — ships exactly ONE issue per invocation (preflight → /next specified → /full auto wt → record outcome), with a skip-and-circuit-breaker failure policy. Run continuously via `/loop /auto`; the loop ends itself on NO-CANDIDATES or AUTO-HALTED. Invoking /auto IS the run-scoped commit/push grant (standards/git.md). Use when the user says 'auto', 'work autonomously', 'work through the backlog', 'ship the next issue unattended', or invokes /auto (typically as /loop /auto).
 ---
 
 # Auto (Autonomous Backlog Iteration)
 
-Ships **exactly one Linear issue per invocation**, end-to-end and unattended: finish any in-flight work, pick the best next issue via `/next`, ship it via `/full auto wt`, record the outcome, emit a tagged final line. Continuous operation is `/loop /auto` — each loop iteration is one issue, and the loop ends itself when the backlog drains (`NO-CANDIDATES`) or the circuit breaker trips (`AUTO-HALTED`).
+Ships **exactly one Linear issue per invocation**, end-to-end and unattended: finish any in-flight work, pick the best next issue via `/next specified` (certified issues only), ship it via `/full auto wt`, record the outcome, emit a tagged final line. Continuous operation is `/loop /auto` — each loop iteration is one issue, and the loop ends itself when the backlog drains (`NO-CANDIDATES`) or the circuit breaker trips (`AUTO-HALTED`).
 
 **Why one-issue-per-invocation instead of an internal "keep going" loop:** in-prose anti-stop scaffolding is the documented failure mode of autonomous macros (`/full` records it failing three times before its Stop hook existed). `/loop`'s wakeup machinery is the reliable recurrence mechanism; the `full-continue.sh` Stop hook already guards the intra-issue start→finish handoff. This skill adds no hooks and no scaffolding — it composes the trustworthy pieces.
 
@@ -68,9 +68,9 @@ Clean tree and no resumable worktree → proceed to Step 2.
 
 ### Step 2: Pick — dispatch /next
 
-Call `Skill(skill: "next")`. It ranks unblocked candidates for the team.
+Call `Skill(skill: "next", args: "specified")`. It ranks unblocked candidates for the team, restricted to issues carrying the `specified` label — only certified specs ship unattended (`standards/issue-spec.md`; `/prd` and `/spec` are the primary certification paths, plus `/reflect`'s auto-filed proposals and manual labeling).
 
-- **No candidates** → set `status: "drained"` in the state file and emit `NO-CANDIDATES: <team> backlog drained — <shipped>/<skipped>/<failed> this run. Seed more issues to resume /auto.` Under `/loop` self-pacing this ends the loop — do not schedule another wakeup.
+- **No candidates** → set `status: "drained"` in the state file and emit `NO-CANDIDATES: <team> backlog drained of certified issues — <shipped>/<skipped>/<failed> this run. Run /spec to certify backlog issues (or /prd to seed new ones), then delete tmp/auto-state.json and re-invoke /auto.` Under `/loop` self-pacing this ends the loop — do not schedule another wakeup.
 - **Candidates exist** → take the **top-ranked** one. Do not prompt the user to choose. Skip any candidate already in this run's `shipped`, `skipped`, or `failed` lists (`shipped` included: a `DEFERRED-MERGE` issue remains In Progress until the queue drains it, and re-picking it would race the queued merge). If every candidate is excluded that way, treat as no-candidates — including setting `status: "drained"` (the entry gate must hold under fixed-interval `/loop` here too) — but say so: `NO-CANDIDATES: all remaining candidates were already attempted this run (<shipped>/<skipped>/<failed>). Delete tmp/auto-state.json to re-attempt.`
 
 ### Step 3: Ship — dispatch /full auto wt

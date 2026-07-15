@@ -35,6 +35,7 @@ Use this skill when:
    - **Blocked issues**: Dependencies not resolved
    - **Priority mismatches**: High priority but blocked
    - **Orphaned issues**: No assignee, no activity
+   - **Uncertified issues**: Workable but lacking the `specified` label — invisible to `/auto`; route through `/spec` to certify (see [standards/issue-spec.md](../../standards/issue-spec.md)). Detect them by comparing `linear-cli issues list --team ENG -o json` label sets, or diffing against `linear-cli issues list --team ENG -l specified` (the default table view doesn't show labels)
 
 4. **Generate Recommendations**
 

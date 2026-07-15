@@ -49,6 +49,10 @@ When evaluating whether an issue's blockers are resolved (for triage, dependency
 
 Any skill that checks whether blockers are resolved (triage, next) should treat "Ready For Release" identically to "Done" when determining if an issue is workable.
 
+## Certified Specs (the `specified` label)
+
+The `specified` issue label marks a certified spec — problem, desired outcome, and testable success criteria, human-reviewed or produced by a trusted pipeline — and gates autonomous pickup: `/auto` dispatches `/next specified`, so only certified issues ship unattended. The canonical template, quality bar, and read-merge-set label mechanics live in [issue-spec.md](issue-spec.md); `/prd` certifies on create, `/spec` grooms existing issues into shape.
+
 ## Spawned Issues Must Link to Their Parent
 
 Any Linear issue created as a follow-up from another issue's workflow (deferred items from `/quality-review`, sub-tasks from `/prd`, etc.) MUST be linked to its originating issue. Use `~/.claude/scripts/linear-create-child.sh <parent> <team> <state> <title> <body-file>` — `linear-cli issues create` has no `--parent` flag (you can set the parent's UUID via `--data` `parentId`, but that path performs no verification), so the helper creates the issue, links the parent with `relations parent`, and **verifies the link, failing hard on an orphan**.

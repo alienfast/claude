@@ -44,7 +44,7 @@ Per issue, the loop is two commands — `/start` then `/finish`:
 | Step | Command | Notes |
 | ---- | ------- | ----- |
 | Build | `/start PL-12` | Assigns, creates branch, plans, implements, then auto-runs `/quality-review`. Append `wt` to work in an isolated worktree |
-| Finish | `/finish` | Reads the review verdict, commits, pushes, marks Ready For Release, then calls `/next` |
+| Finish | `/finish` | Reads the review verdict, commits, pushes, marks Ready For Release |
 
 Or collapse both into one: `/full PL-12` runs `/start` → `/quality-review` → `/finish` end to end, gated on the review verdict, pausing only for plan approval and the deferred-items decision. Append `wt` to run it in an isolated worktree.
 
@@ -81,12 +81,12 @@ Reach for these as needed — between loop steps or on their own:
 
 The developer workflow above is hands-on: you pick issues and drive `/full` per issue. `/auto` is the same machinery with the human taken out of the pick-and-ship loop, and `/loop` is what keeps it running unattended.
 
-- **`/auto`** ships **exactly one Linear issue per invocation**, end to end: finish any in-flight work, pick the best unblocked issue via `/next`, ship it via `/full auto wt`, record the outcome. Worktree mode is always on (so successive issues chain without stacking branches), and every underlying `auto` default chooses abort/preserve over guess — the worst acceptable outcome is "nothing happened and Linear says why," never "something wrong shipped." Invoking `/auto` **is** the run-scoped grant for the commits and pushes it makes (see [standards/git.md](standards/git.md)).
+- **`/auto`** ships **exactly one Linear issue per invocation**, end to end: finish any in-flight work, pick the best unblocked issue via `/next specified` (certified issues only), ship it via `/full auto wt`, record the outcome. Worktree mode is always on (so successive issues chain without stacking branches), and every underlying `auto` default chooses abort/preserve over guess — the worst acceptable outcome is "nothing happened and Linear says why," never "something wrong shipped." Invoking `/auto` **is** the run-scoped grant for the commits and pushes it makes (see [standards/git.md](standards/git.md)).
 - **`/loop /auto`** is the way you actually run it. `/loop` supplies the recurrence — its wakeup machinery re-invokes `/auto` for the next issue — while each `/auto` call stays a single, self-contained iteration. (Deliberately: in-prose "keep going" scaffolding is the documented failure mode of autonomous macros, so `/auto` leans on `/loop`'s reliable recurrence instead of inventing its own.)
 
-Point it at a seeded, prioritized backlog and walk away. It works the queue one issue at a time and **ends itself** — no runaway loop:
+Point it at a seeded, certified (via `/prd` or `/spec`) backlog and walk away. It works the queue one issue at a time and **ends itself** — no runaway loop:
 
-- **`NO-CANDIDATES`** — the backlog drained. Seed more issues to resume.
+- **`NO-CANDIDATES`** — the backlog has no more certified, workable issues. Certify more via `/spec` (or seed via `/prd`), delete `tmp/auto-state.json`, and re-invoke.
 - **`AUTO-HALTED`** — the circuit breaker tripped (two consecutive failures, likely systemic) or an environment halt (e.g. a dirty tree it can't attribute). Each failing issue gets a Linear comment explaining why before the loop stops.
 
 `/loop /auto` never clears or compacts the session — the harness's automatic summarization keeps context in check as it grows (`/compact` and `/clear` are user commands the loop must never invoke). Because summarization can drop detail, the run's actual memory lives in `tmp/auto-state.json` (shipped / skipped / failed lists + the failure counter), not the conversation — so the run survives summarization across iterations, and the terminal halt stays sticky even under a fixed-interval `/loop 15m /auto`. A human starts a fresh run by deleting that file.
@@ -99,7 +99,7 @@ Point it at a seeded, prioritized backlog and walk away. It works the queue one 
   │                                                                             │
   │  0  re-anchor + read  tmp/auto-state.json   (cross-iteration run memory)    │
   │  1  preflight ......... finish any in-flight work / resume orphaned wt      │
-  │  2  /next ............. rank unblocked candidates, take the top one         │
+  │  2  /next specified ... rank certified, unblocked candidates, take top one  │
   │  3  /full auto wt <ISSUE>                                                   │
   │        ├─ /start auto ........... branch · plan → Linear · implement        │
   │        ├─ /quality-review auto .. adversarial review + fix loop             │
@@ -111,7 +111,7 @@ Point it at a seeded, prioritized backlog and walk away. It works the queue one 
               AUTO-CONTINUE  ─────────────┤  shipped / skipped / recorded-failure
                                           ▼   → /loop wakes the next iteration
               ─────────────────────────────────────────────────────────────────
-              NO-CANDIDATES  (backlog drained)          ─┐
+              NO-CANDIDATES  (backlog drained of certified issues)  ─┐
               AUTO-HALTED    (2 consecutive fails / env) ─┴─►  loop stops, awaits a human
 ```
 
@@ -150,6 +150,7 @@ Automated multi-step workflows invoked by trigger phrases or slash commands.
 | [next](skills/next/) | Suggest best next issue using cycle, dependency, and triage signals |
 | [triage](skills/triage/) | Analyze backlog for staleness, blockers, and priority suggestions |
 | [prd](skills/prd/) | Create agent-friendly tickets with PRDs and success criteria |
+| [spec](skills/spec/) | Groom and certify an issue into a `specified` spec — the certification gate `/auto` requires |
 | [reap-worktrees](skills/reap-worktrees/) | Inspect and reclaim leftover `/start wt` worktrees (PR/branch merged, or issue Done/Canceled) |
 | [merge-queue](skills/merge-queue/) | Inspect and drain `/finish` merges that were deferred, then retried by the launchd drainer |
 
@@ -200,6 +201,8 @@ Path-specific conventions applied automatically when editing matching files.
 | [react](rules/react.md) | `**/*.tsx`, `**/*.jsx` |
 | [markdown](rules/markdown.md) | `**/*.md`, `**/*.mdx` |
 | [package-manager](rules/package-manager.md) | `**/package.json`, lockfiles |
+| [env-vars](rules/env-vars.md) | `**/*.ts`, `**/*.tsx`, `**/*.mts` — required-env-var handling; `assertEnvVariable`, no silent defaults |
+| [biome](rules/biome.md) | `**/*.ts`, `**/*.tsx`, `**/*.js`, `**/*.jsx`, `**/*.mjs`, `**/*.cjs`, `**/*.json`, `**/*.jsonc` — Biome projects only, self-nullifies elsewhere |
 
 ### Hooks
 

@@ -1,6 +1,6 @@
 ---
 name: reflect
-description: Continuous-improvement reflection on the just-finished session — captures generalizable lessons and reconciles stale config, then auto-applies the small/safe shared-config edits and proposes the larger ones — filing the proposals as an ai-generated Linear issue (Planned, self-assigned). Two modes — session (default; reflect on this session's friction) and sweep (audit a project's CLAUDE.md/rules against the actual codebase and de-duplicate). Use when the user says 'reflect', 'reflect on this session', 'what did we learn', 'reflect sweep', 'audit the config', or invokes /reflect. Auto-invoked at the tail of /quality-review.
+description: Continuous-improvement reflection on the just-finished session — captures generalizable lessons and reconciles stale config, then auto-applies the small/safe shared-config edits and proposes the larger ones — filing the proposals as a certified (`specified`) Linear issue (Planned). Two modes — session (default; reflect on this session's friction) and sweep (audit a project's CLAUDE.md/rules against the actual codebase and de-duplicate). Use when the user says 'reflect', 'reflect on this session', 'what did we learn', 'reflect sweep', 'audit the config', or invokes /reflect. Auto-invoked at the tail of /quality-review.
 ---
 
 # Reflect
@@ -139,17 +139,17 @@ First, for each `propose` item, show its destination and a ready-to-paste diff �
    - [ ] ...
    ```
 
-   Reference the originating issue as a bare `<ISSUE-ID>` (Linear auto-links it). Do **not** parent-link — a config/process improvement is standalone, not a child of the feature that surfaced it.
+   Reference the originating issue as a bare `<ISSUE-ID>` (Linear auto-links it). Do **not** parent-link — a config/process improvement is standalone, not a child of the feature that surfaced it. This body certifies via the trusted-pipeline carve-out documented in [standards/issue-spec.md](../../standards/issue-spec.md) — observation = problem, diff = outcome, checkboxes = criteria — so filing self-certifies without an interview.
 3. **File it,** capturing the exit code:
 
    ```bash
    new_id=$(~/.claude/scripts/linear-file-improvement.sh <team> "<title>" "$body_file"); rc=$?
    ```
 
-   The helper creates one standalone issue — status `Planned`, `--assignee me` (resolves to the session runner), label `ai-generated` (created if missing) — and echoes the identifier. Title e.g. `Continuous improvement from <ISSUE-ID>: <N> proposal(s)`.
+   The helper creates one standalone issue — status `Planned`, unassigned, label `specified` (created if missing — the certification that makes it eligible for `/auto` pickup) — and echoes the identifier. Title e.g. `Continuous improvement from <ISSUE-ID>: <N> proposal(s)`.
 4. Branch on `rc` for the Output `Filed:` line, then move on — never block the reflection or the enclosing `/full` on filing:
-   - `0` → `Filed: <new_id>` (filed and labelled).
-   - `2` → `Filed: <new_id> (label not attached)` — filed, but the team has no attachable `ai-generated` label; surface the helper's WARN so the user can add the label.
+   - `0` → `Filed: <new_id>` (filed and certified).
+   - `2` → `Filed: <new_id> (label not attached)` — filed, but the `specified` label could not attach, so the issue is invisible to `/auto` until labeled; surface the helper's WARN so the user can fix the label.
    - `1` (or empty `new_id`) → degrade per Error handling (`Filed: none — <reason>`).
 
 ### Step 7 — Output
@@ -203,7 +203,7 @@ Emit the Config Audit report (see Output).
 Reflection:
 - Applied (uncommitted): <N> — <file — one-line each, or none>
 - Proposed: <N> — <destination — one-line each, or none>
-- Filed: <PL-XX (Planned, self-assigned) — append `(label not attached)` when the team lacks the label; or none — reason if skipped>
+- Filed: <PL-XX (Planned, specified) — append `(label not attached — not eligible for /auto)` on exit 2; or none — reason if skipped>
 - Dropped: <N> (already-covered / one-off / not-generalizable)
 ```
 
@@ -225,4 +225,4 @@ Config Audit — <project>:
 - **Auto-fixer/lint touched a config file you were about to edit** → re-read before editing (the on-disk copy is post-fix); see `~/.claude/rules/markdown.md` and `~/.claude/rules/biome.md`.
 - **A proposed edit would remove or restructure existing guidance** → never `apply-now`; always `propose`, even if you are confident. Removal is the user's call. (A reconcile fix that *corrects a stale line's value in place* removes and restructures nothing — that stays `apply-now` per the gates above.)
 - **No issue / no project context** (standalone in a non-project dir) → session mode still works (it reflects on the conversation); sweep mode requires a project — ask for a path if none resolves. When `<project>` is unresolvable, any candidate whose correct home is a project-scoped file (`<project>/CLAUDE.md`, `<project>/.claude/rules/`) downgrades to `propose` (surface the suggested path for the user to place) — never `apply-now` to a guessed or user-level fallback path.
-- **Issue filing failed or no team resolved** (Step 6) → if `linear-file-improvement.sh` exits **1** (`linear-cli` unavailable, the create call failed, no `Planned`-like state) or no team could be derived from a worked issue, **surface the `propose` diffs as before and record `Filed: none — <reason>`**. Exit **2** is *not* a failure — the issue was filed (id on stdout) but its team has no attachable `ai-generated` label; record `Filed: <PL-XX> (label not attached)` and surface the WARN. Filing is best-effort: never block the reflection or the enclosing `/full` flow on it, and never guess a team to force a file.
+- **Issue filing failed or no team resolved** (Step 6) → if `linear-file-improvement.sh` exits **1** (`linear-cli` unavailable, the create call failed, no `Planned`-like state) or no team could be derived from a worked issue, **surface the `propose` diffs as before and record `Filed: none — <reason>`**. Exit **2** is *not* a failure — the issue was filed (id on stdout) but the `specified` label could not attach, leaving it invisible to `/auto` until labeled; record `Filed: <PL-XX> (label not attached)` and surface the WARN. Filing is best-effort: never block the reflection or the enclosing `/full` flow on it, and never guess a team to force a file.

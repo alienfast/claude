@@ -3,6 +3,8 @@
 #
 # Usage:
 #   next-candidates.sh [--team KEY] [--completed PL-XX] [--limit N] [--no-parent-walk]
+#                      [--label NAME] [--exclude-label NAME] [--include-triage]
+#                      [--include-blocked]
 #
 # Resolves the team key from --team or $LINEAR_TEAM.
 # Fans out three parallel Linear CLI calls (workable list, deps graph, current
@@ -11,6 +13,13 @@
 # sibling-under-completed-parent → priority-fallback), then walks parent chains
 # for the top-K candidates to apply parent-status weighting (In Progress epic >
 # Planned > Backlog > Triage). Emits a ranked markdown list to stdout.
+#
+# --label/--exclude-label filter candidates client-side by ASCII-case-insensitive label
+# name (team-scoped duplicate labels share a name, not an id). --include-triage
+# (matches Linear's triage STATE TYPE, so a renamed triage state still works) and
+# --include-blocked (keeps issues with unresolved blockers, reporting each one's
+# unresolved-blocker count) are both for /spec's grooming pick-list only — /next
+# itself never uses these.
 #
 # Exit codes: 0 success (incl. "no workable issues"), 1 arg error,
 # 2 Linear/network failure, 3 missing dependency.
@@ -29,15 +38,34 @@ team_arg=""
 completed=""
 limit=3
 parent_walk=1
+label=""
+exclude_label=""
+include_triage=0
+include_blocked=0
+
+# Value-taking flags must fail loudly, not silently: a missing value makes the `shift 2`
+# below fail under set -e with no stderr, and an empty value (e.g. --label "") must not
+# be read as "no filter" — that would fail a certification gate open instead of closed.
+require_value() {
+  local flag="$1" remaining="$2" val="$3"
+  if [ "$remaining" -lt 2 ] || [ -z "$val" ]; then
+    echo "ERROR: $flag requires a non-empty value" >&2
+    exit 1
+  fi
+}
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --team) team_arg="$2"; shift 2 ;;
-    --completed) completed="$2"; shift 2 ;;
-    --limit) limit="$2"; shift 2 ;;
+    --team) require_value --team "$#" "${2:-}"; team_arg="$2"; shift 2 ;;
+    --completed) require_value --completed "$#" "${2:-}"; completed="$2"; shift 2 ;;
+    --limit) require_value --limit "$#" "${2:-}"; limit="$2"; shift 2 ;;
     --no-parent-walk) parent_walk=0; shift ;;
+    --label) require_value --label "$#" "${2:-}"; label="$2"; shift 2 ;;
+    --exclude-label) require_value --exclude-label "$#" "${2:-}"; exclude_label="$2"; shift 2 ;;
+    --include-triage) include_triage=1; shift ;;
+    --include-blocked) include_blocked=1; shift ;;
     -h|--help)
-      sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *) echo "ERROR: unknown arg '$1'" >&2; exit 1 ;;
@@ -92,10 +120,14 @@ cycle_err="$tmpdir/cycle.err"
 # assignee.name (a display name on real workspaces — NOT the email the ranking compares
 # against), and silently caps at the page size; the api gives estimate + assignee.email
 # and pages through everything. Writes the array already in the shape the ranking
-# pipeline expects (state→name string, assignee→email string) directly to $out.
+# pipeline expects (state→name string + state_type, assignee→email string) directly to
+# $out. Pages accumulate in "$out.pages" on disk, one JSON array per line, rather than in
+# a shell variable passed through --argjson each iteration — that hits ARG_MAX (~1MB on
+# macOS) on a large team's issue list.
 fetch_team_issues() {
-  local team="$1" out="$2" after='' all='[]' page nodes has
-  local q='query($team:String!,$after:String){issues(filter:{team:{key:{eq:$team}}, state:{type:{nin:["completed","canceled"]}}}, first:250, after:$after){nodes{identifier title estimate priority state{name} assignee{email}} pageInfo{hasNextPage endCursor}}}'
+  local team="$1" out="$2" after='' page nodes has pages_file="$out.pages"
+  local q='query($team:String!,$after:String){issues(filter:{team:{key:{eq:$team}}, state:{type:{nin:["completed","canceled"]}}}, first:250, after:$after){nodes{identifier title estimate priority state{name type} assignee{email} labels{nodes{name}}} pageInfo{hasNextPage endCursor}}}'
+  : > "$pages_file"
   while :; do
     if [ -z "$after" ]; then
       page=$(linear-cli api query -q -o json -v team="$team" "$q" 2>/dev/null)
@@ -105,14 +137,16 @@ fetch_team_issues() {
     [ -n "$page" ] || return 1
     [ "$(printf '%s' "$page" | jq 'has("errors")')" = "true" ] && return 1
     nodes=$(printf '%s' "$page" | jq -c '.data.issues.nodes // []')
-    all=$(jq -n --argjson a "$all" --argjson b "$nodes" '$a + $b')
+    printf '%s\n' "$nodes" >> "$pages_file"
     has=$(printf '%s' "$page" | jq -r '.data.issues.pageInfo.hasNextPage // false')
     after=$(printf '%s' "$page" | jq -r '.data.issues.pageInfo.endCursor // empty')
     { [ "$has" = "true" ] && [ -n "$after" ]; } || break
   done
-  printf '%s' "$all" | jq '[ .[]
-    | {identifier, title, state:(.state.name // "?"), priority:(.priority // 0),
-       estimate:(.estimate // 0), assignee:(.assignee.email // null)} ]' > "$out"
+  jq -s 'add' "$pages_file" | jq '[ .[]
+    | {identifier, title, state:(.state.name // "?"), state_type:(.state.type // "?"),
+       priority:(.priority // 0), estimate:(.estimate // 0), assignee:(.assignee.email // null),
+       labels:((.labels.nodes // []) | map(.name))} ]' > "$out"
+  rm -f "$pages_file"
 }
 
 fetch_team_issues "$team_key" "$list_file" &
@@ -149,11 +183,13 @@ me_email=$(linear-cli api query -q -o json 'query{viewer{email}}' 2>/dev/null | 
 
 # State sets — keep terminal states defensive across teams.
 TERMINAL_STATES='["Done","Canceled","Cancelled","Duplicate","Ready For Release"]'
-# Triage is deliberately NOT workable: it's the unreviewed-inbox bucket, so an issue there hasn't been
-# accepted for work yet and must never be surfaced as "next". (Parent epics can still be in Triage — the
-# parent-weight scale below keeps handling that; this exclusion is about a candidate's OWN state.)
+# Triage (Linear's `type: "triage"` state) is deliberately NOT workable: it's the unreviewed-inbox
+# bucket, so an issue there hasn't been accepted for work yet and must never be surfaced as "next".
+# (Parent epics can still be in Triage — the parent-weight scale below keeps handling that; this
+# exclusion is about a candidate's OWN state.) --include-triage is the one escape hatch: /spec's
+# grooming pick-list targets exactly that inbox. Matched by STATE TYPE, not name, below — a team
+# that renamed its triage state (e.g. "Inbox") still gets excluded/included correctly.
 WORKABLE_STATES='["Backlog","Planned","Todo"]'
-ACTIVE_STATES='["In Progress"]'
 
 # Build a canonical state map from BOTH the deps graph (covers blockers that
 # may live outside the workable list) and the team list (richer fields). The
@@ -198,11 +234,11 @@ if [ -n "$completed" ]; then
     --argjson rev "$reverse_blocker_map_json" \
     --argjson sm "$state_map_json" \
     --argjson terminal "$TERMINAL_STATES" '
-      # BFS over reverse blocker map from $root, but only descend into nodes
-      # whose blockers are now all resolved (terminal states). This matches
-      # the "newly unblocked" definition: an issue whose *last* unresolved
-      # blocker was the completed issue (or transitively unblocked by it).
-      def all_terminal($ids): all($ids[]; ($sm[.] // "Unknown") as $s | ($terminal | index($s)) != null);
+      # Transitive reachability walk (BFS) from the completed issue over the reverse-blocker
+      # map — it visits every descendant, not just newly-unblocked ones. The final filter
+      # below drops nodes already in a terminal state; whether a candidate is actually
+      # unblocked is enforced downstream, by the $unresolved blocker check in the
+      # candidate-select stage.
       def bfs($frontier; $visited):
         if ($frontier | length) == 0 then $visited
         else
@@ -225,13 +261,15 @@ fi
 candidates_json=$(jq \
   --argjson workable "$WORKABLE_STATES" \
   --argjson terminal "$TERMINAL_STATES" \
-  --argjson active "$ACTIVE_STATES" \
   --argjson sm "$state_map_json" \
   --argjson bm "$blocker_map_json" \
   --argjson cycle "$cycle_set_json" \
   --argjson newly "$newly_unblocked_json" \
   --arg me "${me_email:-}" \
-  --arg completed "$completed" '
+  --arg label "$label" \
+  --arg xlabel "$exclude_label" \
+  --arg triage "$include_triage" \
+  --arg blocked "$include_blocked" '
     def priority_label(p):
       if p == 1 then "Urgent"
       elif p == 2 then "High"
@@ -250,8 +288,12 @@ candidates_json=$(jq \
       | (.identifier) as $id
       | ($bm[$id] // []) as $blockers
       | ($blockers | map(select(($sm[.] // "Unknown") as $s | ($terminal | index($s)) == null))) as $unresolved
-      | select(($workable | index($i.state)) != null)
-      | select($unresolved | length == 0)
+      | select((($workable | index($i.state)) != null) or (($triage == "1") and ($i.state_type == "triage")))
+      | select(($blocked == "1") or ($unresolved | length == 0))
+      # any() over an empty label array is false and all() is true, so unlabeled issues
+      # correctly fail a --label requirement and pass an --exclude-label one.
+      | select(($label == "") or (any(($i.labels // [])[]; ascii_downcase == ($label | ascii_downcase))))
+      | select(($xlabel == "") or (all(($i.labels // [])[]; ascii_downcase != ($xlabel | ascii_downcase))))
       | {
           id: $id,
           title: $i.title,
@@ -264,14 +306,17 @@ candidates_json=$(jq \
           is_me: (($me != "") and ($i.assignee == $me)),
           in_cycle: (($cycle | index($id)) != null),
           newly_unblocked: (($newly | index($id)) != null),
-          blocker_count_total: ($blockers | length)
+          unresolved_count: ($unresolved | length)
         }
     )
   ' "$list_file")
 
 candidate_count=$(printf '%s' "$candidates_json" | jq 'length')
 if [ "$candidate_count" -eq 0 ]; then
-  printf '## Suggested next\n\n_No workable issues in team %s._\n' "$team_key"
+  filter_desc=""
+  [ -n "$label" ] && filter_desc=" with label '$label'"
+  [ -n "$exclude_label" ] && filter_desc="$filter_desc lacking label '$exclude_label'"
+  printf '## Suggested next\n\n_No workable issues%s in team %s._\n' "$filter_desc" "$team_key"
   exit 0
 fi
 
@@ -279,18 +324,23 @@ fi
 
 # Tier assignment (without parent data yet — tier 5 deferred to step 7).
 # Tier 1: assigned to me + workable
-# Tier 2: in current cycle + newly unblocked
-# Tier 3: in current cycle (ready)
-# Tier 4: newly unblocked (any)
+# Tier 2: in current cycle + newly unblocked + no open blockers
+# Tier 3: in current cycle
+# Tier 4: newly unblocked + no open blockers
 # Tier 6: anything else workable (tier 5 reassignment happens post-parent-walk)
+#
+# The unresolved_count==0 guard on tiers 2/4 matters only under --include-blocked (a no-op
+# otherwise, since the candidate select above already requires it): newly_unblocked marks
+# descendants of the completed issue in the blocks-graph, not "fully unblocked" — a candidate
+# can be newly_unblocked and still have another, unrelated open blocker.
 ranked_json=$(printf '%s' "$candidates_json" | jq '
   map(
     . + {
       tier: (
         if .is_me then 1
-        elif (.in_cycle and .newly_unblocked) then 2
+        elif (.in_cycle and .newly_unblocked and .unresolved_count == 0) then 2
         elif .in_cycle then 3
-        elif .newly_unblocked then 4
+        elif (.newly_unblocked and .unresolved_count == 0) then 4
         else 6
         end
       )
@@ -439,7 +489,8 @@ printf '%s' "$ranked_json" | jq -r --argjson lim "$limit" '
           " · Epic: **\(.value.parent_root.identifier)** _(\(.value.parent_root.state))_"
         else "" end)
     else "" end) +
-    "\n   - Tier \(.value.tier): \(tier_reason(.value))"
+    "\n   - Tier \(.value.tier): \(tier_reason(.value))" +
+    (if .value.unresolved_count > 0 then "\n   - Blocked: \(.value.unresolved_count) unresolved blocker(s)" else "" end)
 '
 
 # Note remaining candidates as a trailing line.

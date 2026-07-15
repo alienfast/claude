@@ -22,58 +22,31 @@ Use this skill when:
    - Identify the core problem being solved
 
 2. **Create the Epic/Parent Issue**
-   Use `linear-cli issues create` with:
-   - Clear, action-oriented title
-   - Problem/Context section
-   - Requirements (must-have vs nice-to-have)
-   - Success criteria (testable, specific)
+   Use `linear-cli issues create` with a clear, action-oriented title and a body following the canonical spec template in [standards/issue-spec.md](../../standards/issue-spec.md) — problem, desired outcome, requirements (must-have vs nice-to-have), testable success criteria, boundaries.
 
 3. **Break Down into Sub-Issues**
-   Each sub-issue should:
+   Each sub-issue body is itself a spec (same template) and should:
    - Be completable in one focused session (<150k tokens of context)
-   - Have clear, verifiable success criteria
-   - Include verification commands (tests to run)
+   - Have clear success criteria stated as observable outcomes
    - Define boundaries (what's in/out of scope)
 
 4. **Set Up Dependencies**
    Use `linear-cli relations add <BLOCKER> <BLOCKED> -r blocks` to create dependency chains (see Example Commands).
 
-## Ticket Structure
+5. **Certify**
+   Apply the `specified` label to **every** created issue — parent and each sub-issue:
 
-````markdown
-## Problem/Context
-[1-2 sentences explaining why this work is needed]
+   ```bash
+   ~/.claude/scripts/linear-add-label.sh ENG-100 specified
+   ```
 
-## Requirements
-### Must Have
-- [ ] Requirement 1
-- [ ] Requirement 2
+   `specified` marks a certified spec — the gate `/auto` picks up ([standards/issue-spec.md](../../standards/issue-spec.md)). Label post-create rather than via `issues create -l`, so a label problem can never fail issue creation. On exit 2, surface the helper's create-label pointer and tell the user certification is incomplete.
 
-### Nice to Have
-- [ ] Optional feature
+## Spec Shape
 
-## Success Criteria
-- [ ] Specific, testable criterion 1
-- [ ] Specific, testable criterion 2
+The canonical template and quality bar live in [standards/issue-spec.md](../../standards/issue-spec.md): `Problem` → `Desired Outcome` → `Requirements` (Must/Nice checkboxes) → `Success Criteria` (testable checkboxes) → `Boundaries` (In/Out of Scope).
 
-## Verification
-```bash
-# Commands to verify the work is complete
-make test
-npm run lint
-```
-
-## Boundaries
-
-### In Scope
-
-- What this ticket covers
-
-### Out of Scope
-
-- What should be separate tickets
-
-````
+Specs are problem + outcomes + success criteria only — **no implementation planning** (`/start` Step 6 designs the how, in plan mode, at execution time) and **no verification-command blocks** (project quality gates own that). Checkboxes are load-bearing: `/start` treats them as requirements and `/finish` checks them off.
 
 ## Example Commands
 
@@ -94,6 +67,10 @@ npm run lint
 # Use `-r blocks` with the blocker FIRST — the `blocked-by` enum value is broken on
 # linear-cli 0.3.26 (it sends "blockedBy", which the API rejects).
 linear-cli relations add ENG-101 ENG-102 -r blocks
+
+# Certify each created issue (read-merge-set — `issues update -l` alone would replace the label set)
+~/.claude/scripts/linear-add-label.sh ENG-100 specified
+~/.claude/scripts/linear-add-label.sh ENG-101 specified
 ```
 
 **Important:** For any description or body content longer than a single line, write it to `tmp/` first and use `~/.claude/scripts/linear-stdin.sh` to pass it via stdin. Do NOT use shell operators (`<`, `|`, `$()`) in Bash commands — they trigger permission prompts regardless of allow-list rules.
@@ -117,8 +94,8 @@ linear-cli search issues "user database"
 ## Best Practices
 
 1. **Size tickets appropriately** - Each should be 1-4 hours of focused work
-2. **Include test commands** - Always specify how to verify completion
+2. **State success criteria as observable outcomes** - Verification commands and technical approach belong to `/start`, not the ticket
 3. **Be explicit about scope** - Prevent scope creep with clear boundaries
-4. **Use Labels** - Add `agent-ready` label for tickets ready for AI implementation
+4. **Certify every ticket** - Process step 5 applies the `specified` label; `/auto` only ships certified issues
 5. **Establish dependencies** - Use `linear-cli relations add <BLOCKER> <BLOCKED> -r blocks` to show work order
 6. **Search first** - Check for existing related issues before creating duplicates
