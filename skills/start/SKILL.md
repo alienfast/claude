@@ -123,7 +123,7 @@ If the args contain `wt` (**including when `interactive` implied it** — see Ar
    command -v code >/dev/null 2>&1 && code -n "<WT_ABS>" || true   # <WT_ABS> from sub-step 1's stdout; -n opens a NEW window, so this session survives
    ```
 
-   Then emit the tagged final line as the session's last output and stop (substitute `ISSUE_ID` and `BRANCH` from sub-step 1's stdout; the path is `.claude/worktrees/<issue-id-lowercased>`):
+   Then emit the tagged final line as the session's last output and stop (substitute `ISSUE_ID` and `BRANCH` from sub-step 1's stdout; the path is `.claude/worktrees/<issue-id-lowercased>`). The ` ```text ` fence below is illustrative — emit the tag **bare**, as the last non-empty line, with no fence around it (see `standards/lifecycle-tags.md`):
 
    ```text
    INTERACTIVE-READY: <ISSUE-ID> — worktree ready at .claude/worktrees/<issue-id-lowercased> (branch <BRANCH>), claimed In Progress, baseline green. Work here; run /finish <ISSUE-ID> merge when done (or /quality-review <ISSUE-ID> first).
@@ -616,7 +616,7 @@ When implementation and review are complete, present a summary to the user that 
    - missing/unavailable verdict (subagent emitted malformed output, infrastructure error, etc.) → `BLOCKED-ON-REVIEW: <ISSUE-ID> — /quality-review verdict unavailable (likely malformed reviewer output or infrastructure error). Investigate before /finish.`
    - **Any other value** (defense in depth — `/quality-review` should normalize to one of the four above) → `BLOCKED-ON-REVIEW: <ISSUE-ID> — unrecognized /quality-review verdict <value>. Investigate before /finish; do NOT guess.` (`<value>` is a substitution site — see `/quality-review` Step 6 sub-step 6's "Every `<...>` token below is a substitution site" paragraph for the general rule — replace with the literal verdict string the orchestrator received, e.g., if `/quality-review` returned `Verdict: passed-after-fixes-extra`, emit `unrecognized /quality-review verdict passed-after-fixes-extra` — never the literal `<value>` token.)
 
-**Ordering — the tagged line MUST be the final line.** The tagged line is the only scannable lifecycle signal in the agents-list display; the user scans bottom-up when running parallel sessions. Do not emit a separate end-of-turn `result:` summary, a one-line recap, or any trailing prose after the tagged line. The Step 10 block IS your end-of-turn summary — nothing follows it. (The harness may append its own `※ recap:` line, which you cannot suppress; the goal is that no LLM-authored text comes between the tagged line and that harness line.)
+**Ordering — the tagged line MUST be the final line, emitted BARE.** The tagged line is the only scannable lifecycle signal in the agents-list display; the user scans bottom-up when running parallel sessions. Do not emit a separate end-of-turn `result:` summary, a one-line recap, or any trailing prose after the tagged line — and do **not** wrap the tag in a ` ```text ` (or any) code fence: a trailing closing ` ``` ` becomes the last line, which reads as a summary close and defeats the `full-continue.sh` handoff hook (see `standards/lifecycle-tags.md`). Any ` ```text ` tag examples above are documentation formatting only. The Step 10 block IS your end-of-turn summary — nothing follows the bare tag. (The harness may append its own `※ recap:` line, which you cannot suppress; the goal is that no LLM-authored text comes between the tagged line and that harness line.)
 
 ## Error Handling
 

@@ -325,6 +325,8 @@ Runs only when `ACTION` is `merge` or `pr`. Skip entirely when `ACTION` is empty
 
 **Step 9 is the terminal step of this session** — for all modes. After the merge (or `gh pr create`) completes, present the closing message and stop. Don't run further bash commands.
 
+**Emit the tag bare.** The `SHIPPED-MERGE` / `DEFERRED-MERGE` / `SHIPPED-PR` closing messages below are shown inside ` ```text ` blocks for readability, but the tag you actually emit must be the **bare, final, non-empty line** — no fence around it, nothing after it. A trailing closing ` ``` ` reads as a summary close and defeats the `full-continue.sh` handoff hook (see `standards/lifecycle-tags.md`).
+
 Substitute the values captured from Step 0 (`SOURCE_BRANCH`, `WORKTREE_BRANCH`, `WT_DIR`, `REPO_ROOT`) into the bash commands below as literal strings.
 
 **If `ACTION == "merge"`:**
