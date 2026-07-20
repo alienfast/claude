@@ -497,6 +497,7 @@ Rules for this step:
      - **Re-spawn produced a well-formed response** → continue normally with its findings.
      - **Re-spawn still malformed** → terminate `/quality-review` with the verdict body below.
      - **Re-spawn failed to return at all** (subagent crashed, infrastructure error, timeout) → route to the agent-unavailable branch below (use its verdict body).
+     - **Zero-tool-activity return (initial or corrective re-spawn)** — if the response shows no tool activity and no findings block (harness boilerplate, a truncated fragment), the agent never actually ran: this is a startup glitch, not a format refusal, and the corrective format prompt does not address it. Before treating that attempt as consumed, resume the same agent ONCE via SendMessage (`Continue the review you were spawned for; produce only the Required findings format from your system prompt`). If the resumed agent produces a well-formed report, continue the run normally with its findings (in wt mode, the standard post-delegation placement check applies to the resumed turn like any other delegation). If the resume also returns without working, or malformed, the attempt is consumed — fall through to the routing above (corrective re-spawn if not yet used; otherwise the malformed-fallthrough verdict body).
 
   **Verdict body for malformed-fallthrough** (write this verbatim to the staging file before calling `quality-review-write-verdict.sh`; all seven Output schema fields populated so `/finish` Step 4 has consistent shape to template):
 
