@@ -87,12 +87,12 @@ The developer workflow above is hands-on: you pick issues and drive `/full` per 
 
 Point it at a seeded, certified (via `/prd` or `/spec`) backlog and walk away. It works the queue one issue at a time and **ends itself** — no runaway loop:
 
-- **`NO-CANDIDATES`** — the backlog has no more certified, workable issues. Certify more via `/spec` (or seed via `/prd`), delete the run's `tmp/auto-state-<pid>.json`, and re-invoke.
+- **`NO-CANDIDATES`** — the backlog has no more certified, workable issues. Certify more via `/spec` (or seed via `/prd`), delete the run's `tmp/auto-state-<runKey>.json`, and re-invoke.
 - **`AUTO-HALTED`** — the circuit breaker tripped (two consecutive failures, likely systemic) or an environment halt (e.g. a dirty tree it can't attribute). Each failing issue gets a Linear comment explaining why before the loop stops.
 
-`/loop /auto` never clears or compacts the session — the harness's automatic summarization keeps context in check as it grows (`/compact` and `/clear` are user commands the loop must never invoke). Because summarization can drop detail, the run's actual memory lives in `tmp/auto-state-<pid>.json` (shipped / skipped / failed lists + the failure counter, keyed by the session's own PID), not the conversation — so the run survives summarization across iterations, and the terminal halt stays sticky even under a fixed-interval `/loop 15m /auto`. A human starts a fresh run by deleting that file — or simply by starting a new session, whose fresh PID names a fresh file.
+`/loop /auto` never clears or compacts the session — the harness's automatic summarization keeps context in check as it grows (`/compact` and `/clear` are user commands the loop must never invoke). Because summarization can drop detail, the run's actual memory lives in `tmp/auto-state-<runKey>.json` (shipped / skipped / failed lists + the failure counter, keyed by the session's own id), not the conversation — so the run survives summarization across iterations, and the terminal halt stays sticky even under a fixed-interval `/loop 15m /auto`. A human starts a fresh run by deleting that file — or simply by starting a new session, whose fresh PID names a fresh file.
 
-**Parallel and stoppable.** Several `/loop /auto` sessions can drain the same repo concurrently: Linear claims keep their picks disjoint, every worktree is stamped with its owning session's PID so a live sibling's in-flight issue is never mistaken for an orphaned dead run (only a provably dead owner gets resumed), run state is per-session, and the per-repo lock serializes every git mutation. Stopping is scoped, too — telling a session "don't run another loop" ends the recurrence, while the in-flight issue still completes normally; parking work mid-issue takes explicit words.
+**Parallel and stoppable.** Several `/loop /auto` sessions can drain the same repo concurrently: Linear claims keep their picks disjoint, every worktree is stamped with its owning session's identity (session id + harness PID — id-first, so `claude agents` fleets that share one root process still resolve correctly) so a live sibling's in-flight issue is never mistaken for an orphaned dead run (only a provably dead owner gets resumed), run state is per-session, and the per-repo lock serializes every git mutation. Stopping is scoped, too — telling a session "don't run another loop" ends the recurrence, while the in-flight issue still completes normally; parking work mid-issue takes explicit words.
 
 ```text
    /loop /auto  ──  the autonomous driver: re-invokes /auto each iteration
@@ -100,14 +100,14 @@ Point it at a seeded, certified (via `/prd` or `/spec`) backlog and walk away. I
         ▼
   ┌───────────────────────  one iteration  =  one issue  ───────────────────────┐
   │                                                                             │
-  │  0  re-anchor + read  tmp/auto-state-<pid>.json  (cross-iteration memory)   │
+  │  0  re-anchor + read  tmp/auto-state-<runKey>.json (cross-iteration memory) │
   │  1  preflight ......... finish any in-flight work / resume orphaned wt      │
   │  2  /next specified ... rank certified, unblocked candidates, take top one  │
   │  3  /full auto wt <ISSUE>                                                   │
   │        ├─ /start auto ........... branch · plan → Linear · implement        │
   │        ├─ /quality-review auto .. adversarial review + fix loop             │
   │        └─ /finish auto .......... commit · push · merge · Ready For Release │
-  │  4  record outcome → tmp/auto-state-<pid>.json,  emit one lifecycle tag     │
+  │  4  record outcome → tmp/auto-state-<runKey>.json,  emit one lifecycle tag  │
   │                                                                             │
   └──────────────────────────────────────┬──────────────────────────────────────┘
                                           │

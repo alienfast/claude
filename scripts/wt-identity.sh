@@ -168,6 +168,9 @@ wt_identity_verify() {
 
 # Nearest ancestor process that is the claude harness binary. Honors $CLAUDE_HARNESS_PID when a caller pre-resolved it. Empty/rc-1 when undeterminable
 # (npm-installed CLI runs under `node`; MSYS ps can't see native processes) — callers MUST treat empty as "unknown", never as "dead".
+# In a `claude agents` fleet the shell's nearer claude-lineage ancestors are retitled pool processes (`claude bg-pty-host`, `claude bg-spare`) whose pids are
+# transient pool artifacts; the comm match below skips those (suffixed titles don't match) and lands on the fleet ROOT — shared by every fleet session. That is
+# correct for LIVENESS (root dies = all its sessions die) but means pid equality can NEVER prove same-session: use wt_owner_is_me, which compares session ids first.
 wtid_harness_pid() {
   if [ -n "${CLAUDE_HARNESS_PID:-}" ]; then printf '%s' "$CLAUDE_HARNESS_PID"; return 0; fi
   local pid=$$ comm base
@@ -194,18 +197,20 @@ wtid_pid_start() {
 wt_owner_alive() {
   local wt_dir="$1"
   WTID_OWNER_ALIVE="unknown"
-  # Ownership is latest-wins: every stamp (including a takeover re-stamp) updates per-worktree git config, so read it FIRST — a stale same-issue sidecar in
-  # OUR job dir must not shadow another session's takeover. Sidecars are the fallback for a wiped config, and only when load verified one for THIS wt dir.
-  WTID_OWNER_PID=$(git -C "$wt_dir" config --worktree --get start.owner-pid 2>/dev/null || true)
-  WTID_OWNER_PID_START=$(git -C "$wt_dir" config --worktree --get start.owner-pid-start 2>/dev/null || true)
-  if [ -z "$WTID_OWNER_PID" ]; then
-    if wt_identity_load "$wt_dir"; then
-      case "$WTID_SOURCE" in
-        job-dir|repo-fallback) : ;;
-        *) WTID_OWNER_PID=""; WTID_OWNER_PID_START="" ;;
-      esac
+  # Ownership is latest-wins: every stamp (including a takeover re-stamp) updates per-worktree git config, so config is authoritative wherever present — a
+  # stale same-issue sidecar in OUR job dir must not shadow another session's takeover. A verified sidecar (load succeeded for THIS wt dir) only fills gaps.
+  local cfg_pid cfg_pid_start cfg_session
+  cfg_pid=$(git -C "$wt_dir" config --worktree --get start.owner-pid 2>/dev/null || true)
+  cfg_pid_start=$(git -C "$wt_dir" config --worktree --get start.owner-pid-start 2>/dev/null || true)
+  cfg_session=$(git -C "$wt_dir" config --worktree --get start.owner-session 2>/dev/null || true)
+  WTID_OWNER_PID="$cfg_pid"; WTID_OWNER_PID_START="$cfg_pid_start"; WTID_OWNER_SESSION="$cfg_session"
+  if [ -z "$cfg_pid" ] || [ -z "$cfg_session" ]; then
+    if wt_identity_load "$wt_dir" && { [ "$WTID_SOURCE" = "job-dir" ] || [ "$WTID_SOURCE" = "repo-fallback" ]; }; then
+      # load overwrote the WTID_OWNER_* globals with sidecar values; keep them only for the fields config lacked.
+      if [ -n "$cfg_pid" ]; then WTID_OWNER_PID="$cfg_pid"; WTID_OWNER_PID_START="$cfg_pid_start"; fi
+      if [ -n "$cfg_session" ]; then WTID_OWNER_SESSION="$cfg_session"; else WTID_OWNER_SESSION="$WTID_OWNER"; fi
     else
-      WTID_OWNER_PID=""; WTID_OWNER_PID_START=""
+      WTID_OWNER_PID="$cfg_pid"; WTID_OWNER_PID_START="$cfg_pid_start"; WTID_OWNER_SESSION="$cfg_session"
     fi
   fi
   [ -z "$WTID_OWNER_PID" ] && return 2
@@ -231,6 +236,20 @@ wt_owner_alive() {
   fi
   WTID_OWNER_ALIVE="alive"
   return 0
+}
+
+# Is the loaded owner THIS session? Run only after wt_owner_alive. Session ids are the primary comparison: in a `claude agents` fleet every session's
+# harness-pid walk collapses to the shared fleet root, so pid equality would call every sibling's worktree "mine". Pid + start time is only the fallback
+# for environments where no session id was stamped or none is resolvable here. Returns 0 = me, 1 = not me (or undeterminable — callers treat that as foreign).
+wt_owner_is_me() {
+  local my_session my_pid
+  my_session=$(wt_identity_owner)
+  if [ -n "$my_session" ] && [ -n "$WTID_OWNER_SESSION" ]; then
+    [ "$my_session" = "$WTID_OWNER_SESSION" ]
+    return
+  fi
+  my_pid=$(wtid_harness_pid || true)
+  [ -n "$my_pid" ] && [ -n "$WTID_OWNER_PID" ] && [ "$my_pid" = "$WTID_OWNER_PID" ]
 }
 
 # --- Stamping (the write side; used by start-wt-create.sh and finish-recover.sh) ---
