@@ -41,7 +41,9 @@
 #   IDENTITY_SIDECAR=<path of the strongest sidecar written, or empty>
 #
 # Exit non-zero on any failure; a failed create (CREATED_WT path) self-cleans the
-# half-prepared worktree via an EXIT trap so the user can re-run cleanly.
+# half-prepared worktree via an EXIT trap so the user can re-run cleanly. Exit 4 is
+# the parallel-session refusal (existing worktree owned by a LIVE other session —
+# see the reuse guard); nothing is created, modified, or cleaned up in that case.
 
 set -eo pipefail
 
@@ -78,6 +80,17 @@ if [ -d "$wt_dir" ]; then
   if [ "$current_wt_branch" != "$branch" ]; then
     echo "ERROR: $wt_dir exists but is on '$current_wt_branch' (expected '$branch'). Investigate manually." >&2
     exit 1
+  fi
+  # Parallel-session guard: reusing a worktree that a LIVE other session owns would put two sessions in one worktree — the clobbering this lock exists to
+  # prevent, reachable via a /next pick race or a preflight "orphan" resume of live work. Refuse only on positive proof of a live foreign owner; a dead or
+  # undeterminable owner falls through to reuse (manual resumption of legacy/unstamped worktrees keeps working) and the stamp below re-records ownership.
+  wt_owner_alive "$wt_dir" || true
+  if [ "$WTID_OWNER_ALIVE" = "alive" ]; then
+    my_harness_pid=$(wtid_harness_pid || true)
+    if [ "$my_harness_pid" != "$WTID_OWNER_PID" ]; then
+      echo "ERROR: worktree '$wt_dir' is owned by another live session (harness pid $WTID_OWNER_PID, started ${WTID_OWNER_PID_START:-unknown}); refusing to reuse it. If that session should not own this issue, stop it first — otherwise let it finish." >&2
+      exit 4
+    fi
   fi
   # Warn about drift from source branch.
   behind=$(git -C "$wt_dir" rev-list --count "$branch..$source_branch" 2>/dev/null || echo "?")

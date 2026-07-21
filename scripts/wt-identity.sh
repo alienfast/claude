@@ -28,6 +28,10 @@
 #       WTID_CORRUPTION_REASON  branch-swapped | baseline-detached |
 #                               source-branch-config-wiped | ""
 #     Always returns 0.
+#
+# Also provides owner-liveness helpers (wt_owner_alive, wtid_harness_pid) so parallel
+# sessions can distinguish a worktree whose owning session DIED (safe to resume) from
+# one another live session is working RIGHT NOW (hands off) — see that section below.
 
 # Read the known keys out of a sidecar .env without eval/source (values may contain
 # slashes; they never contain newlines).
@@ -38,6 +42,9 @@ _wtid_read_sidecar() {
   WTID_SOURCE_BRANCH=$(sed -n 's/^WT_IDENTITY_SOURCE_BRANCH=//p' "$f" | head -1)
   WTID_BASELINE=$(sed -n 's/^WT_IDENTITY_BASELINE_SHA=//p' "$f" | head -1)
   WTID_WT_DIR=$(sed -n 's/^WT_IDENTITY_WT_DIR=//p' "$f" | head -1)
+  WTID_OWNER=$(sed -n 's/^WT_IDENTITY_OWNER=//p' "$f" | head -1)
+  WTID_OWNER_PID=$(sed -n 's/^WT_IDENTITY_OWNER_PID=//p' "$f" | head -1)
+  WTID_OWNER_PID_START=$(sed -n 's/^WT_IDENTITY_OWNER_PID_START=//p' "$f" | head -1)
 }
 
 # A sidecar is only trustworthy for <wt_dir> if its recorded WT_IDENTITY_WT_DIR is
@@ -76,6 +83,7 @@ wt_identity_load() {
   local wt_dir="$1" issue_lower="$2"
   WTID_SOURCE="none"; WTID_ISSUE=""; WTID_BRANCH=""; WTID_SOURCE_BRANCH=""
   WTID_BASELINE=""; WTID_SIDECAR_PATH=""
+  WTID_OWNER=""; WTID_OWNER_PID=""; WTID_OWNER_PID_START=""
   [ -z "$issue_lower" ] && issue_lower=$(basename "$wt_dir")
   local name="wt-identity-${issue_lower}.env"
 
@@ -154,6 +162,77 @@ wt_identity_verify() {
   return 0
 }
 
+# --- Owner liveness (parallel-session coordination) ---
+# A worktree's "owner" is the harness (claude) process of the session that last stamped it. A session id alone (start.owner-session) cannot be tested for
+# liveness, so the stamp also records the harness PID + its start time — PID recycling makes a bare PID ambiguous; PID + start time is unique in practice.
+
+# Nearest ancestor process that is the claude harness binary. Honors $CLAUDE_HARNESS_PID when a caller pre-resolved it. Empty/rc-1 when undeterminable
+# (npm-installed CLI runs under `node`; MSYS ps can't see native processes) — callers MUST treat empty as "unknown", never as "dead".
+wtid_harness_pid() {
+  if [ -n "${CLAUDE_HARNESS_PID:-}" ]; then printf '%s' "$CLAUDE_HARNESS_PID"; return 0; fi
+  local pid=$$ comm base
+  while [ -n "$pid" ] && [ "$pid" != "0" ] && [ "$pid" != "1" ]; do
+    comm=$(ps -o comm= -p "$pid" 2>/dev/null | tail -1)
+    base=$(basename "$comm" 2>/dev/null)
+    case "$base" in
+      claude|claude.exe|claude-code) printf '%s' "$pid"; return 0 ;;
+    esac
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d '[:space:]')
+  done
+  return 1
+}
+
+# Whitespace-normalized start time of a PID (lstart pads with spaces). Empty if unknown.
+wtid_pid_start() {
+  ps -o lstart= -p "$1" 2>/dev/null | tail -1 | awk '{$1=$1; print}'
+}
+
+# Adjudicate the liveness of <wt_dir>'s owning session. Populates WTID_OWNER_PID, WTID_OWNER_PID_START, and
+# WTID_OWNER_ALIVE = alive | dead | unknown. Returns 0 alive, 1 dead, 2 unknown.
+# "dead" requires POSITIVE evidence (PID gone, or recycled into a non-harness / different-start-time process);
+# anything less is "unknown" — automation must fail safe on unknown (a live owner can't be ruled out).
+wt_owner_alive() {
+  local wt_dir="$1"
+  WTID_OWNER_ALIVE="unknown"
+  # Ownership is latest-wins: every stamp (including a takeover re-stamp) updates per-worktree git config, so read it FIRST — a stale same-issue sidecar in
+  # OUR job dir must not shadow another session's takeover. Sidecars are the fallback for a wiped config, and only when load verified one for THIS wt dir.
+  WTID_OWNER_PID=$(git -C "$wt_dir" config --worktree --get start.owner-pid 2>/dev/null || true)
+  WTID_OWNER_PID_START=$(git -C "$wt_dir" config --worktree --get start.owner-pid-start 2>/dev/null || true)
+  if [ -z "$WTID_OWNER_PID" ]; then
+    if wt_identity_load "$wt_dir"; then
+      case "$WTID_SOURCE" in
+        job-dir|repo-fallback) : ;;
+        *) WTID_OWNER_PID=""; WTID_OWNER_PID_START="" ;;
+      esac
+    else
+      WTID_OWNER_PID=""; WTID_OWNER_PID_START=""
+    fi
+  fi
+  [ -z "$WTID_OWNER_PID" ] && return 2
+
+  local msys=0 cur_comm base cur_start
+  case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) msys=1 ;; esac
+  cur_comm=$(ps -o comm= -p "$WTID_OWNER_PID" 2>/dev/null | tail -1)
+  if [ -z "$cur_comm" ]; then
+    # MSYS ps can't see native processes, so an empty result there proves nothing.
+    if [ "$msys" = 1 ]; then return 2; fi
+    WTID_OWNER_ALIVE="dead"; return 1
+  fi
+  base=$(basename "$cur_comm" 2>/dev/null)
+  case "$base" in
+    claude|claude.exe|claude-code|node) : ;;
+    *) WTID_OWNER_ALIVE="dead"; return 1 ;;   # PID recycled into an unrelated process
+  esac
+  if [ -n "$WTID_OWNER_PID_START" ]; then
+    cur_start=$(wtid_pid_start "$WTID_OWNER_PID")
+    if [ -n "$cur_start" ] && [ "$cur_start" != "$WTID_OWNER_PID_START" ]; then
+      WTID_OWNER_ALIVE="dead"; return 1     # PID recycled into a different harness instance
+    fi
+  fi
+  WTID_OWNER_ALIVE="alive"
+  return 0
+}
+
 # --- Stamping (the write side; used by start-wt-create.sh and finish-recover.sh) ---
 
 # Resolve the owning session id (best-effort; empty is acceptable — identity still
@@ -169,9 +248,9 @@ wt_identity_owner() {
 }
 
 # Write one sidecar .env into <dir>. Echoes the path on success; non-zero on failure.
-# Args: dir issue_id branch source_branch baseline wt_abs owner created_at
+# Args: dir issue_id branch source_branch baseline wt_abs owner created_at [owner_pid] [owner_pid_start]
 _wtid_write_sidecar() {
-  local dir="$1" issue_id="$2" branch="$3" source_branch="$4" baseline="$5" wt_abs="$6" owner="$7" created_at="$8"
+  local dir="$1" issue_id="$2" branch="$3" source_branch="$4" baseline="$5" wt_abs="$6" owner="$7" created_at="$8" owner_pid="$9" owner_pid_start="${10}"
   local issue_lower path
   issue_lower=$(printf '%s' "$issue_id" | tr '[:upper:]' '[:lower:]')
   path="$dir/wt-identity-${issue_lower}.env"
@@ -185,6 +264,8 @@ _wtid_write_sidecar() {
     printf 'WT_IDENTITY_WT_DIR=%s\n' "$wt_abs"
     printf 'WT_IDENTITY_OWNER=%s\n' "$owner"
     printf 'WT_IDENTITY_CREATED_AT=%s\n' "$created_at"
+    printf 'WT_IDENTITY_OWNER_PID=%s\n' "$owner_pid"
+    printf 'WT_IDENTITY_OWNER_PID_START=%s\n' "$owner_pid_start"
   } > "$path" 2>/dev/null || return 1
   printf '%s' "$path"
 }
@@ -200,6 +281,9 @@ wt_identity_stamp() {
   WTID_STAMP_OWNER=$(wt_identity_owner)
   WTID_STAMP_CREATED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   WTID_STAMP_SIDECAR=""
+  WTID_STAMP_OWNER_PID=$(wtid_harness_pid || true)
+  WTID_STAMP_OWNER_PID_START=""
+  [ -n "$WTID_STAMP_OWNER_PID" ] && WTID_STAMP_OWNER_PID_START=$(wtid_pid_start "$WTID_STAMP_OWNER_PID")
 
   # Mandatory git config (convenience copy; its absence later is a corruption tell).
   git -C "$wt_dir" config --worktree start.source-branch "$source_branch"
@@ -207,12 +291,20 @@ wt_identity_stamp() {
   git -C "$wt_dir" config --worktree start.baseline-sha "$baseline"
   git -C "$wt_dir" config --worktree start.created-at "$WTID_STAMP_CREATED_AT"
   [ -n "$WTID_STAMP_OWNER" ] && git -C "$wt_dir" config --worktree start.owner-session "$WTID_STAMP_OWNER"
+  # Owner PID: set on success, UNSET on failure — a takeover stamp that can't resolve its own PID must not leave the dead prior owner's PID looking current.
+  if [ -n "$WTID_STAMP_OWNER_PID" ]; then
+    git -C "$wt_dir" config --worktree start.owner-pid "$WTID_STAMP_OWNER_PID"
+    git -C "$wt_dir" config --worktree start.owner-pid-start "$WTID_STAMP_OWNER_PID_START"
+  else
+    git -C "$wt_dir" config --worktree --unset start.owner-pid 2>/dev/null || true
+    git -C "$wt_dir" config --worktree --unset start.owner-pid-start 2>/dev/null || true
+  fi
 
   # Immune sidecars (best-effort; a worktree with no sidecar degrades to legacy
   # behavior at /finish rather than failing setup).
   local p main_root
   if [ -n "${CLAUDE_JOB_DIR:-}" ] && [ -d "${CLAUDE_JOB_DIR}" ]; then
-    if p=$(_wtid_write_sidecar "$CLAUDE_JOB_DIR" "$issue_id" "$branch" "$source_branch" "$baseline" "$wt_abs" "$WTID_STAMP_OWNER" "$WTID_STAMP_CREATED_AT"); then
+    if p=$(_wtid_write_sidecar "$CLAUDE_JOB_DIR" "$issue_id" "$branch" "$source_branch" "$baseline" "$wt_abs" "$WTID_STAMP_OWNER" "$WTID_STAMP_CREATED_AT" "$WTID_STAMP_OWNER_PID" "$WTID_STAMP_OWNER_PID_START"); then
       WTID_STAMP_SIDECAR="$p"
     else
       echo "WARN: could not write identity sidecar under \$CLAUDE_JOB_DIR ($CLAUDE_JOB_DIR)" >&2
@@ -227,7 +319,7 @@ wt_identity_stamp() {
     if mkdir -p "$id_dir" 2>/dev/null && [ ! -f "$id_dir/.gitignore" ]; then
       printf '*\n' > "$id_dir/.gitignore" 2>/dev/null || true
     fi
-    if p=$(_wtid_write_sidecar "$id_dir" "$issue_id" "$branch" "$source_branch" "$baseline" "$wt_abs" "$WTID_STAMP_OWNER" "$WTID_STAMP_CREATED_AT"); then
+    if p=$(_wtid_write_sidecar "$id_dir" "$issue_id" "$branch" "$source_branch" "$baseline" "$wt_abs" "$WTID_STAMP_OWNER" "$WTID_STAMP_CREATED_AT" "$WTID_STAMP_OWNER_PID" "$WTID_STAMP_OWNER_PID_START"); then
       [ -z "$WTID_STAMP_SIDECAR" ] && WTID_STAMP_SIDECAR="$p"
     else
       echo "WARN: could not write repo-level identity sidecar under $id_dir" >&2
