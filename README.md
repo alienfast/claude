@@ -64,6 +64,7 @@ Each runs end to end independently, and the machinery keeps them from colliding:
 - **Serialized merge.** When each `/finish` lands, it advances the shared source branch under a per-repo lock ([scripts/with-repo-lock.py](scripts/with-repo-lock.py)): the worktree branch is first brought up to source's tip _inside its own worktree_ (any conflicts resolved there, never in the main checkout), then source moves by a clean `git merge --ff-only` or an atomic `git update-ref`. Concurrent finishes block briefly and merge in turn, so source is only ever advanced cleanly.
 - **Deferred, never forced.** A merge that can't advance right now — e.g. the main checkout is sitting on the shared branch with another session's WIP — is enqueued rather than failed: it leaves the worktree intact and a launchd drainer retries every ~15 min until it lands. Inspect with `/merge-queue`; conflicts are never resolved unattended.
 - **Self-cleanup.** Finished worktrees are reclaimed by the hourly reaper — check with `/reap-worktrees`.
+- **Human alongside.** `/start interactive PL-4` claims an issue and sets up its worktree (opened in its own VS Code window), then hands off without planning or implementing — so you can work by hand in the same isolation while background agents keep shipping.
 
 For heavy fan-out, keep your main checkout parked on a quiet branch (not the shared integration branch) so every merge advances source by a ref-only update and the queue rarely engages. The full merge protocol lives in [standards/git.md](standards/git.md).
 
@@ -86,10 +87,12 @@ The developer workflow above is hands-on: you pick issues and drive `/full` per 
 
 Point it at a seeded, certified (via `/prd` or `/spec`) backlog and walk away. It works the queue one issue at a time and **ends itself** — no runaway loop:
 
-- **`NO-CANDIDATES`** — the backlog has no more certified, workable issues. Certify more via `/spec` (or seed via `/prd`), delete `tmp/auto-state.json`, and re-invoke.
+- **`NO-CANDIDATES`** — the backlog has no more certified, workable issues. Certify more via `/spec` (or seed via `/prd`), delete the run's `tmp/auto-state-<pid>.json`, and re-invoke.
 - **`AUTO-HALTED`** — the circuit breaker tripped (two consecutive failures, likely systemic) or an environment halt (e.g. a dirty tree it can't attribute). Each failing issue gets a Linear comment explaining why before the loop stops.
 
-`/loop /auto` never clears or compacts the session — the harness's automatic summarization keeps context in check as it grows (`/compact` and `/clear` are user commands the loop must never invoke). Because summarization can drop detail, the run's actual memory lives in `tmp/auto-state.json` (shipped / skipped / failed lists + the failure counter), not the conversation — so the run survives summarization across iterations, and the terminal halt stays sticky even under a fixed-interval `/loop 15m /auto`. A human starts a fresh run by deleting that file.
+`/loop /auto` never clears or compacts the session — the harness's automatic summarization keeps context in check as it grows (`/compact` and `/clear` are user commands the loop must never invoke). Because summarization can drop detail, the run's actual memory lives in `tmp/auto-state-<pid>.json` (shipped / skipped / failed lists + the failure counter, keyed by the session's own PID), not the conversation — so the run survives summarization across iterations, and the terminal halt stays sticky even under a fixed-interval `/loop 15m /auto`. A human starts a fresh run by deleting that file — or simply by starting a new session, whose fresh PID names a fresh file.
+
+**Parallel and stoppable.** Several `/loop /auto` sessions can drain the same repo concurrently: Linear claims keep their picks disjoint, every worktree is stamped with its owning session's PID so a live sibling's in-flight issue is never mistaken for an orphaned dead run (only a provably dead owner gets resumed), run state is per-session, and the per-repo lock serializes every git mutation. Stopping is scoped, too — telling a session "don't run another loop" ends the recurrence, while the in-flight issue still completes normally; parking work mid-issue takes explicit words.
 
 ```text
    /loop /auto  ──  the autonomous driver: re-invokes /auto each iteration
@@ -97,14 +100,14 @@ Point it at a seeded, certified (via `/prd` or `/spec`) backlog and walk away. I
         ▼
   ┌───────────────────────  one iteration  =  one issue  ───────────────────────┐
   │                                                                             │
-  │  0  re-anchor + read  tmp/auto-state.json   (cross-iteration run memory)    │
+  │  0  re-anchor + read  tmp/auto-state-<pid>.json  (cross-iteration memory)   │
   │  1  preflight ......... finish any in-flight work / resume orphaned wt      │
   │  2  /next specified ... rank certified, unblocked candidates, take top one  │
   │  3  /full auto wt <ISSUE>                                                   │
   │        ├─ /start auto ........... branch · plan → Linear · implement        │
   │        ├─ /quality-review auto .. adversarial review + fix loop             │
-  │        └─ /finish auto .......... commit · push · merge · Ready For Release  │
-  │  4  record outcome → tmp/auto-state.json,  emit one lifecycle tag           │
+  │        └─ /finish auto .......... commit · push · merge · Ready For Release │
+  │  4  record outcome → tmp/auto-state-<pid>.json,  emit one lifecycle tag     │
   │                                                                             │
   └──────────────────────────────────────┬──────────────────────────────────────┘
                                           │
@@ -115,7 +118,7 @@ Point it at a seeded, certified (via `/prd` or `/spec`) backlog and walk away. I
               AUTO-HALTED    (2 consecutive fails / env) ─┴─►  loop stops, awaits a human
 ```
 
-`/auto` accepts one optional token, `pr`, which opens a PR per issue instead of merging (use only when the queued issues are independent, since the source branch won't advance until PRs land).
+`/auto` accepts two optional tokens: `pr` opens a PR per issue instead of merging (use only when the queued issues are independent, since the source branch won't advance until PRs land), and a team scope (`BF`, or a comma list `PL,BF`) restricts the run to those teams' certified backlogs.
 
 ## What's Included
 
@@ -125,10 +128,10 @@ Specialized personas the main thread delegates to — directly, or through skill
 
 | Agent | Role | Model |
 |-------|------|-------|
-| [architect](agents/architect.md) | Solution design, ADRs, technical recommendations | Inherits (Opus) |
+| [architect](agents/architect.md) | Solution design, ADRs, technical recommendations | Opus (pinned) · max effort |
 | [developer](agents/developer.md) | Code implementation from specifications | Sonnet |
 | [debugger](agents/debugger.md) | Root cause analysis through systematic evidence gathering | Inherits |
-| [quality-reviewer](agents/quality-reviewer.md) | Adversarial review — edge cases, contract violations, security | Inherits |
+| [quality-reviewer](agents/quality-reviewer.md) | Adversarial review — edge cases, contract violations, security | Opus (pinned) · max effort |
 | [research-lead](agents/research.md) | Multi-perspective research and synthesis | Inherits |
 | [technical-writer](agents/technical-writer.md) | Concise documentation for completed features | Sonnet |
 
@@ -153,6 +156,7 @@ Automated multi-step workflows invoked by trigger phrases or slash commands.
 | [spec](skills/spec/) | Groom and certify an issue into a `specified` spec — the certification gate `/auto` requires |
 | [reap-worktrees](skills/reap-worktrees/) | Inspect and reclaim leftover `/start wt` worktrees (PR/branch merged, or issue Done/Canceled) |
 | [merge-queue](skills/merge-queue/) | Inspect and drain `/finish` merges that were deferred, then retried by the launchd drainer |
+| [reflect](skills/reflect/) | Turn session friction into shared-config edits — auto-applies the safe ones, files the rest as certified Linear issues (auto-runs at the `/quality-review` tail; `sweep` mode audits a project's config against its codebase) |
 
 **Development skills:**
 
@@ -163,6 +167,7 @@ Automated multi-step workflows invoked by trigger phrases or slash commands.
 | [deprecation-handler](skills/deprecation-handler/) | Migrate deprecated APIs with safe patterns |
 | [semver-advisor](skills/semver-advisor/) | Classify version changes as MAJOR/MINOR/PATCH |
 | [react-component-generator](skills/react-component-generator/) | Generate React components following project conventions |
+| [standardize-tooling](skills/standardize-tooling/) | Converge a TypeScript project onto house tooling — pnpm 11, Biome, tsdown, the standardized `check` suite; adaptive and idempotent |
 
 **External Skills (installed by `update.sh`):**
 
