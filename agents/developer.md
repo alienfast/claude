@@ -63,6 +63,9 @@ Implement tests according to CLAUDE.md requirements:
 - **Edge case coverage** including error conditions
 - **Async operation testing** with proper mocking
 - Use configuration and test setup from the project
+- **Prove each regression test fails without its fix.** Revert the fix, confirm exactly that test fails, restore. A test still green against the reverted fix pins nothing.
+  - Revert **each independently-revertable part alone** (two code paths, a guard plus a transaction wrapper) — a whole-fix revert hides a half-fix regression.
+  - If the asserted outcome is already correct pre-fix, assert the **mechanism** instead — write/version counts, the specific error raised — not the end state.
 
 ## NEVER Do These
 
