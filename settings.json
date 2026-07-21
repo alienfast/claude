@@ -159,6 +159,10 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/git-permissions.sh"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/scratch-path-guard.sh"
           }
         ]
       }
