@@ -216,6 +216,7 @@ Automatic quality checks that run without manual invocation.
 | Hook | Trigger | What It Does |
 |------|---------|-------------|
 | [git-permissions](hooks/git-permissions.sh) | Before git commands | Blocks destructive operations (`reset --hard`/`--mixed`, `restore`/`checkout <file>`, `clean -f`, `--force`) |
+| [scratch-path-guard](hooks/scratch-path-guard.sh) | Before bash commands | Denies scratch writes to bare root paths and system `/tmp` (session scratchpads exempt), steering to project-relative `tmp/` — the model self-corrects instead of stalling an autonomous run on a dangerous-path prompt |
 | [full-continue](hooks/full-continue.sh) | On stop | Keeps `/full` going: re-dispatches `/finish` if the macro stalls after `READY-FOR-FINISH` |
 
 ### Background daemons
@@ -302,6 +303,7 @@ all react code, and implement the best practices for react 19.
 No manual intervention needed — hooks run behind the scenes:
 
 - Destructive git commands are blocked before execution (`reset`, `restore`/`checkout <file>`, `clean -f`, `--force`)
+- Scratch writes to bare root paths or system `/tmp` are denied with redirect-to-`tmp/` guidance
 - Biome and markdownlint run after every file edit
 - On stop, `full-continue` keeps `/full` going — re-dispatching `/finish` if the macro stalls after `READY-FOR-FINISH`
 
