@@ -36,6 +36,7 @@ A research-augmented path for shipping something large, from raw idea to merged 
 | Create issues | `/prd @doc/plan-foo.md` | Review stages and accuracy before approving; approval creates the issues in Linear |
 | Triage | `/triage` | Reviews dependencies, identifies blockers, suggests priorities |
 | Prioritize | Move stage 1 to "Planned", stage 2 to "Backlog" | |
+| Certify | `/spec` | Interviews you, rewrites the issue in the canonical spec shape, and adds the `specified` label — the certification gate [`/auto`](#autonomous) requires. Interactive only; no args surfaces the top uncertified issues, including the Triage inbox |
 
 ### 3. Build loop
 
