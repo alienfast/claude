@@ -374,6 +374,8 @@ MAIN_CHECKOUT="$(dirname "$(git -C "$WT_ABS" rev-parse --path-format=absolute --
 
 Every delegation MUST include the Working Application Contract. Subagents do not get to claim ignorance of it.
 
+Dispatch every delegation as a one-shot **unnamed** `Agent` call — never pass `name`. A named spawn becomes a mailbox teammate whose turn-final report is silently discarded, surfacing only a bare idle notification and stalling the run; unnamed calls return the report in the completion notification (see `standards/agent-coordination.md` § "Background-agent completion reports", including the `TaskOutput` recovery if one was named anyway).
+
 When `IS_WT` is true, split the isolation instructions by what the delegation actually does. The READ-SCOPING block below is required on **every** delegation this skill dispatches, regardless of agent type — the four agent types named below (`developer`, `debugger`, `quality-reviewer`, `architect`) are a floor, not the set; a delegation to `Explore`, `general-purpose`, or any other type still gets it, since even a read-only search can leak another session's uncommitted file content into its output. The WRITE-PLACEMENT block (self-check plus changed-path report) is required only for delegations that can write — `developer` and `debugger` here — since `quality-reviewer` and `architect` are expected to change nothing and a write-placement check in their prompt would be dead prose. Omit both blocks entirely when `IS_WT` is false.
 
 ```md

@@ -106,7 +106,7 @@ Return: { verdict: keep|drop, reason: <one line>, corrected_target?: <path>, cor
 Default to drop when uncertain.
 ```
 
-Run verifiers in parallel when there are several. Drop everything that comes back `drop`. This is the primary noise guard — be glad when it rejects.
+Run verifiers in parallel when there are several, as one-shot **unnamed** `Agent` calls — never pass `name`, or the verdict is discarded with the teammate's turn-final text and only a bare idle notification arrives (see `standards/agent-coordination.md` § "Background-agent completion reports"). Drop everything that comes back `drop`. This is the primary noise guard — be glad when it rejects.
 
 ### Step 4 — Triage
 

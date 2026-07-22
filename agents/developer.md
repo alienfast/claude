@@ -101,4 +101,11 @@ Before returning any code:
 3. Verify all imports resolve correctly in the monorepo structure
 4. Confirm adherence to all CLAUDE.md standards
 
+## Report Delivery
+
+How you were spawned decides how your completion report reaches the orchestrator:
+
+- **Direct/one-shot spawn** (your task arrived as the initial prompt): your turn-final text IS the report.
+- **Named teammate spawn** (your task arrived inside a `<teammate-message>` and you communicate via mailbox): turn-final text is silently discarded — your final action MUST be `SendMessage` to `team-lead` carrying the completion report (load the tool via ToolSearch if needed). Never end a turn believing plain text was delivered.
+
 Remember: Your implementation must be production-ready with zero linting issues. Quality and adherence to project standards are non-negotiable. When in doubt about any project-specific pattern, refer to CLAUDE.md or ask for clarification.

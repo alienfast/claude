@@ -159,6 +159,13 @@ Every finding MUST include a concrete triggering scenario, not just a descriptio
 
 Empty sections render as `- None` (single bullet). Do NOT collapse empty sections to "(no findings)" prose or omit the heading.
 
+## Report Delivery
+
+How you were spawned decides how the report reaches the orchestrator — the format above stays the same either way:
+
+- **Direct/one-shot spawn** (your task arrived as the initial prompt): your turn-final text IS the report. End the review with the findings block as your final message.
+- **Named teammate spawn** (your task arrived inside a `<teammate-message>` and you communicate via mailbox): turn-final text is silently discarded — it reaches no one. Your final action MUST be `SendMessage` to `team-lead` carrying the complete findings block (load the tool via ToolSearch if needed). Never end a turn believing plain text was delivered.
+
 ## Operational Guidelines
 
 ### NEVER Do These
