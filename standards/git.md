@@ -195,6 +195,8 @@ git -C /path/to/repo status
 
 `Bash(git:*)` is pre-approved, but `cd:*` is not — prefixing with `cd` makes the command match `cd` rather than `git`, so every invocation prompts.
 
+**This is not a git-specific rule — it applies to every pre-approved command.** A `cd <dir> && <allowlisted-cmd>` compound matches `cd`, so the allow rule for the real command never fires and the call falls through to a prompt (or, in auto mode, to the classifier). Prefer the tool's own directory flag whenever one exists — `git -C`, `pnpm --dir`, `make -C`, `rspec` run via a project wrapper script. When a runner genuinely requires its own working directory (Rails/rspec needs `apps/api`), the `cd` prefix is unavoidable and correct: the fix is a permission or `autoMode.allow` entry covering that shape, **not** a blanket `Bash(cd:*)` rule — that would greenlight anything beginning with `cd`, and a trailing-wildcard variant like `Bash(cd apps/api && rspec:*)` still admits an appended `; rm -rf ~`.
+
 ### Windows Git Bash: `ref:path` Arguments
 
 MSYS path conversion mangles some colon arguments: `git show origin/main:.gitignore` becomes `origin\main;.gitignore` (`fatal: ambiguous argument`).
