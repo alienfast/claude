@@ -23,6 +23,10 @@ This skill cannot change permission modes. For a genuinely walk-away run:
 - A permission prompt mid-run does not break anything — the run pauses until answered and `/loop` resumes normally. Expect occasional prompts on milestones that touch unusual commands (e.g., native-bridge/hardware work).
 - Context growth across iterations is handled by the harness's automatic summarization. `/compact` and `/clear` are user commands — never attempt them; `tmp/auto-state-<runKey>.json` (Step 4) is the cross-iteration memory that survives summarization.
 
+## Self-paced loop pacing
+
+Under self-paced `/loop` (invoked without an interval), every iteration must end with a `ScheduleWakeup` or the loop dies — and the delay is this skill's call, not the tool's default. On `AUTO-CONTINUE`, schedule the **minimum** `delaySeconds` (60s): the backlog *is* the work queue, Step 2 already established it is non-empty, and there is no external state whose change is being waited on. `ScheduleWakeup`'s 1200–1800s idle-tick guidance is written for polling loops (CI, deploys, remote queues) and does not apply here — inheriting it inserts 20–30 idle minutes between every shipped issue, which is how one observed run spent ~3.5 hours doing nothing across 9 ships. The only delays this skill prescribes are the ~900s API-error retry cadence (next section) and the fallback heartbeat that re-arms while an iteration's delegated work is still in flight. On `NO-CANDIDATES` or `AUTO-HALTED`, schedule nothing at all — those end the loop.
+
 ## Transient API failures are never failures
 
 A Claude API error — overload (529), rate limit (429), or transient 5xx — from any tool call or delegated agent is **infrastructure, not an issue failure**. Never count it toward `consecutiveFailures`, never mark the issue failed, never emit `AUTO-HALTED` for it. Instead: retry with a short delay (respect a `Retry-After` header or stated reset time when one is given). If retries keep failing, fall back to a **15-minute wake-and-retry cadence** — under self-paced `/loop`, end the turn with a `ScheduleWakeup`-style ~900s delay and resume the same iteration on wake; under fixed-interval `/loop`, simply end the turn and let the next interval retry. A retry turn still ends with a tagged final line: `AUTO-CONTINUE: <ISSUE-ID> paused mid-issue (Claude API <error>); retrying in ~15m.` — or, when the failure hit before an issue was picked (Step 0/1/2, including `/next` itself), `AUTO-CONTINUE: paused pre-pick (Claude API <error>); retrying in ~15m.` The next iteration resumes where it left off — Step 1's preflight checks route back into the same issue (`/start`/`/full` are idempotent on it).
@@ -135,7 +139,7 @@ Before applying the failure row, check the transient-API rule above — an itera
 
 Iteration tags (per `standards/lifecycle-tags.md` — must be the LAST LLM-authored line, nothing after it):
 
-- `AUTO-CONTINUE: <ISSUE-ID> <outcome> (<inherited tag>). <shipped>/<skipped>/<failed> this run; next /loop iteration proceeds.`
+- `AUTO-CONTINUE: <ISSUE-ID> <outcome> (<inherited tag>). <shipped>/<skipped>/<failed> this run; next /loop iteration proceeds.` Under self-paced `/loop`, pair it with a 60s `ScheduleWakeup` — see "Self-paced loop pacing" above.
 - `AUTO-CONTINUE: ... retrying in ~15m.` — the transient-API retry variants defined in "Transient API failures" above.
 - `AUTO-HALTED: 2 consecutive failures (<ID> <tag>, <ID> <tag>) — likely systemic. See Linear comments on both issues; delete tmp/auto-state-<runKey>.json to start a fresh run.` Under `/loop`, ending on `AUTO-HALTED` or `NO-CANDIDATES` means: do NOT schedule another wakeup — the loop is over until a human intervenes (Step 0 enforces this even if a fixed-interval loop re-fires).
 
