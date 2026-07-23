@@ -88,6 +88,26 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   exit 1
 fi
 
+# Refuse to run from inside another /start wt worktree: it would nest a new worktree inside it and
+# fork from that worktree's WIP branch instead of the shared source branch. Hoisted here (rather than
+# only where the reaper registry needs it below) so the check runs before any mutation. Path shape
+# alone can false-positive a main checkout that legitimately lives at such a path, so also require
+# true linked-worktree status (git-dir != git-common-dir) — a main checkout always has them equal.
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || {
+  echo "ERROR: could not resolve repo root (cwd: $PWD)" >&2
+  exit 1
+}
+case "$repo_root" in
+  */.claude/worktrees/*)
+    git_dir=$(git rev-parse --path-format=absolute --git-dir 2>/dev/null)
+    git_common_dir=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+    if [ -n "$git_dir" ] && [ "$git_dir" != "$git_common_dir" ]; then
+      echo "ERROR: cwd resolves to a repo root inside another worktree ($repo_root) — cd to the main checkout first." >&2
+      exit 1
+    fi
+    ;;
+esac
+
 current_branch=$(git branch --show-current)
 source_branch="$current_branch"
 if [ -z "$source_branch" ]; then
@@ -253,7 +273,9 @@ fi
 if capture_out=$("$SCRIPT_DIR/wt-baseline.sh" capture "$wt_abs" "$issue_lower"); then
   baseline_file="${capture_out#CAPTURED }"
   if [ -z "$baseline_file" ] || [ "$baseline_file" = "$capture_out" ]; then
-    echo "WARN: baseline capture output malformed (no CAPTURED line); treating as failed. The in-session verify script must re-capture before any delegation." >&2
+    warn_msg="WARN: baseline capture output malformed (no CAPTURED line); treating as failed. "
+    warn_msg+="The in-session verify script must re-capture before any delegation."
+    echo "$warn_msg" >&2
     baseline_file=""
   fi
 else
@@ -283,17 +305,15 @@ fi
 # PR merges later on GitHub, or an issue Canceled/Done directly in Linear with no live /start session.
 # Idempotent append; best-effort so a registry hiccup never fails worktree setup.
 reaper_registry="$HOME/.claude/worktree-repos.txt"
-repo_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
-if [ -n "$repo_root" ]; then
-  touch "$reaper_registry" 2>/dev/null || true
-  grep -qxF "$repo_root" "$reaper_registry" 2>/dev/null || printf '%s\n' "$repo_root" >> "$reaper_registry" 2>/dev/null || true
-fi
+touch "$reaper_registry" 2>/dev/null || true
+grep -qxF "$repo_root" "$reaper_registry" 2>/dev/null || printf '%s\n' "$repo_root" >> "$reaper_registry" 2>/dev/null || true
 
 # Warm-install dependencies so the worktree is immediately usable. `git worktree add` copies only tracked files, and node_modules is gitignored, so a fresh
-# worktree has none. The package *contents* are already in the global store (shared, content-addressed, APFS-cloned), so this is a linking-bound warm install —
-# no re-download. Runs only when node_modules is absent (covers fresh creation and resumed worktrees whose modules were never installed). Package-manager-aware
-# via lockfile detection, and non-fatal: a failure leaves a valid worktree the user can install into manually. Output goes to stderr so it never pollutes the
-# key=value contract on stdout. Lock-free by design — the warm install must not hold the repo lock (it is the slow step parallel starts overlap on).
+# worktree has none. The package *contents* are already in the global store (shared, content-addressed, APFS-cloned), so this is a linking-bound
+# warm install — no re-download. Runs only when node_modules is absent (covers fresh creation and resumed worktrees whose modules were never
+# installed). Package-manager-aware via lockfile detection, and non-fatal: a failure leaves a valid worktree the user can install into manually.
+# Output goes to stderr so it never pollutes the key=value contract on stdout. Lock-free by design — the warm install must not hold the repo
+# lock (it is the slow step parallel starts overlap on).
 if [ ! -d "$wt_abs/node_modules" ]; then
   if [ -f "$wt_abs/pnpm-lock.yaml" ] && command -v pnpm >/dev/null 2>&1; then
     echo "Installing dependencies (pnpm, warm path)…" >&2
