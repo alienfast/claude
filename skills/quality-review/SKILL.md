@@ -228,6 +228,8 @@ Previous findings addressed: [list]
 Acceptance: Confirm findings resolved. Flag any new Critical, High, or Medium issues with concrete scenarios.
 ```
 
+**Broaden scope for class-shaped findings.** If any finding addressed this cycle described a duplicated, re-derived, or copy-pasted decision — the same predicate, formatting rule, or authorization/scoping check reimplemented independently at more than one call site — rather than a single isolated site, do not scope the re-review dispatch to only the fixed files. Add an explicit sweep instruction naming the shared decision and the directory/domain to search (e.g. "Also search apps/app/src/domains/stx/ for any other call site re-deriving `isCoordinator || isClosing || isFlowSender(flow)` instead of importing it from entityScope.ts"). A class-shaped finding whose re-review stays file-scoped lets sibling instances surface one at a time across many cycles instead of being caught in one pass — the same failure mode item 2's enum-variant partition rule already exists to prevent for a single defining source, applied here to logic duplicated across files.
+
 **5. Loop** — if the re-review surfaces new Critical, High, or Medium issues, return to the top of this step (triage → fix → check → re-review).
 
 **Termination**: The loop terminates by **convergence** — when a re-review surfaces no new Critical, High, or Medium findings, exit Step 5 with verdict `passed-after-fixes` and proceed to Step 6.
