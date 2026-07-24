@@ -2,7 +2,7 @@
 # linear-create-child.sh — create a Linear issue (optionally linked to a parent),
 # with its description read from a file, and verify the parent link took.
 #
-# Usage: linear-create-child.sh <parent|-> <team> <state|-> <title> <body-file>
+# Usage: linear-create-child.sh <parent|-> <team> <state|-> <title> <body-file> [label|-]
 #
 #   <parent>     Parent issue identifier (e.g., PL-396) to link under, or "-" / ""
 #                for a top-level issue.
@@ -10,6 +10,10 @@
 #   <state>      Workflow state name (e.g., Planned), or "-" / "" for the team default.
 #   <title>      Issue title.
 #   <body-file>  Path to a file holding the markdown description.
+#   <label>      Optional issue label to attach after create (e.g., specified), or
+#                "-" / "" / omitted to skip. BEST EFFORT: the id still prints and the
+#                parent link still verifies; a failed attach exits 2 (filed-but-unlabelled),
+#                mirroring linear-file-improvement.sh.
 #
 # stdout (success): the new issue identifier (e.g., PL-451), single line.
 # stderr (failure): one-line diagnostic.
@@ -24,10 +28,13 @@
 # through. Centralizing it lets /prd and /quality-review file parent-linked issues
 # without inline shell plumbing.
 #
-# Read-write: creates one Linear issue (and sets its parent).
+# Read-write: creates one Linear issue (and sets its parent; optionally attaches a label).
 #
 # Exit codes:
-#   0 = created and (if a parent was given) linked + verified; identifier on stdout
+#   0 = created, (if a parent was given) linked + verified, (if a label was given)
+#       attached; identifier on stdout
+#   2 = created and linked + verified, but the requested label could NOT be attached;
+#       id still on stdout, WARN on stderr
 #   1 = usage / missing body file / create failed / parent link failed or unverified
 
 set -eo pipefail
@@ -35,8 +42,8 @@ set -eo pipefail
 # linear-cli installs to ~/.cargo/bin, which is not on a non-interactive PATH.
 export PATH="$HOME/.cargo/bin:$PATH"
 
-if [ $# -ne 5 ]; then
-  echo "usage: linear-create-child.sh <parent|-> <team> <state|-> <title> <body-file>" >&2
+if [ $# -lt 5 ] || [ $# -gt 6 ]; then
+  echo "usage: linear-create-child.sh <parent|-> <team> <state|-> <title> <body-file> [label|-]" >&2
   exit 1
 fi
 
@@ -45,6 +52,7 @@ team="$2"
 state="$3"
 title="$4"
 body_file="$5"
+label="${6:-}"
 
 for cmd in linear-cli jq; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "ERROR: '$cmd' not found on PATH" >&2; exit 1; }
@@ -84,4 +92,21 @@ if [ -n "$parent" ] && [ "$parent" != "-" ]; then
   fi
 fi
 
+# Attach the optional label — BEST EFFORT, with the id printed FIRST so it reaches stdout
+# on every path. Probe/create mechanics mirror linear-file-improvement.sh (the `-t issue`
+# gotchas and the canonical-casing capture are documented there); the direct `-l` replace
+# semantics are safe only because this issue was just created with an empty label set
+# (standards/issue-spec.md — existing issues must go through linear-add-label.sh instead).
 printf '%s\n' "$new_id"
+if [ -n "$label" ] && [ "$label" != "-" ]; then
+  have_label=$(linear-cli labels list -t issue --all --no-cache -o json 2>/dev/null \
+    | jq -r '.. | objects | select(has("name")) | .name' 2>/dev/null \
+    | grep -Fxi -- "$label" | head -1 || true)
+  if [ -z "$have_label" ]; then
+    linear-cli labels create "$label" -t issue >/dev/null 2>&1 || true
+  fi
+  if ! linear-cli issues update "$new_id" -l "${have_label:-$label}" >/dev/null 2>&1; then
+    echo "WARN: created $new_id but could not attach the '$label' label — if this gates /auto pickup, attach it manually (~/.claude/scripts/linear-add-label.sh $new_id $label)" >&2
+    exit 2
+  fi
+fi

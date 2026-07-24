@@ -8,7 +8,7 @@ Specs describe the **WHAT, never the HOW**. Implementation planning — technica
 
 - **Semantics:** this issue's description is a certified spec — "an unattended agent may pick this up and ship it."
 - **What it gates:** `/next <label>` filters candidates to a label; `/auto` dispatches `Skill(skill: "next", args: "specified")`, so only certified issues ship autonomously. Bare `/next` stays unfiltered — humans may deliberately work uncertified issues.
-- **Who applies it:** `/prd` (on create), `/spec` (after research + interview + explicit signoff), `/reflect`'s filing script (its proposal bodies already carry problem/outcome/criteria), or a human in Linear when they judge a spec complete.
+- **Who applies it:** `/prd` (on create), `/spec` (after research + interview + explicit signoff), `/reflect`'s filing script (its proposal bodies already carry problem/outcome/criteria), `/quality-review`'s deferred-item filing — only for severity-carrying items (pre-existing Critical/High/Medium findings routed from its Step 6 sub-step 5 re-review), whose bodies it composes in the certifiable problem/outcome/criteria shape — or a human in Linear when they judge a spec complete.
 - **One workspace-level issue label.** `linear-cli labels create "specified" -t issue` creates it workspace-wide (the CLI cannot create team-scoped labels — a feature here: one label attaches across all teams). Never create team-scoped `specified` duplicates — name-based label operations become ambiguous.
 
 ## Applying the label — read-merge-set
