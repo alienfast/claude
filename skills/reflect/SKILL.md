@@ -1,6 +1,6 @@
 ---
 name: reflect
-description: Continuous-improvement reflection on the just-finished session — captures generalizable lessons and reconciles stale config, then auto-applies the small/safe shared-config edits and proposes the larger ones — filing the proposals as a certified (`specified`) Linear issue (Planned). Two modes — session (default; reflect on this session's friction) and sweep (audit a project's CLAUDE.md/rules against the actual codebase and de-duplicate). Use when the user says 'reflect', 'reflect on this session', 'what did we learn', 'reflect sweep', 'audit the config', or invokes /reflect. Auto-invoked at the tail of /quality-review.
+description: Continuous-improvement reflection on the just-finished session — captures generalizable lessons and reconciles stale config, then auto-applies the small/safe shared-config edits (user-level `~/.claude` targets only on the keeper's machine; project-level edits inside a /start wt worktree are check-gated and committed so they ride the issue merge) and proposes the larger ones — filing the proposals as a certified (`specified`) Linear issue (Planned). Two modes — session (default; reflect on this session's friction) and sweep (audit a project's CLAUDE.md/rules against the actual codebase and de-duplicate). Use when the user says 'reflect', 'reflect on this session', 'what did we learn', 'reflect sweep', 'audit the config', or invokes /reflect. Auto-invoked at the tail of /quality-review.
 ---
 
 # Reflect
@@ -25,7 +25,7 @@ A reflection step that drips low-value "lessons" into `CLAUDE.md`/rules **active
 
 - **The bar is high and self-checking.** A candidate survives only if it is *genuinely generalizable* (will recur), *not already covered* by existing config, and *would actually have shortcut the friction*. Default to dropping.
 - **Surfacing zero improvements is a success, not a failure.** Most clean sessions should produce `No improvements identified.` Do not manufacture findings to look productive.
-- **Never commit.** Auto-applied edits land in the working tree only — the user's explicit-commit step is the review gate. This skill never runs `git commit`, `git add`, or `git push`.
+- **Commits are narrow and scoped; pushes never.** Auto-applied edits normally land in the working tree only — the user's explicit-commit step is the review gate. The single exception: project-scoped `apply-now` edits inside a `/start wt` worktree are committed by Step 5 (staged **by name**, as a dedicated commit, check-gated) so they ride the issue merge instead of blocking it — that commit is authorized by this skill's contract. This skill never runs `git push`, never commits user-level `~/.claude` edits, and never commits anything it did not itself just edit.
 - **Auto-apply is additive/clarifying only.** Anything that *removes* or *restructures* existing guidance is `propose`, never `apply-now`.
 
 ## Routing — where a lesson goes
@@ -51,6 +51,8 @@ Classify each verified candidate as exactly one:
    - One localized, **additive or clarifying** edit (a bullet, a sentence, a small section, or a reconcile fix that *corrects* a stale line in place — rewrite to current reality, **not** a deletion; removals are always `propose`).
    - Removes or contradicts no other guidance.
    - Clearly generalizable and confirmed not already covered.
+   - **User-level `~/.claude` targets: keeper machines only.** The `~/.claude` repo is shared (pushed to `alienfast/claude.git`) and has one keeper who reviews and commits it. On any other machine, an auto-applied edit sits uncommitted in a clone nobody inspects — invisible to the keeper, drifting from origin until it conflicts or is silently lost. Probe `git -C ~/.claude config --get reflect.keeper`: prints `true` → apply-now permitted (the edit stays uncommitted for the keeper's deliberate review). Anything else — unset, or the probe errors — → downgrade to `propose`; Step 6's auto-filed issue is the durable, keeper-visible route. One-time keeper setup per machine: `git -C ~/.claude config reflect.keeper true` (local git config — machine-scoped, never committed or synced).
+   - **Project-scoped targets inside a `/start wt` worktree: apply-now is permitted but MUST go through Step 5's check-then-commit path.** (`WT_ABS != MAIN_CHECKOUT` is the worktree signal — the same derivation `/quality-review`/`/start` Step 8 already use.) Left uncommitted, the edit fails `finish-merge.sh` precondition 5 and blocks the merge, or is discarded to unblock it and lost with the worktree; committed on the issue branch it rides the `/finish … merge` to the source branch — the only path by which a worktree session's project-config improvement actually reaches the team.
    - → apply to the working tree now, no prompt.
 2. **`propose`** — *any* of: a new rule/standard/skill **file**; a structural `CLAUDE.md` change; a skill bug needing code/script work; cross-cutting; or the wording/placement needs a judgment call. → surface a ready-to-paste diff, and capture it in the auto-filed continuous-improvement issue (Step 6).
 3. **`drop`** — one-off, already covered, or not generalizable. → record a one-line reason; do not surface loudly.
@@ -114,12 +116,23 @@ Apply the three gates above to each kept candidate. **`apply-now` requires that 
 
 ### Step 5 — Apply `apply-now` items
 
-Edit the target files directly in the working tree (these are small markdown edits; the orchestrator applies them — delegate to `developer` only if several independent files are involved). Re-read each target file **immediately before editing** — a prior step, an auto-fixer, *or a concurrent session* may have touched it (see `~/.claude/CLAUDE.md` multi-session safety: never clobber changes you did not make). **Do not commit.**
+Edit the target files directly in the working tree (these are small markdown edits; the orchestrator applies them — delegate to `developer` only if several independent files are involved). Re-read each target file **immediately before editing** — a prior step, an auto-fixer, *or a concurrent session* may have touched it (see `~/.claude/CLAUDE.md` multi-session safety: never clobber changes you did not make). **Do not commit** — except the one scoped case below.
+
+**Project-scoped edits inside a `/start wt` worktree — check, then commit (the Invariant's single exception).** After applying them (user-level `~/.claude` edits are never committed by this skill, in any mode):
+
+1. Run `pnpm check`. On failure, reverse each just-applied project edit with the Edit tool (swap the edit's new/old strings back — this skill knows exactly what it changed; never `git restore`, which is hook-blocked and could clobber others' work), reclassify the candidate as `propose` with the check failure as the reason, and move on — a config edit that reddens the check must not ride the issue merge, and left uncommitted it would block that merge (`finish-merge.sh` precondition 5).
+2. On a green check, stage ONLY those files by name and commit them as a dedicated commit — never amended into, or mixed with, issue commits:
+
+   ```bash
+   git add <target-file ...> && git commit -m "docs(config): <one-line summary> (via /reflect)"
+   ```
+
+   This is the scoped commit the Invariant authorizes: it exists so the edit rides `/finish … merge` into the source branch and reaches the team. No push — `/finish` owns push.
 
 Emit one visibility line, e.g.:
 
 ```text
-Applied 2 config improvements (uncommitted): rules/typescript.md — prefer X over Y; baseFund/CLAUDE.md — test setup is now scripts/setup-tests.sh, not manual.
+Applied 2 config improvements: rules/typescript.md — prefer X over Y (uncommitted, keeper review); baseFund/CLAUDE.md — test setup is now scripts/setup-tests.sh, not manual (committed on issue branch).
 ```
 
 ### Step 6 — Surface and file `propose` items
@@ -201,7 +214,7 @@ Emit the Config Audit report (see Output).
 
 ```text
 Reflection:
-- Applied (uncommitted): <N> — <file — one-line each, or none>
+- Applied: <N> — <file — one-line each, marked committed|uncommitted, or none>
 - Proposed: <N> — <destination — one-line each, or none>
 - Filed: <PL-XX (Planned, specified) — append `(label not attached — not eligible for /auto)` on exit 2; or none — reason if skipped>
 - Dropped: <N> (already-covered / one-off / not-generalizable)
@@ -213,7 +226,7 @@ Reflection:
 Config Audit — <project>:
 - Stale/contradicted: <N> — <file:claim — fix, applied|proposed>
 - Duplicates: <N> — <consolidation proposed>
-- Applied (uncommitted): <N>
+- Applied: <N> (committed|uncommitted per Step 5's rules)
 - Proposed: <N>
 - Clean: <files audited with no findings>
 ```
@@ -222,6 +235,8 @@ Config Audit — <project>:
 
 - **Invoked from `/quality-review` with nothing to reflect on** → `No improvements identified.` and return. Add no latency-heavy work to clean runs.
 - **Verifier agent unavailable** → do not auto-apply on faith. Downgrade every unverified candidate to `propose` and note that verification could not run.
+- **Keeper probe unavailable** (`git -C ~/.claude config` errors — e.g. `~/.claude` is not a git clone on this machine) → treat as non-keeper: user-level candidates downgrade to `propose`. Fail toward filing, never toward editing a shared repo blind.
+- **wt commit fails** (Step 5 — `git commit` rejected by a hook or precondition) → reverse the edits with the Edit tool exactly as in the red-check path, reclassify as `propose`, and surface the git error. Never leave a tracked project edit uncommitted in a merge-mode worktree.
 - **Auto-fixer/lint touched a config file you were about to edit** → re-read before editing (the on-disk copy is post-fix); see `~/.claude/rules/markdown.md` and `~/.claude/rules/biome.md`.
 - **A proposed edit would remove or restructure existing guidance** → never `apply-now`; always `propose`, even if you are confident. Removal is the user's call. (A reconcile fix that *corrects a stale line's value in place* removes and restructures nothing — that stays `apply-now` per the gates above.)
 - **No issue / no project context** (standalone in a non-project dir) → session mode still works (it reflects on the conversation); sweep mode requires a project — ask for a path if none resolves. When `<project>` is unresolvable, any candidate whose correct home is a project-scoped file (`<project>/CLAUDE.md`, `<project>/.claude/rules/`) downgrades to `propose` (surface the suggested path for the user to place) — never `apply-now` to a guessed or user-level fallback path.
