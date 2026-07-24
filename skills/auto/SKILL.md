@@ -1,11 +1,11 @@
 ---
 name: auto
-description: Autonomous Linear-backlog iteration — ships exactly ONE issue per invocation (preflight → /next specified → /full auto wt → record outcome), with a skip-and-circuit-breaker failure policy. Run continuously via `/loop /auto`; the loop ends itself on NO-CANDIDATES or AUTO-HALTED. Invoking /auto IS the run-scoped commit/push grant (standards/git.md). Use when the user says 'auto', 'work autonomously', 'work through the backlog', 'ship the next issue unattended', or invokes /auto (typically as /loop /auto).
+description: Autonomous Linear-backlog iteration — ships exactly ONE issue per invocation (preflight → /next specified → /full auto wt → record outcome), with a skip-and-circuit-breaker failure policy. Accepts an optional issue ID (`/auto BF-123`) for targeted mode — skip the pick and ship that specific certified issue unattended. Run continuously via `/loop /auto`; the loop ends itself on NO-CANDIDATES or AUTO-HALTED. Invoking /auto IS the run-scoped commit/push grant (standards/git.md). Use when the user says 'auto', 'work autonomously', 'work through the backlog', 'ship the next issue unattended', 'ship BF-123 unattended', or invokes /auto (typically as /loop /auto).
 ---
 
 # Auto (Autonomous Backlog Iteration)
 
-Ships **exactly one Linear issue per invocation**, end-to-end and unattended: finish any in-flight work, pick the best next issue via `/next specified` (certified issues only), ship it via `/full auto wt`, record the outcome, emit a tagged final line. Continuous operation is `/loop /auto` — each loop iteration is one issue, and the loop ends itself when the backlog drains (`NO-CANDIDATES`) or the circuit breaker trips (`AUTO-HALTED`).
+Ships **exactly one Linear issue per invocation**, end-to-end and unattended: finish any in-flight work, pick the best next issue via `/next specified` (certified issues only) — or, in **targeted mode** (`/auto BF-123`), take the issue named in the invocation — ship it via `/full auto wt`, record the outcome, emit a tagged final line. Continuous operation is `/loop /auto` — each loop iteration is one issue, and the loop ends itself when the backlog drains (`NO-CANDIDATES`) or the circuit breaker trips (`AUTO-HALTED`).
 
 **Why one-issue-per-invocation instead of an internal "keep going" loop:** in-prose anti-stop scaffolding is the documented failure mode of autonomous macros (`/full` records it failing three times before its Stop hook existed). `/loop`'s wakeup machinery is the reliable recurrence mechanism; the `full-continue.sh` Stop hook already guards the intra-issue start→finish handoff. This skill adds no hooks and no scaffolding — it composes the trustworthy pieces.
 
@@ -51,15 +51,26 @@ One caveat: **do not run an in-place (non-`wt`) `/start` on the same repo while 
 ## Arguments
 
 ```text
-/auto [pr] [TEAM[,TEAM...]]
+/auto [pr] [TEAM[,TEAM...] | ISSUE-ID]
 ```
 
 Tokens are case-insensitive and order-insensitive.
 
 - `pr` opens a PR per issue instead of merging (pass-through to `/full`). **Caveat:** in `pr` mode the source branch does not advance until PRs merge, so a dependent issue forks without its predecessor's code — use `pr` only when the queued issues are independent or a human is merging promptly.
 - A team scope (`BF`, or a comma list `PL,BF`): restricts the whole run to those teams' certified backlogs — forwarded to Step 2's pick as `team:<KEYS>`. Without it, scope follows `/next`'s resolution (`$LINEAR_TEAM`, else every team in the workspace). **At most one** team token is accepted, and it MUST validate before it is trusted: uppercase it, then check every comma-part against the workspace's real team keys (`linear-cli teams list -o json`, case-insensitive). Any part that is not a real team key — `wt`, `auto`, `team`, a typo — is an unrecognized argument: emit the error below and STOP. An unattended run must never launch scoped to a nonexistent team (it would silently mark itself `drained` against an empty backlog). (`pr` is reserved for the PR flag, so `pr,BF` fails validation by design; a workspace whose team is literally keyed `PR` scopes via `$LINEAR_TEAM` instead.)
+- **An issue ID selects targeted mode** (`/auto BF-123`, `/auto pr BF-123`) — ship exactly that issue, skipping Step 2's pick. Parse order: strip `pr` first; a token matching `^[A-Za-z]+-[0-9]+$` is the issue ID (normalize via `~/.claude/scripts/detect-issue-id.sh --validate-only --input <token>`); only then is a remaining bare token tried as a team scope. At most one issue ID, and an issue ID together with a team scope is an error (the target already names its team): `Targeted mode takes no team scope — /auto <ISSUE-ID> ships exactly that issue.`
 
-No issue ID is accepted — picking is `/next`'s job. Error on anything else — a second team-shaped token, an issue ID, or a token failing team validation: `Unrecognized argument 'X'. /auto accepts optional 'pr' and one optional team scope that must match a real team key (e.g. BF or PL,BF); worktree mode is always on.`
+**Targeted mode requires the `specified` label** — the invariant stays one sentence: `/auto` ships only certified specs, picked or targeted (`standards/issue-spec.md`). Probe before dispatching anything:
+
+```bash
+linear-cli issues get <ISSUE-ID> -o json | jq -r '.labels | .. | objects | select(has("name")) | .name' | grep -qix specified
+```
+
+Label absent → refuse and stop with a plain error — no lifecycle tag, no state change; this is invocation-time argument validation and the user is present, having just typed the ID: `<ISSUE-ID> is not certified (no specified label) — run /spec <ISSUE-ID> to certify it, or /full wt <ISSUE-ID> for an interactive run.` (A probe failure from auth/network is Error Handling's `linear-cli` territory, never a silent pass.)
+
+Targeted mode narrows the workflow in exactly four places, each marked at its step: Step 0's sticky terminal-state gate is bypassed, Step 1's preflight is scoped to the target, Step 2 is skipped, and Step 4 never transitions `status` or schedules a wakeup. Everything else — always-`wt`, the run-scoped commit/push grant, auto defaults, outcome recording, the failure Linear comment — is identical. It is one-shot by nature: run it directly, not under `/loop` (a re-fired loop would just skip-block against the now-terminal issue).
+
+Error on anything else — a second team-shaped token, a second issue ID, or a token failing team validation: `Unrecognized argument 'X'. /auto accepts optional 'pr' plus either one team scope matching a real team key (e.g. BF or PL,BF) or one issue ID for a targeted run; worktree mode is always on.`
 
 ## Workflow (one iteration)
 
@@ -78,9 +89,13 @@ Read `<main-checkout>/tmp/auto-state-<runKey>.json` (see Step 4 for the shape). 
 
 The stored `reason` already ends with its next action (usually "delete `tmp/auto-state-<runKey>.json`…"), so append nothing. If a terminal state file predates the `reason` field (or it's empty), emit the tag with `reason unavailable — see the run's Linear comments and the shipped/skipped/failed lists in tmp/auto-state-<runKey>.json; delete it to start a fresh run.` — do not improvise a cause.
 
+**Targeted mode bypasses this terminal-state re-emission** — an explicitly-typed issue ID is the human intervention the halt asked for, so proceed with the run state as-is rather than parroting the stored condition back at the user. Leave `status` untouched (the stored halt/drain still governs the next bare invocation); the targeted outcome still records into the lists per Step 4.
+
 This makes the circuit breaker hold even under fixed-interval `/loop` (e.g., `/loop 15m /auto`), which re-invokes regardless of the previous iteration's tag. A human starts a new run by deleting the state file (its skip/fail exclusions are run-scoped and would otherwise wrongly suppress issues whose blockers have since been resolved) — or simply by starting a new session, whose fresh PID names a fresh file (Step 0's GC eventually clears the old one). If the file is missing or unreadable/corrupt, recreate it empty (`status: "active"`, plus this session's `pid`/`pidStart`) and continue — worst case the breaker takes one extra failure to trip.
 
 ### Step 1: Preflight — finish in-flight work
+
+**Targeted mode scopes this step to the target.** The checks below protect the run, not the backlog, so they narrow: for check 1, dirt attributable to the **target itself** is this run's resumption — dispatch the same `Skill(skill: "finish", args: "auto <ISSUE-ID>")` as the attributable row; dirt attributable to a **different** issue, or unattributable, refuses with a plain error and no state change (the user asked for the target, not a surprise ship of something else, and the loop-mode `halted` transition exists to stop recurrence a one-shot doesn't have): `Main checkout has in-flight work (<branch>) — run bare /auto to preflight-finish it, or resolve manually, then re-run /auto <ISSUE-ID>.` Check 2 reduces to the target's own merge-queue guard: if `<main-checkout>/.claude/merge-queue/<target-id-lowercased>.json` exists, refuse — the issue already shipped and the drainer owns it (`/merge-queue` to inspect). Skip the general orphan sweep (foreign worktrees are not this invocation's business — note them in the summary sentence at most); a leftover worktree for the target itself needs no special handling here, because Step 3's `/full` dispatch already resumes a dead owner's worktree idempotently and refuses a live one (`SKIPPED-BLOCKED`).
 
 Two checks, in order:
 
@@ -97,6 +112,8 @@ Two checks, in order:
 Clean tree and no resumable worktree → proceed to Step 2.
 
 ### Step 2: Pick — dispatch /next
+
+**Targeted mode: skip this step entirely** — the invocation's issue ID is the pick, already validated and label-gated in Arguments. Proceed to Step 3.
 
 Call `Skill(skill: "next", args: "specified")` — appending ` team:<KEYS>` when this run has a team scope from Arguments (e.g. `args: "specified team:BF"`). It ranks unblocked candidates restricted to issues carrying the `specified` label — only certified specs ship unattended (`standards/issue-spec.md`; `/prd` and `/spec` are the primary certification paths, plus `/reflect`'s auto-filed proposals and manual labeling). Without an explicit scope, team resolution follows `/next`: `$LINEAR_TEAM` when the project exports it, otherwise every team in the workspace — so one run drains all certified backlogs.
 
@@ -140,6 +157,7 @@ Before applying the failure row, check the transient-API rule above — an itera
 Iteration tags (per `standards/lifecycle-tags.md` — must be the LAST LLM-authored line, nothing after it):
 
 - `AUTO-CONTINUE: <ISSUE-ID> <outcome> (<inherited tag>). <shipped>/<skipped>/<failed> this run; next /loop iteration proceeds.` Under self-paced `/loop`, pair it with a 60s `ScheduleWakeup` — see "Self-paced loop pacing" above.
+- **Targeted mode:** same outcome mapping and list/counter updates, but `status` never transitions (`drained` is impossible with no pick, and a failure does not set `halted` — the breaker protects unattended recurrence, which a one-shot doesn't have; the incremented `consecutiveFailures` still counts toward any later bare run this session) and no wakeup is ever scheduled. The trailer replaces the loop clause: `AUTO-CONTINUE: <ISSUE-ID> <outcome> (<inherited tag>). <shipped>/<skipped>/<failed> this run; targeted run complete.`
 - `AUTO-CONTINUE: ... retrying in ~15m.` — the transient-API retry variants defined in "Transient API failures" above.
 - `AUTO-HALTED: 2 consecutive failures (<ID> <tag>, <ID> <tag>) — likely systemic. See Linear comments on both issues; delete tmp/auto-state-<runKey>.json to start a fresh run.` Under `/loop`, ending on `AUTO-HALTED` or `NO-CANDIDATES` means: do NOT schedule another wakeup — the loop is over until a human intervenes (Step 0 enforces this even if a fixed-interval loop re-fires).
 

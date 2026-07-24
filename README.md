@@ -36,7 +36,7 @@ A research-augmented path for shipping something large, from raw idea to merged 
 | Create issues | `/prd @doc/plan-foo.md` | Review stages and accuracy before approving; approval creates the issues in Linear |
 | Triage | `/triage` | Reviews dependencies, identifies blockers, suggests priorities |
 | Prioritize | Move stage 1 to "Planned", stage 2 to "Backlog" | |
-| Certify | `/spec` | Interviews you, rewrites the issue in the canonical spec shape, and adds the `specified` label — the certification gate [`/auto`](#autonomous) requires. Interactive only; no args surfaces the top uncertified issues, including the Triage inbox |
+| Certify | `/spec` | Interviews you, rewrites the issue in the canonical spec shape, and adds the `specified` label — the certification gate [`/auto`](#autonomous-auto) requires. Interactive only; no args surfaces the top uncertified issues, including the Triage inbox |
 
 ### 3. Build loop
 
@@ -79,11 +79,12 @@ Reach for these as needed — between loop steps or on their own:
 | `/quality-review` | On demand — adversarial review + triage/fix loop until convergence (also auto-runs inside `/start`) |
 | `/next` | Starting a day or week — suggests the best next issue to pick up |
 
-## Autonomous
+## Autonomous (`/auto`)
 
-The developer workflow above is hands-on: you pick issues and drive `/full` per issue. `/auto` is the same machinery with the human taken out of the pick-and-ship loop, and `/loop` is what keeps it running unattended.
+The developer workflow above is hands-on: you pick issues and drive `/full` per issue. `/auto` is the same machinery with the human taken out of the pick-and-ship loop — or, in targeted mode, out of everything but the pick — and `/loop` is what keeps it running unattended.
 
 - **`/auto`** ships **exactly one Linear issue per invocation**, end to end: finish any in-flight work, pick the best unblocked issue via `/next specified` (certified issues only), ship it via `/full auto wt`, record the outcome. Worktree mode is always on (so successive issues chain without stacking branches), and every underlying `auto` default chooses abort/preserve over guess — the worst acceptable outcome is "nothing happened and Linear says why," never "something wrong shipped." Invoking `/auto` **is** the run-scoped grant for the commits and pushes it makes (see [standards/git.md](standards/git.md)).
+- **`/auto BF-123`** is **targeted mode** — same run, your pick. It skips the `/next` pick and ships exactly that issue: still certified-only (the issue must carry the `specified` label — `/spec` it first if not, or drop to `/full wt BF-123` for an interactive run), still always-worktree, still the full unattended gauntlet (plan composed and posted to Linear with no approval pause, adversarial review, finish/merge, a Linear comment on failure). One-shot by nature — run it directly, not under `/loop`. This is the middle ground between driving `/full wt` by hand and letting the loop choose.
 - **`/loop /auto`** is the way you actually run it. `/loop` supplies the recurrence — its wakeup machinery re-invokes `/auto` for the next issue — while each `/auto` call stays a single, self-contained iteration. (Deliberately: in-prose "keep going" scaffolding is the documented failure mode of autonomous macros, so `/auto` leans on `/loop`'s reliable recurrence instead of inventing its own.) Iterations run back-to-back: `/auto` schedules its next wakeup at the 60s minimum, because the backlog is the work queue and there is nothing external to wait on — `/loop`'s 20–30 minute idle-tick default is for polling loops and would otherwise idle away hours between ships.
 
 Point it at a seeded, certified (via `/prd` or `/spec`) backlog and walk away. It works the queue one issue at a time and **ends itself** — no runaway loop:
@@ -150,7 +151,7 @@ Automated multi-step workflows invoked by trigger phrases or slash commands.
 | [quality-review](skills/quality-review/) | Adversarial review + triage/fix loop until convergence (gates `pnpm check`) |
 | [finish](skills/finish/) | Finish an issue — read verdict, commit/push, mark Ready For Release |
 | [full](skills/full/) | End-to-end macro: `/start` → `/quality-review` → `/finish`, gated on verdict |
-| [auto](skills/auto/) | Autonomous backlog iteration — ships one issue per invocation; run continuously as `/loop /auto` (see [Autonomous](#autonomous)) |
+| [auto](skills/auto/) | Autonomous backlog iteration — ships one issue per invocation; run continuously as `/loop /auto` (see [Autonomous](#autonomous-auto)) |
 | [next](skills/next/) | Suggest best next issue using cycle, dependency, and triage signals |
 | [triage](skills/triage/) | Analyze backlog for staleness, blockers, and priority suggestions |
 | [prd](skills/prd/) | Create agent-friendly tickets with PRDs and success criteria |
