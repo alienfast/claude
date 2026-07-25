@@ -108,6 +108,20 @@ literal example of the wire payload — every wrapper key, every field name, and
 type signature: each side resolves its ambiguity differently, and each side's mocked unit tests then encode its own assumption as green.
 Example: pin `{ "args": { "gameId": 13 } }` → `fn motion_start(args: MotionStartArgs)`, not "motion_start({ gameId: number })".
 
+### Write-target exclusivity
+
+Before dispatching a parallel batch, enumerate every file each delegation might write — not just its stated primary target, but any file a prompt merely *mentions* as
+optional, bonus, or "consider also" work. An optional mention is still a write-target claim: the delegate may act on it. If two delegations in the same parallel batch
+can write the same file, the batch has a latent lost-update hazard — one agent's `Read` may precede the other's `Write` landing, so a later Edit/Write based on a stale
+read silently clobbers the earlier one, with no error and no merge conflict. Landing correctly is possible but is luck, not safety by construction: it depends on the
+two agents' actual read/write timing, which the orchestrator does not control.
+
+Before dispatch, confirm no two delegations in the batch share a write target. If they do:
+
+- Scope the optional/bonus mention out of the delegation that doesn't exclusively own the file, or
+- Make the two delegations sequential instead of parallel, or
+- Bundle both pieces of work into a single delegation.
+
 ### For Sequential Tasks
 
 - **Handoff**: Clear completion criteria before next task starts

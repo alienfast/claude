@@ -238,6 +238,8 @@ Acceptance: Confirm findings resolved. Flag any new Critical, High, or Medium is
 
 **Soft ceiling**: After **5 review cycles** (initial review + up to 4 re-reviews), pause and ask the user how to proceed instead of looping silently. Reviewers tend to find *something* on every cycle, so an unbounded loop can run away even when the implementation is materially improving. The ceiling is not a hard cap — the user can extend it.
 
+**Ground the count in dispatch history, not memory.** Determine the cycle count by counting the actual `quality-reviewer` dispatches made so far in this loop — Step 3's initial review plus each Step 5 item 4 re-review — never by trusting a running mental tally or a self-assigned label on a dispatch (e.g., naming an agent call "Cycle-5"). Labels and mental counters can drift from the true count across a long loop with many interleaved fix/check delegations. Before pausing — or, in auto mode, before applying the ceiling's provenance resolution — recount from the actual dispatch history if there is any doubt.
+
 ```text
 The implementation has gone through 5 review cycles and still has unresolved findings:
 [list current findings]

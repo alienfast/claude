@@ -99,7 +99,8 @@ function doThing(param: string) {
 The same "git is the archive, one source of truth" rules govern CLAUDE.md, `rules/`, `standards/`, and skill docs:
 
 - **State the ideal, not the history.** Write the procedure as it should be followed now. No "was removed", "no longer", "used to", "previously", or version pins narrating change — git holds that. (The `memory/` log is the deliberate exception: dated entries are its purpose.)
-- **Single-source the specifics.** State the rule and link to the standard that owns the details; don't re-list its commands or alternatives. Duplication drifts.
+- **Single-source the specifics.** State the rule and link to the standard that owns the details; don't re-list its commands or alternatives. Duplication drifts. This extends to tools: to reproduce a tool's derived or stateful behavior (env-var derivation, resource/slot allocation, multi-step state transitions), point at the tool's own flag or command rather than hand-deriving the recipe in prose — a manual recipe accumulates subtle bugs from interacting subsystems (ordering, scoping, persistence, idempotency) that are easy to verify individually and easy to miss in combination. Reserve hand-rolled recipes for genuine gaps where no equivalent invocation exists.
+- **Verify mechanism claims against source, not memory.** When writing or restoring prose that describes how something actually works — why a failure occurs, what a function/controller does, what a script reads — trace the current source before writing the claim; don't reconstruct it from memory or plausible inference. Confidently-wrong mechanism prose is worse than no documentation, because agents trust and act on rule/doc content.
 
 ## Decision Tree
 

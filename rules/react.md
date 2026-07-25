@@ -71,6 +71,11 @@ Otherwise, mention it in the "Approved" section as a deliberate non-finding ("in
 - **Objects in effects**: Create objects inside `useEffect` to avoid `useMemo`
 - **No dependency suppression**: Never suppress `exhaustive-deps` linter warnings
 
+## Transitions
+
+- **Catch inside the callback**: `startTransition(async () => { try { await refetch() } catch (e) { ... } })`. Applies to every rejectable promise handed to a transition — Apollo `refetch()`, a `useLazyQuery` execute, a raw `fetch` — not just the one that looks risky.
+- **Why**: a rejection inside `useTransition`'s `startTransition` becomes the hook's pending state and is re-thrown DURING RENDER from `useTransition()` itself on the next render, so only the nearest error boundary catches it — never a local try/catch, and never the inline error-state fallback the component uses elsewhere. (The top-level `startTransition` imported from `react` differs: rejections there go to a global error report and reach no boundary.)
+
 ## Anti-Patterns
 
 - ❌ Class components (use function components)
