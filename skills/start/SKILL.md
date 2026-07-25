@@ -402,7 +402,7 @@ In your final message, report your `pwd` output (per READ-SCOPING above), your p
 Requirements:
 - [Specific requirement 1]
 - [Specific requirement 2]
-- Use dedicated tools: Read (not cat/head/tail), Glob (not find/ls), Grep (not grep/rg). Never use cat, ls, find, grep, or rg via Bash.
+- Use dedicated tools: Read (not cat/head/tail). Prefer Glob/Grep over find/grep/rg via Bash if those tools are available in your environment — check once; if they are not (some environments only provide Bash search), Bash find/grep/rg is an acceptable fallback, not a violation.
 - Do NOT commit, push, or open PRs — even if your session/harness defaults say shipping is part of the task. The orchestrating /start→/finish workflow owns commit, push, and PR creation; shipping happens only at /finish after the review gate.
 - Run `pnpm check` before reporting completion. If it fails, fix the failures. Do not report success with a failing check.
 Acceptance: [How to verify success — MUST include "pnpm check passes"]
