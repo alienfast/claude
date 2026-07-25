@@ -47,6 +47,16 @@ Type checking is hard-gated in `/quality-review` and re-gated in `/finish`; run 
 
 Own the code and move forward: modify in place, delete aggressively, embrace breaking changes, and never leave backups, duplicates, or compatibility layers behind. See [Technical Debt Prevention](standards/technical-debt-prevention.md) for the full rules.
 
+## Output length
+
+Effort governs how much thinking happens, not how much gets said. Length has to be asked for.
+
+**In conversation.** Lead with the outcome — the first sentence after finishing answers "what happened" or "what did you find"; supporting detail comes after. Keep caveats short. When asked to explain something, give the high-level answer unless depth was requested. Shorten by dropping detail that doesn't change what the reader does next, not by compressing prose into fragments, arrow chains, or invented shorthand. Readable beats terse.
+
+**In written deliverables.** Linear plan and completion comments, PR descriptions, spec bodies, and `/reflect` proposals are documents, and they run long by default. Match length to substance and stop: no filler sections, no restating the section above, no template headings kept because the template had them.
+
+**This is about prose, never about coverage.** It does not govern how many findings a review reports, how many requirements a spec lists, or how many candidates a triage surfaces. Reporting less to look concise is the one failure this rule must not cause.
+
 ## Decision-Making & Anti-Patterns
 
 You have autonomy to make good engineering decisions — architectural improvements, new abstractions, schema changes, API updates, cross-file refactors — without asking permission. Proceed directly when the solution is obvious, a codebase pattern exists, or a standard covers the scenario.
@@ -60,6 +70,10 @@ See [Problem-Solving Standards](standards/problem-solving.md) for the full decis
 ## Delegation
 
 For complex multi-step tasks (>5 steps, multiple domains, high context usage), use the `/do` command pattern with TodoWrite and agent delegation.
+
+Delegate work that is genuinely independent and big enough to deserve a fresh context — a wide multi-file investigation, parallel implementation across unrelated files, a scoped review. Do not delegate what finishes in a handful of tool calls, and do not spawn a subagent to check your own work: re-reading, re-running, and self-correction happen without being asked, so instructing them again only multiplies cost. When one agent can do it, use one.
+
+The named review gates are the deliberate exception. `/quality-review`'s `quality-reviewer` dispatch and `/reflect`'s verifier review *another* agent's output from a fresh context — that is not self-critique, and it stays.
 
 ## Memory
 

@@ -6,7 +6,7 @@ Reusable agents, skills, standards, rules, and hooks for [Claude Code](https://d
 
 This started as a fix for one problem and grew into an opinionated operating system for agentic development.
 
-**The original problem — context rot.** LLMs degrade as their context fills with too much information. The fix is **agent delegation**: specialized agents (developer, debugger, reviewer, researcher) each get their own clean context while you stay the main thread, orchestrating from above. Each agent reports back a tight summary, keeping both the top-level and the agent contexts small and focused. Opus drives orchestration and architecture; cheaper, faster models (Sonnet/Haiku) handle scoped task work. For a deeper overview of this pattern, read [ClaudeLog: You Are the Main Thread](https://claudelog.com/mechanics/you-are-the-main-thread/).
+**The original problem — context rot.** LLMs degrade as their context fills with too much information. The fix is **agent delegation**: specialized agents (developer, debugger, reviewer, researcher) each get their own clean context while you stay the main thread, orchestrating from above. Each agent reports back a tight summary, keeping both the top-level and the agent contexts small and focused. Opus drives orchestration, implementation, and review; Sonnet handles research and writing. Since every current model holds instruction-following steady across a 1M-token window, the routing lever is now mostly **effort** rather than model tier — see the [agent table](#agents). For a deeper overview of this pattern, read [ClaudeLog: You Are the Main Thread](https://claudelog.com/mechanics/you-are-the-main-thread/).
 
 **What it became.** On top of that foundation, this repo is now a complete, mostly self-maintaining toolkit:
 
@@ -87,6 +87,8 @@ The developer workflow above is hands-on: you pick issues and drive `/full` per 
 - **`/auto BF-123`** is **targeted mode** — same run, your pick. It skips the `/next` pick and ships exactly that issue: still certified-only (the issue must carry the `specified` label — `/spec` it first if not, or drop to `/full wt BF-123` for an interactive run), still always-worktree, still the full unattended gauntlet (plan composed and posted to Linear with no approval pause, adversarial review, finish/merge, a Linear comment on failure). One-shot by nature — run it directly, not under `/loop`. This is the middle ground between driving `/full wt` by hand and letting the loop choose.
 - **`/loop /auto`** is the way you actually run it. `/loop` supplies the recurrence — its wakeup machinery re-invokes `/auto` for the next issue — while each `/auto` call stays a single, self-contained iteration. (Deliberately: in-prose "keep going" scaffolding is the documented failure mode of autonomous macros, so `/auto` leans on `/loop`'s reliable recurrence instead of inventing its own.) Iterations run back-to-back: `/auto` schedules its next wakeup at the 60s minimum, because the backlog is the work queue and there is nothing external to wait on — `/loop`'s 20–30 minute idle-tick default is for polling loops and would otherwise idle away hours between ships.
 
+**Launch it with `--model opus[1m] --effort xhigh`.** Not `opusplan` — that means "Opus in plan mode, Sonnet otherwise", and `/start auto` skips plan mode entirely, so an `opusplan` run executes end-to-end on Sonnet. `[1m]` because context accumulates across iterations.
+
 Point it at a seeded, certified (via `/prd` or `/spec`) backlog and walk away. It works the queue one issue at a time and **ends itself** — no runaway loop:
 
 - **`NO-CANDIDATES`** — the backlog has no more certified, workable issues. Certify more via `/spec` (or seed via `/prd`), delete the run's `tmp/auto-state-<runKey>.json`, and re-invoke.
@@ -130,12 +132,17 @@ Specialized personas the main thread delegates to — directly, or through skill
 
 | Agent | Role | Model |
 |-------|------|-------|
-| [architect](agents/architect.md) | Solution design, ADRs, technical recommendations | Opus (pinned) · max effort |
-| [developer](agents/developer.md) | Code implementation from specifications | Sonnet |
-| [debugger](agents/debugger.md) | Root cause analysis through systematic evidence gathering | Inherits |
-| [quality-reviewer](agents/quality-reviewer.md) | Adversarial review — edge cases, contract violations, security | Opus (pinned) · max effort |
-| [research-lead](agents/research.md) | Multi-perspective research and synthesis | Inherits |
-| [technical-writer](agents/technical-writer.md) | Concise documentation for completed features | Sonnet |
+| [architect](agents/architect.md) | Solution design, ADRs, technical recommendations | Opus · max |
+| [developer](agents/developer.md) | Code implementation from specifications | Opus · high |
+| [debugger](agents/debugger.md) | Root cause analysis through systematic evidence gathering | Opus · xhigh |
+| [quality-reviewer](agents/quality-reviewer.md) | Adversarial review — edge cases, contract violations, security | Opus · xhigh |
+| [research-lead](agents/research.md) | Multi-perspective research and synthesis | Sonnet · high |
+| [technical-writer](agents/technical-writer.md) | Concise documentation for completed features | Sonnet · low |
+
+Every agent pins both keys, so none inherits the session default. `max` is reserved for `architect`,
+which only runs as `/quality-review`'s escalation path; `xhigh` is the working default for coding and
+review. Effort is the primary cost lever — step `developer` down to `sonnet` · `xhigh` if the spend
+outweighs the completeness gain.
 
 ### Skills
 

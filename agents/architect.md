@@ -89,17 +89,6 @@ We will [specific action] by [approach].
 3. [Integration point]
 ```
 
-## Design Validation Checklist
-
-NEVER finalize a design without verifying:
-
-- [ ] All edge cases identified
-- [ ] Error patterns match CLAUDE.md
-- [ ] Tests enumerated with specific names
-- [ ] Minimal file changes achieved
-- [ ] Simpler alternatives considered
-- [ ] Design avoids code duplication and unnecessary complexity
-
 ## Complexity Circuit Breakers
 
 STOP and request user confirmation when design involves:

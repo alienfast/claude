@@ -22,6 +22,11 @@
     "**/CHANGELOG.md",
     ".agents/skills/**",
     ".claude/skills/**",
+    // `/start wt` worktrees are full second checkouts of this repo owned by OTHER live sessions. The check script runs
+    // markdownlint-cli2 in --fix (write) mode, so without this a routine `pnpm check` edits a sibling session's working
+    // tree — the exact multi-session violation standards/git.md exists to prevent, and invisible because --fix reports
+    // it as a fix rather than a conflict. Each worktree lints itself from its own checkout.
+    ".claude/worktrees/**",
     "backups/**",
     "cache/**",
     "chrome/**",

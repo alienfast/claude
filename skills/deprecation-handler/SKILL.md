@@ -2,7 +2,8 @@
 name: "Deprecation Handler"
 description: "Handles deprecated APIs, types, and modules by applying safe migration patterns. Use when encountering deprecation warnings, migrating from deprecated code, updating dependencies with breaking changes, or modernizing legacy code to use current APIs."
 version: "1.1.0"
-model: haiku
+model: sonnet
+effort: medium
 allowed-tools:
   - Read
   - Grep

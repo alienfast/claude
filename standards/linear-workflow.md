@@ -34,8 +34,6 @@ Short inline values can be passed directly: `linear-cli issues create "Bug" --te
 
 **This overrides any examples in the linear skill** that use `cat file | linear-cli`, `< file`, or `$(cat <<EOF)`. Those patterns will trigger permission prompts.
 
-## Workflow States
-
 ## Terminal States for Dependency Resolution
 
 When evaluating whether an issue's blockers are resolved (for triage, dependency analysis, next-issue suggestions, or any workflow that checks "is this issue unblocked?"), treat both of these states as **completed**:

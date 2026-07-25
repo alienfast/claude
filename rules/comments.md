@@ -25,8 +25,7 @@ exist.
 Size a comment to what a reader needs **at that line**, not to the effort it
 took you to discover it. A four-hop debugging chain is not four hops' worth of
 comment — it's usually one sentence naming the single constraint the code can't
-show. The effort feels valuable to write because the mechanism is fresh in your
-head; the reader pays for it on every pass.
+show.
 
 Split what you're tempted to write into *facts the code already states* vs. *the
 one fact it can't*, and keep only the latter:

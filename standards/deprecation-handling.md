@@ -1,188 +1,43 @@
 # Deprecation Handling
 
-This standard ensures that deprecated APIs, types, functions, and modules are properly handled across all code development and maintenance activities.
+## New code never uses a deprecated API
 
-## For New Code
+Use the replacement named in the deprecation notice. Where several alternatives exist, take the most
+stable and best-documented one. Compiler and lint output is the detection surface — a deprecation
+warning in `pnpm check` is a finding, not noise.
 
-### Rules
+## Existing code gets fixed on contact
 
-- **NEVER** use deprecated APIs, types, functions, or modules
-- Always check documentation and IDE warnings for deprecation notices
-- Use the latest recommended alternatives provided in deprecation messages
-- When multiple alternatives exist, choose the most stable and well-documented option
+Update deprecated usage in any file you touch, even when it is unrelated to the change you came for.
+This is explicitly in scope and must not be classified as churn.
 
-### Verification Steps
+- **Simple deprecations** — renamed functions, moved import paths, changed config keys — fix now, in
+  the same commit.
+- **Architectural deprecations** that need real refactoring — file a separate issue, and leave a
+  one-line pointer at the site per [rules/comments.md](../rules/comments.md). Record what blocks the
+  migration (a dependency, a breaking change, an unfinished upgrade), not a restatement of the
+  deprecation.
 
-- Review TypeScript compiler warnings during development
-- Check ESLint/linting output for deprecation rules
-- Verify IDE deprecation indicators (strikethrough, warnings)
-- Consult official migration guides for major framework updates
+## Priority
 
-## For Existing Code
+| Level | Cases |
+|---|---|
+| **Immediate** | Security vulnerabilities; APIs removed in the next major; performance-critical paths |
+| **When touching the file** | Direct replacements, import path changes, deprecated config options |
+| **Plan as separate work** | Anything needing architectural change or broad refactoring |
+| **Monitor** | Distant sunset dates, style-only deprecations |
 
-### Proactive Updates
+## The four evasions
 
-- **Identify deprecations** when modifying files that contain deprecated usage
-- **Update deprecated usage** when touching a file, even if unrelated to the main change
-- **Prioritize security-related deprecations** that could pose risks
-- **Document** when deprecation updates would require significant refactoring beyond the current scope
+None of these count as handling a deprecation:
 
-### Update Strategy
+1. **Pinning or downgrading** a dependency to avoid the migration.
+2. **Suppressing the warning** — `@ts-ignore`, an eslint-disable, a silenced console — without
+   fixing the call.
+3. **Conditional imports** that keep the old API alive on some paths. Migrate every call site;
+   a partial migration is the deprecation plus a branch.
+4. **"It still works."** True and irrelevant — it works until the major that removes it.
 
-- Fix simple deprecations immediately (e.g., renamed functions, updated import paths)
-- For complex deprecations requiring architectural changes, create separate tasks
-- When touching legacy code, update obvious deprecations in the same commit
-- Use migration guides and official upgrade documentation
-
-## Detection Methods
-
-### Automated Tools
-
-- Enable deprecation warnings in TypeScript configuration
-- Use ESLint rules that flag deprecated usage
-- Run dependency audit tools to identify deprecated packages
-- Enable IDE deprecation highlighting and warnings
-
-### Manual Checks
-
-- Review framework migration guides when upgrading versions
-- Check package.json for deprecated dependencies using `npm outdated` or similar
-- Monitor console warnings in development environment
-- Review official change logs and breaking change announcements
-
-## Common Deprecation Categories
-
-### API Changes
-
-- Function signature changes
-- Renamed methods or properties
-- Removed parameters or return types
-
-### Framework Updates
-
-- React lifecycle methods → hooks
-- Vue 2 composition patterns → Vue 3 Composition API
-- Angular directive syntax changes
-
-### Package Dependencies
-
-- Deprecated npm packages
-- Security-vulnerable versions
-- Packages with better modern alternatives
-
-### Language Features
-
-- Deprecated JavaScript features
-- TypeScript configuration options
-- Node.js API changes
-
-## Priority Levels
-
-### Immediate (Fix Now)
-
-- Security vulnerabilities in deprecated code
-- Breaking changes in next major version
-- Performance-critical deprecated APIs
-
-### High (Fix When Touching File)
-
-- Deprecated functions with direct replacements
-- Simple import path changes
-- Deprecated configuration options
-
-### Medium (Plan for Future)
-
-- Complex architectural changes required
-- Deprecated patterns requiring significant refactoring
-- Non-critical deprecations with long sunset timelines
-
-### Low (Monitor)
-
-- Deprecations with distant sunset dates
-- Optional optimizations
-- Style-only deprecations
-
-## Documentation Requirements
-
-When encountering deprecations that cannot be immediately fixed:
-
-1. **Add inline comments** explaining why the deprecated code remains
-2. **Create tasks** for future refactoring if significant work is required
-3. **Document alternatives** and migration paths for future reference
-4. **Note any blockers** preventing immediate updates (dependencies, breaking changes, etc.)
-
-## Examples
-
-### Good: Immediate Fix
-
-```typescript
-// Before (deprecated)
-React.createClass({ ... })
-
-// After (modern)
-class MyComponent extends React.Component { ... }
-// or
-const MyComponent = () => { ... }
-```
-
-### Good: Documented Complex Case
-
-```typescript
-// TODO: Migrate to new API when v3 migration is complete
-// Current usage of deprecated method due to dependency on legacy system
-// See: https://docs.example.com/migration-guide
-legacyApi.deprecatedMethod()
-```
-
-### Bad: Ignoring Deprecation
-
-```typescript
-// eslint-disable-next-line deprecation/deprecation
-deprecatedFunction() // No explanation or plan for migration
-```
-
-## Anti-Patterns for Deprecation Handling
-
-### ❌ NEVER Do These
-
-1. **Dependency Version Pinning to Avoid Deprecations**
-
-   ```json
-   // DON'T: Pin to old version to avoid dealing with deprecation
-   "react": "16.8.0"  // Pinned to avoid hooks migration
-   ```
-
-   ✅ Instead: Migrate to hooks properly, use current React version
-
-2. **Suppressing Deprecation Warnings**
-
-   ```typescript
-   // DON'T: Hide the warning without fixing
-   // @ts-ignore
-   deprecatedFunction()
-   ```
-
-   ✅ Instead: Use the replacement function
-
-3. **Conditional Imports to Delay Migration**
-
-   ```typescript
-   // DON'T: Use old API in some cases to avoid full migration
-   const api = isNewFeature ? newApi : deprecatedApi
-   ```
-
-   ✅ Instead: Migrate fully to new API across all use cases
-
-4. **"It Still Works" Justification**
-
-   - ❌ "The deprecated method still works, so we'll leave it"
-   - ✅ "The deprecated method still works, but I'll migrate now to avoid future breakage"
-
-### When You Encounter Deprecations
-
-If you find deprecated code:
-
-1. **Fix it immediately** if the change is straightforward
-2. **Research the replacement** if unfamiliar with the new API
-3. **Complete the migration** rather than partial updates
-4. **Never downgrade dependencies** to avoid dealing with deprecations
+These are the deprecation-specific forms of the workaround anti-patterns in
+[Problem-Solving Standards](problem-solving.md). Detecting versions accurately is
+[Version-Aware Planning](version-aware-planning.md).

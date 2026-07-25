@@ -73,25 +73,10 @@ These commands are **BLOCKED** by the git-permissions hook (`~/.claude/hooks/git
 
 **Fundamental principle**: Multiple Claude Code sessions can work simultaneously on the same repository.
 
-**Never assume changes are mistakes:**
-
-```bash
-# ❌ CATASTROPHICALLY WRONG
-$ git status
-  modified: packages/api/config/cucumber.yml
-  modified: doc/e2e/README.md
-
-# Claude thinks: "I'm only working on docs, those API changes must be mistakes"
-$ git restore packages/api/config/cucumber.yml  # 🛑 DESTROYS OTHER SESSION'S WORK
-
-# ✅ CORRECT RESPONSE
-"I notice changes to `packages/api/config/cucumber.yml` in git status.
-I'm working on documentation, so this appears to be from other work.
-Should I:
-1. Include it in this commit?
-2. Leave it unstaged for separate work?
-3. Something else?"
-```
+**Never assume changes are mistakes.** Modified files outside your task's scope are evidence of a
+concurrent session, not of an error to tidy up. Name the unexpected paths, say they look like other
+work, and ask whether to include them or leave them — do not discard them on your own read of what
+"should" be modified.
 
 #### Branch operations mutate the SHARED working tree — never reach for them unasked
 
@@ -150,21 +135,8 @@ git add packages/  # Unless you explicitly worked on ALL of packages/
 
 ### When You See Unexpected Changes
 
-**STOP. DO NOT:**
-
-- Run `git restore` on those files
-- Run `git reset` to "clean up"
-- Assume they are "unrelated" or "mistakes"
-- Stage them with `git add .`
-
-**INSTEAD, ASK:**
-
-```text
-"I see changes to <files> that I didn't modify. Should I:
-1. Include them in my commit?
-2. Leave them unstaged?
-3. Create a separate commit for them?"
-```
+Do not `restore` them, do not `reset` to "clean up", and do not sweep them in with `git add .`. Ask
+whether to include them, leave them unstaged, or commit them separately.
 
 ### Safe Commands (Always Allowed)
 
@@ -213,53 +185,23 @@ MSYS_NO_PATHCONV=1 git show origin/main:.gitignore
 
 Do not test path identity by string-comparing resolved paths, and be wary of deriving a value one script `pwd -P`-resolves that another script compares against (e.g. a per-repo lock key from `cd "$common_dir" && pwd -P`) — the two can diverge by input format alone. Prefer a structural signal independent of path format: e.g. to tell a registered linked worktree from an orphaned dir, test the shape of `git rev-parse --absolute-git-dir` (`*/worktrees/*`) plus the worktree's own `.git` pointer, not `--show-toplevel` vs the directory string.
 
-### Why This Matters: Real Incident
+### Recovery is not available
 
-**October 2025 catastrophic failure:**
+This is why the rules above are absolute rather than advisory. A session once read a concurrent
+session's API changes as unrelated mistakes, ran `git restore` on them, then `git reset --hard` to
+tidy up — destroying hours of work from both sessions. Every recovery attempt failed.
 
-1. **Session A**: Working on API test configuration files (`packages/api/`)
-2. **Session B**: Working on documentation cleanup (`doc/e2e/`)
-3. Session B ran `git status`, saw API changes
-4. Session B **assumed** API changes were "unrelated mistakes"
-5. Session B ran `git restore packages/api/...` → **Destroyed Session A's hours of work**
-6. Session B then ran `git reset --hard` → **Destroyed its own staged work**
-7. **Total loss**: All uncommitted work from both sessions
+| Command | Changes lost | Recoverable? |
+|---|---|---|
+| `git restore <files>` | Unstaged working tree changes | **No** — permanent |
+| `git reset --hard` | All uncommitted changes | Only if staged or committed first |
+| `git clean -fd` | Untracked files | **No** — permanent |
 
-**Recovery attempts**: All failed. Unstaged changes deleted by `git restore` are **gone forever**.
+Reflog does not track working tree files, dangling blobs rarely help for unstaged changes, and
+`git fsck --lost-found` cannot recover discarded working tree changes.
 
-### Recovery Reality
-
-| Command Used | Changes Lost | Recovery Possible? |
-|--------------|--------------|-------------------|
-| `git restore <files>` | Unstaged working tree changes | ❌ **NO** - Permanent loss |
-| `git reset --hard` | All uncommitted changes | ⚠️ **Rarely** - Only if staged/committed before |
-| `git clean -fd` | Untracked files | ❌ **NO** - Permanent loss |
-
-- Git reflog **does not track** working tree files
-- Dangling blobs **rarely help** for unstaged changes
-- `git fsck --lost-found` **cannot recover** discarded working tree changes
-
-### Enforcement
-
-The git-permissions hook will **block** these commands with a clear error message. To override:
-
-```bash
-# User must explicitly say:
-"Yes, run git reset --hard"
-"Yes, run this git restore command"
-
-# Only then will Claude be allowed to execute the command
-```
-
-### Internalize This
-
-The hook provides enforcement, but you must **understand why**:
-
-- **You are not alone** - Other sessions and user's work exists
-- **Changes have reasons** - Never assume mistakes
-- **Clean up is not worth data loss** - Leave working tree alone
-- **When in doubt, ASK** - User decides what to keep/discard
-- **Recovery is usually impossible** - Prevention is the only solution
+The `git-permissions.sh` hook blocks these commands. It unblocks only on an explicit user
+instruction naming the command — the hook is the floor, not the reasoning.
 
 ## Commit and Push Authorization
 

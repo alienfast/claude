@@ -6,8 +6,7 @@ Core principles (autonomy, decision thresholds, workaround anti-patterns) are su
 
 These standards apply universally across all contexts:
 
-- [Agent Coordination](agent-coordination.md) - Parallel vs sequential execution patterns
-- Commenting → moved to [rules/comments.md](../rules/comments.md) — auto-injected on every file edit, all file types (default to no comments; size to the reader; new files get a WHY docblock)
+- [Agent Coordination](agent-coordination.md) - Interface contracts, write-target exclusivity, background-agent recovery
 - [Git](git.md) - Commit messages, PR descriptions, multi-session safety
 - [Problem-Solving](problem-solving.md) - When to ask vs. proceed, anti-patterns for workarounds
 - [Project Commands](project-commands.md) - Command discovery and usage
@@ -20,11 +19,17 @@ These standards apply universally across all contexts:
 - [Version-Aware Planning](version-aware-planning.md) - Research and planning based on actual dependency versions
 - [GitHub Actions](github-actions.md) - SHA-pinning third-party actions; avoid the annotated-tag-object-SHA trap
 
-## Migrated to Path-Specific Rules
+## Path-Specific Rules
 
-These have been moved to `~/.claude/rules/` for path-based application:
+File-type conventions live in [`~/.claude/rules/`](../rules/) and are auto-injected by `paths:` glob
+when you edit a matching file — read them there, not here:
 
-- TypeScript → `rules/typescript.md` (applied to `**/*.ts`, `**/*.tsx`)
-- React → `rules/react.md` (applied to `**/*.tsx`, `**/*.jsx`)
-- Markdown → `rules/markdown.md` (applied to `**/*.md`, `**/*.mdx`)
-- Package Manager → `rules/package-manager.md` (applied to `**/package.json`)
+| Rule | Applies to |
+|---|---|
+| [comments.md](../rules/comments.md) | every file type |
+| [typescript.md](../rules/typescript.md) | `**/*.ts`, `**/*.tsx` |
+| [react.md](../rules/react.md) | `**/*.tsx`, `**/*.jsx` |
+| [markdown.md](../rules/markdown.md) | `**/*.md`, `**/*.mdx` |
+| [biome.md](../rules/biome.md) | JS/TS/JSON in Biome projects |
+| [env-vars.md](../rules/env-vars.md) | `**/*.ts`, `**/*.tsx`, `**/*.mts` |
+| [package-manager.md](../rules/package-manager.md) | `**/package.json`, lockfiles |

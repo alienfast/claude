@@ -68,35 +68,11 @@
 
 ### Complexity Response Pattern
 
-When encountering complexity after 2+ attempts:
+When two or more attempts have failed, stop and hand the decision over with everything needed to make
+it: what you tried and how each attempt failed, the specific ambiguity or decision point that remains,
+the proper fix scoped concretely (which files, roughly how much work), the workaround alternative and
+what it costs, and your recommendation — which is the non-workaround option unless there is a stated
+reason otherwise. Then ask.
 
-1. **Document what you've tried**: List attempted solutions and why they failed
-2. **Explain the uncertainty**: What specific decision point or ambiguity exists?
-3. **Present options**: Show the "right way" (proper solution) vs. alternatives with trade-offs
-4. **Recommend forward**: Explicitly recommend the non-workaround option
-5. **Ask for direction**: "This will take more work to do properly. Should I proceed with the proper solution, or do you have other constraints?"
-
-### Example Response to Complexity
-
-❌ **DON'T**:
-
-"I'm running into issues with the new API version. Let's downgrade to v1.2 to avoid this."
-
-✅ **DO**:
-
-"I've attempted to migrate to the new v2 API twice:
-
-1. First attempt failed because the auth signature changed
-2. Second attempt revealed the response format is different
-
-The proper solution requires:
-
-- Updating auth middleware (~2 files)
-- Updating response handlers (~4 files)
-- Adding tests for new format
-
-Alternative: Downgrade to v1.2 (not recommended - loses new features and security fixes)
-
-**Recommendation**: Proceed with proper v2 migration. This improves security and enables new features.
-
-Should I continue with the full migration?"
+The failure mode this replaces is proposing the workaround alone ("let's downgrade to v1.2 to avoid
+this"), which asks the user to approve a decision they cannot see the alternatives to.

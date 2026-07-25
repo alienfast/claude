@@ -6,49 +6,17 @@ paths:
 
 # TypeScript Rules
 
-## Core Principles
+## Import extensions
 
-- **Type Safety First**: Leverage TypeScript's type system to catch errors at compile time
-- **Explicit Over Implicit**: Prefer explicit type annotations when they improve code clarity
-- **Consistency**: Follow existing codebase patterns and project conventions
-
-## Type Definitions
-
-### Interfaces vs Types
-
-- Use `interface` for object shapes that may be extended
-- Use `type` for unions, intersections, primitives, and computed types
-- Prefer `interface` for public APIs and extensible contracts
+All relative imports carry a `.js` extension, including in `.ts` files — ESM resolution and the build
+tooling both require it.
 
 ```typescript
-// ✅ Good - interface for extensible objects
-interface User {
-  id: string
-  name: string
-}
-
-// ✅ Good - type for unions and computed types
-type Status = 'pending' | 'approved' | 'rejected'
-type UserWithStatus = User & { status: Status }
-```
-
-## Import/Export Conventions
-
-### File Extensions
-
-- All relative imports must include `.js` extensions for ESM compatibility
-- Use explicit extensions even in TypeScript files for build tool compatibility
-
-```typescript
-// ✅ Good
 import { UserService } from './services/user.js'
 import type { User } from './types/user.js'
-
-// ❌ Bad
-import { UserService } from './services/user'
 ```
 
-### Import Organization
+## Import order
 
 1. Node.js built-ins
 2. External dependencies
@@ -56,26 +24,17 @@ import { UserService } from './services/user'
 4. Relative imports
 5. Type-only imports last
 
-## Runtime Safety
+## Type definitions
 
-### Type Guards
+`interface` for object shapes that may be extended and for public/extensible contracts; `type` for
+unions, intersections, primitives, and computed types.
 
-- Implement type guards for external data validation
-- Use assertion functions for invariants
-- Prefer user-defined type guards over `any` assertions
+## Escape hatches need a reason
 
-```typescript
-// ✅ Good - type guard
-function isUser(obj: unknown): obj is User {
-  return typeof obj === 'object' && obj !== null && 'id' in obj && 'name' in obj
-}
-```
+`any`, `@ts-ignore`, non-null `!`, and `as` casts are all ways of telling the compiler to stop
+checking. Reach for a type guard or an assertion function instead — validating external data is the
+case they exist for. When one is genuinely unavoidable, the justification goes in the code, and
+[Problem-Solving Standards](../standards/problem-solving.md) governs when it is allowed at all.
 
-## Anti-Patterns to Avoid
-
-- ❌ Using `any` without justification
-- ❌ Disabling TypeScript errors with `@ts-ignore`
-- ❌ Non-null assertions (`!`) without certainty
-- ❌ Casting with `as` instead of type guards
-- ❌ Missing return type annotations on public functions
-- ❌ Using `Function` type instead of specific function signatures
+Public functions carry explicit return types. Prefer a specific signature over the bare `Function`
+type.

@@ -376,8 +376,9 @@ Quick reference:
 
 Skills should work with:
 
-- Claude Opus (primary - efficient compared to sonnet 4.5 - complex reasoning)
-- Claude Haiku (efficiency-focused)
+- Opus (the default — orchestration, implementation, review)
+- Sonnet (research, writing, and any skill pinned to it)
+- Haiku (narrow classification skills only; it does not support the `effort` parameter)
 
 Test that your skill:
 

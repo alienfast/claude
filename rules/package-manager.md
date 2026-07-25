@@ -46,14 +46,5 @@ to both auto-purge and update the lockfile.
 
 ## Version Management
 
-- Follow semantic versioning for all version-related decisions
-- Apply semver classification when updating dependencies
-- Use appropriate version ranges based on compatibility requirements
-
-### Semver Quick Reference
-
-| Change Type | Version Bump | Examples |
-|-------------|--------------|----------|
-| Breaking changes | MAJOR (X.0.0) | Removed APIs, changed signatures, renamed exports |
-| New features | MINOR (x.Y.0) | Added methods, new optional parameters |
-| Bug fixes | PATCH (x.y.Z) | Fixed bugs, performance improvements |
+Classify every dependency change by semver type and match research depth to it — see
+[Semver Standards](../standards/semver.md), which owns the depth table and the security carve-out.

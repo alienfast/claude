@@ -2,7 +2,7 @@
 name: quality-review
 description: Adversarial implementation review with triage and fix loop. Hard-gates on `pnpm check`, delegates to the quality-reviewer agent for categorized findings (Critical/High/Medium/Nice-to-Have/Approved), then triages and fixes findings via the developer agent. Loops until a re-review surfaces no new Critical/High/Medium findings (convergence), with a soft ceiling of 5 cycles before asking the user how to proceed; option 3 of that prompt terminates with verdict `escalated-to-architect`. Autonomous mode via the `auto` token (prompts resolve to documented defaults; used by /auto via /start auto). Use when the user says 'review my work', 'check this implementation', 'adversarial review', 'quality review', or invokes /quality-review.
 model: opus
-effort: max
+effort: xhigh
 ---
 
 # Quality Review
@@ -159,6 +159,7 @@ Requirements:
 - Assess security surface beyond obvious vulnerabilities
 - Check integration boundaries with existing code
 - Verify conformance against user-level and project-level conventions
+- Report every issue you find, including ones you are uncertain about or judge low-severity. Your job at this stage is coverage, not filtering: Step 6 triage ranks and disposes of findings, so it is better to surface something that later gets filtered out than to silently drop a real bug. Put your severity estimate in the section you file it under — Nice-to-Have is a real lane that gets fixed, not a discard pile.
 Acceptance: Produce a categorized findings report following the Required findings format below — markdown sections with `## Review Findings` heading and the five `### <severity>` subheadings, in that order. Do NOT emit JSON arrays of findings, tables, "Verification summary" sections, "Categorization" tallies, or any alternative structure. The format is parsed by sub-step 1 below; deviations break the consolidation step and surface raw output to the user.
 ```
 

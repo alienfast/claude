@@ -17,11 +17,20 @@ Ships **exactly one Linear issue per invocation**, end-to-end and unattended: fi
 
 ## Unattended-run prerequisites
 
-This skill cannot change permission modes. For a genuinely walk-away run:
+This skill cannot change permission modes or pick its own model. For a genuinely walk-away run:
 
+- **Launch with `--model opus[1m] --effort xhigh`.** Do NOT use `opusplan`: it means "Opus in plan mode, Sonnet otherwise", and Step 3's `/full auto` dispatches `/start auto`, which skips `EnterPlanMode` entirely (`/start` Step 6). The Opus branch never fires, so an `opusplan` run executes end-to-end on Sonnet. `[1m]` matters because a multi-issue run accumulates context across iterations. Fable 5 (`--model fable`) is the alternative for unusually large issues — better long-horizon retention — but it runs safety classifiers that can return `stop_reason: "refusal"`, which reaches Step 4 as an unrecognized-tag failure and counts against the circuit breaker.
 - Run the session in a permissive mode (VSCode auto-accept edits, or `claude --permission-mode acceptEdits`); consider `/fewer-permission-prompts` first to seed a project allowlist.
 - A permission prompt mid-run does not break anything — the run pauses until answered and `/loop` resumes normally. Expect occasional prompts on milestones that touch unusual commands (e.g., native-bridge/hardware work).
-- Context growth across iterations is handled by the harness's automatic summarization. `/compact` and `/clear` are user commands — never attempt them; `tmp/auto-state-<runKey>.json` (Step 4) is the cross-iteration memory that survives summarization.
+- Context growth across iterations is handled by the harness's automatic summarization. `/compact` and `/clear` are user commands — never attempt them; `tmp/auto-state-<runKey>.json` (Step 4) is the cross-iteration memory that survives summarization. You have ample context; never stop, summarize, or propose a new session on account of context limits.
+
+## Operating unattended
+
+Nobody is watching in real time, so a question ends the run instead of resolving it. For any reversible action that follows from the invocation, proceed — every prompt site in the skills this dispatches already documents an `auto` default, and taking it IS the answer. The exceptions are the ones the workflow names: an unattributable dirty tree, a live sibling's worktree, an uncertified target. Those halt with a tag, which is not the same as asking.
+
+Ground progress claims in tool results, not recollection. Before recording an outcome in Step 4, each claim traces to something this session actually observed — a tag from the dispatched skill, a `git status`, a script's exit code. Report faithfully: if a check failed, say so with its output; if a step was skipped, say that.
+
+Before ending a turn, read your last paragraph. If it is a plan, a question, or a promise about work not yet done ("I'll ship it next", "waiting on the review"), do that work now with tool calls instead. Every turn ends on either a lifecycle tag or a genuine block.
 
 ## Fleet-view visibility — issue-keyed narration
 

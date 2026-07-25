@@ -1,114 +1,22 @@
 # Agent Coordination Patterns
 
-This document defines coordination patterns for parallel and sequential agent execution in Claude Code.
+Tool selection and ordering, parallel file reads, search parallelization, retry logic, and context
+management are handled without instruction. Specify coordination only where the model cannot infer the
+constraint from the task: real dependencies between delegations, shared write targets, quality gates
+that must hold before the next phase starts. Everything below is one of those cases.
 
-## Parallel vs Sequential Execution Decision Matrix
+Delegate work that is genuinely independent and large enough to justify a fresh context. Delegation
+multiplies cost on small tasks, and a subagent spawned to double-check another agent's reasoning
+usually adds spend without adding signal — see [CLAUDE.md](../CLAUDE.md) "Delegation".
 
-### Use Parallel Execution When
-
-- Tasks are **independent** - results don't depend on each other
-- Tasks can be **validated separately**
-- No **shared resources** or potential conflicts
-- **Time-sensitive** - parallel execution provides significant speed benefits
-
-### Use Sequential Execution When
-
-- Tasks are **dependent** - later tasks need earlier results
-- Tasks **share resources** that could cause conflicts
-- **Quality gates** - each step must be validated before proceeding
-- **Complex integration** - results need careful coordination
-
-## Parallel Execution Patterns
-
-### Research Tasks
-
-```md
-# Independent research queries - High Parallelism Pattern
-
-[Single message with multiple Task calls - aim for 5-15 parallel subagents]
-Task 1 for research-subagent: Market analysis for Product A
-Task 2 for research-subagent: Competitive landscape for Product B
-Task 3 for research-subagent: Technical feasibility for Feature C
-Task 4 for research-subagent: Regulatory requirements for Feature C
-Task 5 for research-subagent: Cost analysis for Product A production
-Task 6 for research-subagent: Consumer demand trends for Product B
-...
-# Continue up to 15-20 parallel research tasks for maximum efficiency
-```
-
-### Development Tasks
-
-```md
-# Independent component development
-
-[Single message with multiple Task calls]
-Task 1 for developer: Implement UserProfile component
-Task 2 for developer: Implement ProductCatalog component
-Task 3 for developer: Implement ShoppingCart component
-```
-
-### Mixed Agent Types
-
-```md
-# Different agents working on related but independent tasks
-
-[Single message with multiple Task calls]
-Task 1 for architect: Design authentication system architecture
-Task 2 for technical-writer: Document API endpoints for payments
-Task 3 for quality-reviewer: Security audit of existing auth code
-```
-
-## Sequential Execution Patterns
-
-### Dependent Development Flow
-
-```md
-# Task 1: Architecture first
-
-Task for architect: Design user authentication system
-
-# Task 2: Implementation after architecture
-
-Task for developer: Implement authentication based on architecture
-
-# Task 3: Review after implementation
-
-Task for quality-reviewer: Security review of authentication implementation
-```
-
-### Research → Development Flow
-
-```md
-# Task 1: Research existing patterns
-
-Task for research-lead: Research best practices for user onboarding flows
-
-# Task 2: Design based on research
-
-Task for architect: Design onboarding system based on research findings
-
-# Task 3: Implement the design
-
-Task for developer: Build onboarding flow per architecture specifications
-```
-
-## Coordination Checkpoints
-
-### For Parallel Tasks
-
-- **Launch**: All agents start simultaneously
-- **Monitor**: Track progress independently
-- **Sync Points**: Define where results need to be integrated
-- **Validation**: Test integration points after completion
-
-### Cross-agent interface contracts
+## Cross-agent interface contracts
 
 When two parallel agents build opposite sides of an interface (IPC command, HTTP endpoint, event/message shape), the pinned contract MUST be an exact
 literal example of the wire payload — every wrapper key, every field name, and a concrete typed value — plus the receiving signature. Never pin a prose
 type signature: each side resolves its ambiguity differently, and each side's mocked unit tests then encode its own assumption as green.
 Example: pin `{ "args": { "gameId": 13 } }` → `fn motion_start(args: MotionStartArgs)`, not "motion_start({ gameId: number })".
 
-### Write-target exclusivity
+## Write-target exclusivity
 
 Before dispatching a parallel batch, enumerate every file each delegation might write — not just its stated primary target, but any file a prompt merely *mentions* as
 optional, bonus, or "consider also" work. An optional mention is still a write-target claim: the delegate may act on it. If two delegations in the same parallel batch
@@ -122,52 +30,13 @@ Before dispatch, confirm no two delegations in the batch share a write target. I
 - Make the two delegations sequential instead of parallel, or
 - Bundle both pieces of work into a single delegation.
 
-### For Sequential Tasks
-
-- **Handoff**: Clear completion criteria before next task starts
-- **Validation**: Quality gates between phases
-- **Context**: Pass relevant context from previous task
-- **Rollback**: Plan for backing out if later stages fail
-
-## Error Handling in Parallel Execution
-
-### Partial Failures
-
-- Continue with successful tasks
-- Identify which parallel tasks failed
-- Re-run failed tasks or adjust scope
-- Integrate successful results
-
-### Cascading Failures
-
-- Stop dependent tasks if critical parallel task fails
-- Provide clear error context to remaining agents
-- Consider fallback strategies
-- Document impact on overall plan
-
-## Performance Optimization
-
-### Measure From the Transcript Before Optimizing
-
-When asked to optimize agent/skill/workflow latency, extract a measured timeline from the session transcript first — `~/.claude/projects/<project-slug>/<session-uuid>.jsonl` timestamps every event. Compute tool-call execution durations vs inter-event gaps (model-turn time) and attribute the wall-clock before proposing fixes: cost-profile intuition routinely misattributes it (e.g. blaming environment setup when the time went to a serial subagent or a long reasoning turn).
-
-### Batching Guidelines
-
-- **Small research tasks** (< 5 min): Batch 10-15 together for maximum parallelism
-- **Medium research tasks** (5-15 min): Batch 5-10 together
-- **Large research tasks** (> 15 min): Batch 3-5 together with progress monitoring
-- **Development tasks** (< 5 min): Batch 3-5 together
-- **Medium dev tasks** (5-15 min): Batch 2-3 together
-- **Large dev tasks** (> 15 min): Execute individually with progress monitoring
-- **Resource-intensive**: Consider system load and agent limits (max 20 parallel agents)
-
-### Long-Running Commands in Delegations
+## Long-running commands in delegations
 
 If a delegated task includes a multi-minute command (Rust/C++ compile, installer build, dev-server smoke test), tell the agent explicitly to run it
 synchronously with a long Bash timeout (up to 600000ms) — or, if backgrounded, to poll its output file within the same turn. A subagent that ends its
 turn "waiting for a background task/Monitor" does not self-resume — the orchestrator must notice the stall and re-message it, which stalls the whole run.
 
-### Background-agent completion reports
+## Background-agent completion reports
 
 A background agent's completion often surfaces as a bare idle notification — the substantive report may arrive late, separately, or not at all. When delegating to background agents:
 
@@ -177,59 +46,6 @@ A background agent's completion often surfaces as a bare idle notification — t
 - For small verification tasks, prefer synchronous delegation (`run_in_background: false`) — the report returns directly as the tool result, avoiding the loss window entirely.
 - **Omit `name` for one-shot dispatches you need back this turn** (adversarial review, exploration, planning). Passing `name` makes the agent an addressable, resumable teammate — its termination can surface as a bare idle notification with no recoverable findings, and pinging an already-terminated named agent does not recover the content (the remedy above doesn't rescue this case). Reserve `name` exclusively for agents you deliberately intend to resume across multiple conversation turns; unnamed one-shot Agent calls reliably return findings via the standard background-task pattern (an `output_file` plus a completion notification).
 
-### Tool Call Efficiency
+## Measure from the transcript before optimizing
 
-- Use single message for multiple independent Task calls
-- Avoid sequential Task calls when parallel execution is possible
-- Monitor agent capacity and adjust batch size accordingly
-- Balance parallelism with quality control needs
-
-## Quality Assurance
-
-### Parallel Validation
-
-- Define clear acceptance criteria for each parallel task
-- Test integration points thoroughly
-- Validate that parallel results work together
-- Document any conflicts or integration issues
-
-### Sequential Validation
-
-- Quality gates between each phase
-- Comprehensive testing before proceeding
-- Clear rollback procedures if validation fails
-- Maintain audit trail of decisions and changes
-
-## Model Capabilities (Opus 4.6)
-
-Modern models handle many coordination tasks autonomously:
-
-- **Parallel tool execution**: Model fires parallel searches and operations automatically
-- **Context building**: Reads multiple files simultaneously when beneficial
-- **Error recovery**: Self-corrects tool usage errors without explicit instructions
-- **State tracking**: Maintains task progress across extended sessions
-- **Token awareness**: Tracks token usage throughout conversations
-
-### When to Specify Coordination
-
-Only specify execution patterns when:
-
-1. **Dependencies exist** - Task A must complete before Task B can start
-2. **Resource constraints** - Rate limits, memory, or system resources require sequencing
-3. **Quality gates** - Validation checkpoints are critical before proceeding
-
-Otherwise, trust the model to optimize execution autonomously.
-
-### What Doesn't Need Explicit Coordination
-
-Modern models handle these areas automatically:
-
-- Tool selection and ordering
-- Parallel file reads for context building
-- Search parallelization
-- Basic error correction and retry logic
-- Context management and token optimization
-
-Focus coordination instructions on business logic dependencies and quality requirements, not technical execution details.
-
-This coordination framework ensures optimal performance while maintaining code quality and system reliability.
+When asked to optimize agent/skill/workflow latency, extract a measured timeline from the session transcript first — `~/.claude/projects/<project-slug>/<session-uuid>.jsonl` timestamps every event. Compute tool-call execution durations vs inter-event gaps (model-turn time) and attribute the wall-clock before proposing fixes: cost-profile intuition routinely misattributes it (e.g. blaming environment setup when the time went to a serial subagent or a long reasoning turn).
