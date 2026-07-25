@@ -60,4 +60,12 @@ if ! linear-cli issues assign "$issue" >/dev/null 2>&1; then
   echo "WARN: $issue moved to '$matched' but unassign failed. Clear the assignee manually if needed." >&2
 fi
 
+# Drop a leftover `stalled` flag (/auto's abandoned-issue marker) — a shipped issue is no
+# longer stalled, and the resume path (/start Step 3) isn't guaranteed to have run (e.g. a
+# human re-ran /quality-review in the preserved worktree and finished directly). Best-effort.
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if ! "$script_dir/linear-remove-label.sh" "$issue" stalled >/dev/null 2>&1; then
+  echo "WARN: $issue moved to '$matched' but the stalled-label check/removal failed. Remove the label manually if present." >&2
+fi
+
 exit 0

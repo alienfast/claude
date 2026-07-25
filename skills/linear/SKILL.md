@@ -43,6 +43,8 @@ Auth: `linear-cli auth oauth` (browser) or `LINEAR_API_KEY`; check with `linear-
 
 7. **Labels are typed, can be team-scoped, and `-l` REPLACES.** `labels list` and `labels create` default to `--type project` — pass `-t issue` for issue labels (a project label can't be attached to an issue; probe with `linear-cli labels list -t issue -o json`). `issues update -l` **sets the entire label set** (no add/remove subcommand) — to add one label without clobbering the rest, use `~/.claude/scripts/linear-add-label.sh <ID> <label>` (read-merge-set + verified attach); `issues list -l <name>` filters by label name. Issue labels can be **team-scoped**: attaching one to an issue in another team fails with GraphQL `labelIds for incorrect team`, and `labels create` has **no `--team` flag**, so it provisions workspace-level labels only (team-scoped ones must be created in the Linear UI). The `specified` certification label is deliberately workspace-level so it attaches across all teams (`standards/issue-spec.md`); `scripts/linear-file-improvement.sh` keeps a best-effort attach (exit 2 + WARN) for the day a conflicting team-scoped label appears.
 
+8. **`issues update --state` can report success without the state actually changing.** Exit code 0 and the printed `+ Updated issue` message are not confirmation — a follow-up `issues get --no-cache` may still show the old state, even after retries and even when passing the state's UUID directly instead of its name. If a state update doesn't seem to have taken effect after a `--no-cache` re-check, fall back to the raw mutation (gotcha #6) and trust its own response over the wrapped command: `linear-cli api mutate 'mutation($id: String!, $stateId: String!) { issueUpdate(id: $id, input: { stateId: $stateId }) { success issue { id identifier state { id name } } } }' --variable id=<issue-uuid> --variable stateId=<state-uuid>` — its response includes the resulting `issue.state`, so you can confirm the change immediately without a separate `get`.
+
 ## Command map
 
 ```bash
@@ -81,4 +83,5 @@ Output flags (agent-friendly): `-o json|ndjson`, `-q` (quiet), `--id-only`, `--c
 | `linear-create-child.sh <parent\|-> <team> <state\|-> <title> <body-file>` | Parent-linked issue create — create → `relations parent` → verify (gotcha #3). |
 | `linear-post.sh <comment\|description> <ID> <body-file>` | Post a comment or replace a description from a file. |
 | `linear-add-label.sh <ID> <label>` | Add one issue label without clobbering the rest (read-merge-set + verified attach; gotcha #7). Exit 2 + create-label pointer when missing/unattachable. |
+| `linear-remove-label.sh <ID> <label>` | Remove one issue label, preserving the rest (read-filter-set + verified; raw `issueUpdate labelIds: []` for the last-label case). Exit 0 on already-absent. |
 | `mark-ready-for-release.sh <ID>` | Move to Ready-For-Release **and unassign**. |

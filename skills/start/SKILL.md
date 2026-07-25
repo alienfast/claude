@@ -192,6 +192,8 @@ Otherwise, claim it immediately:
 linear-cli issues update PL-13 --assignee me --state "In Progress"
 ```
 
+**`stalled` label cleanup (both claim and resumption, either mode).** If the Step 1 digest shows the `stalled` label — `/auto` applies it when it abandons an In Progress issue (its Step 4 failure row) — remove it now that the issue is actively owned again: `~/.claude/scripts/linear-remove-label.sh <ISSUE-ID> stalled`. Being picked back up is exactly the attention the flag was requesting. Best-effort: a removal failure never blocks the claim or the workflow. (Worktree mode claims via `start-wt-verify.sh`, which doesn't touch labels — run the removal as its own command after Step 0 sub-step 3 returns `VERIFIED`.)
+
 Only after the issue is claimed do you proceed to Step 4 (deepen context, only if needed) and the rest of the workflow.
 
 ### Step 4: Deepen Context (only as needed)

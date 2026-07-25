@@ -46,7 +46,7 @@ A user instruction to stop the loop ("do not run another loop", "stop after this
 Multiple `/loop /auto` sessions on the same repo are supported. They coordinate through shared session-agnostic state, never through each other:
 
 - **Linear is the claim registry.** `/next` offers only unstarted states (Backlog/Planned/Todo), so a claimed (In Progress) issue is invisible to every other session's pick. The residual pick race — two sessions taking the same top candidate before either claims — is closed at the git layer: `start-wt-create.sh` runs under the repo lock and refuses to reuse a worktree owned by a live other session, so exactly one session wins and the loser exits `SKIPPED-BLOCKED` (a skip, not a failure).
-- **Owner liveness distinguishes died from live.** Every `/start wt` stamps the owning harness PID + start time into the worktree identity; Step 1 resumes only a worktree whose owner is provably dead. Alive → a sibling's active work; unknown → parked for a human. Never resume on "In Progress + mine" alone.
+- **Owner liveness distinguishes died from live.** Every `/start wt` stamps the owning harness PID + start time into the worktree identity; Step 1 resumes only a worktree whose owner is provably dead. Alive → a sibling's active work; unknown → parked for a human. Never resume on "In Progress + mine" alone. **Known limitation: liveness is harness-process-granular.** A session that dies inside a still-live harness (one closed window among several, a crashed conversation in a surviving extension host) reads `alive` until that process exits — its worktree is unresumable and its issue unflagged for that whole window (a session id alone has no liveness oracle; `wt-identity.sh` requires positive evidence of death). Such stalls surface only once the harness restarts, via Step 1's dead-owner sweep and its `stalled` labeling.
 - **Run state is per-session** (`tmp/auto-state-<runKey>.json`): shipped/skipped/failed lists and the circuit breaker are scoped to one session's run. Parallel runs have independent breakers — systemic breakage can cost up to 2× the failed attempts before both trip, which is accepted.
 - **The merge queue is cross-session.** A `DEFERRED-MERGE` marker under `.claude/merge-queue/` gates resumption regardless of which session shipped the issue.
 
@@ -72,7 +72,7 @@ linear-cli issues get <ISSUE-ID> -o json | jq -r '.labels | .. | objects | selec
 
 Label absent → refuse and stop with a plain error — no lifecycle tag, no state change; this is invocation-time argument validation and the user is present, having just typed the ID: `<ISSUE-ID> is not certified (no specified label) — run /spec <ISSUE-ID> to certify it, or /full wt <ISSUE-ID> for an interactive run.` (A probe failure from auth/network is Error Handling's `linear-cli` territory, never a silent pass.)
 
-Targeted mode narrows the workflow in exactly four places, each marked at its step: Step 0's sticky terminal-state gate is bypassed, Step 1's preflight is scoped to the target, Step 2 is skipped, and Step 4 never transitions `status` or schedules a wakeup. Everything else — always-`wt`, the run-scoped commit/push grant, auto defaults, outcome recording, the failure Linear comment — is identical. It is one-shot by nature: run it directly, not under `/loop` (a re-fired loop would just skip-block against the now-terminal issue).
+Targeted mode narrows the workflow in exactly four places, each marked at its step: Step 0's sticky terminal-state gate is bypassed, Step 1's preflight is scoped to the target, Step 2 is skipped, and Step 4 never transitions `status` or schedules a wakeup. Everything else — always-`wt`, the run-scoped commit/push grant, auto defaults, outcome recording, the failure Linear comment and `stalled` label — is identical. It is one-shot by nature: run it directly, not under `/loop` (a re-fired loop would just skip-block against the now-terminal issue).
 
 Error on anything else — a second team-shaped token, a second issue ID, or a token failing team validation: `Unrecognized argument 'X'. /auto accepts optional 'pr' plus either one team scope matching a real team key (e.g. BF or PL,BF) or one issue ID for a targeted run; worktree mode is always on.`
 
@@ -113,6 +113,8 @@ Two checks, in order:
 
    Resume at most one per iteration.
 
+   **Flag the rest.** Any additional dead-owner candidates beyond the one resumed are stalled work this iteration won't reach: apply the `stalled` label to each (`~/.claude/scripts/linear-add-label.sh <ISSUE-ID> stalled` — best-effort, idempotent) so they stay discoverable in Linear even if the run later halts before reaching them. Never label an `alive`- or `unknown`-owner worktree's issue — a live sibling's active issue is not stalled, and `unknown` cannot rule that out.
+
 Clean tree and no resumable worktree → proceed to Step 2.
 
 ### Step 2: Pick — dispatch /next
@@ -141,9 +143,12 @@ Maintain `tmp/auto-state-<runKey>.json` (Step 0's pinned path) in the project. S
   "shipped": ["UI-3"],
   "skipped": ["UI-7"],
   "failed": ["UI-5"],
-  "consecutiveFailures": 0
+  "consecutiveFailures": 0,
+  "reviewBlocks": 0
 }
 ```
+
+A state file predating `reviewBlocks` reads as `reviewBlocks: 0`.
 
 `pid`/`pidStart` are the GC liveness anchor (Step 0's `HARNESS_PID`/`HARNESS_PID_START`): written at creation and refreshed by Step 0 when a session-id-keyed file's harness restarted mid-run; on a pid-keyed fallback file a mismatch means PID recycling and Step 0 recreates the file empty instead.
 
@@ -154,9 +159,12 @@ Read it (from the Step 0 pinned path), apply the outcome mapping below, write it
 | `RELEASED` / `SHIPPED-MERGE` / `SHIPPED-PR` / `DEFERRED-MERGE` | Shipped (DEFERRED-MERGE self-resolves via the merge queue) | append to `shipped`; `consecutiveFailures = 0` | `AUTO-CONTINUE` |
 | `SKIPPED-BLOCKED` | Not startable without a human; nothing claimed | append to `skipped`; counter unchanged | `AUTO-CONTINUE` |
 | `CANCELED` | Work already done/unneeded; issue closed by `/start` | append to `shipped` (the backlog shrank); `consecutiveFailures = 0` | `AUTO-CONTINUE` |
-| `BLOCKED-ON-REVIEW` / `BLOCKED-ON-RECOVERY` / `ABANDONED` / `IN-PROGRESS` / unrecognized or missing tag | Failure — the issue needs a human | append to `failed`; `consecutiveFailures += 1`; **post a Linear comment** on the issue (via `~/.claude/scripts/linear-post.sh comment`) stating the terminal tag, the reason, and that `/auto` is moving on | `AUTO-CONTINUE` if `consecutiveFailures < 2`, else set `status: "halted"` and emit `AUTO-HALTED` |
+| `BLOCKED-ON-REVIEW` | Review block — the quality gate stopped the ship and a human is flagged, but the pipeline itself worked (work preserved, verdict documented) | append to `failed`; `reviewBlocks += 1`; `consecutiveFailures` unchanged (neither incremented nor reset); **post a Linear comment** on the issue (via `~/.claude/scripts/linear-post.sh comment`) stating the terminal tag, the reason, and that `/auto` is moving on; **apply the `stalled` issue label** (`~/.claude/scripts/linear-add-label.sh <ISSUE-ID> stalled`) — the issue stays In Progress after `/auto` abandons it, and the label is what makes it discoverable as needing attention (a plain In Progress issue is indistinguishable from live work). `/start` removes the label on resumption and `mark-ready-for-release.sh` on ship, so it never lingers past its meaning | `AUTO-CONTINUE` if `reviewBlocks < 4`, else set `status: "halted"` and emit the review-cap `AUTO-HALTED` |
+| `BLOCKED-ON-RECOVERY` / `ABANDONED` / `IN-PROGRESS` / unrecognized or missing tag | Failure — something beyond the quality gate broke; the issue needs a human | append to `failed`; `consecutiveFailures += 1`; same Linear comment + `stalled` label as the review-block row | `AUTO-CONTINUE` if `consecutiveFailures < 2`, else set `status: "halted"` and emit `AUTO-HALTED` |
 
 Before applying the failure row, check the transient-API rule above — an iteration that died on API overload/rate-limit is retried, not recorded.
+
+**Failure-row ordering: outward markers first.** Post the Linear comment and apply the `stalled` label BEFORE writing the state file. An interruption between the two then leaves a flagged, documented issue that the state file merely hasn't counted yet — recoverable — whereas the reverse order leaves a counted failure with no trace on the issue itself (observed: a halted run's state file listed two failed issues that carried no failure comment, making the stall invisible from Linear).
 
 Iteration tags (per `standards/lifecycle-tags.md` — must be the LAST LLM-authored line, nothing after it):
 
@@ -164,11 +172,13 @@ Iteration tags (per `standards/lifecycle-tags.md` — must be the LAST LLM-autho
 - **Targeted mode:** same outcome mapping and list/counter updates, but `status` never transitions (`drained` is impossible with no pick, and a failure does not set `halted` — the breaker protects unattended recurrence, which a one-shot doesn't have; the incremented `consecutiveFailures` still counts toward any later bare run this session) and no wakeup is ever scheduled. The trailer replaces the loop clause: `AUTO-CONTINUE: <ISSUE-ID> <outcome> (<inherited tag>). <shipped>/<skipped>/<failed> this run; targeted run complete.`
 - `AUTO-CONTINUE: ... retrying in ~15m.` — the transient-API retry variants defined in "Transient API failures" above.
 - `AUTO-HALTED: 2 consecutive failures (<ID> <tag>, <ID> <tag>) — likely systemic. See Linear comments on both issues; delete tmp/auto-state-<runKey>.json to start a fresh run.` Under `/loop`, ending on `AUTO-HALTED` or `NO-CANDIDATES` means: do NOT schedule another wakeup — the loop is over until a human intervenes (Step 0 enforces this even if a fixed-interval loop re-fires).
+- `AUTO-HALTED: 4 review-blocked issues this run (<ID>, <ID>, <ID>, <ID>) — a human needs to work the review queue (each is labeled stalled with a Linear comment); delete tmp/auto-state-<runKey>.json to start a fresh run.` — the review-cap variant; same no-further-wakeup rule.
 
 ## Failure policy (why these defaults)
 
 - **Skip, don't stall:** a single failed issue gets a Linear comment and preserved state (`/finish auto` never overrides its verdict gate; `/start auto` never reassigns/reopens); the loop tries the next candidate. One flaky issue must not end an overnight run. **One documented exception:** a failed issue that leaves the main checkout dirty (Step 1 check 1's `failed`-list branch) halts the run — there is no way to start the next candidate over someone's uncommitted failure without either shipping it or destroying it, and `/auto` does neither.
 - **Circuit breaker at 2:** two *consecutive* failures usually mean something systemic (broken main, dead service, exhausted auth) — more unattended attempts just burn tokens and litter Linear. Any successful ship resets the counter; Step 0 makes the halt sticky across re-invocations.
+- **Review blocks are exempt from the consecutive breaker:** `BLOCKED-ON-REVIEW` is the quality gate *succeeding* — work preserved, verdict documented, human flagged via the `stalled` label. Two in a row on distinct issues is normal on a hard backlog, not evidence of systemic breakage (an observed halt's own reason conceded both blocks were "genuine quality-review blocks with real open items" while still calling them "likely systemic"). They still count as failures everywhere else — recorded in `failed`, excluded from re-pick, comment + label posted. What bounds them is the **review-block cap**: 4 per run, total not consecutive, never reset by ships — capping both token burn under a systemically-broken reviewer and the pile of preserved-but-unmerged worktrees accumulating merge drift while they wait for a human.
 - **Transient API errors are exempt:** infrastructure recovers on its own — retry on a delay (15-minute failsafe cadence), never count it, never halt for it.
 - **Conservative everywhere:** every underlying `auto` default chooses abort/preserve over override/guess. The worst acceptable outcome of an unattended run is "nothing happened and Linear says why" — never "something wrong shipped."
 
