@@ -71,7 +71,7 @@ See [Problem-Solving Standards](standards/problem-solving.md) for the full decis
 
 For complex multi-step tasks (>5 steps, multiple domains, high context usage), use the `/do` command pattern with TodoWrite and agent delegation.
 
-Delegate work that is genuinely independent and big enough to deserve a fresh context — a wide multi-file investigation, parallel implementation across unrelated files, a scoped review. Do not delegate what finishes in a handful of tool calls, and do not spawn a subagent to check your own work: re-reading, re-running, and self-correction happen without being asked, so instructing them again only multiplies cost. When one agent can do it, use one.
+Delegate work that is genuinely independent and big enough to deserve a fresh context — a wide multi-file investigation, parallel implementation across unrelated files, a scoped review. Do not delegate what finishes in a handful of tool calls, and do not spawn a subagent to check your own work: re-reading, re-running, and self-correction happen without being asked, so instructing them again only multiplies cost. When one agent can do it, use one, and keep spawn counts low overall.
 
 The named review gates are the deliberate exception. `/quality-review`'s `quality-reviewer` dispatch and `/reflect`'s verifier review *another* agent's output from a fresh context — that is not self-critique, and it stays.
 
