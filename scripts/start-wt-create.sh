@@ -99,7 +99,10 @@ if [ -d "$wt_dir" ]; then
     else
       echo "NOTE: worktree branch is $behind commit(s) behind $source_branch." >&2
     fi
-    echo "  Consider: git -C \"$wt_dir\" rebase $source_branch" >&2
+    # merge, never rebase: /finish verifies `merge-base --is-ancestor <stamped-baseline> HEAD`
+    # (wt-identity.sh) — a merge preserves that unconditionally; a rebase detaches it (BF-534).
+    echo "  Consider: git -C \"$wt_dir\" merge $source_branch   (resolve drift here, ahead of /finish merge)" >&2
+    echo "  Do NOT rebase this branch: rewriting history detaches the stamped baseline and /finish refuses (exit 4; auto mode aborts as BLOCKED-ON-RECOVERY)." >&2
   fi
   echo "Resuming worktree: $wt_dir" >&2
   mode="reuse"
