@@ -5,8 +5,13 @@
 # `reflection` marks it as a config/process improvement so /next ranks it ahead of
 # product work (improvements change how all future work runs).
 #
-# Usage: linear-file-improvement.sh <team> <title> <body-file>
+# Usage: linear-file-improvement.sh [--keeper] <team> <title> <body-file>
 #
+#   --keeper     The batch contains ≥1 proposal targeting the SHARED user-level ~/.claude
+#                repo — also attach the `keeper` label, which next-candidates.sh uses to
+#                hide the issue from every machine whose `git -C ~/.claude config
+#                reflect.keeper` is not `true`. Global-config edits belong to the keeper's
+#                review flow; a teammate's /auto must not pull them.
 #   <team>       Team key or name (e.g., PL) — derive from the worked issue's ID prefix.
 #   <title>      Issue title.
 #   <body-file>  Path to a file holding the markdown description.
@@ -44,8 +49,13 @@ set -eo pipefail
 # linear-cli installs to ~/.cargo/bin, which is not on a non-interactive PATH.
 export PATH="$HOME/.cargo/bin:$PATH"
 
+keeper=0
+if [ "${1-}" = "--keeper" ]; then
+  keeper=1
+  shift
+fi
 if [ $# -ne 3 ]; then
-  echo "usage: linear-file-improvement.sh <team> <title> <body-file>" >&2
+  echo "usage: linear-file-improvement.sh [--keeper] <team> <title> <body-file>" >&2
   exit 1
 fi
 
@@ -92,6 +102,14 @@ if [ -z "$have_reflection" ]; then
   linear-cli labels create "reflection" -t issue >/dev/null 2>&1 || true
 fi
 reflection_label="${have_reflection:-reflection}"
+keeper_label=""
+if [ "$keeper" = 1 ]; then
+  have_keeper=$(printf '%s' "$all_labels" | grep -Fxi 'keeper' | head -1 || true)
+  if [ -z "$have_keeper" ]; then
+    linear-cli labels create "keeper" -t issue >/dev/null 2>&1 || true
+  fi
+  keeper_label="${have_keeper:-keeper}"
+fi
 
 # 2. Resolve the workflow state up front. Prefer Planned; deferred-but-triaged proposals
 #    should not land in Triage. Fall back to the first Backlog/Todo-like state, mirroring
@@ -132,11 +150,21 @@ fi
 #    reaches stdout on every path. If the pair fails, retry `specified` alone: certification is the load-bearing
 #    label (/auto eligibility), and a missing/team-scoped `reflection` label must never cost the pickup.
 printf '%s\n' "$new_id"
-if linear-cli issues update "$new_id" -l "$specified_label" -l "$reflection_label" >/dev/null 2>&1; then
-  exit 0
+if [ -n "$keeper_label" ]; then
+  if linear-cli issues update "$new_id" -l "$specified_label" -l "$reflection_label" -l "$keeper_label" >/dev/null 2>&1; then
+    exit 0
+  fi
+else
+  if linear-cli issues update "$new_id" -l "$specified_label" -l "$reflection_label" >/dev/null 2>&1; then
+    exit 0
+  fi
 fi
 if linear-cli issues update "$new_id" -l "$specified_label" >/dev/null 2>&1; then
-  echo "WARN: filed $new_id with 'specified' but could not attach the 'reflection' label — /next will rank it as ordinary certified work instead of boosting it. Most likely team '$team' has a conflicting team-scoped reflection label (create an attachable one: linear-cli labels create \"reflection\" -t issue)" >&2
+  if [ -n "$keeper_label" ]; then
+    echo "WARN: filed $new_id with 'specified' but could not attach 'reflection'/'keeper' — the issue is NOT keeper-gated, so any machine's /auto may pull this global-config work. Attach 'keeper' manually (~/.claude/scripts/linear-add-label.sh $new_id keeper) or create attachable labels (linear-cli labels create \"keeper\" -t issue)" >&2
+  else
+    echo "WARN: filed $new_id with 'specified' but could not attach the 'reflection' label — /next will rank it as ordinary certified work instead of boosting it. Most likely team '$team' has a conflicting team-scoped reflection label (create an attachable one: linear-cli labels create \"reflection\" -t issue)" >&2
+  fi
   exit 0
 fi
 echo "WARN: filed $new_id but could not attach the 'specified' label — /auto will not pick it up until it is labeled. Most likely team '$team' has no attachable specified issue label (create one: linear-cli labels create \"specified\" -t issue); a transient linear-cli error is also possible" >&2

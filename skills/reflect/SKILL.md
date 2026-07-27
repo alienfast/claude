@@ -153,13 +153,13 @@ First, for each `propose` item, show its destination and a ready-to-paste diff �
    ```
 
    Reference the originating issue as a bare `<ISSUE-ID>` (Linear auto-links it). Do **not** parent-link — a config/process improvement is standalone, not a child of the feature that surfaced it. This body certifies via the trusted-pipeline carve-out documented in [standards/issue-spec.md](../../standards/issue-spec.md) — observation = problem, diff = outcome, checkboxes = criteria — so filing self-certifies without an interview.
-3. **File it,** capturing the exit code:
+3. **File it,** capturing the exit code — pass `--keeper` iff **≥1 proposal targets the user-level `~/.claude` repo** (any target outside the project — `~/.claude/CLAUDE.md`, `~/.claude/rules/`, `standards/`, `skills/`, `scripts/`):
 
    ```bash
-   new_id=$(~/.claude/scripts/linear-file-improvement.sh <team> "<title>" "$body_file"); rc=$?
+   new_id=$(~/.claude/scripts/linear-file-improvement.sh [--keeper] <team> "<title>" "$body_file"); rc=$?
    ```
 
-   The helper creates one standalone issue — status `Planned`, unassigned, labels `specified` + `reflection` (created if missing; `specified` is the certification that makes it eligible for `/auto` pickup, `reflection` is what makes `/next` rank it ahead of product work — improvements change how all future work runs) — and echoes the identifier. Title e.g. `Continuous improvement from <ISSUE-ID>: <N> proposal(s)`. A `reflection`-only attach failure is a WARN within exit 0 (certification intact, just unboosted), not an error.
+   The helper creates one standalone issue — status `Planned`, unassigned, labels `specified` + `reflection` (created if missing; `specified` is the certification that makes it eligible for `/auto` pickup, `reflection` is what makes `/next` rank it ahead of product work — improvements change how all future work runs) — and echoes the identifier. With `--keeper` it also attaches the `keeper` label: shared-config edits belong to the keeper's review flow, so `next-candidates.sh` hides keeper-labeled issues from every machine whose `git -C ~/.claude config reflect.keeper` is not `true` — a teammate's `/auto` never pulls global-config work it can't properly ship. Title e.g. `Continuous improvement from <ISSUE-ID>: <N> proposal(s)`. A `reflection`/`keeper`-only attach failure is a WARN within exit 0 (certification intact), not an error — but surface the keeper WARN prominently: an un-gated global-config issue is pullable by any machine until the label is attached.
 4. Branch on `rc` for the Output `Filed:` line, then move on — never block the reflection or the enclosing `/full` on filing:
    - `0` → `Filed: <new_id>` (filed and certified).
    - `2` → `Filed: <new_id> (label not attached)` — filed, but the `specified` label could not attach, so the issue is invisible to `/auto` until labeled; surface the helper's WARN so the user can fix the label.

@@ -325,6 +325,13 @@ fi
 
 # ---------- candidate set ----------
 
+# Keeper gate: `keeper`-labeled issues are /reflect filings that edit the SHARED user-level
+# ~/.claude repo — that work belongs to the machine whose clone the keeper reviews and pushes
+# from (one-time setup: git -C ~/.claude config reflect.keeper true). On every other machine
+# they are excluded from the pool entirely (an /auto pull there would ship global-config edits
+# outside the keeper's review flow), with a trailing note so the hiding is never silent.
+is_keeper=$(git -C "$HOME/.claude" config --get reflect.keeper 2>/dev/null || true)
+
 # Filter workable issues whose blockers are all in terminal states.
 # Emit per-candidate metadata for ranking.
 candidates_json=$(jq \
@@ -338,7 +345,8 @@ candidates_json=$(jq \
   --arg label "$label" \
   --arg xlabel "$exclude_label" \
   --arg triage "$include_triage" \
-  --arg blocked "$include_blocked" '
+  --arg blocked "$include_blocked" \
+  --arg iskeeper "$is_keeper" '
     ($sm_doc[0]) as $sm
     | ($bm_doc[0]) as $bm
     | ($cycle_doc[0]) as $cycle
@@ -367,6 +375,7 @@ candidates_json=$(jq \
       # correctly fail a --label requirement and pass an --exclude-label one.
       | select(($label == "") or (any(($i.labels // [])[]; ascii_downcase == ($label | ascii_downcase))))
       | select(($xlabel == "") or (all(($i.labels // [])[]; ascii_downcase != ($xlabel | ascii_downcase))))
+      | select(($iskeeper == "true") or (all(($i.labels // [])[]; ascii_downcase != "keeper")))
       | {
           id: $id,
           title: $i.title,
@@ -386,6 +395,17 @@ candidates_json=$(jq \
     )
   ' "$list_file")
 
+# Count what the keeper gate hid (from the fetched list, pre-filter) so the exclusion is
+# visible on every output path — a silently thinner list reads as "nothing there".
+keeper_hidden=0
+if [ "$is_keeper" != "true" ]; then
+  keeper_hidden=$(jq '[.[] | select(any((.labels // [])[]; ascii_downcase == "keeper"))] | length' "$list_file" 2>/dev/null || echo 0)
+fi
+keeper_note() {
+  [ "$keeper_hidden" -gt 0 ] && printf '\n_%s keeper-gated improvement(s) hidden — this machine is not the ~/.claude keeper (setup: git -C ~/.claude config reflect.keeper true)._\n' "$keeper_hidden"
+  return 0
+}
+
 candidate_count=$(printf '%s' "$candidates_json" | jq 'length')
 if [ "$candidate_count" -eq 0 ]; then
   filter_desc=""
@@ -394,6 +414,7 @@ if [ "$candidate_count" -eq 0 ]; then
   team_word="team"
   [ ${#teams[@]} -gt 1 ] && team_word="teams"
   printf '## Suggested next\n\n_No workable issues%s in %s %s._\n' "$filter_desc" "$team_word" "$teams_label"
+  keeper_note
   exit 0
 fi
 
@@ -580,3 +601,4 @@ remaining=$(printf '%s' "$ranked_json" | jq --argjson lim "$limit" 'length - $li
 if [ "$remaining" -gt 0 ]; then
   printf '\n_%s more workable candidate(s) available; pass --limit to see more._\n' "$remaining"
 fi
+keeper_note

@@ -95,7 +95,7 @@ Multi-team runs merge every team's issues **before** tiering: each team contribu
 
 The script applies a tier scheme — see [scripts/next-candidates.sh](../../scripts/next-candidates.sh) for the exact logic. The high-level priority order:
 
-1. Certified reflection improvement (`specified` + `reflection` labels — `/reflect`'s filings): config/process fixes change how every later issue runs, so they ship ahead of the work they improve
+1. Certified reflection improvement (`specified` + `reflection` labels — `/reflect`'s filings): config/process fixes change how every later issue runs, so they ship ahead of the work they improve. Those additionally labeled `keeper` (they edit the shared user-level `~/.claude` repo) appear **only** on the keeper's machine (`git -C ~/.claude config reflect.keeper` → `true`); everywhere else the script excludes them from the pool entirely — `/auto` included — and prints a trailing note with the hidden count
 2. Already assigned to you (finish what you started)
 3. In current cycle + newly unblocked by `<COMPLETED-ID>`
 4. In current cycle, ready
