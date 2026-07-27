@@ -163,7 +163,7 @@ if [ "${_WT_SKIP_IDENTITY_CHECK:-0}" != "1" ] && [ -f "$HOME/.claude/scripts/wt-
     if [ "$WTID_CORRUPTION" = "1" ]; then
       echo "CORRUPTION: worktree at $wt_dir no longer matches its /start identity (${WTID_CORRUPTION_REASON})." >&2
       echo "  expected branch '$WTID_BRANCH', baseline '$WTID_BASELINE' (identity from: $WTID_SOURCE)." >&2
-      echo "  A parallel session reset this worktree. Recover with finish-recover.sh instead of merging." >&2
+      echo "  The worktree no longer matches its /start identity (foreign reset, or a self-rewrite without wt-restamp.sh). Recover with finish-recover.sh instead of merging." >&2
       exit 4
     fi
   fi

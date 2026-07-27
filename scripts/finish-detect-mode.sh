@@ -16,7 +16,7 @@
 #   NO_PUSH=<0|1>
 #   CORRUPTION=<0|1>                  (1 only on exit 4)
 #   IDENTITY_SOURCE=<job-dir|repo-fallback|git-config|none>
-#   On exit 4 also: CORRUPTION_REASON, EXPECTED_BRANCH, EXPECTED_BASELINE, EXPECTED_SOURCE_BRANCH
+#   On exit 4 also: CORRUPTION_REASON, CORRUPTION_OWNER_IS_ME, EXPECTED_BRANCH, EXPECTED_BASELINE, EXPECTED_SOURCE_BRANCH
 #
 # Exit codes:
 #   0 success
@@ -36,7 +36,7 @@ no_push=0
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help)
-      sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     --no-push) no_push=1; shift ;;
@@ -79,7 +79,9 @@ else
   repo_root=""
 fi
 
-# --- Worktree-identity check: detect a worktree hijacked by a parallel session. ---
+# --- Worktree-identity check: detect a worktree that no longer matches its stamped identity. ---
+# Two causes are indistinguishable here — a parallel session's hijack and this session's own
+# un-restamped rewrite — so the verdict never softens; owner attribution changes only the message.
 # Load the immune identity stamped at /start (sidecar → git config) and compare it
 # to the worktree's CURRENT state. A mismatch means another session reset this
 # worktree's branch/HEAD or wiped its config; we surface that as exit 4 (routed to
@@ -110,12 +112,27 @@ if [ -n "$wt_dir" ] && wt_identity_load "$wt_dir"; then
 fi
 
 if [ "$corruption" = "1" ]; then
+  # Owner attribution changes the MESSAGE only, never the verdict: owner-is-me at check
+  # time cannot prove the owner moved HEAD (a foreign reset while the owner is live looks
+  # identical), so exit 4 stands and the sanctioned fix is wt-restamp.sh at rewrite time.
+  owner_is_me=0
+  wt_owner_alive "$wt_dir" || true
+  if wt_owner_is_me; then owner_is_me=1; fi
   echo "CORRUPTION: worktree '$wt_dir' no longer matches the identity /start stamped." >&2
   echo "  reason: $corruption_reason (identity from: $identity_source)" >&2
   echo "  expected branch:   $expected_branch" >&2
   echo "  current  branch:   $worktree_branch" >&2
   echo "  expected baseline: $expected_baseline" >&2
-  echo "  A parallel session likely reset this worktree. /finish routes this to recovery (finish-recover.sh)." >&2
+  if [ "$owner_is_me" = "1" ]; then
+    echo "  The stamp's owner is THIS session — most likely its own history rewrite (rebase/reset), not a hijack; a foreign reset cannot be ruled out." >&2
+    if [ "$corruption_reason" = "baseline-detached" ]; then
+      echo "  If the rewrite was deliberate: run ~/.claude/scripts/wt-restamp.sh '$wt_dir' (refuses if any commit since the last stamp would be lost) and re-run this detection. Otherwise /finish routes to recovery (finish-recover.sh)." >&2
+    else
+      echo "  /finish routes this to recovery (finish-recover.sh)." >&2
+    fi
+  else
+    echo "  A parallel session likely reset this worktree. /finish routes this to recovery (finish-recover.sh)." >&2
+  fi
   action_out="$action"; [ -z "$action_out" ] && action_out="merge"
   printf 'ACTION=%s\n' "$action_out"
   printf 'SOURCE_BRANCH=%s\n' "$source_branch"
@@ -124,6 +141,7 @@ if [ "$corruption" = "1" ]; then
   printf 'REPO_ROOT=%s\n' "$repo_root"
   printf 'NO_PUSH=%s\n' "$no_push"
   printf 'CORRUPTION=1\n'
+  printf 'CORRUPTION_OWNER_IS_ME=%s\n' "$owner_is_me"
   printf 'CORRUPTION_REASON=%s\n' "$corruption_reason"
   printf 'IDENTITY_SOURCE=%s\n' "$identity_source"
   printf 'EXPECTED_BRANCH=%s\n' "$expected_branch"

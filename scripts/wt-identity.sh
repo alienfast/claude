@@ -12,10 +12,15 @@
 # Provides two functions, both populating WTID_* globals (read them after calling):
 #
 #   wt_identity_load <wt_dir> [<issue_lower>]
-#     Finds the strongest available identity (job-dir sidecar → repo-fallback
-#     sidecar → per-worktree git config) and sets:
+#     Finds the best available identity — the two sidecar tiers ranked by recency
+#     (newest stamped-at wins, job-dir first on a tie), then per-worktree git
+#     config — and sets:
 #       WTID_SOURCE         job-dir | repo-fallback | git-config | none
-#       WTID_ISSUE WTID_BRANCH WTID_SOURCE_BRANCH WTID_BASELINE WTID_SIDECAR_PATH
+#       WTID_ISSUE WTID_BRANCH WTID_SOURCE_BRANCH WTID_BASELINE WTID_HEAD_SHA
+#       WTID_STAMPED_AT WTID_SIDECAR_PATH
+#     WTID_HEAD_SHA (branch tip at stamp time) and WTID_STAMPED_AT (epoch seconds of the
+#     stamp) are wt-restamp.sh's rewrite anchors. Neither is a corruption signal (verify
+#     never reads them): the branch is expected to move as the session works.
 #     Returns 0 if a VERIFIABLE identity was found (sidecar, or git config carrying
 #     the NEW start.worktree-branch + start.baseline-sha fields), 1 otherwise. A
 #     pre-stamp "legacy" worktree (only start.source-branch, no new fields) and a
@@ -41,6 +46,8 @@ _wtid_read_sidecar() {
   WTID_BRANCH=$(sed -n 's/^WT_IDENTITY_BRANCH=//p' "$f" | head -1)
   WTID_SOURCE_BRANCH=$(sed -n 's/^WT_IDENTITY_SOURCE_BRANCH=//p' "$f" | head -1)
   WTID_BASELINE=$(sed -n 's/^WT_IDENTITY_BASELINE_SHA=//p' "$f" | head -1)
+  WTID_HEAD_SHA=$(sed -n 's/^WT_IDENTITY_HEAD_SHA=//p' "$f" | head -1)
+  WTID_STAMPED_AT=$(sed -n 's/^WT_IDENTITY_STAMPED_AT=//p' "$f" | head -1)
   WTID_WT_DIR=$(sed -n 's/^WT_IDENTITY_WT_DIR=//p' "$f" | head -1)
   WTID_OWNER=$(sed -n 's/^WT_IDENTITY_OWNER=//p' "$f" | head -1)
   WTID_OWNER_PID=$(sed -n 's/^WT_IDENTITY_OWNER_PID=//p' "$f" | head -1)
@@ -79,44 +86,72 @@ _wtid_main_root() {
   (cd "$cdir/.." 2>/dev/null && pwd) || return 1
 }
 
+# A stamped-at as a comparable number: anything non-numeric, empty, or too wide for shell arithmetic
+# sorts oldest, so a damaged era can never win a recency contest.
+_wtid_era_num() {
+  case "$1" in ''|*[!0-9]*) printf '0'; return 0 ;; esac
+  [ "${#1}" -gt 10 ] && { printf '0'; return 0; }
+  printf '%s' "$1"
+}
+
 wt_identity_load() {
   local wt_dir="$1" issue_lower="$2"
   WTID_SOURCE="none"; WTID_ISSUE=""; WTID_BRANCH=""; WTID_SOURCE_BRANCH=""
-  WTID_BASELINE=""; WTID_SIDECAR_PATH=""
+  WTID_BASELINE=""; WTID_SIDECAR_PATH=""; WTID_WT_DIR=""; WTID_HEAD_SHA=""; WTID_STAMPED_AT=""
   WTID_OWNER=""; WTID_OWNER_PID=""; WTID_OWNER_PID_START=""
   [ -z "$issue_lower" ] && issue_lower=$(basename "$wt_dir")
   local name="wt-identity-${issue_lower}.env"
 
-  # 1. Current session's job dir — strongest, and the same-session /full wt case.
-  # Skip a stale sidecar whose recorded worktree path isn't this one (fall through).
+  # 1-2. The two sidecar tiers, ranked by RECENCY rather than location: a later stamp under a
+  # different job dir advances the repo-level copy while this session's own stays behind, and
+  # preferring the stale one reverts an already-advanced identity (a baseline that then reads as
+  # corruption, an anchor that re-opens drops the user already acknowledged). A missing or unusable
+  # era sorts oldest; equal eras keep the job-dir-first order, since that tier is the more durable one.
+  # Each candidate is skipped unless its recorded worktree path is this one.
+  local job_file="" repo_file="" job_era="" repo_era="" main_root
   if [ -n "${CLAUDE_JOB_DIR:-}" ] && [ -f "$CLAUDE_JOB_DIR/$name" ]; then
     _wtid_read_sidecar "$CLAUDE_JOB_DIR/$name"
-    if _wtid_sidecar_matches "$wt_dir"; then
-      WTID_SOURCE="job-dir"; WTID_SIDECAR_PATH="$CLAUDE_JOB_DIR/$name"
-      return 0
-    fi
+    if _wtid_sidecar_matches "$wt_dir"; then job_file="$CLAUDE_JOB_DIR/$name"; job_era="$WTID_STAMPED_AT"; fi
   fi
-
-  # 2. Repo-level fallback under the MAIN checkout — found by any session.
-  local main_root
   main_root=$(_wtid_main_root "$wt_dir" || true)
   if [ -n "$main_root" ] && [ -f "$main_root/.claude/worktree-identity/$name" ]; then
     _wtid_read_sidecar "$main_root/.claude/worktree-identity/$name"
     if _wtid_sidecar_matches "$wt_dir"; then
-      WTID_SOURCE="repo-fallback"; WTID_SIDECAR_PATH="$main_root/.claude/worktree-identity/$name"
-      return 0
+      repo_file="$main_root/.claude/worktree-identity/$name"; repo_era="$WTID_STAMPED_AT"
     fi
   fi
+  local chosen="" chosen_source=""
+  if [ -n "$job_file" ] && [ -n "$repo_file" ]; then
+    if [ "$(_wtid_era_num "$repo_era")" -gt "$(_wtid_era_num "$job_era")" ]; then
+      chosen="$repo_file"; chosen_source="repo-fallback"
+    else
+      chosen="$job_file"; chosen_source="job-dir"
+    fi
+  elif [ -n "$job_file" ]; then
+    chosen="$job_file"; chosen_source="job-dir"
+  elif [ -n "$repo_file" ]; then
+    chosen="$repo_file"; chosen_source="repo-fallback"
+  fi
+  if [ -n "$chosen" ]; then
+    _wtid_read_sidecar "$chosen"
+    WTID_SOURCE="$chosen_source"; WTID_SIDECAR_PATH="$chosen"
+    return 0
+  fi
+  # Every candidate was rejected; drop what reading them left behind so nothing leaks into tier 3.
+  WTID_ISSUE=""; WTID_BRANCH=""; WTID_SOURCE_BRANCH=""; WTID_BASELINE=""; WTID_WT_DIR=""
+  WTID_HEAD_SHA=""; WTID_STAMPED_AT=""; WTID_OWNER=""; WTID_OWNER_PID=""; WTID_OWNER_PID_START=""
 
   # 3. Per-worktree git config — only "verifiable" if it carries the NEW fields.
   # A legacy worktree (start.source-branch only) lacks these → treated as no
   # verifiable identity so the caller keeps today's behavior.
-  local cb cbase csrc
+  local cb cbase csrc chead cstamped
   cb=$(git -C "$wt_dir" config --worktree --get start.worktree-branch 2>/dev/null || true)
   cbase=$(git -C "$wt_dir" config --worktree --get start.baseline-sha 2>/dev/null || true)
   csrc=$(git -C "$wt_dir" config --worktree --get start.source-branch 2>/dev/null || true)
+  chead=$(git -C "$wt_dir" config --worktree --get start.head-sha 2>/dev/null || true)
+  cstamped=$(git -C "$wt_dir" config --worktree --get start.stamped-at 2>/dev/null || true)
   if [ -n "$cb" ] && [ -n "$cbase" ]; then
-    WTID_BRANCH="$cb"; WTID_BASELINE="$cbase"; WTID_SOURCE_BRANCH="$csrc"
+    WTID_BRANCH="$cb"; WTID_BASELINE="$cbase"; WTID_SOURCE_BRANCH="$csrc"; WTID_HEAD_SHA="$chead"; WTID_STAMPED_AT="$cstamped"
     WTID_SOURCE="git-config"
     return 0
   fi
@@ -185,9 +220,11 @@ wtid_harness_pid() {
   return 1
 }
 
-# Whitespace-normalized start time of a PID (lstart pads with spaces). Empty if unknown.
+# Whitespace-normalized start time of a PID (lstart pads with spaces). Empty if unknown —
+# an unresolvable pid must not fail the pipeline, which under a caller's `set -eo pipefail`
+# would abort the whole stamp with no output.
 wtid_pid_start() {
-  ps -o lstart= -p "$1" 2>/dev/null | tail -1 | awk '{$1=$1; print}'
+  ps -o lstart= -p "$1" 2>/dev/null | tail -1 | awk '{$1=$1; print}' || true
 }
 
 # Adjudicate the liveness of <wt_dir>'s owning session. Populates WTID_OWNER_PID, WTID_OWNER_PID_START, and
@@ -242,14 +279,36 @@ wt_owner_alive() {
 # harness-pid walk collapses to the shared fleet root, so pid equality would call every sibling's worktree "mine". Pid + start time is only the fallback
 # for environments where no session id was stamped or none is resolvable here. Returns 0 = me, 1 = not me (or undeterminable — callers treat that as foreign).
 wt_owner_is_me() {
-  local my_session my_pid
-  my_session=$(wt_identity_owner)
-  if [ -n "$my_session" ] && [ -n "$WTID_OWNER_SESSION" ]; then
-    [ "$my_session" = "$WTID_OWNER_SESSION" ]
-    return
+  local my_pid
+  if [ -n "${WTID_OWNER_SESSION:-}" ]; then
+    wtid_owner_session_matches && return 0
+    # A stamped id matching none of ours is foreign — unless we can present no id at all, which is
+    # the "no session id resolvable here" case the pid path exists for.
+    [ -n "$(wtid_session_ids)" ] && return 1
   fi
   my_pid=$(wtid_harness_pid || true)
-  [ -n "$my_pid" ] && [ -n "$WTID_OWNER_PID" ] && [ "$my_pid" = "$WTID_OWNER_PID" ]
+  [ -n "$my_pid" ] && [ -n "${WTID_OWNER_PID:-}" ] && [ "$my_pid" = "${WTID_OWNER_PID:-}" ]
+}
+
+# Every identifier this session can legitimately be known by, newline-separated (may be empty). A
+# fleet run stamps its job-dir basename; the same session continuing outside the fleet presents only
+# CLAUDE_CODE_SESSION_ID — same session, different label, so comparing one resolved id strands it.
+wtid_session_ids() {
+  [ -n "${CLAUDE_JOB_DIR:-}" ] && basename "$CLAUDE_JOB_DIR"
+  [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && printf '%s\n' "$CLAUDE_CODE_SESSION_ID"
+  [ -n "${CLAUDE_SESSION_ID:-}" ] && printf '%s\n' "$CLAUDE_SESSION_ID"
+  return 0
+}
+
+# Does the loaded WTID_OWNER_SESSION match any id this session presents? Session ids ONLY — no pid
+# fallback, so callers that must not accept fleet-root pid equality can gate on this directly.
+wtid_owner_session_matches() {
+  local id
+  [ -z "${WTID_OWNER_SESSION:-}" ] && return 1
+  while read -r id; do
+    if [ -n "$id" ] && [ "$id" = "$WTID_OWNER_SESSION" ]; then return 0; fi
+  done <<< "$(wtid_session_ids)"
+  return 1
 }
 
 # --- Stamping (the write side; used by start-wt-create.sh and finish-recover.sh) ---
@@ -267,25 +326,31 @@ wt_identity_owner() {
 }
 
 # Write one sidecar .env into <dir>. Echoes the path on success; non-zero on failure.
-# Args: dir issue_id branch source_branch baseline wt_abs owner created_at [owner_pid] [owner_pid_start]
+# Args: dir issue_id branch source_branch baseline wt_abs owner created_at [owner_pid] [owner_pid_start] [head_sha] [stamped_at]
 _wtid_write_sidecar() {
-  local dir="$1" issue_id="$2" branch="$3" source_branch="$4" baseline="$5" wt_abs="$6" owner="$7" created_at="$8" owner_pid="$9" owner_pid_start="${10}"
-  local issue_lower path
+  local dir="$1" issue_id="$2" branch="$3" source_branch="$4" baseline="$5" wt_abs="$6" owner="$7" created_at="$8" owner_pid="$9" owner_pid_start="${10}" head_sha="${11}" stamped_at="${12}"
+  local issue_lower path tmp
   issue_lower=$(printf '%s' "$issue_id" | tr '[:upper:]' '[:lower:]')
   path="$dir/wt-identity-${issue_lower}.env"
   mkdir -p "$dir" 2>/dev/null || return 1
+  # Write-then-rename (same dir, so the rename is atomic): a concurrent reader must never see a
+  # half-written block — the missing keys would parse as an all-empty identity that verifies CLEAN.
+  tmp="$path.tmp.$$"
   {
     printf 'WT_IDENTITY_VERSION=1\n'
     printf 'WT_IDENTITY_ISSUE=%s\n' "$issue_id"
     printf 'WT_IDENTITY_BRANCH=%s\n' "$branch"
     printf 'WT_IDENTITY_SOURCE_BRANCH=%s\n' "$source_branch"
     printf 'WT_IDENTITY_BASELINE_SHA=%s\n' "$baseline"
+    printf 'WT_IDENTITY_HEAD_SHA=%s\n' "$head_sha"
+    printf 'WT_IDENTITY_STAMPED_AT=%s\n' "$stamped_at"
     printf 'WT_IDENTITY_WT_DIR=%s\n' "$wt_abs"
     printf 'WT_IDENTITY_OWNER=%s\n' "$owner"
     printf 'WT_IDENTITY_CREATED_AT=%s\n' "$created_at"
     printf 'WT_IDENTITY_OWNER_PID=%s\n' "$owner_pid"
     printf 'WT_IDENTITY_OWNER_PID_START=%s\n' "$owner_pid_start"
-  } > "$path" 2>/dev/null || return 1
+  } > "$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 1; }
+  mv "$tmp" "$path" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 1; }
   printf '%s' "$path"
 }
 
@@ -293,12 +358,24 @@ _wtid_write_sidecar() {
 # (the caller's `set -e` + create-failure trap handle a failure here) + BEST-EFFORT
 # immune sidecars (job-dir, strongest; plus a repo-level .claude/worktree-identity/
 # fallback any session can find). Sets globals for the caller to emit:
-#   WTID_STAMP_OWNER WTID_STAMP_CREATED_AT WTID_STAMP_SIDECAR
+#   WTID_STAMP_OWNER WTID_STAMP_CREATED_AT WTID_STAMP_SIDECAR WTID_STAMP_HEAD_SHA WTID_STAMP_STAMPED_AT
 # Args: wt_dir wt_abs issue_id branch source_branch baseline_sha
 wt_identity_stamp() {
   local wt_dir="$1" wt_abs="$2" issue_id="$3" branch="$4" source_branch="$5" baseline="$6"
   WTID_STAMP_OWNER=$(wt_identity_owner)
-  WTID_STAMP_CREATED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  # The tip this stamp sanctions. wt-restamp.sh proves a later rewrite preserved it; recorded here
+  # (not passed in) so every caller gets the anchor without a signature change. The override exists
+  # for /start's RESUME path: re-stamping a worktree that already has work must not re-arm the anchor
+  # on the current tip, which would retroactively bless whatever happened since the original stamp.
+  WTID_STAMP_HEAD_SHA=${WTID_STAMP_HEAD_SHA_OVERRIDE:-$(git -C "$wt_dir" rev-parse HEAD 2>/dev/null || true)}
+  # When this stamp happened. wt-restamp.sh walks the branch reflog back to this instant to find
+  # tips created since — bounding by TIME, not by value: a foreign reset can land the branch back ON
+  # the anchor's value, and a value-bounded walk would stop there and never see the drop.
+  # The override travels WITH WTID_STAMP_HEAD_SHA_OVERRIDE and only with it: an anchor whose era has
+  # been re-armed hides everything that happened between them from the walk.
+  WTID_STAMP_STAMPED_AT=${WTID_STAMP_STAMPED_AT_OVERRIDE:-$(date +%s)}
+  # Override lets a RE-stamp (wt-restamp.sh) keep the worktree's original creation time.
+  WTID_STAMP_CREATED_AT=${WTID_STAMP_CREATED_AT_OVERRIDE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
   WTID_STAMP_SIDECAR=""
   WTID_STAMP_OWNER_PID=$(wtid_harness_pid || true)
   WTID_STAMP_OWNER_PID_START=""
@@ -309,6 +386,12 @@ wt_identity_stamp() {
   git -C "$wt_dir" config --worktree start.worktree-branch "$branch"
   git -C "$wt_dir" config --worktree start.baseline-sha "$baseline"
   git -C "$wt_dir" config --worktree start.created-at "$WTID_STAMP_CREATED_AT"
+  if [ -n "$WTID_STAMP_HEAD_SHA" ]; then
+    git -C "$wt_dir" config --worktree start.head-sha "$WTID_STAMP_HEAD_SHA"
+  else
+    git -C "$wt_dir" config --worktree --unset start.head-sha 2>/dev/null || true
+  fi
+  git -C "$wt_dir" config --worktree start.stamped-at "$WTID_STAMP_STAMPED_AT"
   [ -n "$WTID_STAMP_OWNER" ] && git -C "$wt_dir" config --worktree start.owner-session "$WTID_STAMP_OWNER"
   # Owner PID: set on success, UNSET on failure — a takeover stamp that can't resolve its own PID must not leave the dead prior owner's PID looking current.
   if [ -n "$WTID_STAMP_OWNER_PID" ]; then
@@ -323,7 +406,7 @@ wt_identity_stamp() {
   # behavior at /finish rather than failing setup).
   local p main_root
   if [ -n "${CLAUDE_JOB_DIR:-}" ] && [ -d "${CLAUDE_JOB_DIR}" ]; then
-    if p=$(_wtid_write_sidecar "$CLAUDE_JOB_DIR" "$issue_id" "$branch" "$source_branch" "$baseline" "$wt_abs" "$WTID_STAMP_OWNER" "$WTID_STAMP_CREATED_AT" "$WTID_STAMP_OWNER_PID" "$WTID_STAMP_OWNER_PID_START"); then
+    if p=$(_wtid_write_sidecar "$CLAUDE_JOB_DIR" "$issue_id" "$branch" "$source_branch" "$baseline" "$wt_abs" "$WTID_STAMP_OWNER" "$WTID_STAMP_CREATED_AT" "$WTID_STAMP_OWNER_PID" "$WTID_STAMP_OWNER_PID_START" "$WTID_STAMP_HEAD_SHA" "$WTID_STAMP_STAMPED_AT"); then
       WTID_STAMP_SIDECAR="$p"
     else
       echo "WARN: could not write identity sidecar under \$CLAUDE_JOB_DIR ($CLAUDE_JOB_DIR)" >&2
@@ -338,7 +421,7 @@ wt_identity_stamp() {
     if mkdir -p "$id_dir" 2>/dev/null && [ ! -f "$id_dir/.gitignore" ]; then
       printf '*\n' > "$id_dir/.gitignore" 2>/dev/null || true
     fi
-    if p=$(_wtid_write_sidecar "$id_dir" "$issue_id" "$branch" "$source_branch" "$baseline" "$wt_abs" "$WTID_STAMP_OWNER" "$WTID_STAMP_CREATED_AT" "$WTID_STAMP_OWNER_PID" "$WTID_STAMP_OWNER_PID_START"); then
+    if p=$(_wtid_write_sidecar "$id_dir" "$issue_id" "$branch" "$source_branch" "$baseline" "$wt_abs" "$WTID_STAMP_OWNER" "$WTID_STAMP_CREATED_AT" "$WTID_STAMP_OWNER_PID" "$WTID_STAMP_OWNER_PID_START" "$WTID_STAMP_HEAD_SHA" "$WTID_STAMP_STAMPED_AT"); then
       [ -z "$WTID_STAMP_SIDECAR" ] && WTID_STAMP_SIDECAR="$p"
     else
       echo "WARN: could not write repo-level identity sidecar under $id_dir" >&2

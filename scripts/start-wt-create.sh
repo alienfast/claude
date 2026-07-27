@@ -22,12 +22,16 @@
 # Only this ~git-mutating span serializes.
 #
 # Tamper-evident identity: after create, this script stamps the worktree's
-# identity (branch, baseline SHA, source branch, owner session) to TWO places:
+# identity (branch, baseline SHA, source branch, owner session, plus head-sha —
+# wt-restamp.sh's rewrite anchor — and stamped-at, the era that anchor opens) to
+# TWO places:
 #   1. per-worktree git config (start.*) — convenience copy the happy path reads;
 #      EXPECTED to be wiped by a hostile reset (its absence is the detection trigger);
 #   2. an immune sidecar outside .git — the source of truth /finish compares against
-#      to detect a hijacked worktree. Written to $CLAUDE_JOB_DIR (strongest: fully
-#      external, survives even a repo-level `git clean`) when set, AND to a
+#      to detect a hijacked worktree. Written to $CLAUDE_JOB_DIR (most durable, not
+#      automatically the freshest: fully external, survives even a repo-level
+#      `git clean`, but a later stamp under another job dir leaves it behind — the
+#      loader ranks the two sidecars by recency) when set, AND to a
 #      repo-level fallback (.claude/worktree-identity/, gitignored + .git-external)
 #      so a DIFFERENT session (manual /finish after a dead /full) can still find it.
 #
@@ -71,7 +75,12 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 fi
 
 # --- Three-way create/reuse/attach (the TOCTOU-prone span, now lock-held) ---
-# mode is one of: reuse | attach | fresh. CREATED_WT is 1 for attach/fresh.
+# mode is one of:
+#   reuse  — worktree dir and branch both exist; the session resumes in place.
+#   attach — the branch (and its history) survived but the worktree dir is gone; re-checked out here.
+#   fresh  — neither existed; branch created off HEAD. The ONLY mode that establishes a new identity;
+#            the other two inherit the prior stamp below.
+# CREATED_WT is 1 for attach/fresh.
 mode=""
 CREATED_WT=0
 if [ -d "$wt_dir" ]; then
@@ -103,6 +112,7 @@ if [ -d "$wt_dir" ]; then
     # (wt-identity.sh) — a merge preserves that unconditionally; a rebase detaches it (BF-534).
     echo "  Consider: git -C \"$wt_dir\" merge $source_branch   (resolve drift here, ahead of /finish merge)" >&2
     echo "  Do NOT rebase this branch: rewriting history detaches the stamped baseline and /finish refuses (exit 4; auto mode aborts as BLOCKED-ON-RECOVERY)." >&2
+    echo "  If you deliberately rewrite history anyway, run ~/.claude/scripts/wt-restamp.sh \"$wt_dir\" immediately after, so the stamp follows the rewrite." >&2
   fi
   echo "Resuming worktree: $wt_dir" >&2
   mode="reuse"
@@ -141,11 +151,62 @@ if [ "$CREATED_WT" = "1" ]; then
   ' EXIT
 fi
 
+# --- Identity inherited by every non-fresh setup ---
+# All three inherited fields (baseline, and the head-sha/stamped-at pair) are read CONFIG-FIRST with
+# the identity tier chain as fallback. Every stamp rewrites config latest-wins, so config is the
+# recency-correct copy; the tier chain exists to survive the config wipe a hostile reset performs.
+# Preferring a tier would let a STALE sidecar revert a legitimately advanced identity — a reverted
+# baseline makes /finish report corruption on an untouched worktree, and a reverted anchor makes
+# wt-restamp.sh re-litigate drops the user already accepted with --acknowledge-lost.
+# head-sha and stamped-at additionally travel as a PAIR from whichever source supplies them: an
+# anchor without its era (or the reverse) describes no audit window at all.
+# Config is also the tier a hostile write can seize; corroborating tiers against each other is
+# deliberately out of scope here — BF-546 owns the tier-authority design (recency, corroboration, seizable config).
+prior_baseline=""
+prior_head_sha=""
+prior_stamped_at=""
+if [ "$mode" != "fresh" ]; then
+  cfg_head_sha=$(git -C "$wt_dir" config --worktree --get start.head-sha 2>/dev/null || true)
+  cfg_stamped_at=$(git -C "$wt_dir" config --worktree --get start.stamped-at 2>/dev/null || true)
+  if [ -n "$cfg_head_sha" ] && [ -n "$cfg_stamped_at" ]; then
+    prior_head_sha="$cfg_head_sha"
+    prior_stamped_at="$cfg_stamped_at"
+  fi
+  # The recorded baseline is inherited VERBATIM — no ancestry or existence check. A baseline that no
+  # longer descends to HEAD is exactly what /finish's identity check exists to catch (wt_identity_verify
+  # → baseline-detached → exit 4 → recovery), so filtering one out here would convert a detected hijack
+  # into a resumed one. Staleness is handled where it belongs, by the sidecar recency ranking.
+  prior_baseline=$(git -C "$wt_dir" config --worktree --get start.baseline-sha 2>/dev/null || true)
+  if wt_identity_load "$wt_dir"; then
+    [ -z "$prior_baseline" ] && prior_baseline="$WTID_BASELINE"
+    if [ -z "$prior_head_sha" ] && [ -n "$WTID_HEAD_SHA" ] && [ -n "$WTID_STAMPED_AT" ]; then
+      prior_head_sha="$WTID_HEAD_SHA"
+      prior_stamped_at="$WTID_STAMPED_AT"
+    fi
+  fi
+  if [ -n "$prior_head_sha" ] && [ -n "$prior_stamped_at" ]; then
+    export WTID_STAMP_HEAD_SHA_OVERRIDE="$prior_head_sha"
+    export WTID_STAMP_STAMPED_AT_OVERRIDE="$prior_stamped_at"
+  else
+    # No pair anywhere — destroyed, never stamped, or a legacy stamp predating anchor recording. The
+    # stamp below opens a NEW era, so warn unconditionally: a branch sitting at its fork point with no
+    # verifiable identity is MORE anomalous than one carrying commits, not less (work that was reset
+    # away survives only in the reflog), so this must not be gated on the commit count.
+    mb=$(git -C "$wt_dir" merge-base "$branch" "$source_branch" 2>/dev/null || true)
+    ahead_of_base=0
+    [ -n "$mb" ] && ahead_of_base=$(git -C "$wt_dir" rev-list --count "$mb..$branch" 2>/dev/null || echo 0)
+    carries=""
+    [ "$ahead_of_base" -gt 0 ] && carries=" — the branch already carries $ahead_of_base commit(s)"
+    echo "WARN: no rewrite anchor to inherit for '$wt_dir' (identity destroyed, never stamped, or predating anchor recording)$carries." >&2
+    echo "  This run opens a NEW stamp era: wt-restamp.sh can audit nothing that happened before it, so an earlier rewrite that dropped work can no longer be detected." >&2
+    echo "  If this worktree may have been reset by another session, prefer /finish's exit-4 recovery over continuing here." >&2
+  fi
+fi
+
 # --- Baseline SHA: the fork point the worktree's work descends from. ---
-# Detection (finish-detect-mode.sh) asserts HEAD still descends from this. Prefer
-# an already-recorded baseline (a prior session's stamp survives a resume); for a
-# fresh fork HEAD == the source tip we forked from; otherwise the merge-base.
-baseline_sha=$(git -C "$wt_dir" config --worktree --get start.baseline-sha 2>/dev/null || true)
+# With nothing inherited above, derive it: a fresh fork's HEAD IS the source tip we forked from,
+# while an attach onto existing history has to fall back to the merge-base.
+baseline_sha="$prior_baseline"
 if [ -z "$baseline_sha" ]; then
   if [ "$mode" = "fresh" ]; then
     baseline_sha=$(git -C "$wt_dir" rev-parse HEAD)

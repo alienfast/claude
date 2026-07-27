@@ -69,6 +69,12 @@ These commands are **BLOCKED** by the git-permissions hook (`~/.claude/hooks/git
 | `git clean -f/-fd` | **PERMANENT LOSS** of all untracked files | May delete files created by other sessions |
 | Any `--force` flag | Overrides safety checks, can cause data loss or destructive remote changes | Bypass of git's protective mechanisms |
 
+### The hook only sees the Bash tool's command string
+
+`git-permissions.sh` matches the string the Bash tool was given. A destructive git command run from **inside a script file** (`python3 sweep.py`, `bash revert.sh`) is invisible to it and executes unguarded — and the script runners are themselves pre-approved, so no permission prompt fires either. The hook is a backstop for direct invocation, not a guarantee.
+
+**To undo a temporary edit — a mutation test, a spike, a bisect probe — copy the file aside and copy it back. Never revert with git.** A `/start wt` worktree's change is typically uncommitted and partly untracked, so `git checkout -- <file>` / `git restore <file>` destroys it with no recovery.
+
 ### Multi-Session Awareness
 
 **Fundamental principle**: Multiple Claude Code sessions can work simultaneously on the same repository.
@@ -90,6 +96,7 @@ Concrete rules:
 
 1. **Never create, switch, or delete a branch in a checkout you don't exclusively own without an explicit user instruction.** "The current branch looks wrong for this issue" (unrelated name, far ahead of `main`) is a reason to **STOP and ASK**, never to re-branch on your own judgment. (A `/start wt` worktree session exclusively owns its own worktree — creating/deleting its branch there is fine; this is about the shared main checkout.)
 2. **Before `git branch -D <b>`, verify `<b>` still points where you left it** (`git rev-parse <b>` == the SHA at creation). If it moved, a concurrent session committed onto it — do not delete; investigate and surface.
+3. **Never rebase or otherwise rewrite a `/start wt` branch in an unattended run** — the `/auto` grant excludes history rewrites; merge from source instead. Interactively, a deliberate rewrite must be followed immediately by `~/.claude/scripts/wt-restamp.sh <wt_dir>` (owner-gated; refuses if any commit since the last stamp would be lost), otherwise the rewrite detaches the stamped baseline and `/finish` refuses the merge as a suspected hijack (exit 4).
 
 (Scoped `git add <path>` staging — never `git add -A` in a shared checkout — is already covered under "Proper File Staging" below.)
 

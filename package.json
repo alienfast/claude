@@ -2,8 +2,9 @@
   "name": ".claude",
   "packageManager": "pnpm@11.7.0",
   "scripts": {
-    "check": "pnpm check-markdown",
-    "check-markdown": "markdownlint-cli2 --fix '**/*.md'"
+    "check": "pnpm check-markdown && pnpm test",
+    "check-markdown": "markdownlint-cli2 --fix '**/*.md'",
+    "test": "hooks/full-continue.test.sh && scripts/wt-restamp.test.sh"
   },
   "devDependencies": {
     "markdownlint-cli2": "^0.22.1",
