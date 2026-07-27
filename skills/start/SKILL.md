@@ -609,7 +609,7 @@ When implementation and review are complete, present a summary to the user that 
    - Critical/High/Medium findings resolved
    - Deferred (Nice-to-Have) items fixed in-session
    - Deferred items filed as Linear issues (with issue IDs)
-   - Deferred items dropped (user declined to fix and declined to file)
+   - Deferred items dropped (not fixed and not filed — note-only items plus anything the filing reply did not select)
    - Open items (only on `terminated-with-open-items` or `escalated-to-architect`; includes any deferred items not handled above)
 5. **Checks**: Confirm `pnpm check` passes. Four exception paths to handle explicitly, mutually exclusive by `/quality-review` termination point:
    - **Terminated at sub-step 5 regression-cap** (verdict = `terminated-with-open-items` from the deferred-items regression path) → `pnpm check` may be red. Surface that failure here rather than asserting passes.
