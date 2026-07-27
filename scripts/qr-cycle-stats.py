@@ -21,6 +21,7 @@ from pathlib import Path
 PROJ = Path.home() / ".claude" / "projects"
 INIT_RE = re.compile(r"Task for quality-reviewer: Adversarial implementation review for ([A-Z]+-\d+)")
 REREV_RE = re.compile(r"Task for quality-reviewer: Adversarial re-review of fixes for ([A-Z]+-\d+)")
+CONF_RE = re.compile(r"Task for quality-reviewer: Targeted fix confirmation for ([A-Z]+-\d+)")
 FIX_RE = re.compile(r"Task for developer: Fix review findings for ([A-Z]+-\d+)")
 
 if len(sys.argv) < 2:
@@ -33,7 +34,7 @@ issues = {}
 detail_lines = []
 
 for f in sorted(PROJ.glob(f"*{project}*/*.jsonl")):
-    s = {"init": 0, "rerev": 0, "auto": False, "plan": False, "issues": set()}
+    s = {"init": 0, "rerev": 0, "conf": 0, "auto": False, "plan": False, "issues": set()}
     is_detail = detail_target and detail_target in str(f.parent)
     with open(f, errors="replace") as fh:
         for line in fh:
@@ -65,11 +66,14 @@ for f in sorted(PROJ.glob(f"*{project}*/*.jsonl")):
                     if not m:
                         m = REREV_RE.search(prompt)
                         kind = "rerev" if m else None
+                    if not m:
+                        m = CONF_RE.search(prompt)
+                        kind = "conf" if m else None
                     if m:
                         s[kind] += 1
                         key = m.group(1)
                         s["issues"].add(key)
-                        rec = issues.setdefault(key, {"init": 0, "rerev": 0, "classes": set(), "files": set()})
+                        rec = issues.setdefault(key, {"init": 0, "rerev": 0, "conf": 0, "classes": set(), "files": set()})
                         rec[kind] += 1
                         rec["files"].add(f.name[:8])
                     if is_detail:
@@ -80,32 +84,34 @@ for f in sorted(PROJ.glob(f"*{project}*/*.jsonl")):
                         elif fm:
                             findings = prompt.split("Findings:", 1)[-1][:300].replace("\n", " | ")
                             detail_lines.append(f"{ts}  FIX   {fm.group(1)}: {findings}")
-    if s["init"] or s["rerev"]:
+    if s["init"] or s["rerev"] or s["conf"]:
         cls = "AUTO" if s["auto"] else ("INTER" if s["plan"] else "OTHER")
         sessions[f.name[:8]] = s | {"cls": cls, "dir": f.parent.name[-12:]}
         for key in s["issues"]:
             issues[key]["classes"].add(cls)
 
-print(f"{'SESSION':10s} {'DIR':>12s} {'CLASS':5s} {'init':>4s} {'rerev':>5s}  issues")
+print(f"{'SESSION':10s} {'DIR':>12s} {'CLASS':5s} {'init':>4s} {'rerev':>5s} {'conf':>4s}  issues")
 for name, s in sessions.items():
-    print(f"{name:10s} {s['dir']:>12s} {s['cls']:5s} {s['init']:4d} {s['rerev']:5d}  {','.join(sorted(s['issues']))}")
+    print(f"{name:10s} {s['dir']:>12s} {s['cls']:5s} {s['init']:4d} {s['rerev']:5d} {s['conf']:4d}  {','.join(sorted(s['issues']))}")
 
 agg = {}
 for rec in issues.values():
     cls = "AUTO" if "AUTO" in rec["classes"] else ("INTER" if "INTER" in rec["classes"] else "OTHER")
-    a = agg.setdefault(cls, [0, 0, 0])
+    a = agg.setdefault(cls, [0, 0, 0, 0])
     a[0] += 1
     a[1] += rec["init"]
     a[2] += rec["rerev"]
+    a[3] += rec["conf"]
 
-print("\nPer-issue reviewer dispatches (init + re-review; parallel domain reviewers count each):")
+print("\nPer-issue reviewer dispatches (init + re-review; parallel domain reviewers count each; conf = targeted fix confirmations, not cycles):")
 for key, rec in sorted(issues.items(), key=lambda kv: -(kv[1]["init"] + kv[1]["rerev"]))[:15]:
     cls = "AUTO" if "AUTO" in rec["classes"] else ("INTER" if "INTER" in rec["classes"] else "OTHER")
-    print(f"  {key:8s} {cls:5s} dispatches={rec['init'] + rec['rerev']:2d} (init={rec['init']}, rerev={rec['rerev']}) sessions={len(rec['files'])}")
+    conf = f" conf={rec['conf']}" if rec["conf"] else ""
+    print(f"  {key:8s} {cls:5s} dispatches={rec['init'] + rec['rerev']:2d} (init={rec['init']}, rerev={rec['rerev']}){conf} sessions={len(rec['files'])}")
 
-print("\nAggregate by class (issue-level):")
-for cls, (n, ni, nr) in sorted(agg.items()):
-    print(f"  {cls:5s} issues={n:3d}  reviewer-dispatches={ni + nr:3d}  avg dispatches/issue={(ni + nr) / n:.2f}")
+print("\nAggregate by class (issue-level; avg excludes conf — confirmations are deliberately not cycles):")
+for cls, (n, ni, nr, nc) in sorted(agg.items()):
+    print(f"  {cls:5s} issues={n:3d}  reviewer-dispatches={ni + nr:3d}  confirmations={nc:3d}  avg dispatches/issue={(ni + nr) / n:.2f}")
 
 if detail_lines:
     print(f"\n--- dispatch sequence for {detail_target} ---")

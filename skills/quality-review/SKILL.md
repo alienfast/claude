@@ -1,6 +1,6 @@
 ---
 name: quality-review
-description: Adversarial implementation review with triage and fix loop. Hard-gates on `pnpm check`, delegates to the quality-reviewer agent for categorized findings (Critical/High/Medium/Nice-to-Have/Approved), then triages and fixes findings via the developer agent. Loops until a re-review surfaces no new Critical/High/Medium findings (convergence), with a soft ceiling of 5 cycles before asking the user how to proceed; option 3 of that prompt terminates with verdict `escalated-to-architect`. Autonomous mode via the `auto` token (prompts resolve to documented defaults; used by /auto via /start auto). Use when the user says 'review my work', 'check this implementation', 'adversarial review', 'quality review', or invokes /quality-review.
+description: Adversarial implementation review with triage and fix loop. Hard-gates on `pnpm check`, delegates to the quality-reviewer agent for categorized findings (Critical/High/Medium/Nice-to-Have/Approved), then triages and fixes findings via the developer agent. Re-reviews verify the fix delta rather than re-reviewing from scratch; mechanical and prose-only findings are fixed and confirmed without consuming cycles, so the loop converges when a re-review surfaces no new substantive findings — with a soft ceiling of 5 cycles that drains those lanes before asking the user how to proceed; option 3 of that prompt terminates with verdict `escalated-to-architect`. Autonomous mode via the `auto` token (prompts resolve to documented defaults; used by /auto via /start auto). Use when the user says 'review my work', 'check this implementation', 'adversarial review', 'quality review', or invokes /quality-review.
 model: opus
 effort: xhigh
 ---
@@ -13,7 +13,7 @@ Run an adversarial review of the current implementation, then triage and fix fin
 
 - Issue identifier (e.g., `PL-13`) — optional. Auto-detected from branch/commit when omitted; if no issue can be resolved, the skill runs without requirements-conformance context.
 - Positional file paths — optional override of the auto-detected scope.
-- `auto` — optional token (case-insensitive, position-agnostic). **Autonomous mode**: every prompt resolves to a documented default instead of asking — the Step 5 soft-ceiling prompt resolves by its provenance-aware auto rule (any surviving Critical/High or regression → option 2, `terminated-with-open-items`; an all-Medium, all-pre-existing residue → converge and file the survivors as severity-carrying deferred items), sub-step 6's filing prompt resolves to `suggested`, and sub-step 6's state-name fallback files into the team default state (noted in the verdict block) rather than asking. Nothing else changes. Passed through by `/start auto` for the `/auto` loop.
+- `auto` — optional token (case-insensitive, position-agnostic). **Autonomous mode**: every prompt resolves to a documented default instead of asking — the Step 5 soft-ceiling prompt resolves by its lane-drain + provenance auto rule (mechanical and prose-only survivors are fixed and confirmed rather than terminated over; any remaining substantive Critical/High or regression → option 2, `terminated-with-open-items`; an all-Medium, all-pre-existing residue → converge and file the survivors as severity-carrying deferred items), sub-step 6's filing prompt resolves to `suggested`, and sub-step 6's state-name fallback files into the team default state (noted in the verdict block) rather than asking. Nothing else changes. Passed through by `/start auto` for the `/auto` loop.
 
 Examples: `/quality-review`, `/quality-review PL-13`, `/quality-review auto PL-13`, `/quality-review src/foo.ts src/bar.ts`, `/quality-review PL-13 packages/api/`
 
@@ -200,7 +200,7 @@ Nice-to-Have findings do not affect the verdict; they are handled in Step 6 (aut
 
 If Critical, High, or Medium findings exist, triage, fix, and re-review until the implementation passes cleanly.
 
-**1. Fix every Critical/High/Medium finding in scope, including pre-existing ones in touched files.** Leave code better than you found it. If the reviewer flagged it at this severity, it is not deferrable — Step 6 handles deferrable items via the Nice-to-Have category.
+**1. Fix every Critical/High/Medium finding in scope, including pre-existing ones in touched files.** Leave code better than you found it. If the reviewer flagged it at this severity, it is not deferrable — Step 6 handles deferrable items via the Nice-to-Have category. (This governs the **initial** review's findings; a re-review's new findings are routed by item 5's lanes instead — pre-existing gaps a re-review notices go to the deferred filing lane, not this fix-everything rule.)
 
 **2. Fix all Critical/High/Medium items** — delegate to `developer`. If multiple findings are in independent files, launch parallel fix agents:
 
@@ -221,25 +221,46 @@ After fixes are applied, you MUST continue through items 3→4→5 below. Do not
 
 **3. Verify check passes** — after fixes, re-run `pnpm check`. If it fails, delegate further fixes before proceeding.
 
-**4. Re-review (MANDATORY)** — fixes are not complete until re-reviewed. Spawn `quality-reviewer` scoped to only the changed files:
+**4. Re-review (MANDATORY)** — fixes are not complete until re-reviewed. Spawn `quality-reviewer` **scoped to verification of the fix delta**, not a fresh review of the whole change:
 
 ```md
 Task for quality-reviewer: Adversarial re-review of fixes for PL-13
-Context: Previous adversarial review findings were addressed. Your job is to verify fixes are correct and try to break them again.
-Changed files: [list]
+Context: Previous adversarial review findings were addressed. Verify the fixes — this is a verification pass over the fix delta, NOT a from-scratch re-review of the whole change.
+In scope: (a) each fix actually resolves its finding; (b) any finding closed by argument rather than by change — test the argument's soundness; (c) regressions in the fix delta's blast radius: callers, callees, and shared state of the changed lines.
+Out of scope: review modalities the initial review did not run (do not introduce a mutation sweep, comment-accuracy audit, or similar new lens here), and re-litigating unchanged code a prior cycle already examined. If you notice a real issue outside the fix delta anyway, report it in its severity section flagged `[out-of-delta]` — it is routed by disposition, not automatically treated as loop fuel.
+Changed files: [list of files touched by the fixes]
 Previous findings addressed: [list]
-Acceptance: Confirm findings resolved. Flag any new Critical, High, or Medium issues with concrete scenarios.
+Acceptance: Confirm findings resolved. Flag fix regressions and unsound closures as Critical/High/Medium with concrete scenarios; flag anything else `[out-of-delta]`.
 ```
+
+**Why verification, not re-discovery.** The observed 5-cycle grinds were driven by re-reviews escalating their own modality each cycle — behavioral findings in cycle 1, spec-pinning mid-loop, a first-ever mutation sweep at cycle 5 — so convergence meant "the reviewer ran out of new lenses", which a strong reviewer never does. Depth belongs in Step 3's initial review, which already fans out parallel domain reviewers and chooses its own modalities; the re-review's job is to prove the fixes sound. A latent finding the initial review missed can still arrive `[out-of-delta]` and substantive defects of the change still gate (item 5's routing) — but the loop stops paying a full review cycle for each new lens. (The class-shaped sweep below remains the one sanctioned scope expansion — it names a specific shared decision to hunt for, not a new modality.)
 
 **Broaden scope for class-shaped findings.** If any finding addressed this cycle described a duplicated, re-derived, or copy-pasted decision — the same predicate, formatting rule, or authorization/scoping check reimplemented independently at more than one call site — rather than a single isolated site, do not scope the re-review dispatch to only the fixed files. Add an explicit sweep instruction naming the shared decision and the directory/domain to search (e.g. "Also search apps/app/src/domains/stx/ for any other call site re-deriving `isCoordinator || isClosing || isFlowSender(flow)` instead of importing it from entityScope.ts"). A class-shaped finding whose re-review stays file-scoped lets sibling instances surface one at a time across many cycles instead of being caught in one pass — the same failure mode item 2's enum-variant partition rule already exists to prevent for a single defining source, applied here to logic duplicated across files.
 
-**5. Loop** — if the re-review surfaces new Critical, High, or Medium issues, return to the top of this step (triage → fix → check → re-review).
+**5. Route the re-review's findings, then loop only on what deserves a cycle.** Split every new Critical/High/Medium finding by lane, per finding:
 
-**Termination**: The loop terminates by **convergence** — when a re-review surfaces no new Critical, High, or Medium findings, exit Step 5 with verdict `passed-after-fixes` and proceed to Step 6.
+- **Prose-only** (Step 6 sub-step 2's prose-only rule — the fix edits only comments, doc-strings, or standalone doc/rule text; the severity label the reviewer gave it does not matter): fix it in the next fix batch, but it is **never loop fuel** — it does not make a re-review mandatory on its own and does not count against convergence. The rule's exclusions apply unchanged: prose wrong *because the code is wrong* is a code defect at its real severity, and a doc edit that changes policy meaning is not prose-only.
+- **Mechanical** (definition below): fix it now and verify it with a **targeted fix confirmation** — not a review cycle.
+- **Substantive** (everything else: fix regressions, unsound closures, and any `[out-of-delta]` defect of the change under review that is neither prose nor mechanical): loop fuel — return to the top of this step (triage → fix → check → re-review).
+- **Pre-existing beyond the change under review**: not loop fuel and not fixed in this loop — route to Step 6 sub-step 5's severity-carrying deferred lane (rendered with severity in the tag slot, filed with the `specified` label), exactly as that sub-step prescribes for its own re-reviews. (Item 1's fix-everything rule governs the *initial* review's findings; a re-review's new findings route here instead.)
+
+**Mechanical findings — fix and confirm, never cycle.** A finding is *mechanical* when its fix requires no choice between valid alternatives AND is localized (single file, or a spec file plus its subject) AND changes no public API, schema, or contract AND is small (~<15 lines) AND is directly checkable by `pnpm check` plus a targeted test run. A missing import, one spec arm pinning existing behavior, a wrong string in a message: mechanical. Classify by the **fix**, not the severity — a Medium with a one-line fix is mechanical — and **doubt resolves to substantive**: the classification is made by the party that wants to converge, so it must be conservative, and a fix that changes runtime behavior in any way the classifier cannot fully predict is not mechanical. Handling: apply the fix, run `pnpm check` plus the targeted specs, then dispatch a single confirmation:
+
+```md
+Task for quality-reviewer: Targeted fix confirmation for PL-13
+Context: Mechanical fixes for the findings below were just applied. Confirm each fix resolves its finding and introduces nothing new in the touched lines. This is a confirmation pass, not a review — do not widen scope.
+Fixes: [finding → fix applied, per item]
+Changed files: [list]
+Acceptance: Per fix: confirmed, or a concrete scenario where it fails.
+```
+
+A confirmation that flags a problem promotes that finding to substantive (loop fuel). A `Targeted fix confirmation` dispatch is **not a review cycle** and is never counted as one (see the ceiling's count-grounding note). When a re-review's findings are a mix of lanes, the substantive ones drive the normal cycle and the mechanical/prose ones ride along in the same fix batch — the lanes change what re-arms the loop, not when fixes land.
+
+**Termination**: The loop terminates by **convergence** — when a re-review surfaces no new **substantive** findings. Prose-only and mechanical findings, handled by their lanes above, do not block convergence; a mechanical finding converges when its targeted confirmation returns clean. On convergence, exit Step 5 with verdict `passed-after-fixes` and proceed to Step 6.
 
 **Soft ceiling**: After **5 review cycles** (initial review + up to 4 re-reviews), pause and ask the user how to proceed instead of looping silently. Reviewers tend to find *something* on every cycle, so an unbounded loop can run away even when the implementation is materially improving. The ceiling is not a hard cap — the user can extend it.
 
-**Ground the count in dispatch history, not memory.** Determine the cycle count by counting the actual `quality-reviewer` dispatches made so far in this loop — Step 3's initial review plus each Step 5 item 4 re-review — never by trusting a running mental tally or a self-assigned label on a dispatch (e.g., naming an agent call "Cycle-5"). Labels and mental counters can drift from the true count across a long loop with many interleaved fix/check delegations. Before pausing — or, in auto mode, before applying the ceiling's provenance resolution — recount from the actual dispatch history if there is any doubt.
+**Ground the count in dispatch history, not memory.** Determine the cycle count by counting the actual `quality-reviewer` dispatches made so far in this loop — Step 3's initial review plus each Step 5 item 4 re-review — never by trusting a running mental tally or a self-assigned label on a dispatch (e.g., naming an agent call "Cycle-5"). `Targeted fix confirmation` dispatches (item 5's mechanical lane) are **not** review cycles and are never counted — the count is keyed off the dispatch task headers, which are the history. Labels and mental counters can drift from the true count across a long loop with many interleaved fix/check delegations. Before pausing — or, in auto mode, before applying the ceiling's lane-drain and provenance resolution — recount from the actual dispatch history if there is any doubt.
 
 ```text
 The implementation has gone through 5 review cycles and still has unresolved findings:
@@ -255,7 +276,9 @@ Options:
 Reply with `1` (optionally `1 5` for a custom N), `2`, or `3`.
 ```
 
-**Auto mode:** do not ask — resolve the ceiling by **provenance**, using the split Step 6 sub-step 5 defines (regression vs pre-existing; ambiguity resolves to regression):
+**Drain the mechanical and prose lanes first — both modes.** Before rendering the prompt above or applying the auto resolution below, route every surviving finding through item 5's lanes: prose-only survivors are fixed under the prose rule; mechanical survivors are fixed and verified under the mechanical lane (targeted confirmation — not a new cycle). Only survivors remaining after the drain — substantive, judgment-requiring findings — reach the prompt or the auto resolution. A ceiling reached with only mechanical and prose survivors therefore **converges** (`passed-after-fixes`, once confirmations return clean) without asking anyone: terminating over an unapplied one-line fix is the deadlock this drain removes (observed twice in one weekend — a stall over a single missing import, and a stall over two one-arm spec additions, both on implementations whose success criteria were met with full suites green).
+
+**Auto mode:** do not ask — resolve the post-drain survivors by **provenance**, using the split Step 6 sub-step 5 defines (regression vs pre-existing; ambiguity resolves to regression):
 
 - **Any surviving Critical or High, or any surviving finding that is a regression/defect of the change under review** → option 2 immediately (terminate with `terminated-with-open-items`, surviving findings as Open items). Five cycles of *genuine* non-convergence in an unattended run is a signal for a human, not more unattended cycles; the failing verdict makes `/finish auto` abort and `/auto` count the issue as a failure, which is the intended surfacing path.
 - **Every surviving finding is Medium AND pre-existing** → the implementation itself has converged; the residue is reviewer scope-widening into adjacent gaps, not this change's defects (the BF-435 pattern: 28 findings fixed across 4 cycles, then blocked by a sibling-method one-worder and a "file siblings separately" recommendation). Treat as convergence: exit Step 5 with verdict `passed-after-fixes` and route every surviving finding into Step 6 as a severity-carrying deferred item (sub-step 5's lane — rendered in the "Suggested defer as issue" group with severity in the tag slot, filed `Planned` with the `specified` label), where auto mode's `suggested` default files them.
