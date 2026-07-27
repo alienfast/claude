@@ -159,7 +159,7 @@ First, for each `propose` item, show its destination and a ready-to-paste diff �
    new_id=$(~/.claude/scripts/linear-file-improvement.sh <team> "<title>" "$body_file"); rc=$?
    ```
 
-   The helper creates one standalone issue — status `Planned`, unassigned, label `specified` (created if missing — the certification that makes it eligible for `/auto` pickup) — and echoes the identifier. Title e.g. `Continuous improvement from <ISSUE-ID>: <N> proposal(s)`.
+   The helper creates one standalone issue — status `Planned`, unassigned, labels `specified` + `reflection` (created if missing; `specified` is the certification that makes it eligible for `/auto` pickup, `reflection` is what makes `/next` rank it ahead of product work — improvements change how all future work runs) — and echoes the identifier. Title e.g. `Continuous improvement from <ISSUE-ID>: <N> proposal(s)`. A `reflection`-only attach failure is a WARN within exit 0 (certification intact, just unboosted), not an error.
 4. Branch on `rc` for the Output `Filed:` line, then move on — never block the reflection or the enclosing `/full` on filing:
    - `0` → `Filed: <new_id>` (filed and certified).
    - `2` → `Filed: <new_id> (label not attached)` — filed, but the `specified` label could not attach, so the issue is invisible to `/auto` until labeled; surface the helper's WARN so the user can fix the label.

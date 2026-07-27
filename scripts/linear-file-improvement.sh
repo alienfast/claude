@@ -1,7 +1,9 @@
 #!/bin/bash
 # linear-file-improvement.sh — file a single standalone "continuous-improvement" Linear
-# issue from a /reflect session: status Planned, labelled `specified`, description read
-# from a file.
+# issue from a /reflect session: status Planned, labelled `specified` + `reflection`,
+# description read from a file. `specified` is the /auto-eligibility certification;
+# `reflection` marks it as a config/process improvement so /next ranks it ahead of
+# product work (improvements change how all future work runs).
 #
 # Usage: linear-file-improvement.sh <team> <title> <body-file>
 #
@@ -31,9 +33,10 @@
 # invisible to /auto until certified (standards/issue-spec.md).
 #
 # Exit codes:
-#   0 = issue created (Planned) AND specified label attached; id on stdout
-#   2 = issue created (Planned) but the label could NOT be attached (team has no
-#       attachable specified label); id still on stdout, WARN on stderr
+#   0 = issue created (Planned) AND specified label attached (reflection is best-effort
+#       within 0 — a WARN names it when only specified could attach); id on stdout
+#   2 = issue created (Planned) but the specified label could NOT be attached (team has
+#       no attachable specified label); id still on stdout, WARN on stderr
 #   1 = usage / missing body file / no suitable state / create failed (no usable id)
 
 set -eo pipefail
@@ -62,7 +65,7 @@ fi
 # {labels:[...]} vs {nodes:[...]}), so this survives linear-cli output-shape changes.
 names() { jq -r '.. | objects | select(has("name")) | .name'; }
 
-# 1. Ensure a `specified` ISSUE label exists. Two `-t issue` gotchas, both load-bearing:
+# 1. Ensure the `specified` and `reflection` ISSUE labels exist (one probe, shared by both). Two `-t issue` gotchas, both load-bearing:
 #    - `labels list` with no `-t` returns PROJECT labels (its default) — so the existence
 #      probe MUST pass `-t issue`, or it misses real issue labels and we'd create a junk one.
 #    - `labels create` also defaults to `--type project`, and project labels can't go on
@@ -78,11 +81,17 @@ names() { jq -r '.. | objects | select(has("name")) | .name'; }
 #    NO specified issue label at all. It canNOT create a team-scoped label, so a team that
 #    lacks one still degrades to the best-effort WARN in step 4. Tolerate a concurrent create
 #    (another session filing at the same moment) — "already exists" is success here.
-have_label=$(linear-cli labels list -t issue --all --no-cache -o json 2>/dev/null | names 2>/dev/null | grep -Fxi 'specified' | head -1 || true)
-if [ -z "$have_label" ]; then
+all_labels=$(linear-cli labels list -t issue --all --no-cache -o json 2>/dev/null | names 2>/dev/null || true)
+have_specified=$(printf '%s' "$all_labels" | grep -Fxi 'specified' | head -1 || true)
+if [ -z "$have_specified" ]; then
   linear-cli labels create "specified" -t issue >/dev/null 2>&1 || true
 fi
-specified_label="${have_label:-specified}"
+specified_label="${have_specified:-specified}"
+have_reflection=$(printf '%s' "$all_labels" | grep -Fxi 'reflection' | head -1 || true)
+if [ -z "$have_reflection" ]; then
+  linear-cli labels create "reflection" -t issue >/dev/null 2>&1 || true
+fi
+reflection_label="${have_reflection:-reflection}"
 
 # 2. Resolve the workflow state up front. Prefer Planned; deferred-but-triaged proposals
 #    should not land in Triage. Fall back to the first Backlog/Todo-like state, mirroring
@@ -115,12 +124,20 @@ if [ -z "$new_id" ]; then
   exit 1
 fi
 
-# 4. Attach the `specified` label — BEST EFFORT (cross-team constraint documented above in the header and step 1).
-#    The direct `-l` (not linear-add-label.sh) is deliberate — do not "fix" it to call that helper: this issue was
-#    just created with an empty label set, so replace semantics are harmless and skipping the helper saves two API
-#    calls. The id is printed FIRST, before the attach attempt, so it reaches stdout on every path.
+# 4. Attach the `specified` + `reflection` labels — BEST EFFORT (cross-team constraint documented above in the
+#    header and step 1). The direct `-l` (not linear-add-label.sh) is deliberate — do not "fix" it to call that
+#    helper: this issue was just created with an empty label set, so replace semantics are harmless and skipping
+#    the helper saves API calls. Both labels must ride ONE update (-l sets the whole set; two sequential updates
+#    would clobber the first label with the second). The id is printed FIRST, before the attach attempt, so it
+#    reaches stdout on every path. If the pair fails, retry `specified` alone: certification is the load-bearing
+#    label (/auto eligibility), and a missing/team-scoped `reflection` label must never cost the pickup.
 printf '%s\n' "$new_id"
-if ! linear-cli issues update "$new_id" -l "$specified_label" >/dev/null 2>&1; then
-  echo "WARN: filed $new_id but could not attach the 'specified' label — /auto will not pick it up until it is labeled. Most likely team '$team' has no attachable specified issue label (create one: linear-cli labels create \"specified\" -t issue); a transient linear-cli error is also possible" >&2
-  exit 2
+if linear-cli issues update "$new_id" -l "$specified_label" -l "$reflection_label" >/dev/null 2>&1; then
+  exit 0
 fi
+if linear-cli issues update "$new_id" -l "$specified_label" >/dev/null 2>&1; then
+  echo "WARN: filed $new_id with 'specified' but could not attach the 'reflection' label — /next will rank it as ordinary certified work instead of boosting it. Most likely team '$team' has a conflicting team-scoped reflection label (create an attachable one: linear-cli labels create \"reflection\" -t issue)" >&2
+  exit 0
+fi
+echo "WARN: filed $new_id but could not attach the 'specified' label — /auto will not pick it up until it is labeled. Most likely team '$team' has no attachable specified issue label (create one: linear-cli labels create \"specified\" -t issue); a transient linear-cli error is also possible" >&2
+exit 2

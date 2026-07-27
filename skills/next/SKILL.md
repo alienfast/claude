@@ -93,13 +93,14 @@ A label filter (`--label`) applies after the workable/blocker filtering and befo
 
 Multi-team runs merge every team's issues **before** tiering: each team contributes its own dependency graph and active-cycle set, then one ranked list comes out — a Tier 3 in-cycle BF issue beats a Tier 6 PL fallback regardless of which team the session was "in." Identifiers carry the team (`PL-…`, `BF-…`), so no extra labeling is needed in the output.
 
-The script applies the same six-tier scheme the previous prose version of this skill described — see [scripts/next-candidates.sh](../../scripts/next-candidates.sh) for the exact logic. The high-level priority order:
+The script applies a tier scheme — see [scripts/next-candidates.sh](../../scripts/next-candidates.sh) for the exact logic. The high-level priority order:
 
-1. Already assigned to you (finish what you started)
-2. In current cycle + newly unblocked by `<COMPLETED-ID>`
-3. In current cycle, ready
-4. Newly unblocked anywhere
-5. Sibling under the same parent as `<COMPLETED-ID>`
-6. Highest-priority workable fallback
+1. Certified reflection improvement (`specified` + `reflection` labels — `/reflect`'s filings): config/process fixes change how every later issue runs, so they ship ahead of the work they improve
+2. Already assigned to you (finish what you started)
+3. In current cycle + newly unblocked by `<COMPLETED-ID>`
+4. In current cycle, ready
+5. Newly unblocked anywhere
+6. Sibling under the same parent as `<COMPLETED-ID>`
+7. Highest-priority workable fallback
 
 Within each tier: parent-epic state (In Progress > Planned > Backlog > Triage) > priority > cycle membership > estimate.

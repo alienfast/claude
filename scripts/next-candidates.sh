@@ -11,11 +11,12 @@
 # via `linear-cli teams list`) and candidates are ranked in one merged list —
 # tiers, priority, and estimates are comparable across teams.
 # Fans out three parallel Linear CLI calls per team (workable list, deps graph,
-# current cycle), filters to issues with all blockers resolved, buckets into 6
-# tiers (assigned-to-me → newly-unblocked-in-cycle → cycle-ready → newly-unblocked
-# → sibling-under-completed-parent → priority-fallback), then walks parent chains
-# for the top-K candidates to apply parent-status weighting (In Progress epic >
-# Planned > Backlog > Triage). Emits a ranked markdown list to stdout.
+# current cycle), filters to issues with all blockers resolved, buckets into
+# tiers (reflection-improvement → assigned-to-me → newly-unblocked-in-cycle →
+# cycle-ready → newly-unblocked → sibling-under-completed-parent →
+# priority-fallback), then walks parent chains for the top-K candidates to apply
+# parent-status weighting (In Progress epic > Planned > Backlog > Triage).
+# Emits a ranked markdown list to stdout.
 #
 # --label/--exclude-label filter candidates client-side by ASCII-case-insensitive label
 # name (team-scoped duplicate labels share a name, not an id). --include-triage
@@ -378,7 +379,9 @@ candidates_json=$(jq \
           is_me: (($me != "") and ($i.assignee == $me)),
           in_cycle: (($cycle | index($id)) != null),
           newly_unblocked: (($newly | index($id)) != null),
-          unresolved_count: ($unresolved | length)
+          unresolved_count: ($unresolved | length),
+          is_reflection: ((($i.labels // []) | map(ascii_downcase)) as $ls
+            | (($ls | index("specified")) != null and ($ls | index("reflection")) != null))
         }
     )
   ' "$list_file")
@@ -397,6 +400,9 @@ fi
 # ---------- pre-rank into tiers (parent-agnostic) ----------
 
 # Tier assignment (without parent data yet — tier 5 deferred to step 7).
+# Tier 0: certified reflection improvement (`specified` + `reflection` labels, /reflect's
+#         filings) — config/process fixes change how every later issue runs, so they ship
+#         ahead of the work they improve
 # Tier 1: assigned to me + workable
 # Tier 2: in current cycle + newly unblocked + no open blockers
 # Tier 3: in current cycle
@@ -411,7 +417,8 @@ ranked_json=$(printf '%s' "$candidates_json" | jq '
   map(
     . + {
       tier: (
-        if .is_me then 1
+        if .is_reflection then 0
+        elif .is_me then 1
         elif (.in_cycle and .newly_unblocked and .unresolved_count == 0) then 2
         elif .in_cycle then 3
         elif (.newly_unblocked and .unresolved_count == 0) then 4
@@ -543,7 +550,8 @@ fi
 printf '## Suggested next\n\n'
 printf '%s' "$ranked_json" | jq -r --argjson lim "$limit" '
   def tier_reason(c):
-    if c.tier == 1 then "assigned to you"
+    if c.tier == 0 then "certified reflection improvement — affects how future work runs"
+    elif c.tier == 1 then "assigned to you"
     elif c.tier == 2 then "in current cycle + newly unblocked"
     elif c.tier == 3 then "in current cycle"
     elif c.tier == 4 then "newly unblocked"
