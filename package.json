@@ -4,7 +4,7 @@
   "scripts": {
     "check": "pnpm check-markdown && pnpm test",
     "check-markdown": "markdownlint-cli2 --fix '**/*.md'",
-    "test": "hooks/full-continue.test.sh && scripts/wt-restamp.test.sh"
+    "test": "hooks/full-continue.test.sh && scripts/wt-restamp.test.sh && scripts/wt-disown.test.sh"
   },
   "devDependencies": {
     "markdownlint-cli2": "^0.22.1",

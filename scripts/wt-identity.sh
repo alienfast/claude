@@ -52,6 +52,7 @@ _wtid_read_sidecar() {
   WTID_OWNER=$(sed -n 's/^WT_IDENTITY_OWNER=//p' "$f" | head -1)
   WTID_OWNER_PID=$(sed -n 's/^WT_IDENTITY_OWNER_PID=//p' "$f" | head -1)
   WTID_OWNER_PID_START=$(sed -n 's/^WT_IDENTITY_OWNER_PID_START=//p' "$f" | head -1)
+  WTID_OWNER_RELEASED_AT=$(sed -n 's/^WT_IDENTITY_OWNER_RELEASED_AT=//p' "$f" | head -1)
 }
 
 # A sidecar is only trustworthy for <wt_dir> if its recorded WT_IDENTITY_WT_DIR is
@@ -98,7 +99,7 @@ wt_identity_load() {
   local wt_dir="$1" issue_lower="$2"
   WTID_SOURCE="none"; WTID_ISSUE=""; WTID_BRANCH=""; WTID_SOURCE_BRANCH=""
   WTID_BASELINE=""; WTID_SIDECAR_PATH=""; WTID_WT_DIR=""; WTID_HEAD_SHA=""; WTID_STAMPED_AT=""
-  WTID_OWNER=""; WTID_OWNER_PID=""; WTID_OWNER_PID_START=""
+  WTID_OWNER=""; WTID_OWNER_PID=""; WTID_OWNER_PID_START=""; WTID_OWNER_RELEASED_AT=""
   [ -z "$issue_lower" ] && issue_lower=$(basename "$wt_dir")
   local name="wt-identity-${issue_lower}.env"
 
@@ -139,7 +140,7 @@ wt_identity_load() {
   fi
   # Every candidate was rejected; drop what reading them left behind so nothing leaks into tier 3.
   WTID_ISSUE=""; WTID_BRANCH=""; WTID_SOURCE_BRANCH=""; WTID_BASELINE=""; WTID_WT_DIR=""
-  WTID_HEAD_SHA=""; WTID_STAMPED_AT=""; WTID_OWNER=""; WTID_OWNER_PID=""; WTID_OWNER_PID_START=""
+  WTID_HEAD_SHA=""; WTID_STAMPED_AT=""; WTID_OWNER=""; WTID_OWNER_PID=""; WTID_OWNER_PID_START=""; WTID_OWNER_RELEASED_AT=""
 
   # 3. Per-worktree git config — only "verifiable" if it carries the NEW fields.
   # A legacy worktree (start.source-branch only) lacks these → treated as no
@@ -200,6 +201,9 @@ wt_identity_verify() {
 # --- Owner liveness (parallel-session coordination) ---
 # A worktree's "owner" is the harness (claude) process of the session that last stamped it. A session id alone (start.owner-session) cannot be tested for
 # liveness, so the stamp also records the harness PID + its start time — PID recycling makes a bare PID ambiguous; PID + start time is unique in practice.
+# A session that deliberately walks away (stall, abandon) releases the stamp via wt_identity_disown: owner-pid is cleared and owner-released-at set, while
+# owner-session persists as LAST-OWNER attribution, not a live claim. Pid liveness alone can't express "gave up" — the shared fleet-root/daemon pid stays
+# alive for days after a session stops working a worktree, which is exactly the state a release marks.
 
 # Nearest ancestor process that is the claude harness binary. Honors $CLAUDE_HARNESS_PID when a caller pre-resolved it. Empty/rc-1 when undeterminable
 # (npm-installed CLI runs under `node`; MSYS ps can't see native processes) — callers MUST treat empty as "unknown", never as "dead".
@@ -227,30 +231,42 @@ wtid_pid_start() {
   ps -o lstart= -p "$1" 2>/dev/null | tail -1 | awk '{$1=$1; print}' || true
 }
 
-# Adjudicate the liveness of <wt_dir>'s owning session. Populates WTID_OWNER_PID, WTID_OWNER_PID_START, and
-# WTID_OWNER_ALIVE = alive | dead | unknown. Returns 0 alive, 1 dead, 2 unknown.
+# Adjudicate the liveness of <wt_dir>'s owning session. Populates WTID_OWNER_PID, WTID_OWNER_PID_START, WTID_OWNER_RELEASED_AT, and
+# WTID_OWNER_ALIVE = alive | dead | unknown | released. Returns 0 alive, 1 dead, 2 unknown, 3 released.
 # "dead" requires POSITIVE evidence (PID gone, or recycled into a non-harness / different-start-time process);
+# "released" requires POSITIVE evidence too (owner-released-at present with no resolvable pid — a deliberate wt_identity_disown);
 # anything less is "unknown" — automation must fail safe on unknown (a live owner can't be ruled out).
 wt_owner_alive() {
   local wt_dir="$1"
   WTID_OWNER_ALIVE="unknown"
   # Ownership is latest-wins: every stamp (including a takeover re-stamp) updates per-worktree git config, so config is authoritative wherever present — a
   # stale same-issue sidecar in OUR job dir must not shadow another session's takeover. A verified sidecar (load succeeded for THIS wt dir) only fills gaps.
-  local cfg_pid cfg_pid_start cfg_session
+  local cfg_pid cfg_pid_start cfg_session cfg_released
   cfg_pid=$(git -C "$wt_dir" config --worktree --get start.owner-pid 2>/dev/null || true)
   cfg_pid_start=$(git -C "$wt_dir" config --worktree --get start.owner-pid-start 2>/dev/null || true)
   cfg_session=$(git -C "$wt_dir" config --worktree --get start.owner-session 2>/dev/null || true)
-  WTID_OWNER_PID="$cfg_pid"; WTID_OWNER_PID_START="$cfg_pid_start"; WTID_OWNER_SESSION="$cfg_session"
+  cfg_released=$(git -C "$wt_dir" config --worktree --get start.owner-released-at 2>/dev/null || true)
+  WTID_OWNER_PID="$cfg_pid"; WTID_OWNER_PID_START="$cfg_pid_start"; WTID_OWNER_SESSION="$cfg_session"; WTID_OWNER_RELEASED_AT="$cfg_released"
   if [ -z "$cfg_pid" ] || [ -z "$cfg_session" ]; then
     if wt_identity_load "$wt_dir" && { [ "$WTID_SOURCE" = "job-dir" ] || [ "$WTID_SOURCE" = "repo-fallback" ]; }; then
       # load overwrote the WTID_OWNER_* globals with sidecar values; keep them only for the fields config lacked.
       if [ -n "$cfg_pid" ]; then WTID_OWNER_PID="$cfg_pid"; WTID_OWNER_PID_START="$cfg_pid_start"; fi
       if [ -n "$cfg_session" ]; then WTID_OWNER_SESSION="$cfg_session"; else WTID_OWNER_SESSION="$WTID_OWNER"; fi
+      if [ -n "$cfg_released" ]; then WTID_OWNER_RELEASED_AT="$cfg_released"; fi
     else
-      WTID_OWNER_PID="$cfg_pid"; WTID_OWNER_PID_START="$cfg_pid_start"; WTID_OWNER_SESSION="$cfg_session"
+      WTID_OWNER_PID="$cfg_pid"; WTID_OWNER_PID_START="$cfg_pid_start"; WTID_OWNER_SESSION="$cfg_session"; WTID_OWNER_RELEASED_AT="$cfg_released"
     fi
   fi
-  [ -z "$WTID_OWNER_PID" ] && return 2
+  # A resolvable pid ALWAYS wins over a released marker: a stale sidecar carrying released-at from before a takeover
+  # re-stamp must never report the re-claimed live worktree as up for grabs. Partial disown/stamp writes therefore
+  # degrade to alive/unknown — hands-off — never to a false released.
+  if [ -z "$WTID_OWNER_PID" ]; then
+    if [ -n "$WTID_OWNER_RELEASED_AT" ]; then
+      WTID_OWNER_ALIVE="released"
+      return 3
+    fi
+    return 2
+  fi
 
   local msys=0 cur_comm base cur_start
   case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) msys=1 ;; esac
@@ -393,6 +409,9 @@ wt_identity_stamp() {
   fi
   git -C "$wt_dir" config --worktree start.stamped-at "$WTID_STAMP_STAMPED_AT"
   [ -n "$WTID_STAMP_OWNER" ] && git -C "$wt_dir" config --worktree start.owner-session "$WTID_STAMP_OWNER"
+  # Every stamp revokes a prior release: a claimed worktree must never read released. Unset BEFORE the pid write —
+  # a crash between the two leaves no-released + no-pid = unknown, which automation treats as hands-off.
+  git -C "$wt_dir" config --worktree --unset start.owner-released-at 2>/dev/null || true
   # Owner PID: set on success, UNSET on failure — a takeover stamp that can't resolve its own PID must not leave the dead prior owner's PID looking current.
   if [ -n "$WTID_STAMP_OWNER_PID" ]; then
     git -C "$wt_dir" config --worktree start.owner-pid "$WTID_STAMP_OWNER_PID"
@@ -431,6 +450,69 @@ wt_identity_stamp() {
     echo "WARN: no identity sidecar could be written; worktree falls back to git-config-only identity (less tamper-resistant)." >&2
   fi
   return 0
+}
+
+# Release one sidecar's ownership claim IN PLACE: owner-pid fields emptied, released-at added, every other line
+# byte-preserved. Never a full rewrite from loaded values — that could splice a stale tier's baseline/head/era
+# over a fresher one's (the tier-consistency invariant wt-restamp.sh audits). Write-then-rename like _wtid_write_sidecar.
+_wtid_disown_sidecar() {
+  local f="$1" released_at="$2" tmp
+  tmp="$f.tmp.$$"
+  awk -v rel="$released_at" '
+    /^WT_IDENTITY_OWNER_PID=/       { print "WT_IDENTITY_OWNER_PID="; next }
+    /^WT_IDENTITY_OWNER_PID_START=/ { print "WT_IDENTITY_OWNER_PID_START="; next }
+    /^WT_IDENTITY_OWNER_RELEASED_AT=/ { next }
+    { print }
+    END { print "WT_IDENTITY_OWNER_RELEASED_AT=" rel }
+  ' "$f" > "$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 1; }
+  mv "$tmp" "$f" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 1; }
+}
+
+# Release a worktree's ownership so any session may resume it: unset start.owner-pid/-pid-start, set
+# start.owner-released-at, KEEP start.owner-session (last-owner attribution; wt-restamp's session gate
+# still recognizes the original owner). Ownership is otherwise overwrite-only, and in a fleet the stamped
+# pid is the shared root that reads alive for days after the owning session moved on — without a release,
+# a stalled/abandoned worktree is unreachable by every other session for that process's whole lifetime.
+# Ungated mechanics (like wt_identity_stamp): callers gate — wt-disown.sh is the sanctioned entry point.
+# Sidecars are transformed in place; only reachable ones (this session's job dir + the repo fallback) —
+# a foreign owner's job-dir sidecar is invisible to other sessions' loads and goes inert on the next stamp.
+# Post-verifies every tier it touched; returns non-zero (after a WARN naming the tier) if any write did not
+# take. Either failure order is fail-safe: a half-disowned identity reads alive or unknown, never released.
+# Sets WTID_DISOWN_RELEASED_AT for the caller to emit.
+# Args: wt_identity_disown <wt_dir> [issue_lower]
+wt_identity_disown() {
+  local wt_dir="$1" issue_lower="$2" rc=0 name main_root f
+  [ -z "$issue_lower" ] && issue_lower=$(basename "$wt_dir")
+  name="wt-identity-${issue_lower}.env"
+  WTID_DISOWN_RELEASED_AT=$(date +%s)
+
+  git -C "$wt_dir" config --worktree --unset start.owner-pid 2>/dev/null || true
+  git -C "$wt_dir" config --worktree --unset start.owner-pid-start 2>/dev/null || true
+  git -C "$wt_dir" config --worktree start.owner-released-at "$WTID_DISOWN_RELEASED_AT" 2>/dev/null || true
+  if git -C "$wt_dir" config --worktree --get start.owner-pid >/dev/null 2>&1 || \
+     ! git -C "$wt_dir" config --worktree --get start.owner-released-at >/dev/null 2>&1; then
+    echo "WARN: disown did not take effect in per-worktree git config for '$wt_dir'" >&2
+    rc=1
+  fi
+
+  main_root=$(_wtid_main_root "$wt_dir" || true)
+  for f in ${CLAUDE_JOB_DIR:+"$CLAUDE_JOB_DIR/$name"} ${main_root:+"$main_root/.claude/worktree-identity/$name"}; do
+    [ -f "$f" ] || continue
+    _wtid_read_sidecar "$f"
+    # A stale same-issue sidecar recorded for a DIFFERENT worktree path is not this worktree's claim — leave it alone.
+    _wtid_sidecar_matches "$wt_dir" || continue
+    if ! _wtid_disown_sidecar "$f" "$WTID_DISOWN_RELEASED_AT"; then
+      echo "WARN: disown could not rewrite identity sidecar '$f'" >&2
+      rc=1
+      continue
+    fi
+    _wtid_read_sidecar "$f"
+    if [ -n "$WTID_OWNER_PID" ] || [ -z "$WTID_OWNER_RELEASED_AT" ]; then
+      echo "WARN: disown verification failed for identity sidecar '$f'" >&2
+      rc=1
+    fi
+  done
+  return $rc
 }
 
 # Robustly remove a linked worktree dir on all platforms — notably Windows Git Bash, where a sibling

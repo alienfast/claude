@@ -91,8 +91,9 @@ if [ -d "$wt_dir" ]; then
     exit 1
   fi
   # Parallel-session guard: reusing a worktree that a LIVE other session owns would put two sessions in one worktree — the clobbering this lock exists to
-  # prevent, reachable via a /next pick race or a preflight "orphan" resume of live work. Refuse only on positive proof of a live foreign owner; a dead or
-  # undeterminable owner falls through to reuse (manual resumption of legacy/unstamped worktrees keeps working) and the stamp below re-records ownership.
+  # prevent, reachable via a /next pick race or a preflight "orphan" resume of live work. Refuse only on positive proof of a live foreign owner; a dead,
+  # released (deliberate wt-disown.sh relinquish — the stall/abandon path), or undeterminable owner falls through to reuse (manual resumption of
+  # legacy/unstamped worktrees keeps working) and the stamp below re-records ownership and revokes any release marker.
   # Same-session is decided by wt_owner_is_me (session ids first — in a `claude agents` fleet every session shares one root harness pid).
   wt_owner_alive "$wt_dir" || true
   if [ "$WTID_OWNER_ALIVE" = "alive" ] && ! wt_owner_is_me; then
