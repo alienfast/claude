@@ -66,6 +66,15 @@
    - ✅ Instead: Keep the throw/error. Required means required — silent fallbacks mask misconfiguration.
    - Exception: The value is genuinely optional with a documented default (rare for required-by-name config)
 
+### A verification you never watched fail is not a verification
+
+A sweep, checker, or audit whose passing result gates a decision — ship it, mark it fixed, declare convergence — must prove it can still fail before its verdict is worth anything:
+
+- **Negative control.** Include a case that MUST be reported: a deliberately-broken fixture, a reverted fix, a relaxed clause. A run that flags nothing means something only if you have watched that same run flag something.
+- **Zero discovery is an error, never a pass.** Zero files scanned, zero items parsed, zero matches — fail loudly. Report the counts (files scanned, items checked) next to the verdict so an empty run is visible rather than clean-looking.
+
+A harness that silently matches nothing — a wrong glob, an ignore rule that excludes the fixtures, a parser regex that no longer matches the tool's output format — returns exactly the same "no problems found" as a genuinely clean run. That is the answer everyone wants, which makes it the one nobody questions.
+
 ### Complexity Response Pattern
 
 When two or more attempts have failed, stop and hand the decision over with everything needed to make
