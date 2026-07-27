@@ -19,7 +19,7 @@
 #                     Step 8 must NOT proceed on this value — the user clearly
 #                     ran /quality-review but something went wrong with the
 #                     handoff; gate-bypass would defeat the safety check.
-#   CYCLES=<integer, or empty if VERDICT in {none-found, malformed}>
+#   CYCLES=<integer, or empty if no verdict file was located>
 #   SUB_ISSUES=<comma-separated PL-XX list of parent's current children, or empty>
 #     (NOTE: these are all current children of the parent — not necessarily
 #     filed by THIS /quality-review run. /finish must label accordingly.)

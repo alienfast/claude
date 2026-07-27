@@ -158,7 +158,7 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 
 ### quality-review
 
-**Description**: Adversarial implementation review with triage and fix loop. Hard-gates on `pnpm check`, delegates to the quality-reviewer agent for categorized findings, then loops triage/fix/re-review until convergence (no new Critical/High/Medium findings; 5-cycle soft ceiling), and reflects on the session at the tail.
+**Description**: Adversarial implementation review with triage and fix loop. Hard-gates on `pnpm check`, delegates to the quality-reviewer agent for categorized findings, then loops triage/fix/re-review until convergence (no new substantive findings — prose-only and mechanical fixes do not block it; 5-cycle soft ceiling), and reflects on the session at the tail.
 
 **When Invoked**:
 
@@ -171,8 +171,8 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 - Working Application Contract enforcement (`pnpm check` gate)
 - Categorized findings (Critical/High/Medium/Nice-to-Have/Approved)
 - Parallel domain-scoped reviewers for large changes
-- Mandatory re-review after fixes; converges when no new C/H/M findings surface (5-cycle soft ceiling)
-- Deferred-items triage (`fix-now` / `defer-as-issue` / `note-only`); auto-applies safe fixes, files the rest as sub-issues
+- Mandatory re-review after the initial review's fixes and after every substantive fix; converges when no new substantive findings surface — prose-only and mechanical findings surfaced by a re-review are fixed without consuming a cycle (5-cycle soft ceiling)
+- Deferred-items triage (`fix-now` / `defer-as-issue` / `note-only`); auto-applies safe fixes, files ticket-worthy ones as sub-issues, records the rest as dropped
 - Session-reflection tail (Step 7) — invokes `/reflect` to turn process friction into shared-config improvements
 - Standalone or delegated invocation; auto-detects scope from `git diff`
 - Optional Linear issue context for requirement-conformance checks
@@ -186,7 +186,7 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 
 ### reflect
 
-**Description**: Continuous-improvement reflection on the just-finished session. Captures generalizable lessons (thrashing, silently-worked-around skills, repeated corrections) and reconciles config that has drifted from reality, then auto-applies the small/safe shared-config edits and proposes the larger ones — reusing `/quality-review`'s `apply-now` / `propose` / `drop` triage, pointed at the config layer.
+**Description**: Continuous-improvement reflection on the just-finished session. Captures generalizable lessons (thrashing, silently-worked-around skills, repeated corrections) and reconciles config that has drifted from reality, then auto-applies the small/safe shared-config edits and proposes the larger ones — reusing `/quality-review`'s triage discipline under its own lane names (`apply-now` / `propose` / `drop`), pointed at the config layer.
 
 **When Invoked**:
 
