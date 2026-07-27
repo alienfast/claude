@@ -140,7 +140,7 @@ Applied 2 config improvements: rules/typescript.md — prefer X over Y (uncommit
 First, for each `propose` item, show its destination and a ready-to-paste diff — an interactive run can paste straight away. Then, whenever there is **≥1 `propose` item**, capture them all in **one** auto-filed Linear issue, with **no prompt**, so the work survives autonomous runs (`/full` has no human to act on a surfaced diff — that is the gap this closes):
 
 1. **Resolve the team.** Derive it from the worked issue's ID prefix (e.g. `PL-13` → `PL`) — use the issue ID already in context, or `~/.claude/scripts/detect-issue-id.sh` to recover it from the branch. If no issue/team resolves (a standalone reflection in a non-issue context), **skip filing** — surface the diffs only and note it (see Error handling); never guess a team.
-2. **Build the body** into a unique tmp file — `mkdir -p tmp`, then `body_file=$(mktemp tmp/reflect-improvement-XXXXXX)` (no suffix — BSD `mktemp` only substitutes a template that ends in the `X`s). Shape:
+2. **Build the body** into a unique tmp file — `mkdir -p tmp`, then `body_file=$(mktemp -u tmp/reflect-improvement-XXXXXX)` (`-u` — name only, no file created: the Write tool refuses a pre-existing file it has not Read, so plain `mktemp` breaks the next step. No suffix — BSD `mktemp` only substitutes a template that ends in the `X`s). Shape:
 
    ```text
    Auto-filed by /reflect after working <ISSUE-ID>. These config/process improvements were

@@ -45,6 +45,14 @@ Auth: `linear-cli auth oauth` (browser) or `LINEAR_API_KEY`; check with `linear-
 
 8. **`issues update --state` can report success without the state actually changing.** Exit code 0 and the printed `+ Updated issue` message are not confirmation — a follow-up `issues get --no-cache` may still show the old state, even after retries and even when passing the state's UUID directly instead of its name. If a state update doesn't seem to have taken effect after a `--no-cache` re-check, fall back to the raw mutation (gotcha #6) and trust its own response over the wrapped command: `linear-cli api mutate 'mutation($id: String!, $stateId: String!) { issueUpdate(id: $id, input: { stateId: $stateId }) { success issue { id identifier state { id name } } } }' --variable id=<issue-uuid> --variable stateId=<state-uuid>` — its response includes the resulting `issue.state`, so you can confirm the change immediately without a separate `get`.
 
+9. **`comments list` needs `-o json` — its table output is empty, and the JSON is a nested envelope.** The default table prints a header row and ZERO data rows for every issue (`| Author | Created | Body | ID |`, then `N comments`), so the bare command reads as "no comments" on an issue that has several — and `/start` Step 4 sends you here precisely for full standalone bodies, which the digest truncates to 140 chars. Always pass `-o json`; the payload is `{"comments":{"nodes":[{"body":…}]},"id","identifier","title"}`:
+
+   ```bash
+   linear-cli comments list <ID> -o json | jq -r '.comments.nodes[].body'
+   ```
+
+   Not `.[].body` — iterating the top level hits the `id`/`title` strings and errors with `Cannot index string with string`. Passing **multiple** IDs returns an ARRAY of those objects; use `-o ndjson` and keep the same per-line filter.
+
 ## Command map
 
 ```bash
@@ -57,7 +65,7 @@ linear-cli issues assign <ID> [<user>]        # omit <user> to UNASSIGN
 linear-cli issues comment <ID> --body -       # add a comment (body via stdin)
 
 # Comments / relations / search / statuses
-linear-cli comments list <ID>                 # STANDALONE only — see gotcha #1 for anchored
+linear-cli comments list <ID> -o json         # STANDALONE only (gotcha #1); -o json is REQUIRED — see gotcha #9
 linear-cli relations add <BLOCKER> <BLOCKED> -r blocks   # "A blocked by B" = relations add B A -r blocks (the blocked-by enum is broken on 0.3.26); also -r related|duplicate
 linear-cli relations parent <CHILD> <PARENT>             # set parent after create (issues create has no --parent flag; or set parentId via --data)
 linear-cli search issues "<query>" [--filter 'state.name=Backlog']   # workspace-wide; NO --team flag (use `issues list --team` to scope)

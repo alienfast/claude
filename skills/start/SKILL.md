@@ -203,7 +203,7 @@ The digest covers most context. Reach for these only when its summary is insuffi
 **Full standalone comment bodies** (the digest shows *anchored* comments in full, but truncates *standalone* comments to their first line):
 
 ```bash
-linear-cli comments list PL-13
+linear-cli comments list PL-13 -o json | jq -r '.comments.nodes[].body'
 ```
 
 **Project description** (digest does not include the project body; the digest's `**Project ID:**` line is the project UUID). Use the project ID directly from the Step 1 digest:
