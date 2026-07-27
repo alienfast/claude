@@ -222,7 +222,7 @@ If it **passes**: proceed to commit.
 
 ### Step 7: Git Commit & Push
 
-1. Stage relevant files by name (`git add <files>`). Never `git add -A` / `git add .` (per CLAUDE.md).
+1. Stage relevant files by name (`git add <files>`). Never `git add -A` / `git add .` (per CLAUDE.md). **Derive the list from a fresh `git status --short` run now, at commit time — never from a file list captured earlier in the session.** Review-fix cycles routinely touch files beyond the original implementation set; staging from a stale list ships a commit whose halves don't match (local `pnpm check` passes on the working tree while the committed tree fails CI's type check). After staging, confirm `git status --short` shows no remaining unstaged *tracked* modifications that belong to this issue.
 2. Write the commit message to `tmp/finish-commit-<issue-id-lowercased>.md` (e.g., `tmp/finish-commit-pl-13.md`). The issue ID **must** appear in the message (the script enforces it for Linear auto-linking):
 
    ```text

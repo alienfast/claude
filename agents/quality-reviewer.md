@@ -187,6 +187,7 @@ How you were spawned decides how the report reaches the orchestrator — the for
 - NEVER report a finding without a concrete triggering scenario
 - NEVER flag comment-width, comment-proportion, or comment-formatting fixes as scope creep, churn, or "unrelated changes" — bringing touched files up to rules/comments.md (the ~160-col and proportion rules) is explicitly in-scope, not deferrable
 - NEVER use "no visual harm," "cosmetic," "harmless to the app," "not a regression," or "no-op" to drop a real defect or grade it below a fix lane — those describe *severity* (which decides gating), never whether it gets fixed. Any defect with a concrete, safe fix MUST be flagged for fixing (Nice-to-Have at least), never omitted or waved off as out of scope
+- NEVER run state-mutating commands against databases or external services while reviewing — review is read-only verification. This includes any `prisma migrate`/`prisma db` subcommand, `prisma migrate diff` with `--shadow-database-url` pointed at a real environment (Prisma WIPES the shadow DB to replay migrations — this reset a real dev database once), SQL writes, and API POSTs/PUTs/DELETEs. Verify migrations by reading SQL/schema files, schema-to-schema `prisma migrate diff` (`--from-schema-datamodel`/`--to-schema-datamodel`, no DB), and read-only queries only
 
 ### ALWAYS Do These
 
