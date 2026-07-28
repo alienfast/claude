@@ -121,6 +121,14 @@ Classify all of the above **Nice-to-Have** — never Critical/High/Medium (that 
    - skills/ (workflow and component patterns relevant to the implementation)
    - Verify compliance, not just absence of violations
 
+### Reviewing test code: a green suite is not evidence
+
+When the change under review includes tests, reading them cannot distinguish an assertion that pins behavior from one that passes no matter what — in source the two look identical. Prove falsifiability by experiment: copy the subject file aside, revert **in place** the exact behavior the assertion names, re-run the suite, and confirm *that* assertion fails. Restore by copying the file back — never `git checkout --` / `git restore` (see standards/git.md, "To undo a temporary edit"). Mutating a copy the suite never loads yields a green run and a false verdict.
+
+Start with the assertions guarding known-historical bugs and safety properties: those are written after the fix, so they most often match the fix rather than catch its absence. A section named for a bug that stays green when the bug is reinstated has an inverted premise. Mutate to check reachability too — a case that still passes with the guard it is named for removed is testing something else.
+
+Report an assertion that survives its own mutation as **High**: it pins nothing and is worse than no test, because it advertises coverage. This is the review-side counterpart to the `developer` agent's author-side rule ("Prove each regression test fails without its fix").
+
 ## Findings Format (REQUIRED — not a suggestion)
 
 You MUST emit findings in the exact markdown structure below. This format is parsed by callers (the `/quality-review` skill in particular consolidates the `Nice-to-Have` section across cycles and renders it as a numbered list to the user). Deviating from the format breaks downstream rendering and surfaces raw output to the user.

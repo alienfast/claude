@@ -11,18 +11,175 @@
 # GROW THIS SUITE, NEVER PRUNE IT. wt-restamp.sh grants a worktree the right to be merged, so every
 # hole ever found in that gate has a case below. Add the case WITH the fix; never delete one to
 # "clean up" — a closed hole with no live guard is a hole that reopens.
+
+# THE ISOLATION PREAMBLE BELOW, AND reclaim_locks WITH IT, ARE DUPLICATED IN THE SIBLING wt-*.test.sh SUITES
+# rather than sourced from a shared file — each suite has to stay runnable on its own. The copies are not
+# whole-file identical (wt-identity.test.sh carries two guards this suite measured as unnecessary, and each
+# file cites its own scores), but every line they DO share is kept byte-identical, reclaim_locks in full.
+# Change one and change all three in the same edit — a fix applied to one copy protects only that suite.
+#
+# Exported shell functions are an environment channel with no variable name of their own, so the prefix sweep
+# below cannot reach them: `export -f grep` arrives as an ordinary environment entry bash imports before line
+# 1, and a function outranks both the builtin and $PATH — a `grep` that always succeeds turns every ck_has
+# into a PASS, and one named `cd` or `export` would subvert the isolation below before it runs. Cleared
+# generically rather than by name: this file has defined no function yet, so everything `declare -F` reports
+# here arrived from outside. Builtins only, for the same reason. The `2>/dev/null` can only swallow the
+# `readonly -f` case, which no environment can reach: a function's readonly attribute is not inherited across
+# `exec`, so an imported function is always unsettable (verified — the child's `unset -f` returns 0).
+#
+# The sweep's own tools sit inside the surface it defends. An exported `declare` makes `declare -F` report
+# nothing, so the sweep clears nothing and every other hijack rides straight through it: `declare` and `grep`
+# hijacked together score 177 passed / 8 failed here. An exported `unset` then makes `unset -f declare` a no-op
+# as well. The three lines below bootstrap out of that, and no COMMAND can be their first step, because any
+# command word can be shadowed. A variable assignment cannot be, and assigning $POSIXLY_CORRECT is bash's
+# runtime entry into POSIX mode, where special builtins — `unset` among them — are looked up BEFORE functions.
+# That makes the next line's `unset -f` the real builtin whatever was imported, and it clears every command the
+# bootstrap and the sweep themselves dispatch: `unset`, `builtin`, `declare`, `read`. The backslashes are
+# load-bearing, not decoration: POSIX mode also switches `expand_aliases` ON, which would hand an inherited
+# alias a window it does not get in a default non-interactive shell, and a backslash-quoted word is never
+# alias-expanded, while quoting leaves builtin lookup untouched. Leaving POSIX mode on the third line switches
+# `expand_aliases` back off.
+#
+# The sweep's own test is a `case` rather than the `[ -n "$_l" ]` it would otherwise read as, because `[` is the
+# one command here that cannot be protected the same way: POSIX mode rejects `unset -f [` as "not a valid
+# identifier". `case` needs none, being a reserved word: the parser takes the compound command before any
+# command lookup happens, and bash rejects the env import of a function by that name outright. With `[`, an
+# imported `[` that returns non-zero short-circuits the `&&` and the sweep then clears NOTHING: measured
+# with `[` and `grep` hijacked together, both were still defined afterwards, where the `case` form clears both.
+#
+# The sweep runs BEFORE this file's own `set -uo pipefail`, because `set` is a command word like any other: an
+# imported `set` that returns 0 leaves both options off for the whole run — 30 passed / 155 failed, measured —
+# and an ancestor deciding this gate's shell options is exactly what the preamble exists to prevent. Nothing
+# above needs either option, so `set` is swept with the rest and the real builtin is what runs a few lines down.
+POSIXLY_CORRECT=1
+\unset -f unset builtin declare read 2>/dev/null
+\unset POSIXLY_CORRECT
+while IFS= read -r _l; do case "$_l" in ?*) unset -f "${_l##* }" 2>/dev/null ;; esac; done <<< "$(builtin declare -F)"
+unset _l
+
 set -uo pipefail
+
+# Cleared ahead of the `cd` below, which runs on a RELATIVE path: package.json invokes this suite as
+# `scripts/wt-restamp.test.sh`, so `dirname` yields a bare `scripts` and $CDPATH sends that `cd` elsewhere
+# while echoing where it landed, leaving $DIR two lines long and every source broken. $BASH_ENV is read
+# whenever bash STARTS a non-interactive shell, so it reaches every `bash -c` the fixtures spawn; $ENV is its
+# POSIX-mode form, and $GLOBIGNORE would hide every candidate from the reclaim's glob (bash 3.2.57 honors it
+# only on an in-shell assignment, never when inherited). $POSIXLY_CORRECT is what starts those children in
+# POSIX mode, and it carries a second, load-bearing effect: bash 3.2.57 re-runs its posix-mode hook on the
+# UNSET even when the variable was never set, which turns `expand_aliases` back off. That is what makes the
+# $BASH_ENV alias channel inert here — a $BASH_ENV planting `shopt -s expand_aliases; alias git=...` is
+# otherwise expanded in everything parsed after it. Verified by bisecting the five names: only unsetting
+# $POSIXLY_CORRECT flips the shopt back.
+#
+# $SHELLOPTS/$BASHOPTS are readonly, so their options can only be turned back OFF — and doing only that leaves
+# the pair still exported, which is the half that reaches the fixtures: the children keep inheriting nounset
+# and pipefail, measured at 31 passed / 154 failed. `export -n` closes it, and is legal on a readonly variable.
+# Handled only in the EXPORTED form, the hostile one: `bash -x` on this file sets xtrace WITHOUT exporting
+# $SHELLOPTS, and that deliberate debugging run must keep its trace. So the export attribute is read off each
+# variable's OWN `declare -p` line, whose prefix bash generates: searching `export -p` output instead matched
+# any unrelated variable whose VALUE merely contained the text, and DECOY='SHELLOPTS=x' killed the trace it is
+# supposed to preserve. What this closes is precisely posix, xtrace, verbose, and inheritance via `export -n` —
+# NOT the whole channel: noexec and onecmd are applied by bash at startup, and a script that never executes a
+# command cannot turn them off from inside, so `SHELLOPTS=noexec pnpm check` exits 0 having run nothing at all.
+# That inerts every bash script on the machine rather than anything specific here; named, not defended against.
+unset CDPATH BASH_ENV ENV GLOBIGNORE POSIXLY_CORRECT
+_decl="$(builtin declare -p SHELLOPTS 2>/dev/null)"
+case "${_decl%% SHELLOPTS=*}" in *x) set +o posix; set +x +v; export -n SHELLOPTS 2>/dev/null ;; esac
+_decl="$(builtin declare -p BASHOPTS 2>/dev/null)"
+case "${_decl%% BASHOPTS=*}" in *x) export -n BASHOPTS 2>/dev/null ;; esac
+unset _decl
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RESTAMP="$DIR/wt-restamp.sh"
 IDLIB="$DIR/wt-identity.sh"
 
-TMP="$(mktemp -d)"
-# One case makes a directory unwritable on purpose; restore before rm.
-trap 'chmod -R u+rwx "$TMP" 2>/dev/null; rm -rf "$TMP"' EXIT
+# The PATH shims below exec the real git at the path `command -v` reports, and they only work if that path is
+# ABSOLUTE — a shim holding a relative one, which a relative $PATH entry produces (`PATH=tmp/bin:$PATH` gives
+# `tmp/bin/git`, verified), resolves against the shim's own cwd or back through the shim dir and execs itself
+# forever: a hung suite rather than a failing case. Resolved once so the four shim builders cannot each hit it.
+case "$(command -v git)" in
+  /*) ;;
+  "") echo "ERROR: 'git' was not found on \$PATH at all, and the PATH shims cannot be built without it." >&2; exit 1 ;;
+  *) echo "ERROR: 'git' resolves to '$(command -v git)', not an absolute path — \$PATH carries a relative entry, and the PATH shims cannot be built safely." >&2; exit 1 ;;
+esac
 
-# The suite's own session must not leak into ownership/sidecar resolution.
-unset CLAUDE_JOB_DIR CLAUDE_CODE_SESSION_ID CLAUDE_SESSION_ID CLAUDE_HARNESS_PID WT_RESTAMP_LOCK_PID
+TMP="$(mktemp -d)"
+# `cd ""` succeeds and leaves the cwd unchanged, so an empty $TMP would make $TMP_PHYS the invoking
+# directory — and the reclaim below would then unlink locks live sessions hold on the real repository.
+[ -n "$TMP" ] || { echo "ERROR: mktemp -d failed; refusing to run with an empty workspace path." >&2; exit 1; }
+TMP_PHYS="$(cd "$TMP" && pwd -P)"
+[ -n "$TMP_PHYS" ] || { echo "ERROR: could not resolve a physical path for '$TMP'; refusing to run with an empty workspace path." >&2; exit 1; }
+
+# Every case here re-execs under with-repo-lock.py, which keys a lock file on the repo and never deletes
+# it — so each run leaves one lock per fixture repo in the SHARED ~/.claude/locks/, and since every run
+# gets a fresh mktemp -d those keys never repeat: unbounded growth outside the workspace. Only locks whose
+# recorded key resolves inside THIS run's workspace may be reclaimed; parallel sessions hold live locks in
+# that same directory, so the first-line key test below is what decides and the glob only enumerates.
+# Deliberately duplicated from wt-identity.test.sh rather than sourced: these suites stay self-contained.
+reclaim_locks() {
+  # An UNQUOTED tilde, deliberately, and not "${HOME:-}": this has to resolve the same directory
+  # with-repo-lock.py writes to, and that script uses Python's os.path.expanduser, which falls back to the
+  # passwd database when HOME is unset. "${HOME:-}/.claude/locks" instead yields /.claude/locks, the `-d` test
+  # below fails, and this returns 0 having reclaimed nothing while the locks keep landing in the real shared
+  # directory — `env -u HOME` on a wt suite left 10 orphans there in one run, measured, which is precisely the
+  # unbounded growth this function exists to stop, now invisible. Bash's tilde takes the same passwd fallback,
+  # so the two agree on all four states of HOME — set, unset, empty, pointing nowhere — verified against
+  # expanduser on this machine. It must stay unquoted ("~/..." is a literal), and unquoted is safe: tilde
+  # expansion is not a parameter expansion, so set -u has nothing to fire on, and an assignment word is not
+  # field-split, so a HOME containing spaces survives intact.
+  local dir=~/.claude/locks f key
+  # An empty $TMP_PHYS would make the pattern below "/*" and match every lock on the machine. It cannot
+  # happen past the mktemp guard above, but this function UNLINKS files in a directory shared with live
+  # sessions, so it refuses on its own evidence rather than on a caller's.
+  [ -n "$TMP_PHYS" ] || return 0
+  [ -d "$dir" ] || return 0
+  # Every candidate path stays inside the shell as a single word, start to finish. No `xargs`, no `sh -c`,
+  # no process substitution: each of those re-parses the paths it is handed, and the candidates derive from
+  # $HOME, so a space or an apostrophe there mangled every one of them — measured as 4 locks silently left
+  # behind per run, the exact unbounded growth this function exists to stop. `read` in place of a `head`
+  # fork per file is what keeps that safe version fast: over a 13,560-file directory it costs 0.9s against
+  # 23.5s for the fork-per-file loop. `key` is re-emptied each pass because an unreadable file leaves the
+  # redirect unexecuted, which would otherwise carry the PREVIOUS file's key into this file's verdict.
+  for f in "$dir"/repo-*.lock; do
+    [ -f "$f" ] || continue
+    key=""
+    { IFS= read -r key < "$f"; } 2>/dev/null
+    key=${key#*" key="}
+    case "$key" in "$TMP_PHYS"/*) rm -f "$f" 2>/dev/null || true ;; esac
+  done
+  return 0
+}
+
+# One case makes a directory unwritable on purpose; restore before rm. The reclaim is best-effort and must
+# never fail the suite, and it guards its own inputs so it cannot abort the stages that follow it.
+trap 'reclaim_locks || true; chmod -R u+rwx "$TMP" 2>/dev/null; rm -rf "$TMP"' EXIT
+
+# Nothing an ancestor exported may decide whether this gate passes. The rule for what belongs here is not a
+# list of known-bad names — a list kept missing one more each review round — but a question: every command
+# these fixtures run gets its configuration from an environment PREFIX, so sweep the prefix of every such
+# command and of the library itself. GIT_* is everything git reads, and an inherited GIT_DIR does not merely
+# fail the gate, it makes the fixtures COMMIT INTO the invoking repository (GIT_INDEX_FILE alone, which git
+# 2.51.2 exports to a pre-commit hook, took this suite to 31 passed / 154 failed). GREP_* reaches ck_has,
+# which /usr/bin/grep honors: GREP_OPTIONS=--invert-match scores 171/14. PYTHON* is with-repo-lock.py's
+# interpreter, which every case here re-execs under. PS_* is procps' `ps` configuration, which the library's
+# ownership verdict is parsed out of: PS_PERSONALITY is the live member — PS_FORMAT is only procps-ng's DEFAULT
+# format, outranked by the explicit `-o` every call in the library passes. Unmeasurable against the BSD ps
+# here, so swept on the documented behaviour. NODE_* is swept for parity with the sibling suites; nothing here
+# runs node. WTID_* is the library's own override seam, CLAUDE_* is what wtid_session_ids and wtid_harness_pid
+# resolve ownership from, and WT_*/_WITH_REPO_LOCK_HELD are the lock sentinels an inherited copy of which lets
+# wt-restamp.sh skip the serialization every case here exercises.
+for _v in "${!GIT_@}" "${!WTID_@}" "${!CLAUDE_@}" "${!WT_@}" "${!GREP_@}" "${!NODE_@}" "${!PYTHON@}" "${!PS_@}"; do unset "$_v"; done
+unset _WITH_REPO_LOCK_HELD
+# A developer's own git config must not decide it either: commit.gpgsign=true (which `-c user.email`/`-c
+# user.name` do not suppress) or core.logAllRefUpdates=false fails the fixtures wholesale. Re-exported after
+# the sweep, which took these two with the rest of GIT_*. $HOME, $PATH, $TMPDIR and $LANG/$LC_*/$TZ are left
+# standing deliberately — the reclaim keys on $HOME, the shims exec through $PATH, and the assertions here
+# are on the scripts' own English strings and on git plumbing, neither of which the locale moves.
+#
+# Two of wt-identity.test.sh's guards are deliberately absent: this suite quotes every fixture path rather
+# than word-splitting an assigns list, and it has no fixture that must resolve NO identity. Measured — a
+# workspace with a space in it and a workspace nested inside a stamped /start worktree both score 185/0.
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
 
 G="git -c user.email=t@t -c user.name=t"
 pass=0; fail=0
