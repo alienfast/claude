@@ -1358,6 +1358,93 @@ ln "$REPO/.claude/worktree-identity/wt-identity-test-1.env" "$HARD_JOB/wt-identi
 ck "1/2" "$(probe "$HARD_JOB" WTID_CORROBORATION)" "a hard-linked sidecar counts once too"
 ck_has "identity tiers disagree" "$(stderr_of "$HARD_JOB")" "and cannot silence the warning either"
 
+# --- Part 60: /finish cannot ship a same-lineage clobber (BF-547) ---
+# wt_identity_verify's ancestry check cannot see a tip moved BACKWARDS along its own lineage: a
+# foreign reset onto the source tip (cycle 3), or back to the fork plus a foreign commit (cycle 9),
+# leaves the baseline an ancestor of HEAD, detect-mode exits 0, and finish-merge ships zero owner
+# commits while the issue closes. The preservation audit that already refuses this at restamp time
+# (Part 2) must also gate the merge path — in BOTH gates independently, detect-mode and
+# finish-merge's precondition 0, because a parallel session can clobber in the window between them.
+MERGESH="$DIR/finish-merge.sh"
+fm() { # -> OUT/ERR/RC, runs the real finish-merge from $REPO
+  local errf="$TMP/stderr.txt" msgf="$TMP/fm-msg.md"
+  echo "Merge test-1" > "$msgf"
+  OUT=$(cd "$REPO" && env "CLAUDE_SESSION_ID=sess-A" "$MERGESH" "$WT" main issue-branch "$msgf" 2>"$errf"); RC=$?
+  ERR=$(cat "$errf")
+}
+
+# cycle-3 shape: foreign reset onto the SOURCE TIP — merge-base unchanged, verify clean, empty merge.
+setup c3clobber
+( cd "$WT" && echo work > work.txt && $G add work.txt && $G commit -qm "W: c3 owner work" ) >/dev/null
+( cd "$REPO" && echo b > b.txt && $G add b.txt && $G commit -qm "B: source moves on" ) >/dev/null
+git -C "$WT" reset -q --hard main
+ck "0:" "$(verify "$WT")" "the ancestry check alone reads the c3 clobber as clean (the blind spot is real)"
+dm sess-A
+ck "4" "$RC" "detect-mode refuses the c3 clobber (exit 4)"
+ck_has "CORRUPTION_REASON=lineage-clobbered" "$OUT" "detect-mode names the lineage clobber"
+ck_has "W: c3 owner work" "$ERR" "detect-mode names the dropped commit"
+fm
+ck "4" "$RC" "finish-merge precondition 0 refuses the c3 clobber independently (exit 4)"
+ck_has "lineage-clobbered" "$ERR" "finish-merge names the reason"
+ck_has "W: c3 owner work" "$ERR" "finish-merge names the dropped commit"
+ck "yes" "$([ -d "$WT" ] && echo yes)" "the refused merge leaves the worktree intact"
+
+# cycle-9 shape: foreign reset to the FORK plus a foreign commit — baseline still an ancestor via F.
+setup c9clobber
+( cd "$WT" && echo w1 > w1.txt && $G add w1.txt && $G commit -qm "W1: c9 owner work" ) >/dev/null
+( cd "$WT" && echo w2 > w2.txt && $G add w2.txt && $G commit -qm "W2: c9 owner work" ) >/dev/null
+git -C "$WT" reset -q --hard "$(git -C "$WT" config --worktree --get start.baseline-sha)"
+( cd "$WT" && echo f > f.txt && $G add f.txt && $G commit -qm "F: foreign commit" ) >/dev/null
+ck "0:" "$(verify "$WT")" "the ancestry check alone reads the c9 clobber as clean"
+dm sess-A
+ck "4" "$RC" "detect-mode refuses the c9 clobber (exit 4)"
+ck_has "CORRUPTION_REASON=lineage-clobbered" "$OUT" "c9 reason surfaces"
+ck_has "W1: c9 owner work" "$ERR" "the dropped commits are named (W1)"
+ck_has "W2: c9 owner work" "$ERR" "the dropped commits are named (W2)"
+fm
+ck "4" "$RC" "finish-merge refuses the c9 clobber too (exit 4)"
+
+# False-flag boundary 1: a legitimate merge-from-source catch-up must pass — merging only ADDS
+# ancestry, so every prior tip stays reachable and the audit finds nothing dropped.
+setup catchup
+( cd "$WT" && echo work > work.txt && $G add work.txt && $G commit -qm "W: catchup owner work" ) >/dev/null
+( cd "$REPO" && echo b > b.txt && $G add b.txt && $G commit -qm "B: source moves on" ) >/dev/null
+( cd "$WT" && $G merge -q -m "M: catch up from main" main ) >/dev/null
+dm sess-A
+ck "0" "$RC" "catch-up merge from source passes detect-mode"
+ck_has "CORRUPTION=0" "$OUT" "catch-up merge is not corruption"
+fm
+ck "0" "$RC" "catch-up merge still merges (finish-merge exit 0)"
+ck_has "W: catchup owner work" "$(git -C "$REPO" log main --format=%s | tr '\n' '|')" "the owner work shipped"
+
+# False-flag boundary 2: a sanctioned restamp after a deliberate rebase must pass — the restamp
+# advanced the anchor pair, so the audit runs from the blessed post-rewrite era.
+setup sanction
+( cd "$WT" && echo work > work.txt && $G add work.txt && $G commit -qm "W: kept work" ) >/dev/null
+( cd "$REPO" && $G commit -q --amend -m "A2: rewritten pre-fork" ) >/dev/null
+( cd "$WT" && $G rebase -q main ) >/dev/null 2>&1
+run sess-A "$WT"
+ck "0" "$RC" "sanctioned restamp of the deliberate rebase succeeds"
+( cd "$WT" && echo more > more.txt && $G add more.txt && $G commit -qm "W2: post-restamp work" ) >/dev/null
+dm sess-A
+ck "0" "$RC" "the restamped rewrite passes detect-mode (no false flag)"
+ck_has "CORRUPTION=0" "$OUT" "the restamped rewrite is not corruption"
+
+# False-flag boundary 3: an ACKNOWLEDGED drop is sanctioned — the acknowledged restamp advanced
+# stamped-at past the drop, so the audit must not re-litigate what the user already accepted.
+setup ackship
+( cd "$WT" && echo work > work.txt && $G add work.txt && $G commit -qm "W: deliberately dropped" ) >/dev/null
+git -C "$WT" reset -q --hard "$(git -C "$WT" config --worktree --get start.baseline-sha)"
+( cd "$WT" && echo keep > keep.txt && $G add keep.txt && $G commit -qm "K: kept replacement" ) >/dev/null
+sleep 1   # age the drop below the era the acknowledgement establishes, as real elapsed time would
+run sess-A --acknowledge-lost "$WT"
+ck "0" "$RC" "the acknowledged restamp records the deliberate drop"
+dm sess-A
+ck "0" "$RC" "the acknowledged drop passes detect-mode (the era advanced past it)"
+fm
+ck "0" "$RC" "the acknowledged drop merges (finish-merge exit 0)"
+ck_has "K: kept replacement" "$(git -C "$REPO" log main --format=%s | tr '\n' '|')" "the replacement work shipped"
+
 echo "----------------------------------------"
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]

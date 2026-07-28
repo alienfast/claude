@@ -45,7 +45,9 @@
 #       WTID_CORRUPTION         0 | 1
 #       WTID_CORRUPTION_REASON  branch-swapped | baseline-detached |
 #                               source-branch-config-wiped | ""
-#     Always returns 0.
+#     Always returns 0. Verify cannot see a tip moved BACKWARDS along its own lineage —
+#     wt_identity_preservation_audit (documented at its definition) is the companion check
+#     that can, and the /finish gates run both.
 #
 # Also provides owner-liveness helpers (wt_owner_alive, wtid_harness_pid) so parallel
 # sessions can distinguish a worktree whose owning session DIED (safe to resume) from
@@ -407,6 +409,174 @@ wt_identity_verify() {
     fi
   fi
 
+  return 0
+}
+
+# wt_identity_preservation_audit <wt_dir> [<branch>] [<anchor>] [<stamped_at>]
+#   Run only after a successful wt_identity_load; <branch> defaults to WTID_BRANCH (callers that
+#   already proved current-branch == stamped-branch may pass the current branch explicitly), and
+#   <anchor>/<stamped_at> default to WTID_HEAD_SHA/WTID_STAMPED_AT — a caller that snapshotted the
+#   loaded identity before something re-loaded it (wt_owner_alive clobbers the globals) passes its
+#   snapshots explicitly.
+#   The work-preservation audit behind wt-restamp.sh's exit-5 gate, factored here so the /finish
+#   path runs the same machinery (BF-547): verify's baseline ancestry check cannot see a tip moved
+#   backwards along its own lineage — a foreign reset onto the source tip, or back to the fork plus
+#   a foreign commit, leaves the baseline an ancestor of HEAD and verifies clean while committed
+#   work is gone. This audit proves the branch still CARRIES every commit it is known to have held
+#   since its last sanctioned stamp. Two anchors, because neither alone is sound: the stamped head
+#   (everything the branch held when last blessed) and every reflog tip recorded since the stamp —
+#   bounded by TIME, never by value, since a foreign reset can land the branch back on the stamped
+#   head's value and a value-bounded walk would stop there and never see the drop. Entries at or
+#   before stamped-at end nothing individually (each is examined — back-dating one entry must not
+#   hide the honest entries below it), same-second entries are collected (reading same-second work
+#   as pre-stamp is the fail-open direction), and an unreadable timestamp adds scrutiny rather than
+#   judgment. Anchors reduce via merge-base --independent; each survivor is checked with `git
+#   cherry` (content) plus `git rev-list --merges` (a dropped merge is invisible to cherry, which
+#   compares patches and a merge has none of its own). Sets:
+#     WTID_AUDIT              clean | dropped | unauditable
+#     WTID_AUDIT_REASON       "" (clean/dropped) | no-reflog | legacy-unmoved | legacy-no-anchor |
+#                             bad-stamp-time | anchor-missing | window-unobservable |
+#                             no-anchor-survived | git-merge-base-failed | git-cherry-failed |
+#                             git-rev-list-failed
+#     WTID_AUDIT_DETAIL       first line of the failing git command's output (git-* reasons only)
+#     WTID_AUDIT_LOST         newline-separated SHAs whose content HEAD no longer carries
+#     WTID_AUDIT_LOST_MERGES  newline-separated merge SHAs no longer reachable from HEAD
+#   Always returns 0 — verdict semantics belong to the caller. wt-restamp.sh refuses dropped and
+#   every unauditable form (exit 5; legacy-unmoved included, because an --acknowledge-lost on a
+#   legacy stamp has nothing auditable to acknowledge). The /finish gates fail closed on dropped
+#   and unauditable alike (exit 4) — an unobservable drop window at merge time is exactly the
+#   laundering surface a hijacker who can expire a reflog would use — EXCEPT legacy-unmoved, which
+#   they pass: a branch whose reflog holds only its creation entry never moved, so nothing could
+#   have been dropped, and blocking a still worktree over a pre-anchor stamp is pure availability
+#   loss.
+wt_identity_preservation_audit() {
+  local wt_dir="$1" branch="${2:-$WTID_BRANCH}"
+  WTID_AUDIT="clean"; WTID_AUDIT_REASON=""; WTID_AUDIT_DETAIL=""; WTID_AUDIT_LOST=""; WTID_AUDIT_LOST_MERGES=""
+  local anchor="${3:-$WTID_HEAD_SHA}" stamped_at="${4:-$WTID_STAMPED_AT}"
+  local cur_head reflog_entries
+  [ -z "$branch" ] && branch=$(git -C "$wt_dir" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+  cur_head=$(git -C "$wt_dir" rev-parse HEAD 2>/dev/null || true)
+  reflog_entries=$(git -C "$wt_dir" reflog show "$branch" 2>/dev/null | wc -l | tr -d ' ')
+
+  # A legacy stamp has no anchor to audit from. Stillness is provable only by a reflog holding
+  # exactly the entry that CREATED the branch (partial expiry can leave a lone MOVEMENT entry
+  # behind, which would otherwise read as never-moved); anything else is movement it cannot audit,
+  # and no entries are no record at all.
+  if [ -z "$anchor" ]; then
+    WTID_AUDIT="unauditable"
+    if [ "$reflog_entries" = "0" ]; then
+      WTID_AUDIT_REASON="no-reflog"
+    elif [ "$reflog_entries" = "1" ]; then
+      case "$(git -C "$wt_dir" reflog show --format='%gs' "$branch" 2>/dev/null | head -1)" in
+        'branch: Created'*) WTID_AUDIT_REASON="legacy-unmoved" ;;
+        *) WTID_AUDIT_REASON="legacy-no-anchor" ;;
+      esac
+    else
+      WTID_AUDIT_REASON="legacy-no-anchor"
+    fi
+    return 0
+  fi
+
+  # Epoch seconds are 10 digits through the year 2286; anything longer is not a second-resolution
+  # stamp and would silently break every arithmetic comparison below.
+  local stamped_at_ok=1
+  case "$stamped_at" in ''|*[!0-9]*) stamped_at_ok=0 ;; esac
+  [ "${#stamped_at}" -gt 10 ] && stamped_at_ok=0
+  if [ "$stamped_at_ok" = "0" ]; then
+    WTID_AUDIT="unauditable"; WTID_AUDIT_REASON="bad-stamp-time"; WTID_AUDIT_DETAIL="${stamped_at:-empty}"
+    return 0
+  fi
+  if ! git -C "$wt_dir" cat-file -e "${anchor}^{commit}" 2>/dev/null; then
+    WTID_AUDIT="unauditable"; WTID_AUDIT_REASON="anchor-missing"; WTID_AUDIT_DETAIL="$anchor"
+    return 0
+  fi
+
+  local anchors="$anchor" post_stamp=0 line tip entry_at entry_ok
+  while read -r line; do
+    [ -z "$line" ] && continue
+    tip=${line%% *}
+    entry_at=${line##*@\{}; entry_at=${entry_at%\}}
+    # A timestamp we cannot read (or one too wide to compare) must not be compared at all — and the
+    # fail-safe answer is to AUDIT that tip rather than judge its age, so a corrupted entry can only
+    # ever add scrutiny.
+    entry_ok=1
+    case "$entry_at" in ''|*[!0-9]*) entry_ok=0 ;; esac
+    [ "${#entry_at}" -gt 10 ] && entry_ok=0
+    if [ "$entry_ok" = "0" ]; then
+      anchors="$anchors
+$tip"
+      post_stamp=$((post_stamp + 1))
+      continue
+    fi
+    if [ "$entry_at" -lt "$stamped_at" ]; then continue; fi
+    anchors="$anchors
+$tip"
+    post_stamp=$((post_stamp + 1))
+  done <<< "$(git -C "$wt_dir" reflog show --format='%H %gd' --date=unix "$branch" 2>/dev/null || true)"
+
+  # Under an honest reflog, a branch that moved since the stamp ALWAYS has at least one entry at or
+  # after stamped-at. Zero collected therefore means the record itself is unusable — expired,
+  # disabled, deleted, back-dated, or a stamp time pushed into the future — and the window in which
+  # commits could have been dropped is unobservable. Sound only because head-sha and stamped-at are
+  # always written together (a resume inherits the pair), so "no entry since the stamp" cannot mean
+  # the era was re-armed under a stale anchor.
+  if [ "$post_stamp" = "0" ] && [ "$cur_head" != "$anchor" ]; then
+    WTID_AUDIT="unauditable"; WTID_AUDIT_REASON="window-unobservable"
+    return 0
+  fi
+
+  # Collapse to maximal anchors: a tip reachable from another adds nothing, and each survivor costs
+  # a cherry + rev-list. A pruned old tip proves nothing and is skipped.
+  local anchors_present="" a
+  while read -r a; do
+    [ -z "$a" ] && continue
+    git -C "$wt_dir" cat-file -e "${a}^{commit}" 2>/dev/null || continue
+    anchors_present="$anchors_present$a
+"
+  done <<< "$(printf '%s\n' "$anchors" | sort -u)"
+  if [ -n "$anchors_present" ]; then
+    # Unquoted on purpose: the newline-separated shas must split into arguments.
+    # shellcheck disable=SC2086
+    if ! anchors=$(git -C "$wt_dir" merge-base --independent $anchors_present 2>&1); then
+      WTID_AUDIT="unauditable"; WTID_AUDIT_REASON="git-merge-base-failed"
+      WTID_AUDIT_DETAIL=$(printf '%s' "$anchors" | head -1)
+      return 0
+    fi
+  else
+    # The stamped head was proven present above, so this list can never be empty — if it somehow
+    # is, the audit would run against nothing at all.
+    WTID_AUDIT="unauditable"; WTID_AUDIT_REASON="no-anchor-survived"
+    return 0
+  fi
+
+  local lost="" lost_merges="" cherry_out merges_out
+  while read -r a; do
+    [ -z "$a" ] && continue
+    git -C "$wt_dir" merge-base --is-ancestor "$a" HEAD 2>/dev/null && continue   # nothing unreachable below HEAD
+    # No pipeline here: `git cherry ... | sed` swallows both the status and the reason, so a broken
+    # repo would read as "nothing lost" and the gate would fail OPEN.
+    if ! cherry_out=$(git -C "$wt_dir" cherry HEAD "$a" 2>&1); then
+      WTID_AUDIT="unauditable"; WTID_AUDIT_REASON="git-cherry-failed"
+      WTID_AUDIT_DETAIL=$(printf '%s' "$cherry_out" | head -1)
+      return 0
+    fi
+    lost="$lost$(printf '%s\n' "$cherry_out" | sed -n 's/^+ //p')
+"
+    # cherry compares PATCHES, and a merge commit has no patch of its own — a dropped merge is
+    # therefore invisible to it even when the merge is the only record of a conflict resolution.
+    if ! merges_out=$(git -C "$wt_dir" rev-list --merges "HEAD..$a" 2>&1); then
+      WTID_AUDIT="unauditable"; WTID_AUDIT_REASON="git-rev-list-failed"
+      WTID_AUDIT_DETAIL=$(printf '%s' "$merges_out" | head -1)
+      return 0
+    fi
+    lost_merges="$lost_merges$merges_out
+"
+  done <<< "$(printf '%s\n' "$anchors" | sort -u)"
+  WTID_AUDIT_LOST=$(printf '%s' "$lost" | sed '/^$/d' | sort -u)
+  WTID_AUDIT_LOST_MERGES=$(printf '%s' "$lost_merges" | sed '/^$/d' | sort -u)
+  if [ -n "$WTID_AUDIT_LOST" ] || [ -n "$WTID_AUDIT_LOST_MERGES" ]; then
+    WTID_AUDIT="dropped"
+  fi
   return 0
 }
 

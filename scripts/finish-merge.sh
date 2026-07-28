@@ -166,6 +166,34 @@ if [ "${_WT_SKIP_IDENTITY_CHECK:-0}" != "1" ] && [ -f "$HOME/.claude/scripts/wt-
       echo "  The worktree no longer matches its /start identity (foreign reset, or a self-rewrite without wt-restamp.sh). Recover with finish-recover.sh instead of merging." >&2
       exit 4
     fi
+    # The ancestry check above cannot see a tip moved BACKWARDS along its own lineage — the
+    # preservation audit can (BF-547), and it runs here as well as in detect-mode because a
+    # parallel session can clobber in the window between the two. legacy-unmoved passes: a branch
+    # whose reflog holds only its creation entry never moved, so nothing could have been dropped.
+    wt_identity_preservation_audit "$wt_dir"
+    case "$WTID_AUDIT:$WTID_AUDIT_REASON" in
+      clean:*|unauditable:legacy-unmoved) : ;;
+      *)
+        fm_reason="lineage-clobbered"
+        [ "$WTID_AUDIT" = "unauditable" ] && fm_reason="lineage-unauditable (${WTID_AUDIT_REASON}${WTID_AUDIT_DETAIL:+: $WTID_AUDIT_DETAIL})"
+        echo "CORRUPTION: worktree at $wt_dir fails the work-preservation audit ($fm_reason)." >&2
+        if [ -n "$WTID_AUDIT_LOST" ]; then
+          echo "  commits this branch carried since its last stamp that HEAD no longer contains:" >&2
+          while read -r _sha; do
+            [ -z "$_sha" ] && continue
+            git -C "$wt_dir" log -1 --format='    %h %s' "$_sha" >&2 2>/dev/null || echo "    $_sha (unreadable)" >&2
+          done <<< "$WTID_AUDIT_LOST"
+        fi
+        if [ -n "$WTID_AUDIT_LOST_MERGES" ]; then
+          echo "  merge commits no longer reachable:" >&2
+          while read -r _sha; do
+            [ -z "$_sha" ] && continue
+            git -C "$wt_dir" log -1 --format='    %h %s' "$_sha" >&2 2>/dev/null || echo "    $_sha (unreadable)" >&2
+          done <<< "$WTID_AUDIT_LOST_MERGES"
+        fi
+        echo "  A same-lineage rewrite dropped committed work this branch carried, or its drop window cannot be audited — merging would ship the loss silently. Recover with finish-recover.sh instead of merging." >&2
+        exit 4 ;;
+    esac
   fi
 fi
 

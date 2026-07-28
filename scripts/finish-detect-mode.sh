@@ -23,10 +23,13 @@
 #   1 incompatible argument combination
 #   2 merge requested outside a /start wt worktree
 #   4 corruption: the worktree no longer matches the identity /start stamped
-#     (branch swapped, HEAD reset off the baseline, or source-branch config wiped
-#     while an immune sidecar still proves this is a /start wt worktree). The
-#     /finish skill routes this to finish-recover.sh. Detected only when a
-#     VERIFIABLE identity exists; legacy/pre-stamp worktrees fall through to 0/2.
+#     (branch swapped, HEAD reset off the baseline, source-branch config wiped
+#     while an immune sidecar still proves this is a /start wt worktree, or —
+#     lineage-clobbered / lineage-unauditable — committed work dropped by a
+#     same-lineage rewrite the ancestry check cannot see, or a drop window the
+#     preservation audit cannot certify). The /finish skill routes this to
+#     finish-recover.sh. Detected only when a VERIFIABLE identity exists;
+#     legacy/pre-stamp worktrees fall through to 0/2.
 
 set -eo pipefail
 
@@ -96,6 +99,10 @@ identity_source="none"
 expected_branch=""
 expected_baseline=""
 expected_source_branch=""
+audit_reason=""
+audit_detail=""
+audit_lost=""
+audit_lost_merges=""
 if [ -n "$wt_dir" ] && wt_identity_load "$wt_dir"; then
   identity_source="$WTID_SOURCE"
   expected_branch="$WTID_BRANCH"
@@ -104,6 +111,24 @@ if [ -n "$wt_dir" ] && wt_identity_load "$wt_dir"; then
   wt_identity_verify "$wt_dir"
   corruption="$WTID_CORRUPTION"
   corruption_reason="$WTID_CORRUPTION_REASON"
+  if [ "$corruption" = "0" ]; then
+    # Verify cannot see a tip moved BACKWARDS along its own lineage — a foreign reset onto the
+    # source tip, or back to the fork plus a foreign commit, keeps the baseline an ancestor of HEAD
+    # while committed work is gone, and the merge would ship the loss silently (BF-547). The
+    # preservation audit (the same machinery behind wt-restamp.sh's exit-5 gate) can see it, and a
+    # tree it cannot certify is refused the same way. legacy-unmoved passes: a branch whose reflog
+    # holds only its creation entry never moved, so nothing could have been dropped.
+    wt_identity_preservation_audit "$wt_dir"
+    audit_reason="$WTID_AUDIT_REASON"
+    audit_detail="$WTID_AUDIT_DETAIL"
+    audit_lost="$WTID_AUDIT_LOST"
+    audit_lost_merges="$WTID_AUDIT_LOST_MERGES"
+    case "$WTID_AUDIT:$WTID_AUDIT_REASON" in
+      clean:*|unauditable:legacy-unmoved) : ;;
+      dropped:*) corruption=1; corruption_reason="lineage-clobbered" ;;
+      *) corruption=1; corruption_reason="lineage-unauditable" ;;
+    esac
+  fi
   # If the live config source-branch was wiped but the sidecar still carries it,
   # prefer the sidecar value so the recovery context still names the real source.
   if [ -z "$source_branch" ] && [ -n "$expected_source_branch" ]; then
@@ -123,10 +148,28 @@ if [ "$corruption" = "1" ]; then
   echo "  expected branch:   $expected_branch" >&2
   echo "  current  branch:   $worktree_branch" >&2
   echo "  expected baseline: $expected_baseline" >&2
+  if [ "$corruption_reason" = "lineage-clobbered" ]; then
+    echo "  commits this branch carried since its last stamp that HEAD no longer contains:" >&2
+    while read -r _sha; do
+      [ -z "$_sha" ] && continue
+      git -C "$wt_dir" log -1 --format='    %h %s' "$_sha" >&2 2>/dev/null || echo "    $_sha (unreadable)" >&2
+    done <<< "$audit_lost"
+    if [ -n "$audit_lost_merges" ]; then
+      echo "  merge commits no longer reachable:" >&2
+      while read -r _sha; do
+        [ -z "$_sha" ] && continue
+        git -C "$wt_dir" log -1 --format='    %h %s' "$_sha" >&2 2>/dev/null || echo "    $_sha (unreadable)" >&2
+      done <<< "$audit_lost_merges"
+    fi
+  elif [ "$corruption_reason" = "lineage-unauditable" ]; then
+    echo "  the drop window since the last stamp cannot be audited (${audit_reason}${audit_detail:+: $audit_detail}) — refusing to certify the tree for merge." >&2
+  fi
   if [ "$owner_is_me" = "1" ]; then
     echo "  The stamp's owner is THIS session — most likely its own history rewrite (rebase/reset), not a hijack; a foreign reset cannot be ruled out." >&2
     if [ "$corruption_reason" = "baseline-detached" ]; then
       echo "  If the rewrite was deliberate: run ~/.claude/scripts/wt-restamp.sh '$wt_dir' (refuses if any commit since the last stamp would be lost) and re-run this detection. Otherwise /finish routes to recovery (finish-recover.sh)." >&2
+    elif [ "$corruption_reason" = "lineage-clobbered" ]; then
+      echo "  If the drops were DELIBERATE and confirmed by the user: run ~/.claude/scripts/wt-restamp.sh --acknowledge-lost '$wt_dir' and re-run this detection. Otherwise treat this as a foreign clobber — /finish routes to recovery (finish-recover.sh). Never merge over dropped work." >&2
     else
       echo "  /finish routes this to recovery (finish-recover.sh)." >&2
     fi
