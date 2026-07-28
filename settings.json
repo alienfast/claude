@@ -1,4 +1,6 @@
 {
+  "skillListingMaxDescChars": 2048,
+  "skillListingBudgetFraction": 0.03,
   "env": {
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
     "ENABLE_LSP_TOOL": "1"
@@ -182,9 +184,8 @@
     "typescript-lsp@claude-plugins-official": true
   },
   "effortLevel": "xhigh",
+  "tui": "fullscreen",
   "theme": "dark",
   "skipAutoPermissionPrompt": true,
-  "tui": "fullscreen",
-  "skillListingBudgetFraction": 0.03,
-  "skillListingMaxDescChars": 2048
+  "agentPushNotifEnabled": true
 }
