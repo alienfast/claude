@@ -99,9 +99,9 @@ fi
 err()  { echo "reap-worktrees.sh: $*" >&2; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
-# Reuse the shared worktree-identity loader (defines wt_identity_load, which prefers a path-validated
-# sidecar and falls back to per-worktree git config). Guarded so a missing library never aborts the
-# reaper — recorded_baseline falls back to a direct git-config read when the loader is unavailable.
+# Reuse the shared worktree-identity loader (defines wt_identity_load, which arbitrates the three
+# identity tiers against each other and returns the winner whole). Guarded so a missing library never
+# aborts the reaper — recorded_baseline falls back to a direct git-config read when it is unavailable.
 # shellcheck source=/dev/null
 [ -f "$HOME/.claude/scripts/wt-identity.sh" ] && . "$HOME/.claude/scripts/wt-identity.sh"
 
@@ -199,10 +199,10 @@ linear_state_type() {
 }
 
 # The baseline (fork-point) commit /start recorded for this worktree, or empty if none is recorded.
-# Reuses wt_identity_load when available (it prefers a sidecar whose recorded WT_DIR matches this
-# worktree — so a stale same-issue sidecar can't supply a wrong baseline — and falls back to per-
-# worktree git config). Falls back to a direct git-config read if the loader isn't sourced. Empty ⇒
-# legacy/pre-stamp worktree, and the zero-commit guard then no-ops.
+# Reuses wt_identity_load when available (only sidecars whose recorded WT_DIR matches this worktree are
+# eligible, so a stale same-issue sidecar can't supply a wrong baseline, and the surviving tiers are
+# arbitrated by corroboration). Falls back to a direct git-config read if the loader isn't sourced.
+# Empty ⇒ legacy/pre-stamp worktree, and the zero-commit guard then no-ops.
 recorded_baseline() {
   local repo="$1" dir="$2" slug="$3"
   if declare -f wt_identity_load >/dev/null 2>&1 && wt_identity_load "$dir" "$slug"; then

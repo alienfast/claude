@@ -215,7 +215,9 @@ if [ "$reflog_entries" = "1" ]; then
 fi
 if [ "$ack_lost" = "0" ] && { { [ -n "$anchor" ] && [ "$cur_head" = "$anchor" ]; } \
    || { [ -z "$anchor" ] && [ "$new_baseline" = "$old_baseline" ] && [ "$branch_unmoved" = "1" ]; }; }; then
-  wt_identity_load "$wt_dir" >/dev/null 2>&1 || true
+  # stdout only: the load's tier-dissent WARN goes to stderr and must reach the operator, so the noop path and
+  # tiers_consistent below report the same contested state instead of one of them silently passing.
+  wt_identity_load "$wt_dir" >/dev/null || true
   wt_identity_verify "$wt_dir"
   if [ "$WTID_CORRUPTION" = "0" ]; then
     if tiers_consistent "$old_baseline" "$anchor"; then

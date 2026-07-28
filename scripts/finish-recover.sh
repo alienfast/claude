@@ -25,7 +25,7 @@
 # Exit codes:
 #   0 — recovered and merged.
 #   1 — precondition/setup failure (bad args, source branch gone, nothing to
-#       salvage, worktree-add failed). Nothing was merged.
+#       salvage, worktree-add failed, identity stamp failed). Nothing was merged.
 #   2 — conflict: `git apply` (or the downstream merge) hit conflicts in the
 #       recovered worktree. Resolve there, then re-run finish-recover.sh.
 #   3 — transient: finish-merge.sh deferred the merge to the local queue. The
@@ -329,9 +329,16 @@ if [ "$rec_state" != "committed" ]; then
 fi
 
 # --- 4. Re-stamp identity on the recovered worktree (baseline = the new fork). ---
-# (wt-identity.sh already sourced near the top.)
+# A failed stamp stops the recovery instead of merging on a partial one: git config is the tier ownership is
+# read from, so a lost write (two parallel /auto runs contending on config.worktree) leaves a worktree whose
+# owner tuple is torn while its work is about to be merged. Safe to stop here — the salvaged work is already
+# committed on $rec_branch, so a re-run resumes at "committed" and re-stamps rather than re-salvaging.
 rec_issue_id=$(printf '%s' "${issue_lower}-recovered" | tr '[:lower:]' '[:upper:]')
-wt_identity_stamp "$rec_wt" "$rec_abs" "$rec_issue_id" "$rec_branch" "$source_branch" "$src_tip" || true
+if ! wt_identity_stamp "$rec_wt" "$rec_abs" "$rec_issue_id" "$rec_branch" "$source_branch" "$src_tip"; then
+  echo "ERROR: could not stamp identity on the recovered worktree '$rec_wt' (a mandatory per-worktree git config write failed; see the WARN above). Not merging." >&2
+  echo "  The recovered work is committed on '$rec_branch' and nothing was merged; re-run /finish recovery once the cause is cleared (a concurrent writer, or a read-only .git) and it will resume from there." >&2
+  exit 1
+fi
 
 # --- 5. Hand to finish-merge.sh (skip its identity check — this worktree is fresh). ---
 # Merge message lives in the recovered worktree's tmp/ (like /finish Step 9) so the

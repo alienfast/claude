@@ -377,29 +377,33 @@ ck "1:none" "$(idl "$NOTREPO" "" "" '$rc:$WTID_SOURCE')" "a directory that is no
 ck "" "$(idl "$NOTREPO" "" "" '$WTID_ISSUE$WTID_BRANCH$WTID_SOURCE_BRANCH$WTID_BASELINE$WTID_SIDECAR_PATH$WTID_STAMPED_AT')" "and every identity field comes back empty rather than half-filled"
 ck "survived" "$(bash -c "set -eo pipefail; . '$IDLIB'; wt_identity_load '$NOTREPO' || true; echo survived")" "the failing git probes do not abort a set -eo pipefail caller"
 
-# Recency ranking. The tiers are ranked by era, not by location: a later stamp under a different job dir
-# advances the repo copy while this session's own stays behind, and preferring the stale one would revert
-# an already-advanced identity. Only a STRICTLY greater era flips the choice — a tie keeps the job-dir
-# tier, the more durable one — and _wtid_era_num sorts anything unusable oldest so a damaged era can
-# never win a contest by accident.
+# Era ranking, which BF-546 demoted from AUTHORITY to LAST-RESORT TIEBREAK. One stamp writes every reachable
+# tier at once, so under honest operation they all agree and the winner is settled by corroboration before any
+# era is consulted. The era only decides when no two tiers agree at all — and then only after completeness,
+# because a tier no stamp could have written as it stands is damaged whatever era it still claims.
+# _wtid_era_num sorts anything unusable oldest, so a damaged era never wins a contest by accident.
 mkrepo recency
 JOB="$TMP/recency/job"; mkdir -p "$JOB"
 stamp "$WT" sess-A "$JOB" 1000
 JOBFILE="$JOB/wt-identity-test-1.env"
 ck "1000" "$(sed -n 's/^WT_IDENTITY_STAMPED_AT=//p' "$JOBFILE" | head -1)" "sanity: the era override reached the sidecars"
-ck "0:job-dir" "$(idl "$WT" "$JOB" "" '$rc:$WTID_SOURCE')" "a tie in era keeps the job-dir tier"
+ck "0:job-dir" "$(idl "$WT" "$JOB" "" '$rc:$WTID_SOURCE')" "three agreeing tiers resolve to the strongest of them"
+# The cycle-8 reproduction this design exists to close: the repo-fallback sidecar lives in the main checkout's
+# working tree, writable by any local process, so a forged era there used to demote the job-dir tier the design
+# calls immune. It no longer can — job-dir and git config still corroborate each other, and a lone dissenter
+# loses however new it claims to be. This assertion IS the fix; flipping it back to repo-fallback reopens BF-546.
 set_key "$SIDE" WT_IDENTITY_STAMPED_AT 2000
-ck "0:repo-fallback" "$(idl "$WT" "$JOB" "" '$rc:$WTID_SOURCE')" "a strictly newer repo-fallback era wins"
+ck "0:job-dir" "$(idl "$WT" "$JOB" "" '$rc:$WTID_SOURCE')" "a forged newer era cannot outvote the corroborating pair"
+ck "repo-fallback" "$(idl "$WT" "$JOB" "" '$WTID_TIER_DISSENT')" "and the tampered tier is named as the dissenter"
 set_key "$SIDE" WT_IDENTITY_STAMPED_AT 999
-ck "0:job-dir" "$(idl "$WT" "$JOB" "" '$rc:$WTID_SOURCE')" "an older repo-fallback era loses"
-# The damaged era goes on the JOB-DIR side deliberately. On the repo side it would prove nothing: without
-# the guard `[ nan -gt 1000 ]` merely errors and takes the else branch, which is the same job-dir answer
-# the guard produces. Here the guard is the only thing that lets an era of 1 beat it. The value is kept
-# UNDER eleven characters on purpose — a longer one would be caught by the width guard below instead, and
-# this case would then pass with the non-numeric guard removed.
+ck "0:job-dir" "$(idl "$WT" "$JOB" "" '$rc:$WTID_SOURCE')" "an older repo-fallback era loses too"
+# Now the no-majority path, the only one era still decides: all three tiers are made to disagree. The damaged
+# era goes on the JOB-DIR side deliberately — on the repo side it would prove nothing, since without the guard
+# `[ nan -gt 1000 ]` merely errors into the same answer the guard produces. Config is in this ranking where the
+# pre-BF-546 design ranked only the two sidecars, and it holds the largest usable era, so it takes it.
 set_key "$SIDE" WT_IDENTITY_STAMPED_AT 1
 set_key "$JOBFILE" WT_IDENTITY_STAMPED_AT nan
-ck "0:repo-fallback" "$(idl "$WT" "$JOB" "" '$rc:$WTID_SOURCE')" "a non-numeric era loses to the smallest usable one"
+ck "0:git-config" "$(idl "$WT" "$JOB" "" '$rc:$WTID_SOURCE')" "with no majority the largest usable era wins and a non-numeric one loses"
 set_key "$JOBFILE" WT_IDENTITY_STAMPED_AT 1000
 set_key "$SIDE" WT_IDENTITY_STAMPED_AT 99999999999
 ck "0:job-dir" "$(idl "$WT" "$JOB" "" '$rc:$WTID_SOURCE')" "an era too wide for shell arithmetic loses every contest"
@@ -458,10 +462,12 @@ ck "0:git-config" "$(idl "$WT" "" "" '$rc:$WTID_SOURCE')" "a rejected sidecar fa
 ck "" "$(idl "$WT" "" "" '$WTID_ISSUE$WTID_WT_DIR$WTID_SIDECAR_PATH$WTID_OWNER$WTID_OWNER_PID$WTID_OWNER_PID_START$WTID_OWNER_RELEASED_AT')" "the rejected sidecar's fields do not leak into the git-config identity"
 ck "issue-branch:main" "$(idl "$WT" "" "" '$WTID_BRANCH:$WTID_SOURCE_BRANCH')" "the git-config identity still carries the config's own branch fields"
 
-# WTID_OWNER_SESSION is deliberately NOT reset by wt_identity_load — only wt_owner_alive sets it, and
-# clearing it here would discard an ownership answer a caller resolved before re-reading the identity.
-# The asymmetry is pinned so a future change to it is caught rather than absorbed silently.
-ck "stale-session" "$(bash -c ". '$IDLIB'; WTID_OWNER_SESSION=stale-session; wt_identity_load '$WT'; printf '%s' \"\$WTID_OWNER_SESSION\"")" "wt_identity_load leaves WTID_OWNER_SESSION untouched"
+# BF-546 inverted this: wt_identity_load SCRUBS every owner global rather than preserving them. Ownership is
+# arbitrated by a different rule than structural identity (git config is authoritative for it, corroboration is
+# not), so the structural winner's owner claim may be outdated — publishing it, or leaving a caller's earlier
+# answer in place, lets code act on a tuple nothing adjudicated. Scrubbing makes that impossible instead of
+# merely discouraged; wt_owner_alive is the only sanctioned reader and it re-resolves every field from scratch.
+ck "" "$(bash -c ". '$IDLIB'; WTID_OWNER_SESSION=stale-session; wt_identity_load '$WT'; printf '%s' \"\$WTID_OWNER_SESSION\"")" "wt_identity_load scrubs WTID_OWNER_SESSION rather than preserving it"
 
 # The tier-3 gate. Config counts as an identity only when it carries BOTH new fields; a legacy pre-stamp
 # worktree has just start.source-branch, and treating that as verifiable would have /finish check a
@@ -749,8 +755,11 @@ bash -c ". '$IDLIB'; wt_identity_disown '$WT' test-1" >/dev/null 2>&1
 ck "yes" "$(nonempty "$(cfg start.owner-released-at)")" "sanity: there is a release for the re-stamp to revoke"
 : > "$CFG_LOG"
 stamp_env "CLAUDE_SESSION_ID=sess-A CLAUDE_HARNESS_PID=999999 TEST_SHIM=$GITLOGSHIM CFG_LOG=$CFG_LOG" "$WT"
+# Matched on --unset-all/--replace-all, the forms _wtid_unstamp_cfg and _wtid_stamp_cfg actually emit: those
+# helpers replaced the bare `config --worktree <key>` writes this assertion was first written against, and the
+# older patterns match nothing now, which reads as a silently passing ordering check rather than a failing one.
 ck "release-unset pid-write" \
-   "$(sed -n -e 's/.*--unset start\.owner-released-at.*/release-unset/p' -e 's/.*--worktree start\.owner-pid .*/pid-write/p' "$CFG_LOG" | tr '\n' ' ' | sed 's/ $//')" \
+   "$(sed -n -e 's/.*--unset-all start\.owner-released-at.*/release-unset/p' -e 's/.*--replace-all start\.owner-pid .*/pid-write/p' "$CFG_LOG" | tr '\n' ' ' | sed 's/ $//')" \
    "the release is revoked BEFORE the pid claim is written"
 
 # Tier B is gated on $CLAUDE_JOB_DIR ALREADY EXISTING, deliberately asymmetric with the load side, which
@@ -1026,20 +1035,27 @@ else
 fi
 
 # Per-worktree git config is authoritative for ownership because every stamp rewrites it latest-wins: a
-# stale same-issue sidecar sitting in OUR job dir must not shadow another session's takeover. The sidecar
-# only fills gaps, and only per FIELD — splicing a whole sidecar owner over a partially-present config
-# would pair one session's id with another's pid.
+# stale same-issue sidecar sitting in OUR job dir must not shadow another session's takeover.
+#
+# BF-546 removed the per-FIELD gap-fill this block used to pin. Filling field by field is what CREATES the
+# splice — a pid from one stamp landing beside a session id from another asserts an owner no stamp ever wrote,
+# and wt_owner_is_me and wt-disown's session gate would then adjudicate a fiction. The tuple now moves WHOLE
+# or not at all: config is consulted first, and it is consulted only when COMPLETE (a pid, or a released
+# marker). Anything else is a torn write — the shape an interrupted /start leaves — and falls through to a
+# path-verified sidecar taken entire, constrained to the newest session id so a superseded owner cannot
+# resurrect itself. Measured before the gate existed: a torn {session, no pid} erased a LIVE owner into
+# `unknown`, and the reuse guard admits on unknown, so a second session entered the worktree.
 mkrepo ownerauthority
 stamp_env "CLAUDE_SESSION_ID=sess-A CLAUDE_HARNESS_PID=999999" "$WT"
 set_key "$SIDE" WT_IDENTITY_OWNER sidecar-session
 set_key "$SIDE" WT_IDENTITY_OWNER_PID 424242
 ck "sidecar-session" "$(skey "$SIDE" WT_IDENTITY_OWNER)" "sanity: the sidecar now disagrees with config"
-ck "sess-A:999999" "$(owner_fields "$WT")" "config wins outright over a divergent sidecar"
+ck "sess-A:999999" "$(owner_fields "$WT")" "a COMPLETE config tuple wins outright over a divergent sidecar"
 git -C "$WT" config --worktree --unset start.owner-session
-ck "sidecar-session:999999" "$(owner_fields "$WT")" "an empty owner-session is gap-filled from the sidecar, the pid is not"
+ck ":999999" "$(owner_fields "$WT")" "a config carrying a pid is COMPLETE, so an absent session id stays absent rather than borrowed"
 git -C "$WT" config --worktree start.owner-session sess-A
 git -C "$WT" config --worktree --unset start.owner-pid
-ck "sess-A:424242" "$(owner_fields "$WT")" "an empty owner-pid is gap-filled from the sidecar, the session is not"
+ck "sess-A:" "$(owner_fields "$WT")" "and a torn config is completed only from ITS OWN session's sidecar, never a foreign one"
 
 # wt_owner_alive re-enters wt_identity_load to reach the sidecar, so it overwrites EVERY identity global
 # the caller had loaded. wt-restamp.sh:99-105 snapshots baseline/branch/issue/source/anchor/era around
