@@ -20,6 +20,17 @@ exist.
 - Behavior that would surprise a reader
 - A choice between equally-valid alternatives where the rationale matters
 
+## Empirical claims: measure before you write
+
+A comment asserting how something behaves — a tool's exit semantics, a platform
+difference, a version-specific quirk — is the kind a reader trusts without
+re-checking, and the kind this file most invites you to write. Run it on the
+machine first. If you can't, write the narrower claim you did confirm.
+
+Never cite a number that moves with ambient machine state (a file count, a
+timing, a line count). It reads as evidence but reproduces nowhere else — state
+the qualitative claim the reader can re-test instead.
+
 ## Proportion: size to the reader, not the effort
 
 Size a comment to what a reader needs **at that line**, not to the effort it
