@@ -82,6 +82,16 @@ verify() { # wt_dir -> "<corruption>:<reason>"
   bash -c ". '$IDLIB'; wt_identity_load '$1' && wt_identity_verify '$1'; echo \"\$WTID_CORRUPTION:\$WTID_CORRUPTION_REASON\""
 }
 
+# One WTID_* global as a fresh process sees it. Tier arbitration happens inside the load, so the read has
+# to run in a subshell that re-sources the library — otherwise a losing tier's values linger in this one.
+probe() { # job_dir field
+  env "CLAUDE_JOB_DIR=$1" bash -c ". '$IDLIB'; wt_identity_load '$WT' >/dev/null 2>&1; printf '%s' \"\$$2\""
+}
+
+stderr_of() { # job_dir -> everything the load writes to stderr
+  env "CLAUDE_JOB_DIR=$1" bash -c ". '$IDLIB'; wt_identity_load '$WT' >/dev/null" 2>&1
+}
+
 OUT=""; ERR=""; RC=0; REPO=""; WT=""
 run() { # session args... -> OUT/ERR/RC
   local sess="$1" errf="$TMP/stderr.txt"; shift
@@ -90,6 +100,15 @@ run() { # session args... -> OUT/ERR/RC
   RC=$?
   ERR=$(cat "$errf")
 }
+
+# --- Fixture invariant: a forged era must stay inside the loader's future-skew tolerance ---
+# Parts 48-52 forge an era in the FUTURE so the forged tier would win any contest decided by recency
+# alone. wt_identity_load ranks a claim further ahead than its skew tolerance as 0, and a clamped forgery
+# then loses on era whatever the ranking rule is — the case still passes while testing none of what it
+# names. This binds the offset to the tolerance actually compiled into the library.
+FORGED_ERA_AHEAD=120
+guard_era=$(( $(date +%s) + FORGED_ERA_AHEAD ))
+ck "$guard_era" "$(bash -c ". '$IDLIB'; _wtid_era_num '$guard_era'")" "a forged era ${FORGED_ERA_AHEAD}s ahead is ranked, not clamped as impossible"
 
 # --- Part 1: the core owner-gate contract (rebase onto a rewritten source) ---
 setup core
@@ -425,7 +444,7 @@ setup noreflog
 rm -f "$REPO/.git/logs/refs/heads/issue-branch"
 run sess-A "$WT"
 ck "5" "$RC" "deleted reflog refuses (exit 5)"
-ck_has "no post-stamp reflog entry exists" "$ERR" "exit 5 names the unobservable window"
+ck_has "no post-stamp reflog entry exists" "$ERR" "exit 5 names the unobservable window (deleted reflog)"
 
 # --- Part 22: a dropped MERGE is caught even though every patch survives ---
 # `git cherry` compares patches and merges have none of their own, so a flattening rewrite reads as
@@ -559,7 +578,7 @@ rm -f "$REPO/.claude/worktree-identity/wt-identity-test-1.env"
 git -C "$WT" config --worktree start.stamped-at 9999999999
 run sess-A "$WT"
 ck "5" "$RC" "future-dated stamp time refused (exit 5)"
-ck_has "no post-stamp reflog entry exists" "$ERR" "exit 5 names the unobservable window"
+ck_has "no post-stamp reflog entry exists" "$ERR" "exit 5 names the unobservable window (future-dated era)"
 
 # --- Part 28: a non-numeric stamp time refuses cleanly, without shell noise ---
 setup badera
@@ -657,8 +676,8 @@ git -C "$WT" reset -q --hard main          # foreign: drops the rebased work
 sleep 1
 SPLICED="$REPO/.claude/worktree-identity/wt-identity-test-1.env"
 grep -v '^WT_IDENTITY_STAMPED_AT=' "$SPLICED" \
-  | sed "s#^WT_IDENTITY_HEAD_SHA=.*#WT_IDENTITY_HEAD_SHA=$(git -C "$WT" rev-parse main)#" > "$SPLICED.x"
-mv "$SPLICED.x" "$SPLICED"
+  | sed "s#^WT_IDENTITY_HEAD_SHA=.*#WT_IDENTITY_HEAD_SHA=$(git -C "$WT" rev-parse main)#" > "$SPLICED.x" \
+  && mv "$SPLICED.x" "$SPLICED"
 real_start
 ck "0" "$RC" "resume succeeds against a half-populated tier"
 ( cd "$REPO" && $G commit -q --amend -m "B2: source rewritten again" ) >/dev/null
@@ -685,8 +704,8 @@ setup legacypair
 git -C "$WT" config --worktree --unset start.head-sha
 git -C "$WT" config --worktree --unset start.stamped-at
 LEGACY_TIER="$REPO/.claude/worktree-identity/wt-identity-test-1.env"
-grep -v -e '^WT_IDENTITY_HEAD_SHA=' -e '^WT_IDENTITY_STAMPED_AT=' "$LEGACY_TIER" > "$LEGACY_TIER.x"
-mv "$LEGACY_TIER.x" "$LEGACY_TIER"
+grep -v -e '^WT_IDENTITY_HEAD_SHA=' -e '^WT_IDENTITY_STAMPED_AT=' "$LEGACY_TIER" > "$LEGACY_TIER.x" \
+  && mv "$LEGACY_TIER.x" "$LEGACY_TIER"
 ( cd "$WT" && echo work > work.txt && $G add work.txt && $G commit -qm "W: work" ) >/dev/null
 ( cd "$REPO" && $G commit -q --amend -m "A2: rewritten pre-fork" ) >/dev/null
 ( cd "$WT" && $G rebase -q main ) >/dev/null 2>&1
@@ -722,7 +741,7 @@ cp "$REPO/.claude/worktree-identity/wt-identity-test-1.env" "$JOB1/"
 git -C "$WT" reset -q --hard main
 sleep 1   # age the drop below the era the acknowledgement establishes, as real elapsed time would
 OUT=$(env "CLAUDE_SESSION_ID=sess-A" "CLAUDE_JOB_DIR=$JOB2" "$RESTAMP" --acknowledge-lost "$WT" 2>/dev/null); RC=$?
-ck "0" "$RC" "the drop is acknowledged under the second job dir"
+ck "0" "$RC" "the drop is acknowledged under the second job dir (before a resume)"
 ck_has "W: acknowledged work" "$OUT" "the acknowledgement names the dropped commit"
 ack_anchor=$(git -C "$WT" config --worktree --get start.head-sha)
 OUT=$(cd "$REPO" && env "CLAUDE_SESSION_ID=sess-A" "CLAUDE_JOB_DIR=$JOB1" "$DIR/start-wt-create.sh" test-1 test-1 issue-branch main "$WT" 2>"$TMP/stderr.txt"); RC=$?
@@ -826,7 +845,7 @@ cp "$REPO/.claude/worktree-identity/wt-identity-test-1.env" "$JOB1/"
 git -C "$WT" reset -q --hard main
 sleep 1
 OUT=$(env "CLAUDE_SESSION_ID=sess-A" "CLAUDE_JOB_DIR=$JOB2" "$RESTAMP" --acknowledge-lost "$WT" 2>/dev/null); RC=$?
-ck "0" "$RC" "the drop is acknowledged under the second job dir"
+ck "0" "$RC" "the drop is acknowledged under the second job dir (no resume in between)"
 ( cd "$REPO" && $G commit -q --amend -m "B2: source rewritten again" ) >/dev/null
 ( cd "$WT" && $G rebase -q main ) >/dev/null 2>&1
 OUT=$(env "CLAUDE_SESSION_ID=sess-A" "CLAUDE_JOB_DIR=$JOB1" "$RESTAMP" "$WT" 2>"$TMP/stderr.txt"); RC=$?
@@ -862,7 +881,7 @@ setup legacymoved
 git -C "$WT" config --worktree --unset start.head-sha
 git -C "$WT" config --worktree --unset start.stamped-at
 LEG="$REPO/.claude/worktree-identity/wt-identity-test-1.env"
-grep -v -e '^WT_IDENTITY_HEAD_SHA=' -e '^WT_IDENTITY_STAMPED_AT=' "$LEG" > "$LEG.x"; mv "$LEG.x" "$LEG"
+grep -v -e '^WT_IDENTITY_HEAD_SHA=' -e '^WT_IDENTITY_STAMPED_AT=' "$LEG" > "$LEG.x" && mv "$LEG.x" "$LEG"
 run sess-A "$WT"
 ck "RESTAMP=noop" "$(echo "$OUT" | head -1)" "an unmoved legacy worktree still noops"
 ( cd "$WT" && echo work > work.txt && $G add work.txt && $G commit -qm "W: work" ) >/dev/null
@@ -880,7 +899,7 @@ setup badbaseline
 foreign=$(git -C "$REPO" rev-parse side)
 git -C "$WT" config --worktree start.baseline-sha "$foreign"
 BAD="$REPO/.claude/worktree-identity/wt-identity-test-1.env"
-sed "s#^WT_IDENTITY_BASELINE_SHA=.*#WT_IDENTITY_BASELINE_SHA=$foreign#" "$BAD" > "$BAD.x"; mv "$BAD.x" "$BAD"
+sed "s#^WT_IDENTITY_BASELINE_SHA=.*#WT_IDENTITY_BASELINE_SHA=$foreign#" "$BAD" > "$BAD.x" && mv "$BAD.x" "$BAD"
 real_start
 ck "0" "$RC" "a worktree with a non-descending baseline still resumes"
 ck "$foreign" "$(git -C "$WT" config --worktree --get start.baseline-sha)" "the non-descending baseline is inherited verbatim"
@@ -911,7 +930,7 @@ setup legacynoreflog
 git -C "$WT" config --worktree --unset start.head-sha
 git -C "$WT" config --worktree --unset start.stamped-at
 LEGNR="$REPO/.claude/worktree-identity/wt-identity-test-1.env"
-grep -v -e '^WT_IDENTITY_HEAD_SHA=' -e '^WT_IDENTITY_STAMPED_AT=' "$LEGNR" > "$LEGNR.x"; mv "$LEGNR.x" "$LEGNR"
+grep -v -e '^WT_IDENTITY_HEAD_SHA=' -e '^WT_IDENTITY_STAMPED_AT=' "$LEGNR" > "$LEGNR.x" && mv "$LEGNR.x" "$LEGNR"
 ( cd "$WT" && echo work > work.txt && $G add work.txt && $G commit -qm "W: work" ) >/dev/null
 git -C "$REPO" config core.logAllRefUpdates false
 git -C "$WT" reset -q --hard main          # drops the commit; baseline unchanged
@@ -928,17 +947,253 @@ setup legacytrimmed
 git -C "$WT" config --worktree --unset start.head-sha
 git -C "$WT" config --worktree --unset start.stamped-at
 LEGT="$REPO/.claude/worktree-identity/wt-identity-test-1.env"
-grep -v -e '^WT_IDENTITY_HEAD_SHA=' -e '^WT_IDENTITY_STAMPED_AT=' "$LEGT" > "$LEGT.x"; mv "$LEGT.x" "$LEGT"
+grep -v -e '^WT_IDENTITY_HEAD_SHA=' -e '^WT_IDENTITY_STAMPED_AT=' "$LEGT" > "$LEGT.x" && mv "$LEGT.x" "$LEGT"
 ( cd "$WT" && echo work > work.txt && $G add work.txt && $G commit -qm "W: work" ) >/dev/null
 git -C "$WT" reset -q --hard main
 ( cd "$WT" && echo f > f.txt && $G add f.txt && $G commit -qm "F: foreign work" ) >/dev/null
-tail -1 "$REPO/.git/logs/refs/heads/issue-branch" > "$TMP/trimmed"
-mv "$TMP/trimmed" "$REPO/.git/logs/refs/heads/issue-branch"
+tail -1 "$REPO/.git/logs/refs/heads/issue-branch" > "$TMP/trimmed" \
+  && mv "$TMP/trimmed" "$REPO/.git/logs/refs/heads/issue-branch"
 ck "1" "$(git -C "$WT" reflog show issue-branch | wc -l | tr -d ' ')" "the fixture leaves exactly one reflog entry"
 ck "yes" "$(git -C "$WT" reflog show --format='%gs' issue-branch | head -1 | grep -qv '^branch: Created' && echo yes || echo no)" "and that entry records movement, not creation"
 run sess-A "$WT"
 ck "5" "$RC" "a lone movement entry is not mistaken for stillness (exit 5)"
 ck_has "records no rewrite anchor" "$ERR" "the refusal explains the legacy stamp cannot audit it"
+
+# --- Part 48: a forged anchor pair in one tier cannot move the corroborated anchor ---
+# Any in-repo command can rewrite per-worktree git config, so a pair planted there used to become both
+# the rewrite anchor and the audit window — letting a clobber re-point them at its own tip and erase the
+# very history the anchor exists to witness. Two tiers carrying one stamp's fingerprint outvote it.
+# The arbitration is only half the property: /start's resume is what CONSUMES the anchor and re-stamps it
+# as sanctioned, so the resume is driven for real below — reading the winner correctly and then inheriting
+# a different one is exactly the shape of the bug this part exists to keep closed.
+setup forgedpair
+FORGED_JOB="$TMP/forgedpair/job/sess-A"
+mkdir -p "$FORGED_JOB"   # a job dir that does not exist is skipped by the stamp, silently costing a tier
+stamp "$WT" sess-A "$FORGED_JOB"
+ck "3/3" "$(probe "$FORGED_JOB" WTID_CORROBORATION)" "the forged-pair fixture really seeds all three tiers"
+true_anchor=$(git -C "$WT" config --worktree --get start.head-sha)
+true_era=$(git -C "$WT" config --worktree --get start.stamped-at)
+( cd "$WT" && echo work > work.txt && $G add work.txt && $G commit -qm "W: work the forged anchor would hide" ) >/dev/null
+git -C "$WT" config --worktree start.head-sha "$(git -C "$WT" rev-parse HEAD)"
+git -C "$WT" config --worktree start.stamped-at "$(( $(date +%s) + FORGED_ERA_AHEAD ))"
+ck "$true_anchor" "$(probe "$FORGED_JOB" WTID_HEAD_SHA)" "the forged anchor loses to the corroborated one"
+ck "$true_era" "$(probe "$FORGED_JOB" WTID_STAMPED_AT)" "the forged era loses with it, so the audit window survives"
+ck "job-dir" "$(probe "$FORGED_JOB" WTID_SOURCE)" "the strongest agreeing tier carries the identity"
+ck "git-config" "$(probe "$FORGED_JOB" WTID_TIER_DISSENT)" "the forged-pair tier is named as the dissenter"
+ck "2/3" "$(probe "$FORGED_JOB" WTID_CORROBORATION)" "the two untouched tiers still corroborate each other"
+OUT=$(cd "$REPO" && env "CLAUDE_SESSION_ID=sess-A" "CLAUDE_JOB_DIR=$FORGED_JOB" \
+  "$DIR/start-wt-create.sh" test-1 test-1 issue-branch main "$WT" 2>"$TMP/stderr.txt"); RC=$?
+ck "0" "$RC" "the real resume succeeds over the forged pair"
+ck "$true_anchor" "$(git -C "$WT" config --worktree --get start.head-sha)" "the resume inherits the corroborated anchor, repairing the forged tier"
+ck "$true_era" "$(git -C "$WT" config --worktree --get start.stamped-at)" "the resume inherits the corroborated era with it"
+
+# --- Part 49: a tier that forges only the era never gets to be ranked by it ---
+# Recency used to BE the arbitration, so a sidecar edited to claim a newer era won every load and pinned
+# the worktree to a baseline no stamp ever wrote. Corroboration now decides before any era is read. The
+# forged era stays INSIDE the skew tolerance on purpose: a claim beyond it is clamped to 0 and would lose
+# on era alone, which is the future-era guard of Part 50 rather than corroboration.
+setup eraforge
+ERA_JOB="$TMP/eraforge/job/sess-A"
+mkdir -p "$ERA_JOB"
+stamp "$WT" sess-A "$ERA_JOB"
+ck "3/3" "$(probe "$ERA_JOB" WTID_CORROBORATION)" "the era-forge fixture really seeds all three tiers"
+true_base=$(git -C "$WT" config --worktree --get start.baseline-sha)
+era_forged=$(( $(date +%s) + FORGED_ERA_AHEAD ))
+ck "yes" "$([ "$era_forged" -gt "$(git -C "$WT" config --worktree --get start.stamped-at)" ] && echo yes || echo no)" "the forged era would win a contest decided by recency alone"
+ERASIDE="$REPO/.claude/worktree-identity/wt-identity-test-1.env"
+sed -e 's/^WT_IDENTITY_BASELINE_SHA=.*/WT_IDENTITY_BASELINE_SHA=deadbeef/' \
+    -e "s/^WT_IDENTITY_STAMPED_AT=.*/WT_IDENTITY_STAMPED_AT=$era_forged/" "$ERASIDE" > "$ERASIDE.x" \
+  && mv "$ERASIDE.x" "$ERASIDE"
+ck "$true_base" "$(probe "$ERA_JOB" WTID_BASELINE)" "the forged era is never consulted; the corroborated baseline wins"
+ck "repo-fallback" "$(probe "$ERA_JOB" WTID_TIER_DISSENT)" "the forged-era tier is named as the dissenter"
+
+# --- Part 50: a future-dated era sorts oldest, so clock skew cannot pin a stale identity ---
+# The same forever-newest tier arrives without malice from a fast clock. Ranked by its own claim it wins
+# every later load and drags the worktree back to the baseline it remembers, which reads as
+# baseline-detached downstream and aborts auto mode BLOCKED-ON-RECOVERY.
+setup skewera
+SKEW_JOB="$TMP/skewera/job/sess-A"
+mkdir -p "$SKEW_JOB"
+stamp "$WT" sess-A "$SKEW_JOB"
+skew_base=$(git -C "$WT" config --worktree --get start.baseline-sha)
+SKEWSIDE="$REPO/.claude/worktree-identity/wt-identity-test-1.env"
+sed -e 's/^WT_IDENTITY_BASELINE_SHA=.*/WT_IDENTITY_BASELINE_SHA=deadbeef/' \
+    -e "s/^WT_IDENTITY_STAMPED_AT=.*/WT_IDENTITY_STAMPED_AT=$(( $(date +%s) + 86400 ))/" "$SKEWSIDE" > "$SKEWSIDE.x" \
+  && mv "$SKEWSIDE.x" "$SKEWSIDE"
+rm -f "$SKEW_JOB/wt-identity-test-1.env"   # exactly two disagreeing tiers, so ranking alone decides
+ck "1/2" "$(probe "$SKEW_JOB" WTID_CORROBORATION)" "the skew-era fixture leaves two tiers with nothing to corroborate"
+ck "$skew_base" "$(probe "$SKEW_JOB" WTID_BASELINE)" "a skew-fast era sorts oldest instead of winning forever"
+ck "git-config" "$(probe "$SKEW_JOB" WTID_SOURCE)" "the honestly-dated tier carries the identity"
+
+# --- Part 51: completeness outranks recency — a damaged tier cannot win on the era it kept ---
+# Damage falls on the era as readily as on any other field, so a tier no stamp could have written as it
+# stands is not evidence of when it was written. Ranking it by that surviving era hands the identity to
+# the broken tier at exactly the moment the intact one matters most.
+setup incompletetier
+INC_JOB="$TMP/incompletetier/job/sess-A"
+mkdir -p "$INC_JOB"
+stamp "$WT" sess-A "$INC_JOB"
+good_base=$(git -C "$WT" config --worktree --get start.baseline-sha)
+rm -f "$INC_JOB/wt-identity-test-1.env"
+git -C "$WT" config --worktree start.baseline-sha deadbeef
+git -C "$WT" config --worktree start.stamped-at "$(( $(date +%s) + FORGED_ERA_AHEAD ))"   # newer, and inside the skew tolerance
+git -C "$WT" config --worktree --unset start.source-branch                                # ...but no longer a shape a stamp writes
+ck "1/2" "$(probe "$INC_JOB" WTID_CORROBORATION)" "the incomplete-tier fixture leaves two tiers with nothing to corroborate"
+ck "$good_base" "$(probe "$INC_JOB" WTID_BASELINE)" "the incomplete tier loses despite carrying the newer era"
+ck "repo-fallback" "$(probe "$INC_JOB" WTID_SOURCE)" "the complete tier carries the identity"
+
+# --- Part 52: half an anchor pair is an incomplete tier, not a newer one ---
+# Part 32 follows a spliced anchor all the way to a missed drop; this pins the arbitration step that lets
+# one in. A tier holding one half of the pair was damaged after it was written, and must lose to any intact
+# tier however old that one claims to be. The surviving half here is the ERA, kept newer and inside the skew
+# tolerance: with the anchor as the survivor the era normalizes to 0 and the intact tier wins on recency
+# anyway, so completeness is never consulted and the case proves nothing.
+setup halfpairtier
+HALF_JOB="$TMP/halfpairtier/job/sess-A"
+mkdir -p "$HALF_JOB"
+stamp "$WT" sess-A "$HALF_JOB"
+rm -f "$HALF_JOB/wt-identity-test-1.env"
+true_head=$(git -C "$WT" config --worktree --get start.head-sha)
+half_base=$(git -C "$WT" config --worktree --get start.baseline-sha)
+half_era=$(( $(date +%s) + FORGED_ERA_AHEAD ))
+HALFSIDE="$REPO/.claude/worktree-identity/wt-identity-test-1.env"
+grep -v '^WT_IDENTITY_HEAD_SHA=' "$HALFSIDE" \
+  | sed -e "s/^WT_IDENTITY_STAMPED_AT=.*/WT_IDENTITY_STAMPED_AT=$half_era/" \
+        -e 's/^WT_IDENTITY_BASELINE_SHA=.*/WT_IDENTITY_BASELINE_SHA=deadbeef/' > "$HALFSIDE.x" \
+  && mv "$HALFSIDE.x" "$HALFSIDE"
+ck "1/2" "$(probe "$HALF_JOB" WTID_CORROBORATION)" "the half-pair fixture leaves the damaged tier readable, not deleted"
+ck "$half_base" "$(probe "$HALF_JOB" WTID_BASELINE)" "the half-paired tier loses despite carrying the newer era"
+ck "$true_head" "$(probe "$HALF_JOB" WTID_HEAD_SHA)" "the half-paired tier loses to the complete one"
+ck "git-config" "$(probe "$HALF_JOB" WTID_SOURCE)" "config carries the identity when it is the only intact tier"
+
+# --- Part 53: the no-majority path is loud, and the corroborated path is silent ---
+# Resolving disagreement in silence is what made a seizure look exactly like an ordinary resume. The other
+# half matters as much: a warning that also fires on healthy worktrees trains readers to skip it, so a
+# corroborated load must say nothing at all.
+setup loudsplit
+LOUD_JOB="$TMP/loudsplit/job/sess-A"
+mkdir -p "$LOUD_JOB"
+stamp "$WT" sess-A "$LOUD_JOB"
+rm -f "$LOUD_JOB/wt-identity-test-1.env"
+LOUDSIDE="$REPO/.claude/worktree-identity/wt-identity-test-1.env"
+grep -v '^WT_IDENTITY_STAMPED_AT=' "$LOUDSIDE" | sed 's/^WT_IDENTITY_HEAD_SHA=.*/WT_IDENTITY_HEAD_SHA=deadbeef/' > "$LOUDSIDE.x" \
+  && mv "$LOUDSIDE.x" "$LOUDSIDE"
+ck "1/2" "$(probe "$LOUD_JOB" WTID_CORROBORATION)" "the loud fixture really leaves two tiers agreeing on nothing"
+warn=$(stderr_of "$LOUD_JOB")
+ck_has "identity tiers disagree" "$warn" "a no-majority load warns on stderr"
+ck_has "1/2" "$warn" "the warning carries the corroboration ratio"
+ck_has "repo-fallback" "$warn" "the warning names the dissenting tier"
+
+setup loudquiet
+QUIET_JOB="$TMP/loudquiet/job/sess-A"
+mkdir -p "$QUIET_JOB"
+stamp "$WT" sess-A "$QUIET_JOB"
+ck "3/3" "$(probe "$QUIET_JOB" WTID_CORROBORATION)" "the healthy fixture really seeds three agreeing tiers"
+ck "" "$(stderr_of "$QUIET_JOB")" "a corroborated identity loads in silence"
+
+# A LONE readable tier has nothing to disagree with, so it must be silent too — and this is the likeliest
+# source of a spurious warning, not an exotic one: it is every legacy or config-only worktree, plus every
+# foreign reader of a healthy worktree whose own job dir holds no sidecar for it. Warning here would fire
+# on ordinary traffic and train readers to skip the warning that matters.
+setup loudsingle
+SINGLE_JOB="$TMP/loudsingle/job/sess-A"
+mkdir -p "$SINGLE_JOB"
+stamp "$WT" sess-A "$SINGLE_JOB"
+rm -f "$SINGLE_JOB/wt-identity-test-1.env" "$REPO/.claude/worktree-identity/wt-identity-test-1.env"
+ck "1/1" "$(probe "$SINGLE_JOB" WTID_CORROBORATION)" "the fixture leaves exactly one readable tier"
+ck "" "$(stderr_of "$SINGLE_JOB")" "a lone readable tier loads in silence"
+
+# --- Part 54: a sidecar that says nothing is not a tier that agrees with everything ---
+# An empty, truncated or unreadable sidecar reads back as all-empty fields. Counted as a tier it
+# corroborates every other empty tier and hands verify a wholly empty identity to pronounce CLEAN — a
+# hijacked worktree passing detection because nothing could be read about it.
+setup emptytier
+EMPTY_JOB="$TMP/emptytier/job/sess-A"
+mkdir -p "$EMPTY_JOB"
+stamp "$WT" sess-A "$EMPTY_JOB"
+: > "$EMPTY_JOB/wt-identity-test-1.env"                                # truncated to nothing mid-write
+chmod a-r "$REPO/.claude/worktree-identity/wt-identity-test-1.env"     # readable only to a luckier process
+ck "1/1" "$(probe "$EMPTY_JOB" WTID_CORROBORATION)" "neither the truncated nor the unreadable sidecar counts as a readable tier"
+ck "git-config" "$(probe "$EMPTY_JOB" WTID_SOURCE)" "the one surviving tier carries the identity"
+ck "" "$(probe "$EMPTY_JOB" WTID_TIER_DISSENT)" "a tier below the readable floor cannot dissent either"
+for k in start.worktree-branch start.baseline-sha start.source-branch start.head-sha start.stamped-at; do
+  git -C "$WT" config --worktree --unset-all "$k" 2>/dev/null || true
+done
+ck "rejected" "$(env "CLAUDE_JOB_DIR=$EMPTY_JOB" bash -c ". '$IDLIB'
+  if wt_identity_load '$WT' >/dev/null 2>&1; then wt_identity_verify '$WT'; printf 'loaded corruption=%s branch=[%s]' \"\$WTID_CORRUPTION\" \"\$WTID_BRANCH\"
+  else printf 'rejected'; fi")" "with nothing else left, an all-empty identity is rejected rather than verified clean"
+chmod u+r "$REPO/.claude/worktree-identity/wt-identity-test-1.env"
+
+# --- Part 55: a stamp that cannot resolve an owner clears the previous one ---
+# Both sidecars record an unresolvable owner as empty. Leaving the PREVIOUS session's id behind in config
+# makes an entirely honest worktree dissent from itself on every load thereafter — a permanent warning
+# with no tampering behind it, which is the fastest way to teach readers to ignore the warning.
+setup ownerless
+ck "sess-A" "$(git -C "$WT" config --worktree --get start.owner-session)" "the first stamp records an owner"
+env -u CLAUDE_JOB_DIR -u CLAUDE_CODE_SESSION_ID -u CLAUDE_SESSION_ID bash -c "set -e; . '$IDLIB'
+  wt_identity_stamp '$WT' '$WT' test-1 issue-branch main \"\$(git -C '$WT' config --worktree --get start.baseline-sha)\" >/dev/null"
+ck "" "$(git -C "$WT" config --worktree --get start.owner-session || true)" "an unresolvable owner unsets the key, it does not keep the previous session's id"
+ck "2/2" "$(probe "" WTID_CORROBORATION)" "the honest worktree does not dissent from itself"
+ck "" "$(stderr_of "")" "and so loads without a warning"
+
+# --- Part 56: a stamp that cannot write its mandatory config fails, it does not report success ---
+# Git config is the tier ownership is read from, so a stamp that wrote none of it left a worktree the
+# caller believes is claimed and every reader sees as unowned. Reporting 0 there hands /start a
+# half-stamped worktree it will happily continue into.
+setup stampfail
+chmod a-w "$REPO/.git/worktrees/test-1"
+stamp_rc=0
+ERR=$(bash -c ". '$IDLIB'; wt_identity_stamp '$WT' '$WT' test-1 issue-branch main deadbeef >/dev/null" 2>&1) || stamp_rc=$?
+chmod u+w "$REPO/.git/worktrees/test-1"
+ck "yes" "$([ "$stamp_rc" != 0 ] && echo yes || echo "no (rc $stamp_rc)")" "a failed mandatory config write returns non-zero"
+ck_has "mandatory per-worktree config" "$ERR" "the failure names the config write that did not land"
+
+# --- Part 57: a multi-valued start.* key is not truth ---
+# `git config --get` silently returns the LAST value, so one `--add` reads back as the identity — and
+# stays that way, since every single-value write onto the key then fails rc 5. Such a key was not written
+# by a stamp, so it must drop the whole tier below the readable floor instead of surfacing the plant.
+setup multivalued
+mv_base=$(git -C "$WT" config --worktree --get start.baseline-sha)
+git -C "$WT" config --worktree --add start.baseline-sha deadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+ck "" "$(bash -c ". '$IDLIB'; _wtid_read_config '$WT' 2>/dev/null; printf '%s' \"\$WTID_BASELINE\"")" "a planted --add value is ignored, not returned as truth"
+ck_has "holds multiple values" "$(stderr_of "")" "the multi-valued key is announced on stderr"
+ck "repo-fallback" "$(probe "" WTID_SOURCE)" "the plant cannot become the identity"
+ck "1/1" "$(probe "" WTID_CORROBORATION)" "the multi-valued tier is not readable at all"
+stamp "$WT" sess-A
+ck "1" "$(git -C "$WT" config --worktree --get-all start.baseline-sha | wc -l | tr -d ' ')" "--replace-all repairs the planted key on the next stamp"
+ck "$mv_base" "$(git -C "$WT" config --worktree --get start.baseline-sha)" "the repaired key holds the real baseline"
+
+# --- Part 58: two names for one sidecar file are one tier ---
+# The two sidecar tiers are independent evidence only while they are two FILES. With CLAUDE_JOB_DIR
+# symlinked at the repo-level identity dir, one file corroborates itself: a single forged write reads as a
+# 2/3 majority and the load that should have warned goes quiet.
+setup samefile
+SAME_JOB="$TMP/samefile/job-link"
+ln -s "$REPO/.claude/worktree-identity" "$SAME_JOB"
+git -C "$WT" config --worktree --replace-all start.baseline-sha deadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+ck "1/2" "$(probe "$SAME_JOB" WTID_CORROBORATION)" "a self-corroborating job dir counts once, not twice"
+ck "git-config" "$(probe "$SAME_JOB" WTID_TIER_DISSENT)" "the rewritten config tier is still named as the dissenter"
+ck_has "identity tiers disagree" "$(stderr_of "$SAME_JOB")" "one file cannot silence the dissent warning by corroborating itself"
+
+# --- Part 59: a symlinked or hard-linked sidecar FILE is one tier, not two ---
+# One file reached under two names does not need a shared directory to get there: a link at the sidecar
+# itself lands a single write in both sidecar tiers, and counting it twice reports a self-corroborating
+# forgery as a 2/3 majority. Tier identity is device:inode with symlinks FOLLOWED — both BSD and GNU stat
+# default to lstat, so an unfollowed symlink reports its own inode and reads as a genuinely second file.
+setup linkedsidecar
+LINK_JOB="$TMP/linkedsidecar/job/sess-A"
+mkdir -p "$LINK_JOB"
+ln -s "$REPO/.claude/worktree-identity/wt-identity-test-1.env" "$LINK_JOB/wt-identity-test-1.env"
+git -C "$WT" config --worktree --replace-all start.baseline-sha deadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+ck "1/2" "$(probe "$LINK_JOB" WTID_CORROBORATION)" "a symlinked sidecar counts once, not twice"
+ck "git-config" "$(probe "$LINK_JOB" WTID_TIER_DISSENT)" "the rewritten config tier is still named as the dissenter"
+ck_has "identity tiers disagree" "$(stderr_of "$LINK_JOB")" "and the symlink cannot silence the dissent warning"
+
+HARD_JOB="$TMP/linkedsidecar/job-hard/sess-A"
+mkdir -p "$HARD_JOB"
+ln "$REPO/.claude/worktree-identity/wt-identity-test-1.env" "$HARD_JOB/wt-identity-test-1.env"
+ck "1/2" "$(probe "$HARD_JOB" WTID_CORROBORATION)" "a hard-linked sidecar counts once too"
+ck_has "identity tiers disagree" "$(stderr_of "$HARD_JOB")" "and cannot silence the warning either"
 
 echo "----------------------------------------"
 echo "$pass passed, $fail failed"

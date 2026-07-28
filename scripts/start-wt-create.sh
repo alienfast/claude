@@ -30,8 +30,8 @@
 #   2. an immune sidecar outside .git — the source of truth /finish compares against
 #      to detect a hijacked worktree. Written to $CLAUDE_JOB_DIR (most durable, not
 #      automatically the freshest: fully external, survives even a repo-level
-#      `git clean`, but a later stamp under another job dir leaves it behind — the
-#      loader ranks the two sidecars by recency) when set, AND to a
+#      `git clean`, but a later stamp under another job dir leaves it behind — where
+#      the two tiers that DID advance then outvote it) when set, AND to a
 #      repo-level fallback (.claude/worktree-identity/, gitignored + .git-external)
 #      so a DIFFERENT session (manual /finish after a dead /full) can still find it.
 #
@@ -98,7 +98,23 @@ if [ -d "$wt_dir" ]; then
   wt_owner_alive "$wt_dir" || true
   if [ "$WTID_OWNER_ALIVE" = "alive" ] && ! wt_owner_is_me; then
     echo "ERROR: worktree '$wt_dir' is owned by another live session (session '${WTID_OWNER_SESSION:-unknown}', harness pid $WTID_OWNER_PID, started ${WTID_OWNER_PID_START:-unknown}); refusing to reuse it. If that session should not own this issue, stop it first — otherwise let it finish." >&2
+    # Without the dissenting tiers a forged lockout reads exactly like an honest one.
+    echo "  Identity tiers: corroboration $WTID_CORROBORATION${WTID_TIER_DISSENT:+, dissenting: $WTID_TIER_DISSENT}." >&2
+    if [ -n "$WTID_TIER_DISSENT" ]; then
+      echo "  Ownership is read from per-worktree git config alone, so a dissent here means the other tiers record a DIFFERENT identity: verify with ~/.claude/scripts/wt-owner.sh '$wt_dir' before assuming the refusal is correct." >&2
+    fi
     exit 4
+  fi
+  # The other direction of the same single-tier authority, and the unrecoverable one: admitting this session on a
+  # config tuple another tier contradicts. Nothing else reports it. A WARN and not a refusal: the same dissent is
+  # left by an interrupted disown and by an ordinary stale tier, and refusing there would strand a worktree whose
+  # owner is merely gone — the failure this guard exists to avoid is two live sessions, not an untidy tier.
+  if [ -n "$WTID_TIER_DISSENT" ]; then
+    echo "WARN: reusing '$wt_dir' on a '$WTID_OWNER_ALIVE' owner verdict while identity tiers disagree (corroboration $WTID_CORROBORATION; dissenting: $WTID_TIER_DISSENT). Ownership is read from git config alone; if that tier was seized or partially written, another session may still be working here." >&2
+  elif [ "${WTID_CORROBORATION#*/}" = "1" ]; then
+    # Absence of evidence, not evidence of absence: with one readable tier nothing CAN dissent, so the quietest
+    # report is also the weakest identity — and it is the state a config-only seizure is invisible in.
+    echo "WARN: reusing '$wt_dir' on a single readable identity tier (corroboration $WTID_CORROBORATION), so nothing could corroborate or contest the '$WTID_OWNER_ALIVE' owner verdict. A seizure of that tier is undetectable here." >&2
   fi
   # Warn about drift from source branch.
   behind=$(git -C "$wt_dir" rev-list --count "$branch..$source_branch" 2>/dev/null || echo "?")
@@ -153,34 +169,29 @@ if [ "$CREATED_WT" = "1" ]; then
 fi
 
 # --- Identity inherited by every non-fresh setup ---
-# All three inherited fields (baseline, and the head-sha/stamped-at pair) are read CONFIG-FIRST with
-# the identity tier chain as fallback. Every stamp rewrites config latest-wins, so config is the
-# recency-correct copy; the tier chain exists to survive the config wipe a hostile reset performs.
-# Preferring a tier would let a STALE sidecar revert a legitimately advanced identity — a reverted
-# baseline makes /finish report corruption on an untouched worktree, and a reverted anchor makes
-# wt-restamp.sh re-litigate drops the user already accepted with --acknowledge-lost.
-# head-sha and stamped-at additionally travel as a PAIR from whichever source supplies them: an
-# anchor without its era (or the reverse) describes no audit window at all.
-# Config is also the tier a hostile write can seize; corroborating tiers against each other is
-# deliberately out of scope here — BF-546 owns the tier-authority design (recency, corroboration, seizable config).
+# Every inherited field (baseline, and the head-sha/stamped-at pair) comes WHOLE from ONE arbitrated tier:
+# wt_identity_load corroborates the three tiers and hands back the winner. head-sha and stamped-at travel
+# as an indivisible PAIR — an anchor without its era, or the reverse, describes no audit window at all.
+#
+# ACCEPTED RISK — BF-546 holds the threat model, _wtid_resolve_owner the arbitration rule. The constraint this
+# file cannot show: ownership (the reuse guard above) is read from git config ALONE, so a config-only write can
+# seize this worktree, and the guard refuses only on `alive` — a planted release marker or dead pid is ADMITTED,
+# which puts two sessions in one worktree. Nothing here arbitrates that away; the mitigation is that it cannot
+# happen quietly, so the dissent WARNs above are load-bearing and must not be dropped. Their two blind spots,
+# stated because silence from them is not safety: a torn config naming a session no surviving sidecar names
+# still resolves `unknown` and is admitted (it does now dissent, so the WARN fires), and a single readable tier
+# has nothing that could contest it at all.
 prior_baseline=""
 prior_head_sha=""
 prior_stamped_at=""
 if [ "$mode" != "fresh" ]; then
-  cfg_head_sha=$(git -C "$wt_dir" config --worktree --get start.head-sha 2>/dev/null || true)
-  cfg_stamped_at=$(git -C "$wt_dir" config --worktree --get start.stamped-at 2>/dev/null || true)
-  if [ -n "$cfg_head_sha" ] && [ -n "$cfg_stamped_at" ]; then
-    prior_head_sha="$cfg_head_sha"
-    prior_stamped_at="$cfg_stamped_at"
-  fi
   # The recorded baseline is inherited VERBATIM — no ancestry or existence check. A baseline that no
   # longer descends to HEAD is exactly what /finish's identity check exists to catch (wt_identity_verify
   # → baseline-detached → exit 4 → recovery), so filtering one out here would convert a detected hijack
-  # into a resumed one. Staleness is handled where it belongs, by the sidecar recency ranking.
-  prior_baseline=$(git -C "$wt_dir" config --worktree --get start.baseline-sha 2>/dev/null || true)
+  # into a resumed one. Staleness is handled where it belongs, by the arbitration above.
   if wt_identity_load "$wt_dir"; then
-    [ -z "$prior_baseline" ] && prior_baseline="$WTID_BASELINE"
-    if [ -z "$prior_head_sha" ] && [ -n "$WTID_HEAD_SHA" ] && [ -n "$WTID_STAMPED_AT" ]; then
+    prior_baseline="$WTID_BASELINE"
+    if [ -n "$WTID_HEAD_SHA" ] && [ -n "$WTID_STAMPED_AT" ]; then
       prior_head_sha="$WTID_HEAD_SHA"
       prior_stamped_at="$WTID_STAMPED_AT"
     fi
@@ -222,9 +233,10 @@ wt_abs=$(cd "$wt_dir" && pwd)
 # Stamp the tamper-evident identity via the shared library — the SAME code path
 # /finish reads back (wt_identity_load/verify) and finish-recover.sh re-stamps a
 # recovered worktree with. wt_identity_stamp writes the mandatory per-worktree git
-# config (a failure there aborts under `set -e` and fires the create trap above)
-# plus the best-effort immune sidecars (job-dir + repo-level fallback), and sets
-# WTID_STAMP_OWNER / WTID_STAMP_SIDECAR for the emit below. (wt-identity.sh already sourced at top.)
+# config plus the best-effort immune sidecars (job-dir + repo-level fallback), and sets
+# WTID_STAMP_OWNER / WTID_STAMP_SIDECAR for the emit below. A failure here aborts under
+# `set -e`; on a freshly created worktree that also fires the create trap above, while a REUSED one exits
+# non-zero with nothing cleaned up — correctly, since tearing it down would destroy real work.
 wt_identity_stamp "$wt_dir" "$wt_abs" "$issue_id" "$branch" "$source_branch" "$baseline_sha"
 owner="$WTID_STAMP_OWNER"
 strongest_sidecar="$WTID_STAMP_SIDECAR"
