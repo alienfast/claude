@@ -17,7 +17,67 @@
 #
 # Fixtures are generated inline into a temp dir (not committed) — each case's transcript shape sits next
 # to its assertion, which is easier to review and maintain than a directory of micro-files.
+
+# Exported shell functions are the one environment channel this suite does share with the wt-*.test.sh
+# siblings: `export -f jq` arrives as an ordinary environment entry bash imports before line 1, and a function
+# outranks both the builtin and $PATH. Every assertion here is a jq verdict and every fixture path goes through
+# the `cd` below, so an output-SUPPRESSING hijack of either — `jq(){ :; }` or `cd(){ :; }` — takes the suite to
+# 0 passed / 51 failed, measured both ways. A value-FORGING one does something worse and quieter: unswept,
+# `jq(){ echo true; }` scores 21 passed / 30 failed, so 21 assertions pass FALSELY, which is the dangerous
+# direction — the gate itself still goes red. Cleared generically rather than by name: this file has defined no
+# function yet, so everything `declare -F` reports here arrived from outside. The `2>/dev/null` can only
+# swallow the `readonly -f` case, which no environment can reach: a function's readonly attribute is not
+# inherited across `exec`, so an imported function is always unsettable (verified — the child's `unset -f`
+# returns 0 and clears it).
+#
+# The sweep's own tools sit inside the surface it defends. An exported `declare` makes `declare -F` report
+# nothing, so the sweep clears nothing and every other hijack rides straight through it — that is exactly how
+# the 21/30 above is measured, `declare` and `jq` hijacked together. An exported `unset` then makes `unset -f
+# declare` a no-op as well. The three lines below bootstrap out of that, and no COMMAND can be their first step,
+# because any command word can be shadowed. A variable assignment cannot be, and assigning $POSIXLY_CORRECT is
+# bash's runtime entry into POSIX mode, where special builtins — `unset` among them — are looked up BEFORE
+# functions. That makes the next line's `unset -f` the real builtin whatever was imported, and it clears every
+# command the bootstrap and the sweep themselves dispatch: `unset`, `builtin`, `declare`, `read`. The backslashes
+# are load-bearing, not decoration: POSIX mode also switches `expand_aliases` ON, which would hand an inherited
+# alias a window it does not get in a default non-interactive shell, and a backslash-quoted word is never
+# alias-expanded, while quoting leaves builtin lookup untouched. Leaving POSIX mode on the third line switches
+# `expand_aliases` back off.
+#
+# The sweep's own test is a `case` rather than the `[ -n "$_l" ]` it would otherwise read as, because `[` is the
+# one command here that cannot be protected the same way: POSIX mode rejects `unset -f [` as "not a valid
+# identifier". `case` needs none, being a reserved word: the parser takes the compound command before any
+# command lookup happens, and bash rejects the env import of a function by that name outright. With `[`, an
+# imported `[` that returns non-zero short-circuits the `&&` and the sweep then clears NOTHING: measured
+# with `[` and `jq` hijacked together, both were still defined afterwards, where the `case` form clears both.
+#
+# The sweep runs BEFORE this file's own `set -uo pipefail`, because `set` is a command word like any other: an
+# imported `set` that returns 0 leaves both options off for the whole run — 0 passed / 51 failed, measured — and
+# an ancestor deciding this gate's shell options is exactly what the preamble exists to prevent. Nothing above
+# needs either option, so `set` is swept with the rest and the real builtin is what runs a few lines down.
+POSIXLY_CORRECT=1
+\unset -f unset builtin declare read 2>/dev/null
+\unset POSIXLY_CORRECT
+while IFS= read -r _l; do case "$_l" in ?*) unset -f "${_l##* }" 2>/dev/null ;; esac; done <<< "$(builtin declare -F)"
+unset _l
+
 set -uo pipefail
+
+# This suite reaches neither git nor wt-identity.sh, so it needs none of the sibling wt-*.test.sh isolation
+# beyond these two names. $CDPATH applies because this suite shares their `cd` on a RELATIVE path: package.json
+# invokes it as `hooks/full-continue.test.sh`, so `dirname` yields a bare `hooks` and $CDPATH sends the `cd`
+# elsewhere while echoing where it landed — $DIR ends up two lines long, the source below fails, and every case
+# reports an empty decision, 0 passed / 51 failed, measured.
+#
+# $BASH_ENV itself is deliberately NOT cleared, and clearing it would accomplish nothing: it is read when bash
+# STARTS a non-interactive shell, and this suite starts none — decide() runs in this process and its subshells,
+# which do not re-read it, while this file's own startup consumed it before line 1. That is not the same as
+# $BASH_ENV being harmless, because what it consumed at startup outlives it. Two shapes reach in, and the two
+# lines here are what cover them: a $BASH_ENV defining FUNCTIONS is caught by the sweep above, and one doing
+# `shopt -s expand_aliases; alias jq='command true'` is caught by `unset POSIXLY_CORRECT` — bash 3.2.57 re-runs
+# its posix-mode hook on that unset even though the variable was never set, and the hook turns `expand_aliases`
+# back off. Both measured: unswept, the alias shape takes this suite to 0 passed / 51 failed, and bisecting the
+# wt suites' five names showed $POSIXLY_CORRECT to be the only one that flips the shopt back.
+unset CDPATH POSIXLY_CORRECT
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
