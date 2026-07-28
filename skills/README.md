@@ -158,7 +158,7 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 
 ### quality-review
 
-**Description**: Adversarial implementation review with triage and fix loop. Hard-gates on `pnpm check`, delegates to the quality-reviewer agent for categorized findings, then loops triage/fix/re-review until convergence (no new substantive findings — prose-only and mechanical fixes do not block it; 5-cycle soft ceiling), and reflects on the session at the tail.
+**Description**: Adversarial implementation review with triage and fix loop, tiered by role. Hard-gates on `pnpm check`, delegates initial discovery to the quality-reviewer agent (opus/xhigh) for categorized findings, then loops triage/fix/re-review — small fixes applied directly by the orchestrator, substantive ones via sonnet-tier developer dispatches, re-reviews and confirmations on the lighter quality-verifier agent — until convergence (no new substantive findings — prose-only and mechanical fixes do not block it; 5-cycle soft ceiling, extended once in auto mode when the findings trend is decreasing), and reflects on the session at the tail.
 
 **When Invoked**:
 
@@ -171,7 +171,7 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 - Working Application Contract enforcement (`pnpm check` gate)
 - Categorized findings (Critical/High/Medium/Nice-to-Have/Approved)
 - Parallel domain-scoped reviewers for large changes
-- Mandatory re-review after the initial review's fixes and after every substantive fix; converges when no new substantive findings surface — prose-only and mechanical findings surfaced by a re-review are fixed without consuming a cycle (5-cycle soft ceiling)
+- Mandatory re-review after the initial review's fixes and after every substantive fix, dispatched to the quality-verifier agent with the fix delta as an inline diff; converges when no new substantive findings surface — prose-only and mechanical findings surfaced by a re-review are fixed directly by the orchestrator without consuming a cycle, and after cycle 2 new Mediums are filed as deferred items instead of re-arming the loop (5-cycle soft ceiling)
 - Deferred-items triage (`fix-now` / `defer-as-issue` / `note-only`); auto-applies safe fixes, files ticket-worthy ones as sub-issues, records the rest as dropped
 - Session-reflection tail (Step 7) — invokes `/reflect` to turn process friction into shared-config improvements
 - Standalone or delegated invocation; auto-detects scope from `git diff`
@@ -180,7 +180,7 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 **Structure**:
 
 - Self-contained workflow in `SKILL.md`
-- Delegates to `quality-reviewer` and `developer` agents
+- Delegates to `quality-reviewer` (initial review), `quality-verifier` (re-reviews and confirmations), and `developer` (substantive fixes, sonnet-tier) agents; mechanical and prose fixes are applied by the orchestrator directly
 - Invokes `reflect` (session mode) as its final step
 - Uses `linear-cli issues get` for requirement context when an issue is resolvable
 

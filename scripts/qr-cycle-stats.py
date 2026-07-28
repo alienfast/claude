@@ -20,8 +20,9 @@ from pathlib import Path
 
 PROJ = Path.home() / ".claude" / "projects"
 INIT_RE = re.compile(r"Task for quality-reviewer: Adversarial implementation review for ([A-Z]+-\d+)")
-REREV_RE = re.compile(r"Task for quality-reviewer: Adversarial re-review of fixes for ([A-Z]+-\d+)")
-CONF_RE = re.compile(r"Task for quality-reviewer: Targeted fix confirmation for ([A-Z]+-\d+)")
+# BF-576 moved re-reviews and confirmations to the quality-verifier agent; transcripts from before it carry quality-reviewer.
+REREV_RE = re.compile(r"Task for quality-(?:reviewer|verifier): Adversarial re-review of fixes for ([A-Z]+-\d+)")
+CONF_RE = re.compile(r"Task for quality-(?:reviewer|verifier): Targeted fix confirmation for ([A-Z]+-\d+)")
 FIX_RE = re.compile(r"Task for developer: Fix review findings for ([A-Z]+-\d+)")
 
 if len(sys.argv) < 2:

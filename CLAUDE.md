@@ -74,7 +74,7 @@ For complex multi-step tasks (>5 steps, multiple domains, high context usage), u
 
 Delegate work that is genuinely independent and big enough to deserve a fresh context — a wide multi-file investigation, parallel implementation across unrelated files, a scoped review. Do not delegate what finishes in a handful of tool calls, and do not spawn a subagent to check your own work: re-reading, re-running, and self-correction happen without being asked, so instructing them again only multiplies cost. When one agent can do it, use one, and keep spawn counts low overall.
 
-The named review gates are the deliberate exception. `/quality-review`'s `quality-reviewer` dispatch and `/reflect`'s verifier review *another* agent's output from a fresh context — that is not self-critique, and it stays.
+The named review gates are the deliberate exception. `/quality-review`'s reviewer dispatches (`quality-reviewer` discovery; `quality-verifier` re-reviews and fix confirmations — including confirming fixes the orchestrator applied directly) and `/reflect`'s verifier bring a fresh context to the session's output as a mandated independent gate — that is not self-critique, and it stays.
 
 ## Memory
 
