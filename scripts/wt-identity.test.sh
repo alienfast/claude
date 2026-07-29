@@ -324,11 +324,15 @@ stamp() { # wt_dir [session] [job_dir] [stamped_at era]
 }
 
 # A second identity for the SAME worktree under a different issue slug — the only way to prove the
-# two-arg load reads the slug rather than the directory basename.
-stamp_issue() { # wt_dir issue_id
-  bash -c "set -e; . '$IDLIB'
-    base=\$(git -C '$1' merge-base issue-branch main)
-    wt_identity_stamp '$1' '$1' '$2' issue-branch main \"\$base\" >/dev/null"
+# two-arg load reads the slug rather than the directory basename. Session and era are pinnable for the
+# same reason stamp()'s are: this fixture's two stamps write DISJOINT sidecar files, so the shared
+# config tier carries the SECOND stamp's fingerprint while the basename sidecar carries the first's —
+# and cross-stamp tiers corroborate only when every fingerprint field matches, the era included.
+stamp_issue() { # wt_dir issue_id [session] [stamped_at era]
+  local wt="$1" issue="$2" sess="${3-}" era="${4-}"
+  env ${sess:+"CLAUDE_SESSION_ID=$sess"} ${era:+"WTID_STAMP_STAMPED_AT_OVERRIDE=$era"} bash -c "set -e; . '$IDLIB'
+    base=\$(git -C '$wt' merge-base issue-branch main)
+    wt_identity_stamp '$wt' '$wt' '$issue' issue-branch main \"\$base\" >/dev/null"
 }
 
 # Rewrite one key of one sidecar. A stamp writes BOTH tiers at once, so this is the only way to give
@@ -496,13 +500,35 @@ ck "1:none" "$(idl "$WT" "" "" '$rc:$WTID_SOURCE')" "config without start.baseli
 
 # The two-arg form, which reap-worktrees.sh uses because it inspects worktrees by issue rather than by
 # path. The fixture stamps a SECOND identity for the same worktree under a different slug, so the
-# directory basename and the slug disagree and only the slug can select the right file.
+# directory basename and the slug disagree and only the slug can select the right file. Session and
+# era are pinned equal across the two stamps: they split the tiers (basename sidecar from the first,
+# shared config from the second), so the one-arg load corroborates only while their fingerprints
+# match — left to the wall clock, a second-boundary straddle under load broke the match and the load
+# correctly fell back to the issue-less git-config tier (BF-578's intermittent FAIL; the straddle is
+# pinned deterministically as designed behavior just below).
 mkrepo twoarg
-stamp "$WT"
-stamp_issue "$WT" other-2
+TWOARG_ERA=$(date +%s)
+stamp "$WT" sess-A "" "$TWOARG_ERA"
+stamp_issue "$WT" other-2 sess-A "$TWOARG_ERA"
 ck "test-1" "$(idl "$WT" "" "" '$WTID_ISSUE')" "the one-arg form derives the sidecar from the directory basename"
 ck "other-2" "$(idl "$WT" "" other-2 '$WTID_ISSUE')" "the two-arg form selects the sidecar named for the explicit slug"
 ck "$MAINROOT/.claude/worktree-identity/wt-identity-other-2.env" "$(idl "$WT" "" other-2 '$WTID_SIDECAR_PATH')" "the two-arg load reports the slug's sidecar path"
+
+# The straddle itself, held deterministic forever (BF-578): push the config tier's era one second past
+# the basename sidecar's. The two tiers now genuinely disagree — they came from different stamp calls,
+# and coincidental same-second agreement was the only thing that ever made them corroborate — so the
+# load must refuse corroboration, warn loudly, and proceed on the weakest tier, which by design carries
+# no issue. This is the tamper-detection property itself: a partially rewritten or tampered config tier
+# presents exactly this shape, and folding the era out of the fingerprint (or tolerating ±1s skew)
+# would wave it through in silence.
+mkrepo straddle
+STRADDLE_ERA=$(date +%s)
+stamp "$WT" sess-A "" "$STRADDLE_ERA"
+stamp_issue "$WT" other-2 sess-A "$STRADDLE_ERA"
+ck "test-1" "$(idl "$WT" "" "" '$WTID_ISSUE')" "control: era-pinned twin stamps corroborate and the sidecar supplies the issue"
+git -C "$WT" config --worktree --replace-all start.stamped-at "$((STRADDLE_ERA + 1))"
+ck "git-config:" "$(idl "$WT" "" "" '$WTID_SOURCE:$WTID_ISSUE')" "a one-second era straddle breaks corroboration and falls back to the issue-less config tier"
+ck_has "identity tiers disagree" "$(idl "$WT" "" "" '' 2>&1)" "and the straddle is announced, never silent"
 
 # --- Part 2: wt_identity_verify — the corruption verdict ---
 
