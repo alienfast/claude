@@ -16,9 +16,11 @@
 # cycle-ready → newly-unblocked → sibling-under-completed-parent →
 # priority-fallback), then walks parent chains for the top-K candidates to apply
 # parent-status weighting (In Progress epic > Planned > Backlog > Triage).
-# Within a tier: security/bug label class > priority > spread (a sibling under the
-# same parent In Progress/In Review soft de-ranks the candidate — parallel /auto
-# sessions collide in sibling files) > parent weight > cycle > estimate. A candidate
+# Within a tier: Urgent priority first (it pierces the class ordering — a deliberate
+# human escalation outranks any label), then security/bug label class > remaining
+# priority > spread (a sibling under the same parent In Progress/In Review soft
+# de-ranks the candidate — parallel /auto sessions collide in sibling files) >
+# parent weight > cycle > estimate. A candidate
 # whose children carry all the work (1+ children, none workable) is de-ranked below
 # everything and annotated "Delegated" (BF-504 — epics kept `specified` by design
 # recur as top picks with nothing to implement).
@@ -408,6 +410,10 @@ candidates_json=$(jq \
           is_reflection: ((($i.labels // []) | map(ascii_downcase)) as $ls
             | (($ls | index("specified")) != null and ($ls | index("reflection")) != null)),
           is_keeper: (((($i.labels // []) | map(ascii_downcase)) | index("keeper")) != null),
+          # Urgent — and only Urgent — pierces the class ordering below: it is a rare,
+          # deliberate human "drop everything" escalation, and a bulk-applied category
+          # label must not overrule it. Agreed with Blake (BF-583).
+          urgent_first: (if $i.priority == 1 then 0 else 1 end),
           class_rank: ((($i.labels // []) | map(ascii_downcase)) as $ls
             | if ($ls | index("security")) != null then 0
               elif ($ls | index("bug")) != null then 1
@@ -477,7 +483,7 @@ ranked_json=$(printf '%s' "$candidates_json" | jq '
     # else the pool excludes it), so it front-runs project-level reflection filings.
     | . + { keeper_rank: (if .tier == 0 and .is_keeper then 0 else 1 end) }
   )
-  | sort_by([.tier, .keeper_rank, .class_rank, .priority_rank, .spread_penalty, (if .in_cycle then 0 else 1 end), .estimate])
+  | sort_by([.tier, .keeper_rank, .urgent_first, .class_rank, .priority_rank, .spread_penalty, (if .in_cycle then 0 else 1 end), .estimate])
 ')
 
 # ---------- parent walk for top-K ----------
@@ -606,7 +612,7 @@ if [ "$parent_walk" -eq 1 ] && [ -n "$top_ids" ]; then
             delegated_open: (if $kids != null then $kids.open else 0 end)
           }
       )
-      | sort_by([.delegated_penalty, .tier, .keeper_rank, .class_rank, .priority_rank, .spread_penalty, .parent_weight,
+      | sort_by([.delegated_penalty, .tier, .keeper_rank, .urgent_first, .class_rank, .priority_rank, .spread_penalty, .parent_weight,
                  (if .in_cycle then 0 else 1 end), .estimate])
     ')
 fi

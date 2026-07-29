@@ -103,7 +103,7 @@ The script applies a tier scheme — see [scripts/next-candidates.sh](../../scri
 6. Sibling under the same parent as `<COMPLETED-ID>`
 7. Highest-priority workable fallback
 
-Within each tier: label class (`security` > `bug` > everything else — defects ship before improvements) > priority > spread penalty (a sibling under the same parent is In Progress/In Review, so a live session is likely in nearby files — soft de-rank, annotated in the output) > parent-epic state (In Progress > Planned > Backlog > Triage) > cycle membership > estimate. Terminal-blocker matching is case-insensitive (workspace state names vary: "Ready for Release" vs "Ready For Release").
+Within each tier: **Urgent priority pierces everything** (a deliberate human "drop everything" escalation outranks any label — agreed policy, BF-583), then label class (`security` > `bug` > everything else — defects ship before improvements) > remaining priority (High > Normal > Low > None) > spread penalty (a sibling under the same parent is In Progress/In Review, so a live session is likely in nearby files — soft de-rank, annotated in the output) > parent-epic state (In Progress > Planned > Backlog > Triage) > cycle membership > estimate. Terminal-blocker matching is case-insensitive (workspace state names vary: "Ready for Release" vs "Ready For Release").
 
 Two structural de-ranks sit outside the tier scheme:
 
