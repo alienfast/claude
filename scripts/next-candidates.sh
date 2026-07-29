@@ -407,6 +407,7 @@ candidates_json=$(jq \
           unresolved_count: ($unresolved | length),
           is_reflection: ((($i.labels // []) | map(ascii_downcase)) as $ls
             | (($ls | index("specified")) != null and ($ls | index("reflection")) != null)),
+          is_keeper: (((($i.labels // []) | map(ascii_downcase)) | index("keeper")) != null),
           class_rank: ((($i.labels // []) | map(ascii_downcase)) as $ls
             | if ($ls | index("security")) != null then 0
               elif ($ls | index("bug")) != null then 1
@@ -471,8 +472,12 @@ ranked_json=$(printf '%s' "$candidates_json" | jq '
         end
       )
     }
+    # keeper_rank orders WITHIN tier 0 only: keeper reflection edits the shared user-level
+    # ~/.claude (every project benefits, and only the keeper machine can ship it — everywhere
+    # else the pool excludes it), so it front-runs project-level reflection filings.
+    | . + { keeper_rank: (if .tier == 0 and .is_keeper then 0 else 1 end) }
   )
-  | sort_by([.tier, .class_rank, .priority_rank, .spread_penalty, (if .in_cycle then 0 else 1 end), .estimate])
+  | sort_by([.tier, .keeper_rank, .class_rank, .priority_rank, .spread_penalty, (if .in_cycle then 0 else 1 end), .estimate])
 ')
 
 # ---------- parent walk for top-K ----------
@@ -601,7 +606,7 @@ if [ "$parent_walk" -eq 1 ] && [ -n "$top_ids" ]; then
             delegated_open: (if $kids != null then $kids.open else 0 end)
           }
       )
-      | sort_by([.delegated_penalty, .tier, .class_rank, .priority_rank, .spread_penalty, .parent_weight,
+      | sort_by([.delegated_penalty, .tier, .keeper_rank, .class_rank, .priority_rank, .spread_penalty, .parent_weight,
                  (if .in_cycle then 0 else 1 end), .estimate])
     ')
 fi
@@ -611,7 +616,10 @@ fi
 printf '## Suggested next\n\n'
 printf '%s' "$ranked_json" | jq -r --argjson lim "$limit" '
   def tier_reason(c):
-    if c.tier == 0 then "certified reflection improvement — affects how future work runs"
+    if c.tier == 0 then
+      (if c.keeper_rank == 0
+        then "certified keeper reflection improvement — shared ~/.claude config; only this machine can ship it"
+        else "certified reflection improvement — affects how future work runs" end)
     elif c.tier == 1 then "assigned to you"
     elif c.tier == 2 then "in current cycle + newly unblocked"
     elif c.tier == 3 then "in current cycle"
