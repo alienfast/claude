@@ -156,6 +156,27 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 - Self-contained workflow in `SKILL.md`
 - Uses `linear-deps-graph.sh` for the dependency graph, an `api` active-cycle filter, and `linear-cli issues list`
 
+### auto-prep
+
+**Description**: Prepare a team's certified backlog for a fleet of parallel `/loop /auto` sessions — label honesty audit, collision-edge wiring, ranked-pool validation, fleet sizing.
+
+**When Invoked**:
+
+- User says "auto-prep", "fleet prep", or "prep the backlog for auto"
+- Before launching multiple parallel `/loop /auto` sessions
+
+**Key Features**:
+
+- Audits `specified` labels for unattended-shippability; de-labels or flags decision-gated, human-dependent, and run-attended/solo issues
+- Wires minimal `blocks` chains between file-colliding certified candidates (the only dependency signal `/next` observes)
+- Repairs `/reflect` filing labels (`reflection`/`keeper`) and dedupes duplicate filings
+- Validates the result through `next-candidates.sh` and recommends a parallel-session count from the independent-lane analysis
+
+**Structure**:
+
+- Self-contained workflow in `SKILL.md`
+- Complements `/quality-review`'s same-batch collision wiring by covering overlap across previously filed siblings
+
 ### quality-review
 
 **Description**: Adversarial implementation review with triage and fix loop, tiered by role. Hard-gates on `pnpm check`, delegates initial discovery to the quality-reviewer agent (opus/xhigh) for categorized findings, then loops triage/fix/re-review — small fixes applied directly by the orchestrator, substantive ones via sonnet-tier developer dispatches, re-reviews and confirmations on the lighter quality-verifier agent — until convergence (no new substantive findings — prose-only and mechanical fixes do not block it; 5-cycle soft ceiling, extended once in auto mode when the findings trend is decreasing), and reflects on the session at the tail.
