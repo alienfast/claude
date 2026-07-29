@@ -71,7 +71,7 @@ These commands are **BLOCKED** by the git-permissions hook (`~/.claude/hooks/git
 
 ### The hook only sees the Bash tool's command string
 
-`git-permissions.sh` matches the string the Bash tool was given. A destructive git command run from **inside a script file** (`python3 sweep.py`, `bash revert.sh`) is invisible to it and executes unguarded — and the script runners are themselves pre-approved, so no permission prompt fires either. The hook is a backstop for direct invocation, not a guarantee.
+`git-permissions.sh` matches the string the Bash tool was given, and only when `git` is its leading word. A destructive git command run from **inside a script file** (`python3 sweep.py`, `bash revert.sh`) is invisible to it and executes unguarded — and the script runners are themselves pre-approved, so no permission prompt fires either. Any other form that displaces `git` from command position bypasses it the same way: `bash -c "git restore f"`, `cd x && git restore f`, `env git restore f`. The hook is a backstop for direct top-level invocation, not a guarantee.
 
 **To undo a temporary edit — a mutation test, a spike, a bisect probe — copy the file aside and copy it back. Never revert with git.** A `/start wt` worktree's change is typically uncommitted and partly untracked, so `git checkout -- <file>` / `git restore <file>` destroys it with no recovery.
 
