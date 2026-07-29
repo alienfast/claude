@@ -103,4 +103,9 @@ The script applies a tier scheme — see [scripts/next-candidates.sh](../../scri
 6. Sibling under the same parent as `<COMPLETED-ID>`
 7. Highest-priority workable fallback
 
-Within each tier: parent-epic state (In Progress > Planned > Backlog > Triage) > priority > cycle membership > estimate.
+Within each tier: label class (`security` > `bug` > everything else — defects ship before improvements) > priority > spread penalty (a sibling under the same parent is In Progress/In Review, so a live session is likely in nearby files — soft de-rank, annotated in the output) > parent-epic state (In Progress > Planned > Backlog > Triage) > cycle membership > estimate. Terminal-blocker matching is case-insensitive (workspace state names vary: "Ready for Release" vs "Ready For Release").
+
+Two structural de-ranks sit outside the tier scheme:
+
+- **Delegated epics** (BF-504): a candidate with 1+ sub-issues, none of them in a workable state, has no independent work of its own — its children carry the work. It is de-ranked below every non-delegated candidate and annotated `Delegated` (child states come from the same top-K `issues get` payload the parent walk already fetches — no extra API calls). An epic whose children have all shipped is annotated as likely needing closure, not implementation.
+- The spread penalty above is a soft tie-break, never an exclusion — a High-priority candidate still outranks a None-priority one with no sibling in flight.

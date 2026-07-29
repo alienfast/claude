@@ -16,6 +16,12 @@
 # cycle-ready → newly-unblocked → sibling-under-completed-parent →
 # priority-fallback), then walks parent chains for the top-K candidates to apply
 # parent-status weighting (In Progress epic > Planned > Backlog > Triage).
+# Within a tier: security/bug label class > priority > spread (a sibling under the
+# same parent In Progress/In Review soft de-ranks the candidate — parallel /auto
+# sessions collide in sibling files) > parent weight > cycle > estimate. A candidate
+# whose children carry all the work (1+ children, none workable) is de-ranked below
+# everything and annotated "Delegated" (BF-504 — epics kept `specified` by design
+# recur as top picks with nothing to implement).
 # Emits a ranked markdown list to stdout.
 #
 # --label/--exclude-label filter candidates client-side by ASCII-case-insensitive label
@@ -154,7 +160,7 @@ cycle_file="$tmpdir/cycle.json"
 # macOS) on a large team's issue list.
 fetch_team_issues() {
   local team="$1" out="$2" after='' page nodes has pages_file="$out.pages"
-  local q='query($team:String!,$after:String){issues(filter:{team:{key:{eq:$team}}, state:{type:{nin:["completed","canceled"]}}}, first:250, after:$after){nodes{identifier title estimate priority state{name type} assignee{email} labels{nodes{name}}} pageInfo{hasNextPage endCursor}}}'
+  local q='query($team:String!,$after:String){issues(filter:{team:{key:{eq:$team}}, state:{type:{nin:["completed","canceled"]}}}, first:250, after:$after){nodes{identifier title estimate priority state{name type} assignee{email} labels{nodes{name}} parent{identifier}} pageInfo{hasNextPage endCursor}}}'
   : > "$pages_file"
   while :; do
     if [ -z "$after" ]; then
@@ -173,7 +179,7 @@ fetch_team_issues() {
   jq -s 'add' "$pages_file" | jq '[ .[]
     | {identifier, title, state:(.state.name // "?"), state_type:(.state.type // "?"),
        priority:(.priority // 0), estimate:(.estimate // 0), assignee:(.assignee.email // null),
-       labels:((.labels.nodes // []) | map(.name))} ]' > "$out"
+       labels:((.labels.nodes // []) | map(.name)), parent:(.parent.identifier // null)} ]' > "$out"
   rm -f "$pages_file"
 }
 
@@ -353,6 +359,14 @@ candidates_json=$(jq \
     | ($bm_doc[0]) as $bm
     | ($cycle_doc[0]) as $cycle
     | ($newly_doc[0]) as $newly
+    | ($terminal | map(ascii_downcase)) as $terminal_lc
+    # Hot parents: a sibling In Progress/In Review under the same parent means a live
+    # session is likely editing nearby files — feeds the soft spread de-rank below.
+    # "Ready for Release" is type started but terminal-by-name (merged), so it is not hot.
+    | ([ .[] | (.state | ascii_downcase) as $slc
+          | select(.state_type == "started"
+              and (($terminal_lc | index($slc)) == null)
+              and (.parent != null)) | .parent ] | unique) as $hot
     | def priority_label(p):
       if p == 1 then "Urgent"
       elif p == 2 then "High"
@@ -392,7 +406,12 @@ candidates_json=$(jq \
           newly_unblocked: (($newly | index($id)) != null),
           unresolved_count: ($unresolved | length),
           is_reflection: ((($i.labels // []) | map(ascii_downcase)) as $ls
-            | (($ls | index("specified")) != null and ($ls | index("reflection")) != null))
+            | (($ls | index("specified")) != null and ($ls | index("reflection")) != null)),
+          class_rank: ((($i.labels // []) | map(ascii_downcase)) as $ls
+            | if ($ls | index("security")) != null then 0
+              elif ($ls | index("bug")) != null then 1
+              else 2 end),
+          spread_penalty: (if ($i.parent != null) and (($hot | index($i.parent)) != null) then 1 else 0 end)
         }
     )
   ' "$list_file")
@@ -436,6 +455,9 @@ fi
 # otherwise, since the candidate select above already requires it): newly_unblocked marks
 # descendants of the completed issue in the blocks-graph, not "fully unblocked" — a candidate
 # can be newly_unblocked and still have another, unrelated open blocker.
+#
+# Within a tier: class_rank (security 0 > bug 1 > other 2 — defects ship before improvements)
+# > priority > spread_penalty (sibling in flight under the same parent) > cycle > estimate.
 ranked_json=$(printf '%s' "$candidates_json" | jq '
   map(
     . + {
@@ -450,7 +472,7 @@ ranked_json=$(printf '%s' "$candidates_json" | jq '
       )
     }
   )
-  | sort_by([.tier, .priority_rank, (if .in_cycle then 0 else 1 end), .estimate])
+  | sort_by([.tier, .class_rank, .priority_rank, .spread_penalty, (if .in_cycle then 0 else 1 end), .estimate])
 ')
 
 # ---------- parent walk for top-K ----------
@@ -481,10 +503,21 @@ if [ "$parent_walk" -eq 1 ] && [ -n "$top_ids" ]; then
 
   # ancestors_json: id -> [{identifier, title, state}, ...] (root-to-direct-parent order)
   ancestors_json="{}"
+  # delegated_json: id -> {total, workable, open} child counts, from the same fetched
+  # payload (zero extra API calls). A candidate with children but no workable child has
+  # no independent work of its own (BF-504) — de-ranked below everything in the re-sort.
+  delegated_json="{}"
 
   while IFS= read -r id; do
     [ -z "$id" ] && continue
     if [ ! -s "$fetch_dir/$id.json" ]; then continue; fi
+    kid_info=$(jq -c --argjson workable "$WORKABLE_STATES" --argjson terminal "$TERMINAL_STATES" '
+      [(.children.nodes // [])[] | (.state.name // .state // "?")] as $ks
+      | {total: ($ks | length),
+         workable: ([ $ks[] | select(. as $s | ($workable | index($s)) != null) ] | length),
+         open: ([ $ks[] | select(. as $s | (($terminal | map(ascii_downcase)) | index($s | ascii_downcase)) == null) ] | length)}
+    ' "$fetch_dir/$id.json" 2>/dev/null) || kid_info='{"total":0,"workable":0,"open":0}'
+    delegated_json=$(jq -c --arg id "$id" --argjson v "$kid_info" '. + {($id): $v}' <<< "$delegated_json")
     # Start with this candidate's direct parent (if any).
     chain="[]"
     cur=$(jq -r '.parent.identifier // ""' "$fetch_dir/$id.json")
@@ -535,6 +568,7 @@ if [ "$parent_walk" -eq 1 ] && [ -n "$top_ids" ]; then
 
   ranked_json=$(printf '%s' "$ranked_json" | jq \
     --argjson anc "$ancestors_json" \
+    --argjson del "$delegated_json" \
     --arg completed "$completed" \
     --arg completed_parent_id "$completed_parent_id" '
       def weight(s):
@@ -556,15 +590,19 @@ if [ "$parent_walk" -eq 1 ] && [ -n "$top_ids" ]; then
               and ($direct_parent != null)
               and ($direct_parent.identifier == $completed_parent_id)
             then 5 else null end) as $sibling_tier
+        | ($del[$c.id] // null) as $kids
         | . + {
             parent_chain: $chain,
             parent_root: $root,
             parent_direct: $direct_parent,
             parent_weight: $pw,
-            tier: (if $sibling_tier != null and .tier > 5 then $sibling_tier else .tier end)
+            tier: (if $sibling_tier != null and .tier > 5 then $sibling_tier else .tier end),
+            delegated_penalty: (if $kids != null and $kids.total > 0 and $kids.workable == 0 then 1 else 0 end),
+            delegated_open: (if $kids != null then $kids.open else 0 end)
           }
       )
-      | sort_by([.tier, .parent_weight, .priority_rank, (if .in_cycle then 0 else 1 end), .estimate])
+      | sort_by([.delegated_penalty, .tier, .class_rank, .priority_rank, .spread_penalty, .parent_weight,
+                 (if .in_cycle then 0 else 1 end), .estimate])
     ')
 fi
 
@@ -586,6 +624,7 @@ printf '%s' "$ranked_json" | jq -r --argjson lim "$limit" '
     "\n   - State: \(.value.state)" +
     (if .value.in_cycle then " (in cycle)" else "" end) +
     " | Priority: \(.value.priority_label)" +
+    (if .value.class_rank == 0 then " | security" elif .value.class_rank == 1 then " | bug" else "" end) +
     (if .value.estimate != null and .value.estimate != 0 then " | Estimate: \(.value.estimate)" else "" end) +
     (if .value.is_me then " | _assigned to you_" else "" end) +
     (if .value.parent_direct then
@@ -595,6 +634,12 @@ printf '%s' "$ranked_json" | jq -r --argjson lim "$limit" '
         else "" end)
     else "" end) +
     "\n   - Tier \(.value.tier): \(tier_reason(.value))" +
+    (if (.value.delegated_penalty // 0) > 0 then
+      (if (.value.delegated_open // 0) > 0
+        then "\n   - Delegated: \(.value.delegated_open) open sub-issue(s) carry the work — de-ranked, no independent work of its own"
+        else "\n   - Delegated: all sub-issues shipped/terminal — de-ranked; the epic likely needs closing, not implementation" end)
+    else "" end) +
+    (if (.value.spread_penalty // 0) > 0 then "\n   - Spread: a sibling under the same parent is in flight — soft de-rank to reduce file collisions" else "" end) +
     (if .value.unresolved_count > 0 then "\n   - Blocked: \(.value.unresolved_count) unresolved blocker(s)" else "" end)
 '
 
