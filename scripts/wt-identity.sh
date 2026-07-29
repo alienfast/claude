@@ -70,6 +70,7 @@ _wtid_read_sidecar() {
   WTID_OWNER_PID=$(sed -n 's/^WT_IDENTITY_OWNER_PID=//p' "$f" 2>/dev/null | head -1)
   WTID_OWNER_PID_START=$(sed -n 's/^WT_IDENTITY_OWNER_PID_START=//p' "$f" 2>/dev/null | head -1)
   WTID_OWNER_RELEASED_AT=$(sed -n 's/^WT_IDENTITY_OWNER_RELEASED_AT=//p' "$f" 2>/dev/null | head -1)
+  WTID_OWNER_CLAIMED_AT=$(sed -n 's/^WT_IDENTITY_OWNER_CLAIMED_AT=//p' "$f" 2>/dev/null | head -1)
 }
 
 # Read one per-worktree config value into <var>. Assigns rather than echoes because a command
@@ -107,6 +108,7 @@ _wtid_read_config() {
   _wtid_config_get "$wt_dir" start.owner-pid         WTID_OWNER_PID
   _wtid_config_get "$wt_dir" start.owner-pid-start   WTID_OWNER_PID_START
   _wtid_config_get "$wt_dir" start.owner-released-at WTID_OWNER_RELEASED_AT
+  _wtid_config_get "$wt_dir" start.owner-claimed-at  WTID_OWNER_CLAIMED_AT
   WTID_CONFIG_MULTIVALUED="${WTID_CONFIG_MULTIVALUED# }"
   if [ -n "$WTID_CONFIG_MULTIVALUED" ] && [ "${WTID_MULTIVALUED_WARNED:-}" != "$wt_dir|$WTID_CONFIG_MULTIVALUED" ]; then
     WTID_MULTIVALUED_WARNED="$wt_dir|$WTID_CONFIG_MULTIVALUED"
@@ -117,7 +119,11 @@ _wtid_read_config() {
 # The tuple ONE stamp writes, over the fields BOTH tier formats carry — equal fingerprints can only come from
 # the same wt_identity_stamp call, which is what makes agreement evidence rather than coincidence. Sidecar-only
 # keys (issue, version, recorded wt dir) and the config-only created-at are excluded: they are not written
-# symmetrically, so including them would manufacture dissent between honest tiers.
+# symmetrically, so including them would manufacture dissent between honest tiers. The owner claim epoch is
+# excluded for a different reason: it advances on every stamp and honors no override (BF-575), so it can never
+# be pinned equal across the paired same-worktree stamps corroboration is compared over (the BF-578 straddle
+# would return, unpinnable this time), and a failed best-effort sidecar rewrite would turn into new structural
+# dissent where today there is none. wt_owner_contest reads it per tier directly; it needs no membership here.
 _wtid_fingerprint() {
   printf '%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s' \
     "$WTID_BRANCH" "$WTID_SOURCE_BRANCH" "$WTID_BASELINE" "$WTID_HEAD_SHA" "$WTID_STAMPED_AT" \
@@ -178,6 +184,7 @@ _wtid_same_file() {
 _wtid_reset_identity() {
   WTID_ISSUE=""; WTID_BRANCH=""; WTID_SOURCE_BRANCH=""; WTID_BASELINE=""; WTID_HEAD_SHA=""; WTID_STAMPED_AT=""
   WTID_WT_DIR=""; WTID_OWNER=""; WTID_OWNER_SESSION=""; WTID_OWNER_PID=""; WTID_OWNER_PID_START=""; WTID_OWNER_RELEASED_AT=""
+  WTID_OWNER_CLAIMED_AT=""
 }
 
 # A sidecar is only trustworthy for <wt_dir> if its recorded WT_IDENTITY_WT_DIR is
@@ -355,6 +362,7 @@ wt_identity_load() {
     cfg)  _wtid_read_config "$wt_dir";     WTID_SOURCE="git-config" ;;
   esac
   WTID_OWNER=""; WTID_OWNER_SESSION=""; WTID_OWNER_PID=""; WTID_OWNER_PID_START=""; WTID_OWNER_RELEASED_AT=""
+  WTID_OWNER_CLAIMED_AT=""
 
   # Two or more readable tiers and not one pair agrees: one stamp writes every reachable tier together,
   # so this state is a partial write or a tampered tier — never healthy, and it must not resolve in
@@ -642,10 +650,11 @@ _wtid_resolve_owner() {
   local wt_dir="$1" issue_lower="${2-}" name f main_root
   local keep_issue="$WTID_ISSUE" keep_branch="$WTID_BRANCH" keep_src="$WTID_SOURCE_BRANCH" keep_base="$WTID_BASELINE"
   local keep_head="$WTID_HEAD_SHA" keep_era="$WTID_STAMPED_AT" keep_wt="$WTID_WT_DIR"
-  local owner pid pid_start released
+  local owner pid pid_start released claimed
   [ -z "$issue_lower" ] && issue_lower=$(basename "$wt_dir")
   _wtid_read_config "$wt_dir"
   owner="$WTID_OWNER"; pid="$WTID_OWNER_PID"; pid_start="$WTID_OWNER_PID_START"; released="$WTID_OWNER_RELEASED_AT"
+  claimed="$WTID_OWNER_CLAIMED_AT"
   if [ -z "$pid" ] && [ -z "$released" ]; then
     name=$(_wtid_sidecar_name "$issue_lower")
     main_root=$(_wtid_main_root "$wt_dir" || true)
@@ -662,6 +671,7 @@ _wtid_resolve_owner() {
       if [ -n "$owner" ] && [ "$WTID_OWNER" != "$owner" ]; then continue; fi
       if [ -n "$WTID_OWNER" ] || [ -n "$WTID_OWNER_PID" ]; then
         owner="$WTID_OWNER"; pid="$WTID_OWNER_PID"; pid_start="$WTID_OWNER_PID_START"; released="$WTID_OWNER_RELEASED_AT"
+        claimed="$WTID_OWNER_CLAIMED_AT"
         break
       fi
     done
@@ -670,6 +680,7 @@ _wtid_resolve_owner() {
   WTID_HEAD_SHA="$keep_head"; WTID_STAMPED_AT="$keep_era"; WTID_WT_DIR="$keep_wt"
   WTID_OWNER="$owner"; WTID_OWNER_SESSION="$owner"
   WTID_OWNER_PID="$pid"; WTID_OWNER_PID_START="$pid_start"; WTID_OWNER_RELEASED_AT="$released"
+  WTID_OWNER_CLAIMED_AT="$claimed"
 }
 
 # Adjudicate the liveness of <wt_dir>'s owning session. Runs wt_identity_load for the structural identity and then _wtid_resolve_owner for the owner tuple,
@@ -718,6 +729,68 @@ wt_owner_alive() {
     fi
   fi
   WTID_OWNER_ALIVE="alive"
+  return 0
+}
+
+# Cross-tier ownership-contest signal (BF-575). Run after wt_owner_alive; leaves its resolved tuple intact.
+# Sets WTID_OWNER_CONTEST=0|1 and WTID_OWNER_CONTEST_DETAIL (one line naming the rival tier and both claims).
+#
+# A contest is config's owner claim standing UNWITNESSED against a rival: some readable, path-matched sidecar
+# records a DIFFERENT owner whose claim epoch is equal-or-newer than config's (-ge, never -gt — stamped-at is
+# frozen across reuse, so a seizure that leaves the epochs alone is only visible on equality), AND no readable
+# sidecar corroborates config's exact owner+epoch pair. The corroborator is a same-stamp witness: a real
+# takeover's own stamp writes the new claim to the sidecars in the same call, so its claim never stands alone —
+# which is also what keeps a same-second takeover (rival epoch EQUAL by clock, not by seizure) out of the
+# signal. The three states TIER_DISSENT conflates separate here: a seizure contests; an interrupted disown
+# never does (same owner on every tier — only pid/release fields differ); an ordinary stale tier never does
+# (its claim epoch is older than the corroborated current one).
+#
+# SUBORDINATE TO LIVENESS by contract: this signal refines messaging and reporting; admission decisions stay
+# on wt_owner_alive's verdict, and no consumer may park or relabel a worktree on contest alone — a worktree
+# whose owner is merely gone must stay takeoverable (the stranding that killed BF-546's OWNER_DISSENT gate).
+# Residuals, stated: a seizure that also forges a NEWER claim epoch mimics supersession here (it still trips
+# TIER_DISSENT structurally), and a stamp whose sidecar writes all failed leaves its honest claim unwitnessed —
+# both are the two-coordinated-writes / degraded-tier states BF-546 accepts, each loudly warned at stamp time.
+wt_owner_contest() {
+  local wt_dir="$1" issue_lower="${2-}" name main_root f
+  WTID_OWNER_CONTEST=0; WTID_OWNER_CONTEST_DETAIL=""
+  local keep_issue="$WTID_ISSUE" keep_branch="$WTID_BRANCH" keep_src="$WTID_SOURCE_BRANCH" keep_base="$WTID_BASELINE"
+  local keep_head="$WTID_HEAD_SHA" keep_era="$WTID_STAMPED_AT" keep_wt="$WTID_WT_DIR"
+  local keep_owner="$WTID_OWNER" keep_sess="$WTID_OWNER_SESSION" keep_pid="$WTID_OWNER_PID"
+  local keep_pid_start="$WTID_OWNER_PID_START" keep_rel="$WTID_OWNER_RELEASED_AT" keep_claim="$WTID_OWNER_CLAIMED_AT"
+  local cfg_owner cfg_claim rival_tier="" rival_owner="" rival_claim="" witnessed=0 tier
+  [ -z "$issue_lower" ] && issue_lower=$(basename "$wt_dir")
+  # The comparison base is config ITSELF — the seizable tier the contest is about — never the resolved
+  # tuple, which may have been completed from a sidecar precisely when config is torn.
+  _wtid_read_config "$wt_dir"
+  cfg_owner="$WTID_OWNER"; cfg_claim="$WTID_OWNER_CLAIMED_AT"
+  if [ -n "$cfg_owner" ]; then
+    name=$(_wtid_sidecar_name "$issue_lower")
+    main_root=$(_wtid_main_root "$wt_dir" || true)
+    for f in ${CLAUDE_JOB_DIR:+"$CLAUDE_JOB_DIR/$name"} ${main_root:+"$main_root/.claude/worktree-identity/$name"}; do
+      [ -f "$f" ] || continue
+      _wtid_read_sidecar "$f"
+      _wtid_tier_readable || continue
+      _wtid_sidecar_matches "$wt_dir" || continue
+      [ -n "$WTID_OWNER" ] || continue
+      # The guard default can never prefix a real path: with CLAUDE_JOB_DIR unset the pattern would
+      # otherwise degenerate to /* and label the repo-fallback tier job-dir in the detail line.
+      case "$f" in "${CLAUDE_JOB_DIR:-/dev/null/none}"/*) tier="job-dir" ;; *) tier="repo-fallback" ;; esac
+      if [ "$WTID_OWNER" = "$cfg_owner" ]; then
+        [ "$WTID_OWNER_CLAIMED_AT" = "$cfg_claim" ] && witnessed=1
+      elif [ "$(_wtid_era_num "$WTID_OWNER_CLAIMED_AT")" -ge "$(_wtid_era_num "$cfg_claim")" ]; then
+        rival_tier="$tier"; rival_owner="$WTID_OWNER"; rival_claim="$WTID_OWNER_CLAIMED_AT"
+      fi
+    done
+    if [ -n "$rival_owner" ] && [ "$witnessed" = 0 ]; then
+      WTID_OWNER_CONTEST=1
+      WTID_OWNER_CONTEST_DETAIL="$rival_tier records owner '$rival_owner' (claimed ${rival_claim:-unrecorded}) against config's unwitnessed '$cfg_owner' (claimed ${cfg_claim:-unrecorded})"
+    fi
+  fi
+  WTID_ISSUE="$keep_issue"; WTID_BRANCH="$keep_branch"; WTID_SOURCE_BRANCH="$keep_src"; WTID_BASELINE="$keep_base"
+  WTID_HEAD_SHA="$keep_head"; WTID_STAMPED_AT="$keep_era"; WTID_WT_DIR="$keep_wt"
+  WTID_OWNER="$keep_owner"; WTID_OWNER_SESSION="$keep_sess"; WTID_OWNER_PID="$keep_pid"
+  WTID_OWNER_PID_START="$keep_pid_start"; WTID_OWNER_RELEASED_AT="$keep_rel"; WTID_OWNER_CLAIMED_AT="$keep_claim"
   return 0
 }
 
@@ -772,9 +845,9 @@ wt_identity_owner() {
 }
 
 # Write one sidecar .env into <dir>. Echoes the path on success; non-zero on failure.
-# Args: dir issue_id branch source_branch baseline wt_abs owner created_at [owner_pid] [owner_pid_start] [head_sha] [stamped_at]
+# Args: dir issue_id branch source_branch baseline wt_abs owner created_at [owner_pid] [owner_pid_start] [head_sha] [stamped_at] [owner_claimed_at]
 _wtid_write_sidecar() {
-  local dir="$1" issue_id="$2" branch="$3" source_branch="$4" baseline="$5" wt_abs="$6" owner="$7" created_at="$8" owner_pid="$9" owner_pid_start="${10}" head_sha="${11}" stamped_at="${12}"
+  local dir="$1" issue_id="$2" branch="$3" source_branch="$4" baseline="$5" wt_abs="$6" owner="$7" created_at="$8" owner_pid="$9" owner_pid_start="${10}" head_sha="${11}" stamped_at="${12}" owner_claimed_at="${13-}"
   local issue_lower path tmp
   issue_lower=$(printf '%s' "$issue_id" | tr '[:upper:]' '[:lower:]')
   path="$dir/wt-identity-${issue_lower}.env"
@@ -795,6 +868,7 @@ _wtid_write_sidecar() {
     printf 'WT_IDENTITY_CREATED_AT=%s\n' "$created_at"
     printf 'WT_IDENTITY_OWNER_PID=%s\n' "$owner_pid"
     printf 'WT_IDENTITY_OWNER_PID_START=%s\n' "$owner_pid_start"
+    printf 'WT_IDENTITY_OWNER_CLAIMED_AT=%s\n' "$owner_claimed_at"
   # stderr is silenced BEFORE the file redirection, not after: redirections apply left to right, so the other
   # order lets the shell's own "Permission denied" for $tmp escape to the caller's stderr.
   } 2>/dev/null > "$tmp" || { rm -f "$tmp" 2>/dev/null; return 1; }
@@ -850,6 +924,12 @@ wt_identity_stamp() {
   WTID_STAMP_STAMPED_AT=${WTID_STAMP_STAMPED_AT_OVERRIDE:-$(date +%s)}
   # Override lets a RE-stamp (wt-restamp.sh) keep the worktree's original creation time.
   WTID_STAMP_CREATED_AT=${WTID_STAMP_CREATED_AT_OVERRIDE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
+  # The ownership claim epoch (BF-575): when THIS stamp asserted the owner tuple. Deliberately decoupled
+  # from stamped-at, which is FROZEN across reuse as wt-restamp's audit anchor — the freeze is what made a
+  # legitimate takeover and a config seizure byte-identical on every persisted field. No override is
+  # honored, ever: an overridable claim epoch would be freezable, restoring exactly that blindness, and a
+  # forged-future value already sorts to 0 through _wtid_era_num on the read side.
+  WTID_STAMP_OWNER_CLAIMED_AT=$(date +%s)
   WTID_STAMP_SIDECAR=""
   WTID_STAMP_OWNER_PID=$(wtid_harness_pid || true)
   WTID_STAMP_OWNER_PID_START=""
@@ -886,6 +966,9 @@ wt_identity_stamp() {
   else
     _wtid_unstamp_cfg "$wt_dir" start.owner-session || cfg_rc=1
   fi
+  # The claim epoch is written unconditionally — even a carried-forward or ownerless stamp re-asserts
+  # whatever tuple it writes, and the contest comparison requires both owners non-empty anyway.
+  _wtid_stamp_cfg "$wt_dir" start.owner-claimed-at "$WTID_STAMP_OWNER_CLAIMED_AT" || cfg_rc=1
   # Every stamp revokes a prior release: a claimed worktree must never read released. Unset BEFORE the pid write —
   # a crash between the two leaves no-released + no-pid = unknown, which automation treats as hands-off.
   _wtid_unstamp_cfg "$wt_dir" start.owner-released-at || cfg_rc=1
@@ -902,7 +985,7 @@ wt_identity_stamp() {
   # behavior at /finish rather than failing setup).
   local p main_root
   if [ -n "${CLAUDE_JOB_DIR:-}" ] && [ -d "${CLAUDE_JOB_DIR}" ]; then
-    if p=$(_wtid_write_sidecar "$CLAUDE_JOB_DIR" "$issue_id" "$branch" "$source_branch" "$baseline" "$wt_abs" "$WTID_STAMP_OWNER" "$WTID_STAMP_CREATED_AT" "$WTID_STAMP_OWNER_PID" "$WTID_STAMP_OWNER_PID_START" "$WTID_STAMP_HEAD_SHA" "$WTID_STAMP_STAMPED_AT"); then
+    if p=$(_wtid_write_sidecar "$CLAUDE_JOB_DIR" "$issue_id" "$branch" "$source_branch" "$baseline" "$wt_abs" "$WTID_STAMP_OWNER" "$WTID_STAMP_CREATED_AT" "$WTID_STAMP_OWNER_PID" "$WTID_STAMP_OWNER_PID_START" "$WTID_STAMP_HEAD_SHA" "$WTID_STAMP_STAMPED_AT" "$WTID_STAMP_OWNER_CLAIMED_AT"); then
       WTID_STAMP_SIDECAR="$p"
     else
       echo "WARN: could not write identity sidecar under \$CLAUDE_JOB_DIR ($CLAUDE_JOB_DIR)" >&2
@@ -917,7 +1000,7 @@ wt_identity_stamp() {
     if mkdir -p "$id_dir" 2>/dev/null && [ ! -f "$id_dir/.gitignore" ]; then
       printf '*\n' > "$id_dir/.gitignore" 2>/dev/null || true
     fi
-    if p=$(_wtid_write_sidecar "$id_dir" "$issue_id" "$branch" "$source_branch" "$baseline" "$wt_abs" "$WTID_STAMP_OWNER" "$WTID_STAMP_CREATED_AT" "$WTID_STAMP_OWNER_PID" "$WTID_STAMP_OWNER_PID_START" "$WTID_STAMP_HEAD_SHA" "$WTID_STAMP_STAMPED_AT"); then
+    if p=$(_wtid_write_sidecar "$id_dir" "$issue_id" "$branch" "$source_branch" "$baseline" "$wt_abs" "$WTID_STAMP_OWNER" "$WTID_STAMP_CREATED_AT" "$WTID_STAMP_OWNER_PID" "$WTID_STAMP_OWNER_PID_START" "$WTID_STAMP_HEAD_SHA" "$WTID_STAMP_STAMPED_AT" "$WTID_STAMP_OWNER_CLAIMED_AT"); then
       [ -z "$WTID_STAMP_SIDECAR" ] && WTID_STAMP_SIDECAR="$p"
     else
       echo "WARN: could not write repo-level identity sidecar under $id_dir" >&2

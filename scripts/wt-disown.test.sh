@@ -732,7 +732,7 @@ stamp_job "$WT" sess-A "$SLEEPER" "$SCRUB_JOB"
 
 ck "sess-A" "$(cfg start.owner-session)" "the fixture really does have an owner to publish"
 ck "issue-branch" "$(probe "$SCRUB_JOB" WTID_BRANCH)" "the load still returns the structural identity"
-for f in WTID_OWNER WTID_OWNER_SESSION WTID_OWNER_PID WTID_OWNER_PID_START WTID_OWNER_RELEASED_AT; do
+for f in WTID_OWNER WTID_OWNER_SESSION WTID_OWNER_PID WTID_OWNER_PID_START WTID_OWNER_RELEASED_AT WTID_OWNER_CLAIMED_AT; do
   ck "" "$(probe "$SCRUB_JOB" "$f")" "the load leaves $f empty"
 done
 ck "sess-A" "$(owner_probe "$SCRUB_JOB" WTID_OWNER_SESSION)" "only the ownership adjudicator fills the tuple in"
@@ -768,6 +768,123 @@ drun sess-A "$WT"
 ck "0" "$RC" "owner disown exits 0"
 ck "" "$(cfg start.owner-pid-start)" "and clears owner-pid-start, not just owner-pid"
 ck "" "$(owner_field TIER_DISSENT)" "so the released worktree corroborates rather than dissents"
+
+# --- Part 23: the ownership claim epoch — every tier, never overridable, the frozen pair untouched ---
+# BF-575: start.stamped-at is FROZEN across every reuse (it anchors wt-restamp's preservation audit),
+# which made a legitimate takeover and a config seizure byte-identical on every persisted field. The
+# claim epoch is ownership's own recency: advanced by every stamp, decoupled from the era anchor, and
+# honoring NO override — an overridable claim epoch would be freezable, the exact property that made
+# stamped-at unusable for ownership.
+spawn_sleeper
+setup claimepoch sess-A "$SLEEPER"
+CE_JOB="$TMP/claimepoch/job/sess-A"
+stamp_job "$WT" sess-A "$SLEEPER" "$CE_JOB"
+claim1=$(cfg start.owner-claimed-at)
+ck "1" "$([ -n "$claim1" ] && echo 1 || echo 0)" "a stamp writes the claim epoch to git config"
+ck "$claim1" "$(sed -n 's/^WT_IDENTITY_OWNER_CLAIMED_AT=//p' "$SIDE" | head -1)" "and the same value to the repo-fallback sidecar"
+ck "$claim1" "$(sed -n 's/^WT_IDENTITY_OWNER_CLAIMED_AT=//p' "$CE_JOB/wt-identity-test-1.env" | head -1)" "and to the job-dir sidecar"
+
+head_before=$(cfg start.head-sha)
+era_before=$(cfg start.stamped-at)
+real_start sess-A
+ck "0" "$RC" "the owner's reuse through the real create succeeds"
+ck "$head_before" "$(cfg start.head-sha)" "reuse keeps head-sha frozen (the restamp anchor)"
+ck "$era_before" "$(cfg start.stamped-at)" "and stamped-at frozen (the era that anchor opens)"
+claim2=$(cfg start.owner-claimed-at)
+ck "1" "$([ -n "$claim2" ] && [ "$claim2" -ge "$claim1" ] && echo 1 || echo 0)" "while the claim epoch is re-asserted, decoupled from the frozen pair"
+
+# The override seam that freezes the pair must not reach the claim epoch.
+env "CLAUDE_SESSION_ID=sess-A" "WTID_STAMP_OWNER_CLAIMED_AT_OVERRIDE=9999999999" bash -c "
+  set -e; . '$IDLIB'
+  base=\$(git -C '$WT' merge-base issue-branch main)
+  wt_identity_stamp '$WT' '$WT' test-1 issue-branch main \"\$base\" >/dev/null"
+ck "1" "$([ "$(cfg start.owner-claimed-at)" != "9999999999" ] && echo 1 || echo 0)" "the claim epoch honors no override"
+
+claim3=$(cfg start.owner-claimed-at)
+drun sess-A "$WT"
+ck "0" "$RC" "owner disown exits 0"
+ck "$claim3" "$(cfg start.owner-claimed-at)" "a release leaves the claim epoch intact in config — a release is not a new claim"
+ck "$claim3" "$(sed -n 's/^WT_IDENTITY_OWNER_CLAIMED_AT=//p' "$SIDE" | head -1)" "and intact in the sidecar the release rewrote"
+
+# --- Part 24: the claim epoch separates a config seizure from a legitimate takeover (BF-546's killed repro) ---
+# The two states are byte-identical on every pre-BF-575 field: stamped-at is frozen, so in both a
+# different-owner tier carries an era equal to config's. The contest rule breaks the tie two ways: a
+# rival counts on an EQUAL-or-newer claim epoch (-ge, never -gt — a seizure that leaves the epoch alone
+# is only visible on equality), and config's claim is cleared by a same-stamp witness — a sidecar
+# recording the same owner AND the same claim epoch, which only the takeover's own stamp writes, and
+# which also keeps a same-second takeover from reading as a contest.
+spawn_sleeper
+setup contest sess-A "$SLEEPER"
+CT_JOB_A="$TMP/contest/job/sess-A"
+stamp_job "$WT" sess-A "$SLEEPER" "$CT_JOB_A"
+git -C "$WT" config --worktree start.owner-session sess-EVIL
+seize_rep=$(env "CLAUDE_JOB_DIR=$CT_JOB_A" "$DIR/wt-owner.sh" "$WT" 2>/dev/null)
+ck "1" "$(printf '%s\n' "$seize_rep" | sed -n 's/^OWNER_CONTEST=//p')" "a config-write seizure raises the contest signal"
+ck_has "sess-A" "$(printf '%s\n' "$seize_rep" | sed -n 's/^OWNER_CONTEST_DETAIL=//p')" "and the detail names the rival owner the seized tier displaced"
+
+spawn_dead
+setup handoff sess-A "$DEAD"
+HO_JOB_A="$TMP/handoff/job/sess-A"; HO_JOB_B="$TMP/handoff/job/sess-B"
+stamp_job "$WT" sess-A "$DEAD" "$HO_JOB_A"
+reap_dead
+mkdir -p "$HO_JOB_B"
+# Driven through the REAL create: a direct wt_identity_stamp here would advance the era and certify a
+# code path production never takes — how BF-546's first attempt passed while the bug reproduced.
+OUT=$(cd "$REPO" && env "CLAUDE_SESSION_ID=sess-B" "CLAUDE_JOB_DIR=$HO_JOB_B" \
+  "$DIR/start-wt-create.sh" test-1 test-1 issue-branch main "$WT" 2>"$TMP/stderr.txt"); RC=$?
+ck "0" "$RC" "the dead-owner takeover is admitted (exit 0)"
+ck "$(cfg start.stamped-at)" "$(sed -n 's/^WT_IDENTITY_STAMPED_AT=//p' "$HO_JOB_A/wt-identity-test-1.env" | head -1)" "sanity: the superseded tier's era EQUALS config's — the pre-BF-575 fields really cannot separate the states"
+ho_b=$(env "CLAUDE_JOB_DIR=$HO_JOB_B" "$DIR/wt-owner.sh" "$WT" 2>/dev/null)
+ck "0" "$(printf '%s\n' "$ho_b" | sed -n 's/^OWNER_CONTEST=//p')" "no contest from the resumer's seat"
+ho_a=$(env "CLAUDE_JOB_DIR=$HO_JOB_A" "$DIR/wt-owner.sh" "$WT" 2>/dev/null)
+ck "0" "$(printf '%s\n' "$ho_a" | sed -n 's/^OWNER_CONTEST=//p')" "and none from the superseded owner's seat — an older rival claim is supersession"
+ck "job-dir" "$(printf '%s\n' "$ho_a" | sed -n 's/^TIER_DISSENT=//p')" "while the stale tier still dissents structurally — dissent and contest are now separate signals"
+
+# The same-second takeover: the rival's claim epoch EQUALS config's by clock coincidence, not by seizure —
+# the state a takeover landing inside the stamp's second leaves naturally (BF-578's straddle lesson applied
+# to the claim epoch, which honors no pin). Synthesized deterministically by rewinding both of the
+# takeover's own tiers to the superseded claim's epoch; the same-stamp witness is what keeps it out of the
+# signal, since on equality the -ge rival test alone cannot.
+a_claim=$(sed -n 's/^WT_IDENTITY_OWNER_CLAIMED_AT=//p' "$HO_JOB_A/wt-identity-test-1.env" | head -1)
+git -C "$WT" config --worktree start.owner-claimed-at "$a_claim"
+sed "s/^WT_IDENTITY_OWNER_CLAIMED_AT=.*/WT_IDENTITY_OWNER_CLAIMED_AT=$a_claim/" "$SIDE" > "$SIDE.new" && mv "$SIDE.new" "$SIDE"
+ho_same=$(env "CLAUDE_JOB_DIR=$HO_JOB_A" "$DIR/wt-owner.sh" "$WT" 2>/dev/null)
+ck "0" "$(printf '%s\n' "$ho_same" | sed -n 's/^OWNER_CONTEST=//p')" "a same-second takeover is witnessed by its own stamp — equal epochs alone are not a seizure"
+
+# --- Part 25: an interrupted disown dissents but never contests — same owner on every tier ---
+spawn_sleeper
+setup halfdisown sess-A "$SLEEPER"
+HD_JOB="$TMP/halfdisown/job/sess-A"
+stamp_job "$WT" sess-A "$SLEEPER" "$HD_JOB"
+chmod a-w "$REPO/.claude/worktree-identity"
+drun sess-A "$WT"
+ck "2" "$RC" "the blocked sidecar fails the disown loudly (exit 2)"
+hd=$(env "CLAUDE_JOB_DIR=$HD_JOB" "$DIR/wt-owner.sh" "$WT" 2>/dev/null)
+ck "released" "$(printf '%s\n' "$hd" | sed -n 's/^OWNER_ALIVE=//p')" "config's release took"
+ck "1" "$([ -n "$(printf '%s\n' "$hd" | sed -n 's/^TIER_DISSENT=//p')" ] && echo 1 || echo 0)" "the un-rewritten tiers dissent"
+ck "0" "$(printf '%s\n' "$hd" | sed -n 's/^OWNER_CONTEST=//p')" "but the same owner on every tier is never a contest"
+chmod -R u+rwx "$REPO/.claude/worktree-identity" 2>/dev/null || true
+
+# --- Part 26: fresh and never-stamped worktrees are trivially contest-free, and the keys always emit ---
+# Parsed BY KEY like Part 17's pair: a key emitted only when something is wrong is indistinguishable
+# from a key whose value is empty.
+spawn_sleeper
+setup freshclean sess-A "$SLEEPER"
+FC_JOB="$TMP/freshclean/job/sess-A"
+stamp_job "$WT" sess-A "$SLEEPER" "$FC_JOB"
+fc=$(env "CLAUDE_JOB_DIR=$FC_JOB" "$DIR/wt-owner.sh" "$WT" 2>/dev/null)
+ck "1" "$(printf '%s\n' "$fc" | grep -c '^OWNER_CONTEST=')" "a clean report still carries the OWNER_CONTEST key"
+ck "1" "$(printf '%s\n' "$fc" | grep -c '^OWNER_CLAIMED_AT=')" "and the OWNER_CLAIMED_AT key"
+ck "0" "$(printf '%s\n' "$fc" | sed -n 's/^OWNER_CONTEST=//p')" "a freshly stamped worktree carries no contest"
+ck "" "$(printf '%s\n' "$fc" | sed -n 's/^TIER_DISSENT=//p')" "and no dissent"
+
+w="$TMP/nostampcontest"; REPO="$w/repo"; WT="$w/test-1"
+mkdir -p "$w"
+git init -q -b main "$REPO"
+git -C "$REPO" config extensions.worktreeConfig true
+( cd "$REPO" && echo base > base.txt && $G add base.txt && $G commit -qm "R: root" ) >/dev/null
+git -C "$REPO" worktree add -q "$WT" -b issue-branch
+ck "0" "$("$DIR/wt-owner.sh" "$WT" 2>/dev/null | sed -n 's/^OWNER_CONTEST=//p')" "a never-stamped worktree has no claim to contest"
 
 
 echo

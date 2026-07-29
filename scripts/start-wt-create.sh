@@ -96,21 +96,28 @@ if [ -d "$wt_dir" ]; then
   # legacy/unstamped worktrees keeps working) and the stamp below re-records ownership and revokes any release marker.
   # Same-session is decided by wt_owner_is_me (session ids first — in a `claude agents` fleet every session shares one root harness pid).
   wt_owner_alive "$wt_dir" || true
+  wt_owner_contest "$wt_dir"
   if [ "$WTID_OWNER_ALIVE" = "alive" ] && ! wt_owner_is_me; then
     echo "ERROR: worktree '$wt_dir' is owned by another live session (session '${WTID_OWNER_SESSION:-unknown}', harness pid $WTID_OWNER_PID, started ${WTID_OWNER_PID_START:-unknown}); refusing to reuse it. If that session should not own this issue, stop it first — otherwise let it finish." >&2
     # Without the dissenting tiers a forged lockout reads exactly like an honest one.
     echo "  Identity tiers: corroboration $WTID_CORROBORATION${WTID_TIER_DISSENT:+, dissenting: $WTID_TIER_DISSENT}." >&2
-    if [ -n "$WTID_TIER_DISSENT" ]; then
+    if [ "$WTID_OWNER_CONTEST" = "1" ]; then
+      echo "  OWNERSHIP CONTEST: $WTID_OWNER_CONTEST_DETAIL. This is the seizure signature — the refusing claim was never witnessed by a sidecar stamp. Verify with ~/.claude/scripts/wt-owner.sh '$wt_dir' before treating this refusal as legitimate." >&2
+    elif [ -n "$WTID_TIER_DISSENT" ]; then
       echo "  Ownership is read from per-worktree git config alone, so a dissent here means the other tiers record a DIFFERENT identity: verify with ~/.claude/scripts/wt-owner.sh '$wt_dir' before assuming the refusal is correct." >&2
     fi
     exit 4
   fi
   # The other direction of the same single-tier authority, and the unrecoverable one: admitting this session on a
-  # config tuple another tier contradicts. Nothing else reports it. A WARN and not a refusal: the same dissent is
-  # left by an interrupted disown and by an ordinary stale tier, and refusing there would strand a worktree whose
-  # owner is merely gone — the failure this guard exists to avoid is two live sessions, not an untidy tier.
+  # config tuple another tier contradicts. Nothing else reports it. A WARN and not a refusal — even on a contest:
+  # the admit/refuse decision stays on the liveness verdict alone (wt_owner_contest's subordination contract), and
+  # refusing on tier state would strand a worktree whose owner is merely gone — the failure this guard exists to
+  # avoid is two live sessions, not an untidy tier. The contest line upgrades the message, never the decision.
   if [ -n "$WTID_TIER_DISSENT" ]; then
     echo "WARN: reusing '$wt_dir' on a '$WTID_OWNER_ALIVE' owner verdict while identity tiers disagree (corroboration $WTID_CORROBORATION; dissenting: $WTID_TIER_DISSENT). Ownership is read from git config alone; if that tier was seized or partially written, another session may still be working here." >&2
+    if [ "$WTID_OWNER_CONTEST" = "1" ]; then
+      echo "  OWNERSHIP CONTEST: $WTID_OWNER_CONTEST_DETAIL — the config claim being replaced by this reuse was never witnessed by a sidecar stamp (the seizure signature, not an interrupted disown or a stale tier)." >&2
+    fi
   elif [ "${WTID_CORROBORATION#*/}" = "1" ]; then
     # Absence of evidence, not evidence of absence: with one readable tier nothing CAN dissent, so the quietest
     # report is also the weakest identity — and it is the state a config-only seizure is invisible in.
@@ -177,10 +184,12 @@ fi
 # file cannot show: ownership (the reuse guard above) is read from git config ALONE, so a config-only write can
 # seize this worktree, and the guard refuses only on `alive` — a planted release marker or dead pid is ADMITTED,
 # which puts two sessions in one worktree. Nothing here arbitrates that away; the mitigation is that it cannot
-# happen quietly, so the dissent WARNs above are load-bearing and must not be dropped. Their two blind spots,
-# stated because silence from them is not safety: a torn config naming a session no surviving sidecar names
-# still resolves `unknown` and is admitted (it does now dissent, so the WARN fires), and a single readable tier
-# has nothing that could contest it at all.
+# happen quietly, so the dissent WARNs above are load-bearing and must not be dropped, and the ownership-contest
+# lines (wt_owner_contest, BF-575) name the seizure shape specifically — messaging only, never the decision.
+# The blind spots, stated because silence from them is not safety: a torn config naming a session no surviving
+# sidecar names still resolves `unknown` and is admitted (it does now dissent, so the WARN fires); a single
+# readable tier has nothing that could contest it at all; and a seizure that also forges a NEWER claim epoch
+# reads as supersession to the contest signal (it still dissents structurally).
 prior_baseline=""
 prior_head_sha=""
 prior_stamped_at=""

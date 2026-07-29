@@ -846,7 +846,7 @@ ck "yes" "$(isodate "$(cfg start.created-at)")" "an empty created-at override fa
 mkrepo stampformat
 stamp_env "CLAUDE_SESSION_ID=sess-A CLAUDE_HARNESS_PID=999999" "$WT"
 ck "WT_IDENTITY_VERSION=1" "$(head -1 "$SIDE")" "the sidecar declares its format version first"
-ck "VERSION ISSUE BRANCH SOURCE_BRANCH BASELINE_SHA HEAD_SHA STAMPED_AT WT_DIR OWNER CREATED_AT OWNER_PID OWNER_PID_START" \
+ck "VERSION ISSUE BRANCH SOURCE_BRANCH BASELINE_SHA HEAD_SHA STAMPED_AT WT_DIR OWNER CREATED_AT OWNER_PID OWNER_PID_START OWNER_CLAIMED_AT" \
    "$(sed 's/^WT_IDENTITY_//; s/=.*//' "$SIDE" | tr '\n' ' ' | sed 's/ $//')" "the sidecar carries exactly the stamped key set, in order"
 ck "0" "$(grep -c '^WT_IDENTITY_OWNER_RELEASED_AT=' "$SIDE" || true)" "a stamp never writes a release marker into the sidecar"
 
