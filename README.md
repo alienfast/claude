@@ -159,6 +159,7 @@ Automated multi-step workflows invoked by trigger phrases or slash commands.
 | [finish](skills/finish/) | Finish an issue — read verdict, commit/push, mark Ready For Release |
 | [full](skills/full/) | End-to-end macro: `/start` → `/quality-review` → `/finish`, gated on verdict |
 | [auto](skills/auto/) | Autonomous backlog iteration — ships one issue per invocation; run continuously as `/loop /auto` (see [Autonomous](#autonomous-auto)) |
+| [auto-prep](skills/auto-prep/) | Fleet prep before parallel `/loop /auto` sessions — audit `specified` labels for unattended-shippability, wire `blocks` edges between file-colliding candidates, recommend a session count |
 | [next](skills/next/) | Suggest best next issue using cycle, dependency, and triage signals |
 | [triage](skills/triage/) | Analyze backlog for staleness, blockers, and priority suggestions |
 | [prd](skills/prd/) | Create agent-friendly tickets with PRDs and success criteria |
