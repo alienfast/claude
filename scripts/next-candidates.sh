@@ -238,7 +238,9 @@ me_email=$(linear-cli api query -q -o json 'query{viewer{email}}' 2>/dev/null | 
 
 # ---------- jq pipeline: workable filter + tiering ----------
 
-# State sets — keep terminal states defensive across teams.
+# State sets — keep terminal states defensive across teams. Terminal matching is
+# case-insensitive: workspaces vary the casing (BF's state is "Ready for Release"),
+# and an exact match silently treats a shipped blocker as unresolved forever.
 TERMINAL_STATES='["Done","Canceled","Cancelled","Duplicate","Ready For Release"]'
 # Triage (Linear's `type: "triage"` state) is deliberately NOT workable: it's the unreviewed-inbox
 # bucket, so an issue there hasn't been accepted for work yet and must never be surfaced as "next".
@@ -317,7 +319,7 @@ if [ -n "$completed" ]; then
           | bfs($fresh; ($visited + $fresh) | unique)
         end;
       [bfs([$root]; []) | .[] | select(. != $root)]
-      | map(select(($sm[.] // "Unknown") as $s | ($terminal | index($s)) == null))
+      | map(select(($sm[.] // "Unknown") as $s | (($terminal | map(ascii_downcase)) | index($s | ascii_downcase)) == null))
     ' > "$newly_unblocked_file"
 else
   printf '[]' > "$newly_unblocked_file"
@@ -368,7 +370,7 @@ candidates_json=$(jq \
       . as $i
       | (.identifier) as $id
       | ($bm[$id] // []) as $blockers
-      | ($blockers | map(select(($sm[.] // "Unknown") as $s | ($terminal | index($s)) == null))) as $unresolved
+      | ($blockers | map(select(($sm[.] // "Unknown") as $s | (($terminal | map(ascii_downcase)) | index($s | ascii_downcase)) == null))) as $unresolved
       | select((($workable | index($i.state)) != null) or (($triage == "1") and ($i.state_type == "triage")))
       | select(($blocked == "1") or ($unresolved | length == 0))
       # any() over an empty label array is false and all() is true, so unlabeled issues
