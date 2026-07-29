@@ -53,6 +53,10 @@ Auth: `linear-cli auth oauth` (browser) or `LINEAR_API_KEY`; check with `linear-
 
    Not `.[].body` — iterating the top level hits the `id`/`title` strings and errors with `Cannot index string with string`. Passing **multiple** IDs returns an ARRAY of those objects; use `-o ndjson` and keep the same per-line filter.
 
+10. **`relations add -r blocked-by` 400s in every published version through 0.3.27** — `IssueRelationType` has no `blockedBy` member (Linear models blocking as one *directed* `blocks`), and the CLI serializes the flag straight through. Fixed upstream on `master` (PR #37, 2026-07-18) but **unreleased**: crates.io `0.3.27` was published 2026-06-26, three weeks earlier ([#42](https://github.com/nesszer/linear-cli/issues/42)). Until a `0.3.28` ships, always express blocking as `relations add <BLOCKER> <BLOCKED> -r blocks`. `blocks`, `related` and `duplicate` all work.
+
+11. **`Argument Validation Error` means a malformed identifier reached the API — suspect your shell, not the CLI.** Linear returns this generic GraphQL error when an issue key is empty or isn't a key, so a batched loop that mangles its arguments looks exactly like a broken command. The usual cause is a bash idiom in **zsh**, which does not word-split unquoted expansions: `for pair in "A B"; do set -- $pair` leaves `$1="A B"` and `$2=""` (bash gives `$1=A`, `$2=B`). Before reporting a CLI bug, echo the arguments and retry one pair by hand.
+
 ## Command map
 
 ```bash
@@ -66,7 +70,8 @@ linear-cli issues comment <ID> --body -       # add a comment (body via stdin)
 
 # Comments / relations / search / statuses
 linear-cli comments list <ID> -o json         # STANDALONE only (gotcha #1); -o json is REQUIRED — see gotcha #9
-linear-cli relations add <BLOCKER> <BLOCKED> -r blocks   # "A blocked by B" = relations add B A -r blocks (the blocked-by enum is broken on 0.3.26); also -r related|duplicate
+linear-cli relations add <BLOCKER> <BLOCKED> -r blocks   # "A blocked by B" = relations add B A -r blocks (-r blocked-by 400s in every PUBLISHED version through 0.3.27 — see gotcha #10); also -r related|duplicate
+linear-cli relations remove <RELATION-UUID>              # takes the relation id (from relations list -o json), NOT the two issue keys
 linear-cli relations parent <CHILD> <PARENT>             # set parent after create (issues create has no --parent flag; or set parentId via --data)
 linear-cli search issues "<query>" [--filter 'state.name=Backlog']   # workspace-wide; NO --team flag (use `issues list --team` to scope)
 linear-cli statuses list -t <KEY>
