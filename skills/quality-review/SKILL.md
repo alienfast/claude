@@ -486,12 +486,30 @@ body_file=$(mktemp -u tmp/deferred-XXXXXX)   # -u = name only; Write creates it.
 #    instead would queue them for re-evaluation that's already been done.
 #    If no issue was resolved in Step 1, pass "-" as the parent (a top-level issue) —
 #    do not invent a parent.
-# 3. Final arg — the label: pass `specified` ONLY for severity-carrying items (their
+# 3. Label arg (comma-separated): `specified` ONLY for severity-carrying items (their
 #    spec-shaped bodies self-certify, making them /auto-eligible immediately); pass "-"
 #    (or omit it) for every ordinary item — defer-as-issue items cleared gate 3 precisely
 #    because they need a design/strategy decision, so they go through /spec grooming
-#    before certification.
-new_id=$(~/.claude/scripts/linear-create-child.sh <ISSUE-ID> <team> Planned "<short title>" "$body_file" <specified|->)
+#    before certification. ALSO classify severity-carrying items by failure mode and
+#    append the class label(s) /next's ranking reads (security > bug > everything else).
+#    The two are independent — apply each that fits, either, or, or both:
+#      - `security` — unauthorized access/disclosure, viewer-scoping leak, PII exposure,
+#        or a cross-boundary write (e.g. a preview reaching a production vendor) —
+#        including latent ones a code change would make reachable
+#      - `bug` — a behavioral defect of shipped code (wrong output, race, silent failure);
+#        a live security defect is both (e.g. "specified,security,bug")
+#      - neither — coverage gaps, hardening, docs: real work, but it must not jump the
+#        queue disguised as a defect
+# 4. Priority arg — REQUIRED for severity-carrying items: map the finding's severity to
+#    the Linear priority field (Critical → 1, High → 2, Medium → 3); pass "-" for
+#    ordinary items. A severity rendered only in the title tag or body prose is invisible
+#    to /next's priority_rank — the field is what the ranking reads (BF-583: filings said
+#    "Severity is High" while the issue sat at priority None).
+# 5. Title: NO severity prefix — never "[MEDIUM] <title>". The severity tag belongs to
+#    the sub-step 6 render (the prompt display), not the filed title: the priority field
+#    now carries the grade, and a tag baked into the title duplicates it and goes stale
+#    if the grade is later revised.
+new_id=$(~/.claude/scripts/linear-create-child.sh <ISSUE-ID> <team> Planned "<short title>" "$body_file" <specified|-> <1|2|3|->)
 create_status=$?   # captured immediately, before any other command — the discriminator the
                    # filing-failure rules below branch on: 0 = filed and parent-linked; 2 = filed
                    # and linked, label not attached (keep the issue); anything else = create

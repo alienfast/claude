@@ -2,7 +2,7 @@
 # linear-create-child.sh — create a Linear issue (optionally linked to a parent),
 # with its description read from a file, and verify the parent link took.
 #
-# Usage: linear-create-child.sh <parent|-> <team> <state|-> <title> <body-file> [label|-]
+# Usage: linear-create-child.sh <parent|-> <team> <state|-> <title> <body-file> [label|-] [priority|-]
 #
 #   <parent>     Parent issue identifier (e.g., PL-396) to link under, or "-" / ""
 #                for a top-level issue.
@@ -10,10 +10,15 @@
 #   <state>      Workflow state name (e.g., Planned), or "-" / "" for the team default.
 #   <title>      Issue title.
 #   <body-file>  Path to a file holding the markdown description.
-#   <label>      Optional issue label to attach after create (e.g., specified), or
-#                "-" / "" / omitted to skip. BEST EFFORT: the id still prints and the
-#                parent link still verifies; a failed attach exits 2 (filed-but-unlabelled),
-#                mirroring linear-file-improvement.sh.
+#   <label>      Optional issue label(s) to attach after create — a single name or a
+#                comma-separated list (e.g., "specified,bug"), or "-" / "" / omitted to
+#                skip. BEST EFFORT: the id still prints and the parent link still
+#                verifies; a failed attach exits 2 (filed-but-unlabelled), mirroring
+#                linear-file-improvement.sh.
+#   <priority>   Optional Linear priority (0=none 1=urgent 2=high 3=normal 4=low), or
+#                "-" / "" / omitted to skip. Set at create time. A severity graded into
+#                an issue BODY is invisible to /next's priority_rank — this field is
+#                what the ranking actually reads (BF-583).
 #
 # stdout (success): the new issue identifier (e.g., PL-451), single line.
 # stderr (failure): one-line diagnostic.
@@ -42,8 +47,8 @@ set -eo pipefail
 # linear-cli installs to ~/.cargo/bin, which is not on a non-interactive PATH.
 export PATH="$HOME/.cargo/bin:$PATH"
 
-if [ $# -lt 5 ] || [ $# -gt 6 ]; then
-  echo "usage: linear-create-child.sh <parent|-> <team> <state|-> <title> <body-file> [label|-]" >&2
+if [ $# -lt 5 ] || [ $# -gt 7 ]; then
+  echo "usage: linear-create-child.sh <parent|-> <team> <state|-> <title> <body-file> [label|-] [priority|-]" >&2
   exit 1
 fi
 
@@ -53,6 +58,7 @@ state="$3"
 title="$4"
 body_file="$5"
 label="${6:-}"
+priority="${7:-}"
 
 for cmd in linear-cli jq; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "ERROR: '$cmd' not found on PATH" >&2; exit 1; }
@@ -68,6 +74,13 @@ fi
 create_args=(issues create "$title" --team "$team" -o json -d -)
 if [ -n "$state" ] && [ "$state" != "-" ]; then
   create_args+=(--state "$state")
+fi
+if [ -n "$priority" ] && [ "$priority" != "-" ]; then
+  if ! [[ "$priority" =~ ^[0-4]$ ]]; then
+    echo "ERROR: priority must be 0-4 (got '$priority')" >&2
+    exit 1
+  fi
+  create_args+=(--priority "$priority")
 fi
 
 created=$(linear-cli "${create_args[@]}" < "$body_file") || {
@@ -99,14 +112,23 @@ fi
 # (standards/issue-spec.md — existing issues must go through linear-add-label.sh instead).
 printf '%s\n' "$new_id"
 if [ -n "$label" ] && [ "$label" != "-" ]; then
-  have_label=$(linear-cli labels list -t issue --all --no-cache -o json 2>/dev/null \
-    | jq -r '.. | objects | select(has("name")) | .name' 2>/dev/null \
-    | grep -Fxi -- "$label" | head -1 || true)
-  if [ -z "$have_label" ]; then
-    linear-cli labels create "$label" -t issue >/dev/null 2>&1 || true
-  fi
-  if ! linear-cli issues update "$new_id" -l "${have_label:-$label}" >/dev/null 2>&1; then
-    echo "WARN: created $new_id but could not attach the '$label' label — if this gates /auto pickup, attach it manually (~/.claude/scripts/linear-add-label.sh $new_id $label)" >&2
+  all_names=$(linear-cli labels list -t issue --all --no-cache -o json 2>/dev/null \
+    | jq -r '.. | objects | select(has("name")) | .name' 2>/dev/null || true)
+  update_args=(issues update "$new_id")
+  IFS=',' read -ra _labels <<< "$label"
+  for lb in "${_labels[@]}"; do
+    lb=$(printf '%s' "$lb" | tr -d '[:space:]')
+    [ -z "$lb" ] && continue
+    have_label=$(printf '%s\n' "$all_names" | grep -Fxi -- "$lb" | head -1 || true)
+    if [ -z "$have_label" ]; then
+      linear-cli labels create "$lb" -t issue >/dev/null 2>&1 || true
+    fi
+    update_args+=(-l "${have_label:-$lb}")
+  done
+  # One replace-semantics update carrying every -l — safe only because the label set is
+  # empty on a just-created issue (existing issues must use linear-add-label.sh).
+  if ! linear-cli "${update_args[@]}" >/dev/null 2>&1; then
+    echo "WARN: created $new_id but could not attach label(s) '$label' — if this gates /auto pickup, attach manually (~/.claude/scripts/linear-add-label.sh $new_id <label>)" >&2
     exit 2
   fi
 fi
