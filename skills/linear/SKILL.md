@@ -5,7 +5,7 @@ description: Linear via linear-cli — MUST READ before running Linear commands,
 
 # Linear (linear-cli) — Quick Reference
 
-Linear is driven by **Finesssee `linear-cli`** (Rust; binary `linear-cli`, installed to `~/.cargo/bin`). This is a short reference for the **non-obvious** parts — for everything else use `linear-cli <cmd> --help`, `linear-cli common`, or `linear-cli agent`.
+Linear is driven by **nesszer `linear-cli`** (Rust; binary `linear-cli`, installed to `~/.cargo/bin`). This is a short reference for the **non-obvious** parts — for everything else use `linear-cli <cmd> --help`, `linear-cli common`, or `linear-cli agent`.
 
 Auth: `linear-cli auth oauth` (browser) or `LINEAR_API_KEY`; check with `linear-cli auth status`. The full issue lifecycle is automated by the in-repo skills (`/start`, `/finish`, `/full`, `/checkpoint`, `/next`, `/quality-review`, `/prd`, `/spec`, `/triage`) — no install step.
 
