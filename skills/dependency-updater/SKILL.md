@@ -119,7 +119,7 @@ Research each package concurrently based on **semver classification from Phase 1
 3. **Developer**: Implement required code changes for breaking changes
 4. Handle dependency conflicts and version mismatches
 
-**On failure in this phase** (e.g., `pnpm install` fails on a peer-dependency conflict, or a bumped range is incompatible), restore the tree before retrying or surfacing — `git checkout -- package.json pnpm-lock.yaml '**/package.json'` — so a half-applied manifest or lockfile is never left behind.
+**Rollback pre-flight**: before step 1's first edit, copy the manifests the update will touch — the root `package.json`, `pnpm-lock.yaml`, and each workspace `package.json` — aside to `tmp/`. **On failure in this phase** (e.g., `pnpm install` fails on a peer-dependency conflict, or a bumped range is incompatible), restore the tree from those copies before retrying or surfacing — never `git checkout`/`git restore` (see standards/git.md, "Working Tree Protection": the hook blocks them, and run from a script they destroy uncommitted work unguarded) — so a half-applied manifest or lockfile is never left behind.
 
 #### Phase 5: Quality Validation
 
@@ -166,7 +166,7 @@ When encountering errors:
 1. **Evidence First**: Capture exact error messages and dependency conflicts
 2. **Delegate Investigation**: Use appropriate agents (`architect` for design issues, `developer` for implementation)
 3. **Quality Gates**: All tests must pass before PR creation
-4. **Rollback Plan**: On a mid-update failure, restore the tree with `git checkout -- package.json pnpm-lock.yaml '**/package.json'` and delete any branch/PR created prematurely — never leave a half-applied manifest or lockfile
+4. **Rollback Plan**: On a mid-update failure, restore the tree from the copies Phase 4's rollback pre-flight took (never `git checkout`/`git restore` — see standards/git.md, "Working Tree Protection") and delete any branch/PR created prematurely — never leave a half-applied manifest or lockfile
 
 ## Quality Standards
 
