@@ -92,4 +92,4 @@ Output flags (agent-friendly): `-o json|ndjson`, `-q` (quiet), `--id-only`, `--c
 | `linear-post.sh <comment\|description> <ID> <body-file>` | Post a comment or replace a description from a file. |
 | `linear-add-label.sh <ID> <label>` | Add one issue label without clobbering the rest (read-merge-set + verified attach; gotcha #7). Exit 2 + create-label pointer when missing/unattachable. |
 | `linear-remove-label.sh <ID> <label>` | Remove one issue label, preserving the rest (read-filter-set + verified; raw `issueUpdate labelIds: []` for the last-label case). Exit 0 on already-absent. |
-| `mark-ready-for-release.sh <ID>` | Move to Ready-For-Release **and unassign**. |
+| `mark-ready-for-release.sh <ID>` | Move to Ready-For-Release **and unassign** — read-back-verified, with gotcha #8's raw-mutation fallback automated (exit 1 if the state provably never changed). |

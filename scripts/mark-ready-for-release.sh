@@ -23,8 +23,9 @@
 # landed and the state transition is the load-bearing outcome.
 #
 # Exit codes:
-#   0 — issue is now in the resolved Ready-For-Release state (unassign best-effort).
-#   1 — usage / no matching state / the state update failed. The caller
+#   0 — issue VERIFIED in the resolved Ready-For-Release state by read-back (unassign best-effort).
+#   1 — usage / no matching state / the state update failed or did not verify (read-back
+#       mismatch and the raw-mutation fallback also missed). The caller
 #       surfaces/notifies; the merge itself has already landed regardless.
 
 set -eo pipefail
@@ -53,6 +54,31 @@ fi
 if ! linear-cli issues update "$issue" --state "$matched" >/dev/null 2>&1; then
   echo "ERROR: failed to move $issue to '$matched'. Set it manually." >&2
   exit 1
+fi
+
+# `issues update` can report success (exit 0, "+ Updated issue") while the state stays unchanged —
+# skills/linear/SKILL.md gotcha #8, observed live during BF-492's /finish. This script is what /finish
+# and the merge-queue drainer trust for the release transition, so success is declared only on a
+# read-back, with the gotcha's raw-mutation fallback (whose response carries the resulting state) tried
+# once before failing.
+actual=$(linear-cli issues get "$issue" --no-cache -o json 2>/dev/null | jq -r '.state.name // empty' 2>/dev/null || true)
+if [ "$actual" != "$matched" ]; then
+  echo "WARN: issues update reported success but $issue reads '${actual:-unreadable}' (expected '$matched'); retrying via raw mutation..." >&2
+  issue_uuid=$(linear-cli issues get "$issue" --no-cache -o json 2>/dev/null | jq -r '.id // empty' 2>/dev/null || true)
+  state_uuid=$(linear-cli statuses list -t "$team" -o json 2>/dev/null \
+    | jq -r --arg n "$matched" '.statuses[]? | select(.name == $n) | .id // empty' 2>/dev/null | head -1 || true)
+  result=""
+  if [ -n "$issue_uuid" ] && [ -n "$state_uuid" ]; then
+    # api responses are data-wrapped ({"data":{"issueUpdate":...}}); the unwrapped path is kept as a
+    # fallback so a linear-cli that starts unwrapping doesn't silently fail the verification.
+    result=$(linear-cli api mutate 'mutation($id: String!, $stateId: String!) { issueUpdate(id: $id, input: { stateId: $stateId }) { success issue { state { name } } } }' \
+      --variable id="$issue_uuid" --variable stateId="$state_uuid" 2>/dev/null \
+      | jq -r '.data.issueUpdate.issue.state.name // .issueUpdate.issue.state.name // empty' 2>/dev/null || true)
+  fi
+  if [ "$result" != "$matched" ]; then
+    echo "ERROR: $issue still not in '$matched' after the raw-mutation fallback. Set it manually." >&2
+    exit 1
+  fi
 fi
 
 # Unassign — best-effort. `issues assign <id>` with no user clears the assignee.
