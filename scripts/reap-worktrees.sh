@@ -22,7 +22,7 @@
 #     • completion evidence (any one):
 #         - its branch is an ancestor of its source branch or the repo default (merged), OR
 #         - its PR state is MERGED (gh), OR
-#         - its Linear issue state type is completed|canceled.
+#         - its Linear issue state type is terminal: completed|canceled|duplicate.
 #     • no unsaved commits: every commit on the branch is reachable from a durable ref — it is
 #       merged into mainline OR present on its origin remote-tracking branch (pushed).
 #     • clean working tree: `git status --porcelain` is empty, i.e. no tracked modifications and no
@@ -34,14 +34,17 @@
 #       trivially an ancestor of its source, so the "merged" evidence fired on a worktree whose owning
 #       session had just set it up; its edits then landed in the main checkout because the worktree's
 #       .git was gone):
-#         - HAS COMMITTED WORK: the branch has ≥1 commit beyond its recorded start.baseline-sha. A
-#           zero-commit branch (tip == baseline) is never "completed work" — it is just-forked or
-#           unstarted, i.e. a session is (or is about to be) working in it. (Guard skipped when no
-#           baseline is recorded — pre-identity-stamp/legacy worktrees fall through to prior behavior.)
 #         - IDLE: no git activity in the worktree within WORKTREE_REAP_GRACE_MIN minutes (default 60) —
 #           the per-worktree index mtime is stale, indicating no live session is touching it. A live
 #           session's frequent git ops (checkpoints, add, status) keep the index fresh; it goes stale
 #           only after the session ends.
+#         - COMMITTED WORK, or completion evidence that does not depend on it. A zero-commit branch
+#           (tip == baseline) is what PL-459 tripped over, so for one the trivially-true "merged"
+#           evidence does not count. Evidence INDEPENDENT of commit count still does: a terminal Linear
+#           issue means the work is over whether or not it ever earned a commit. So a `/start wt`
+#           worktree whose issue was canceled in Linear before the first commit IS reaped — idle and a
+#           clean tree still required, which together leave nothing recoverable to lose. (Guard skipped
+#           when no baseline is recorded — pre-identity-stamp/legacy worktrees keep prior behavior.)
 #   ABANDONED-for-resumption worktrees (branch unmerged, PR open, issue still active) fail the
 #   evidence test and are preserved automatically — no special-casing needed.
 #
@@ -53,10 +56,11 @@
 #     and active git ops keep the index fresh. The robust fix is a session-maintained heartbeat (the
 #     owning session's job-dir mtime was evaluated and rejected: it tracks dir creation, not activity,
 #     and WT_IDENTITY_OWNER's format is not a reliable job-dir key).
-#   • A zero-commit worktree at a terminal state (e.g. an issue canceled before any commit) is kept by
-#     the zero-progress guard indefinitely rather than reaped — surfaced by `list`, reap manually. We
-#     prefer this benign leak over weakening the guard, which would re-expose reaping a live just-forked
-#     worktree (the PL-459 failure).
+#   • The zero-commit + terminal-issue reap narrows the PL-459 mechanism rather than closing it: a live
+#     session idle past the grace, on an issue canceled underneath it, still loses its worktree DIR (not
+#     its work — the clean-tree and zero-commit facts are what make it empty), and would write to the
+#     main checkout if it then resumed. Accepted: reaching that window takes a terminal issue AND
+#     idleness AND nothing uncommitted, which in combination is not a session in progress.
 #
 # Subcommands:
 #   reap [<repo_root>]   Reap eligible worktrees. No arg → every registered repo (the launchd path).
@@ -238,7 +242,7 @@ recent_activity() {
 # Assumes (reap mode) the per-repo lock is held by the caller.
 evaluate_worktree() {
   local repo="$1" dir="$2" mode="$3"
-  local slug issue branch source reason merged_ref ltype dirty baseline
+  local slug issue branch source reason merged_ref ltype dirty baseline zero_commit
 
   slug=$(basename "$dir")
   issue=$(printf '%s' "$slug" | tr '[:lower:]' '[:upper:]')
@@ -267,43 +271,64 @@ evaluate_worktree() {
     return 0
   fi
 
-  # Liveness guard A — zero committed work. A branch with no commits beyond its recorded baseline is
-  # not "completed work" (a done worktree always has commits) — it is just-forked or unstarted, so a
-  # session is, or is about to be, working in it. The completion-evidence test below would otherwise
-  # fire on it (a zero-commit branch is trivially an ancestor of source), reaping a live worktree and
-  # landing its edits in the main checkout (PL-459). No-op when no baseline is recorded (legacy).
-  baseline=$(recorded_baseline "$repo" "$dir" "$slug")
-  if [ -n "$baseline" ] && git -C "$dir" cat-file -e "${baseline}^{commit}" 2>/dev/null \
-     && [ "$(git -C "$dir" rev-list --count "${baseline}..HEAD" 2>/dev/null || echo 1)" = "0" ]; then
-    printf '  %-12s %s\n' "$issue" "KEEP — no commits since baseline (just-forked/unstarted); a live session likely owns it."
-    return 0
-  fi
-
   # Liveness guard B — recent activity. The worktree's index was touched within REAP_GRACE_MIN minutes,
-  # so a session is actively using it. Checked BEFORE the `git status` below, which can rewrite the
-  # index and would otherwise reset this signal.
+  # so a session is actively using it. Runs BEFORE the `git status` below, which can rewrite the index
+  # and would otherwise reset this signal. It also precedes guard A, which needs the idle and clean-tree
+  # facts settled before it will consider a zero-commit reap; both only read, so their order is free.
   if recent_activity "$dir"; then
     printf '  %-12s %s\n' "$issue" "KEEP — active within ${REAP_GRACE_MIN}m (index recently modified); deferring reap to avoid a live session."
     return 0
   fi
 
+  # Zero committed work — DETECTED here, adjudicated by guard A below. No-op when no baseline is
+  # recorded (legacy worktree), which leaves that worktree on the pre-guard evidence rules.
+  zero_commit=0
+  baseline=$(recorded_baseline "$repo" "$dir" "$slug")
+  if [ -n "$baseline" ] && git -C "$dir" cat-file -e "${baseline}^{commit}" 2>/dev/null \
+     && [ "$(git -C "$dir" rev-list --count "${baseline}..HEAD" 2>/dev/null || echo 1)" = "0" ]; then
+    zero_commit=1
+  fi
+
   dirty=0
   [ -n "$(git -C "$dir" status --porcelain 2>/dev/null)" ] && dirty=1
+
+  reason=""
+
+  # Liveness guard A — zero committed work disqualifies the *merged* evidence, not the worktree. A branch
+  # with no commits beyond its baseline is trivially an ancestor of its source, so "branch merged" fires
+  # on a worktree a session just forked; reaping that one landed its edits in the main checkout (PL-459).
+  # Evidence independent of commit count is still good: a terminal Linear issue says the work is over
+  # whether or not it ever earned a commit, which is the `/start wt` → canceled-in-Linear leak this guard
+  # used to hold forever. Idle (guard B) and clean are already established, so such a worktree is empty.
+  if [ "$zero_commit" = 1 ]; then
+    if [ "$dirty" = 1 ]; then
+      printf '  %-12s %s\n' "$issue" "KEEP — no commits since baseline and the worktree is dirty (just-forked/unstarted); a live session likely owns it."
+      return 0
+    fi
+    ltype=$(linear_state_type "$issue")
+    case "$ltype" in
+      completed|canceled|duplicate) reason="Linear issue $ltype, no commits since baseline" ;;
+      *)
+        printf '  %-12s %s\n' "$issue" "KEEP — no commits since baseline (just-forked/unstarted); a live session likely owns it."
+        return 0 ;;
+    esac
+  fi
 
   # Completion evidence. The local merged check is free; only consult gh/linear-cli when not locally
   # merged AND the tree is clean (a dirty worktree is never auto-reaped, so the network can't change
   # the outcome to a reap — skip it).
-  reason=""
-  if merged_ref=$(merged_into "$repo" "$branch" "$source"); then
-    reason="branch merged into $merged_ref"
-  elif [ "$dirty" = 0 ]; then
-    if pr_is_merged "$repo" "$branch"; then
-      reason="PR merged"
-    else
-      ltype=$(linear_state_type "$issue")
-      case "$ltype" in
-        completed|canceled) reason="Linear issue $ltype" ;;
-      esac
+  if [ -z "$reason" ]; then
+    if merged_ref=$(merged_into "$repo" "$branch" "$source"); then
+      reason="branch merged into $merged_ref"
+    elif [ "$dirty" = 0 ]; then
+      if pr_is_merged "$repo" "$branch"; then
+        reason="PR merged"
+      else
+        ltype=$(linear_state_type "$issue")
+        case "$ltype" in
+          completed|canceled|duplicate) reason="Linear issue $ltype" ;;
+        esac
+      fi
     fi
   fi
 
@@ -312,8 +337,11 @@ evaluate_worktree() {
     return 0
   fi
 
-  # Eligible by evidence — now the safety gates that protect work.
-  if ! { [ -n "$merged_ref" ] || is_pushed "$repo" "$branch"; }; then
+  # Eligible by evidence — now the safety gates that protect work. A zero-commit branch clears the
+  # unsaved-commits gate by definition (every commit it carries is the baseline's, already on the source
+  # branch) and must not be run through is_pushed: guard A skipped merged_into, so merged_ref is empty,
+  # and an unpushed zero-commit branch would be reported as having local-only commits it does not have.
+  if ! { [ "$zero_commit" = 1 ] || [ -n "$merged_ref" ] || is_pushed "$repo" "$branch"; }; then
     printf '  %-12s %s\n' "$issue" "KEEP — $reason, but the branch has local-only commits (not merged, not pushed). Resolve manually."
     return 0
   fi

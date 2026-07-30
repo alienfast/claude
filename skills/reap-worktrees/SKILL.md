@@ -27,14 +27,20 @@ This skill is for **on-demand inspection and cleanup** between those passes.
 completion** — never on mere inactivity. A worktree is reaped iff **all** hold:
 
 - **Completion evidence** (any one): its branch is an ancestor of its source branch or the repo default
-  (merged); **or** its PR state is `MERGED` (via `gh`); **or** its Linear issue state type is
-  `completed`/`canceled`.
+  (merged); **or** its PR state is `MERGED` (via `gh`); **or** its Linear issue state type is terminal
+  (`completed`/`canceled`/`duplicate`).
 - **No unsaved commits**: every commit on the branch is reachable from a durable ref — merged into
   mainline, or present on its `origin` remote-tracking branch (pushed).
 - **Clean working tree**: `git status --porcelain` is empty. The reaper **never** passes `--force`, so
   untracked work is never destroyed; gitignored scratch (`tmp/`, `node_modules`) doesn't block removal.
 - **No in-flight deferred merge**: no `<repo>/.claude/merge-queue/<issue>.json` marker (the drainer owns
   those).
+- **Not live**: the worktree's index is stale (no git activity for `WORKTREE_REAP_GRACE_MIN` minutes,
+  default 60), **and** the branch has commits beyond its recorded baseline — *or*, for a zero-commit
+  branch, the completion evidence is something other than "merged". A zero-commit branch is trivially an
+  ancestor of its source, so the merged test says nothing about it (reaping on that alone destroyed a live
+  just-forked worktree once — PL-459). A terminal Linear issue is independent of commit count and does
+  count, which is what reclaims a `/start wt` worktree whose issue was canceled before the first commit.
 
 **Abandoned-for-resumption worktrees are preserved automatically** — branch unmerged, PR open, issue
 still active means they fail the evidence test, so no special-casing is needed. A worktree that is
@@ -44,6 +50,10 @@ finish the job by hand.
 Source branch comes from the per-worktree `start.source-branch` config recorded by
 [start-wt-setup.sh](../../scripts/start-wt-setup.sh); the repo set is the union of the self-registering
 `~/.claude/worktree-repos.txt` and `~/.claude/merge-queue-repos.txt`.
+
+The gates are regression-guarded by [reap-worktrees.test.sh](../../scripts/reap-worktrees.test.sh)
+(`bash ~/.claude/scripts/reap-worktrees.test.sh`) — run it after any change to them, and add the case
+alongside the fix. This script deletes work; an unguarded gate is one that quietly reopens.
 
 ## Usage
 
