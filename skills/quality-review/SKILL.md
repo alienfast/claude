@@ -21,7 +21,7 @@ Reject any bare argument that is neither an issue-ID (`[A-Z]+-[0-9]+`), the `aut
 
 ## Invariant
 
-**Working Application Contract.** This skill assumes the application was working before the changes under review. `pnpm check` is the gate that proves it still is. A check failure after our changes is never "pre-existing", never "out of scope" — it is our breakage and must be fixed before review proceeds. Turborepo caching makes repeated runs cheap.
+**Working Application Contract.** This skill assumes the application was working before the changes under review. `pnpm check` is the gate that proves it still is, for the suites it actually runs — a project may have suites outside it (basefund's rspec), which `/start`'s contract rule 1 covers. A check failure after our changes is never "pre-existing", never "out of scope" — it is our breakage and must be fixed before review proceeds. Turborepo caching makes repeated runs cheap.
 
 ## Workflow
 
@@ -64,6 +64,8 @@ Pass `--input` only when the user typed an explicit ID (e.g., `/quality-review P
    ```
 
    Same bare-path form `/start` Step 0 uses (`-z` avoids C-quoting/octal-escaping under `core.quotePath`; `cut -c4-` strips the fixed-width status prefix; `--no-renames` keeps every record to one field). Union the two sets. If the union is empty, warn the user and exit — there is nothing to review.
+
+   **Before exiting on an empty union: the change may live outside this repo.** A `keeper`-labeled issue's deliverable is in the user-level `~/.claude` repo (`/reflect` attaches that label iff ≥1 proposal targets it), so this worktree's union is empty *by construction* while there is very much something to review — and exiting here persists no verdict, which `/finish` Step 8 reads as `none-found` and, in auto mode, aborts on. Resolve scope from the **issue body**, not from `git status`: `/reflect` files each proposal as `- [ ] **<target file>** — <observation>` with a diff, so those named targets are the scope — intersect them with `git -C ~/.claude status --porcelain` and review exactly that. **Never widen it to the rest of that repo's dirt.** `~/.claude` is shared and routinely dirty for unrelated reasons — `/reflect`'s own apply-now edits stay uncommitted for keeper review, and the keeper's in-progress edits sit there too — so pulling them in keys this issue's verdict to someone else's work (the Scope-mismatch guard above) and points the fix loop's write authority at it. If the intersection is empty, exit as above. Step 2 then runs `pnpm check` in **that** repo as well as the project's — the project's is green because the project was never touched, which proves nothing about the change under review; expect `~/.claude`'s `markdownlint-cli2 --fix` to reformat out-of-scope `.md` files, and leave those alone. An empty union is only the loudest symptom: run this same check whenever the issue names targets outside this repo, since a mixed filing has a non-empty union whose user-level half would otherwise go unreviewed.
 
    **Worktree source-branch awareness.** Before defaulting to `origin/main` as the merge-base target, check whether this session is inside a `/start wt` worktree with a recorded source branch:
 

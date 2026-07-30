@@ -46,6 +46,19 @@ A background agent's completion often surfaces as a bare idle notification — t
 - For small verification tasks, prefer synchronous delegation (`run_in_background: false`) — the report returns directly as the tool result, avoiding the loss window entirely.
 - **Omit `name` for one-shot dispatches you need back this turn** (adversarial review, exploration, planning). Passing `name` makes the agent an addressable, resumable teammate — its termination can surface as a bare idle notification with no recoverable findings, and pinging an already-terminated named agent does not recover the content (the remedy above doesn't rescue this case). Reserve `name` exclusively for agents you deliberately intend to resume across multiple conversation turns; unnamed one-shot Agent calls reliably return findings via the standard background-task pattern (an `output_file` plus a completion notification).
 
+## `file:line` citations lifted from a subagent's report
+
+A subagent that quotes source back to you does not carry the source's line numbering with it. Persist a long report and Read it back and the numbers
+you see are the **report's** — `cat -n` over the report file, not over the file it quotes. Inline, there are no line numbers at all beyond whatever the
+agent asserted. Either way a citation taken from the report is unanchored, and it fails in the way that survives review: a real file and a plausible range.
+
+**Before a `file:line` goes into anything durable** — a Linear comment, a dispatch prompt, a commit message, a PR description — confirm it against the
+file itself (`grep -n`, or a Read of that range). One call. Citing loosely inside your own reasoning is fine; the rule is about what you write down for
+someone else. (In a *code* comment, don't cite a line number at all — it moves; see `rules/comments.md`.)
+
+In BF-617 an orchestrator relayed `tenant_paying_agent_access_spec.rb:271-278` into a Linear plan comment and a `developer` dispatch. 271 was where the
+report quoted that example; the file is 171 lines, so the cited range does not exist. The delegate caught it after the comment was already posted.
+
 ## Measure from the transcript before optimizing
 
 When asked to optimize agent/skill/workflow latency, extract a measured timeline from the session transcript first — `~/.claude/projects/<project-slug>/<session-uuid>.jsonl` timestamps every event. Compute tool-call execution durations vs inter-event gaps (model-turn time) and attribute the wall-clock before proposing fixes: cost-profile intuition routinely misattributes it (e.g. blaming environment setup when the time went to a serial subagent or a long reasoning turn).
