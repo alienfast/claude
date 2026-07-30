@@ -104,6 +104,7 @@ Your job is to REJECT unless it clearly survives all of:
 2. Not already covered — read <target file> and the related rules/standards/CLAUDE.md; quote anything that already says this. If covered, reject.
 3. Would actually have helped — the change, present beforehand, would have shortcut the friction (for reconcile: the contradiction is real and the proposed fix matches CURRENT reality — read the code/scripts to confirm).
 4. Correct destination — per ~/.claude/CLAUDE.md "Where Knowledge Goes".
+5. Claims about other skills hold — when the draft asserts how another skill, standard, or rule behaves, or prescribes an action another skill owns, READ those files (skills included — gate 2's read set stops at rules/standards/CLAUDE.md) and confirm every assertion. Reject, or return a `corrected_draft`, when a claim misstates the referenced behavior or the proposed rule would conflict with what that skill actually does. A rule stating a false fact about the workflow is worse than no rule.
 Return: { verdict: keep|drop, reason: <one line>, corrected_target?: <path>, corrected_draft?: <text> }.
 Default to drop when uncertain.
 ```
