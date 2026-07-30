@@ -112,6 +112,18 @@ If the args contain `wt` (**including when `interactive` implied it** — see Ar
 
    Failure handling by verdict (the first line of the script's stdout is the verdict — see its header docblock for the full contract):
 
+   **Do not merge the streams — the verdict is the first line of *stdout*, but the LAST line of a `2>&1` capture.** The script sends everything else to stderr *including* `pnpm check`'s own stdout (`pnpm check >&2`), so stdout holds exactly one line and the contract above is exact — but merged, hundreds of check lines precede it, and the capture routinely exceeds the harness's inline output limit, leaving the tool result showing only a head preview starting `== cwd confirm ==` with no verdict in it at all. Redirect **stderr only**, which keeps the verdict inline and small while still persisting the diagnostics this step needs (the `FAILED-CLAIM` 5xx probe, `WARN:`, `SOURCE_BRANCH=`):
+
+   ```bash
+   ~/.claude/scripts/start-wt-verify.sh '<WT_ABS>' <ISSUE-ID> --claim --baseline-file '<BASELINE_FILE>' 2>tmp/start-wt-verify-<issue-id-lowercased>.err
+   ```
+
+   If you did merge them, recover the verdict explicitly before branching — never from the head of the file. `fail()` mirrors each `FAILED-*` line to both streams, so a merged file contains it twice; take the last match:
+
+   ```bash
+   grep -nE '^(VERIFIED|FAILED-[A-Z-]+)' <persisted-output-path> | tail -n 1
+   ```
+
    - `VERIFIED` → Steps 1–5 complete, the Working Application Contract is in effect; proceed to Step 6 (whose exploration is already running) — **unless the `interactive` token was given, in which case sub-step 4 halts the skill here instead of continuing to Step 6.**
    - `FAILED-CWD` → sub-step 2's STOP-and-surface. Auto mode: emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — EnterWorktree registration did not take (cwd mismatch); manual investigation required. No state change.` and stop.
    - `FAILED-BASELINE` → STOP, fail closed (same posture as Step 8 item 1, triggered earlier). Auto mode: emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — session-start dirty baseline could not be captured; manual investigation required. No state change.` and stop.
