@@ -119,9 +119,24 @@ if [ "$claim_flag" = "claim" ]; then
   # linear-cli installs to ~/.cargo/bin, which is not on a non-interactive PATH.
   export PATH="$HOME/.cargo/bin:$PATH"
   # Redirect linear-cli's own stdout to our stderr — it must never leak onto this script's
-  # single-line stdout verdict contract. Its stderr passes through unredirected.
-  if ! linear-cli issues update "$issue_id" --assignee me --state "In Progress" >&2; then
-    fail "FAILED-CLAIM: claim update failed — do not proceed unclaimed"
+  # single-line stdout verdict contract. Its stderr is captured and re-emitted so a plainly transient
+  # failure (5xx / timeout — never auth, permissions, or an unknown state name) can be retried once
+  # behind a successful read probe (the machinery half of /start's FAILED-CLAIM transient-5xx exception).
+  claim_err=$(mktemp)
+  trap 'rm -f "$claim_err"' EXIT
+  if ! linear-cli issues update "$issue_id" --assignee me --state "In Progress" >&2 2>"$claim_err"; then
+    cat "$claim_err" >&2
+    if grep -qiE 'HTTP 5[0-9][0-9]|Service Unavailable|timed? ?out' "$claim_err" \
+      && linear-cli issues get "$issue_id" >/dev/null 2>&1; then
+      echo "== claim retry (transient 5xx/timeout) ==" >&2
+      sleep 2
+      linear-cli issues update "$issue_id" --assignee me --state "In Progress" >&2 \
+        || fail "FAILED-CLAIM: claim update failed — do not proceed unclaimed"
+    else
+      fail "FAILED-CLAIM: claim update failed — do not proceed unclaimed"
+    fi
+  else
+    cat "$claim_err" >&2
   fi
 fi
 
