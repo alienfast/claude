@@ -1,6 +1,6 @@
 ---
 name: auto-prep
-description: Prepare a team's certified backlog for a fleet of parallel /loop /auto sessions — audit `specified` labels for unattended-shippability (de-label or flag decision-gated, human-dependent, and run-solo issues), wire `blocks` edges between file-colliding candidates, validate through next-candidates.sh, and recommend a parallel-session count. Use when the user says 'auto-prep', 'fleet prep', 'prep the backlog for auto', or before launching multiple /loop /auto sessions.
+description: Prepare a team's certified backlog for a fleet of parallel /loop /auto sessions — audit `specified` labels for unattended-shippability (de-label or flag decision-gated, human-dependent, and run-solo issues), consolidate same-defect-family point fixes into class-scoped sweep issues, wire `blocks` edges between file-colliding candidates, validate through next-candidates.sh, and recommend a parallel-session count. Use when the user says 'auto-prep', 'fleet prep', 'prep the backlog for auto', or before launching multiple /loop /auto sessions.
 argument-hint: "[team:KEY | KEY]"
 ---
 
@@ -10,7 +10,7 @@ argument-hint: "[team:KEY | KEY]"
 
 Read [skills/linear/SKILL.md](../linear/SKILL.md) first (gotchas: relations direction, label add/remove helpers, state-update verification). Interactive by design — the flags it raises are decisions for the user; never run it unattended.
 
-**Writes it may make** (all reversible, all reported): add/remove issue labels, add `blocks`/`duplicate` relations, post explanatory comments, adjust priority. It never changes issue states or assignees.
+**Writes it may make** (all reversible, all reported): add/remove issue labels, add `blocks`/`duplicate` relations, post explanatory comments, adjust priority. The one state write is Step 3's per-group-approved family consolidation (absorbed issues → the team's Duplicate/Canceled state); it never touches states otherwise, and never assignees.
 
 ## Step 1: Resolve scope and fetch the pool
 
@@ -39,9 +39,13 @@ Split into the certified set (`specified` label) and the rest. Read every certif
 
 While reading bodies, also catch cheap ranking wins: a flake fix or check-stabilizer that other sessions' quality gates depend on deserves a priority bump (it sorts within-tier by priority); `bug`/`security` labels missing from issues that plainly are one feed the class rank.
 
-## Step 3: Wire collision edges
+## Step 3: Consolidate families, then wire collision edges
 
-From the descriptions' named files/components, build overlap groups, then wire **minimal chains** with `linear-cli relations add <BLOCKER> <BLOCKED> -r blocks` (blocker ships first):
+From the descriptions' named files/components, build overlap groups. For each group, consolidation is the first disposition; serialization is the fallback.
+
+**Family consolidation (one decision per group, interactive like every flag here).** When a group's issues are the same defect *class* with the same fix *shape* — the bodies name one root cause across N sites (N header-scoped policy predicates, N unscoped finds, N copies of a missing guard) — N point-fix issues cost N worktrees, roughly 2N reviewer dispatches, and N serialized merges for what one class-scoped sweep fixes in a fraction. Adversarial review generates exactly this shape when it pulls a defect-family thread: a fleet night can file point fixes *and* its own sweep issues (BF-623, BF-642) for the same families in different sessions. Propose the merge: absorb the point issues into the existing sweep/audit issue when one exists, else promote the most complete point issue to canonical and widen its scope to the class. On approval for a group: append each absorbed issue's Problem + Success Criteria as a checklist block on the canonical (comment via `~/.claude/scripts/linear-post.sh`), wire `linear-cli relations add <absorbed> <canonical> -r duplicate`, remove `specified` from the absorbed issues, and move them to the team's Duplicate/Canceled state — the absorbed criteria live on in the canonical, so nothing is lost. A canonical that is not itself certified (a Triage-filed sweep, say) takes the absorbed work out of the fleet pool until it is groomed — flag it for `/spec` in the report rather than certifying it here (widened-scope certification is an interview-grade judgment, not label repair). Declined groups fall through to serialization. The test is same *fix shape*, never same *file*: two different defects in one file are a serialization case below, and merging them would build exactly the run-attended blast radius Step 2 flag 3 exists to keep out of fleets — when a proposed merge would cross that line, leave the group unconsolidated.
+
+Then wire **minimal chains** with `linear-cli relations add <BLOCKER> <BLOCKED> -r blocks` (blocker ships first):
 
 - **Same file → serialize.** Adjacent pairs only (A→B, B→C — never a redundant A→C; `/next` requires all blockers terminal, so transitivity is free).
 - **Semantic order → direct the edge**: mechanism before consumers, client display fixes before the server withholds the data they render, code before the docs that describe it, small surgical fixes before the sweep that enumerates the area.
@@ -71,7 +75,7 @@ Launch checklist for the report:
 
 ## Report
 
-Lead with the recommended session count. Then: changes made (edges as blocker→blocked with one-line rationale, label ops, priority bumps), the flag lists by disposition (de-labeled / decision-gated / run-solo), and the validated top of the ranked pool. Every write is reversible — say so once.
+Lead with the recommended session count. Then: changes made (consolidations as absorbed→canonical with the class named, edges as blocker→blocked with one-line rationale, label ops, priority bumps), the flag lists by disposition (de-labeled / decision-gated / run-solo), and the validated top of the ranked pool. Every write is reversible — say so once.
 
 ## Error Handling
 
