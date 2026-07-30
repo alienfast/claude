@@ -1,17 +1,24 @@
 #!/bin/bash
 # linear-file-improvement.sh — file a single standalone "continuous-improvement" Linear
-# issue from a /reflect session: status Planned, labelled `specified` + `reflection`,
-# description read from a file. `specified` is the /auto-eligibility certification;
-# `reflection` marks it as a config/process improvement so /next ranks it ahead of
-# product work (improvements change how all future work runs).
+# issue from a /reflect session: status Planned, labelled `specified` + `reflection`
+# (`reflection` + `keeper`, UNCERTIFIED, for --keeper batches), description read from a
+# file. `specified` is the /auto-eligibility certification; `reflection` marks it as a
+# config/process improvement so /next ranks it ahead of product work (improvements change
+# how all future work runs).
 #
 # Usage: linear-file-improvement.sh [--keeper] <team> <title> <body-file>
 #
 #   --keeper     The batch contains ≥1 proposal targeting the SHARED user-level ~/.claude
-#                repo — also attach the `keeper` label, which next-candidates.sh uses to
-#                hide the issue from every machine whose `git -C ~/.claude config
-#                reflect.keeper` is not `true`. Global-config edits belong to the keeper's
-#                review flow; a teammate's /auto must not pull them.
+#                repo — attach the `keeper` label INSTEAD of `specified`, filing the issue
+#                uncertified. `specified` certifies "an unattended agent may pick this up
+#                and ship it" (standards/issue-spec.md), which is structurally false for
+#                keeper work: /auto ships project repos only, so it would apply the
+#                ~/.claude edits, commit nothing, and still mark the issue shipped — BF-591
+#                did exactly that, and the certified keeper queue behind it burned 15
+#                decline cycles across one night's fleet. Uncertified, /auto ignores the
+#                issue on every machine; `keeper` additionally hides it from every machine
+#                whose `git -C ~/.claude config reflect.keeper` is not `true` and boosts
+#                it on the keeper's for interactive pickup (next-candidates.sh).
 #   <team>       Team key or name (e.g., PL) — derive from the worked issue's ID prefix.
 #   <title>      Issue title.
 #   <body-file>  Path to a file holding the markdown description.
@@ -24,8 +31,8 @@
 # would trip permission prompts on every reflection. The issue is deliberately
 # STANDALONE (no parent link): a config/process improvement is not a child of the feature
 # that surfaced it; /reflect references the originating issue inside the body instead. It
-# is also deliberately UNASSIGNED and unprioritized: the `specified` label (not assignment)
-# is what keeps it visible to /auto, and without a priority it ranks as fill-in work
+# is also deliberately UNASSIGNED and unprioritized: for a non-keeper filing the `specified`
+# label (not assignment) is what keeps it visible to /auto, and without a priority it ranks as fill-in work
 # rather than jumping the product backlog. This mirrors scripts/linear-create-child.sh
 # in style, minus the parent plumbing.
 #
@@ -37,11 +44,11 @@
 # failure). Losing the proposal is the worse outcome — but an unlabelled issue is
 # invisible to /auto until certified (standards/issue-spec.md).
 #
-# Exit codes:
-#   0 = issue created (Planned) AND specified label attached (reflection is best-effort
-#       within 0 — a WARN names it when only specified could attach); id on stdout
-#   2 = issue created (Planned) but the specified label could NOT be attached (team has
-#       no attachable specified label); id still on stdout, WARN on stderr
+# Exit codes (the load-bearing label is `specified` — or `keeper` under --keeper):
+#   0 = issue created (Planned) AND the load-bearing label attached (reflection is
+#       best-effort within 0 — a WARN names it when it could not ride along); id on stdout
+#   2 = issue created (Planned) but the load-bearing label could NOT be attached (team has
+#       no attachable label of that name); id still on stdout, WARN on stderr
 #   1 = usage / missing body file / no suitable state / create failed (no usable id)
 
 set -eo pipefail
@@ -93,7 +100,7 @@ names() { jq -r '.. | objects | select(has("name")) | .name'; }
 #    (another session filing at the same moment) — "already exists" is success here.
 all_labels=$(linear-cli labels list -t issue --all --no-cache -o json 2>/dev/null | names 2>/dev/null || true)
 have_specified=$(printf '%s' "$all_labels" | grep -Fxi 'specified' | head -1 || true)
-if [ -z "$have_specified" ]; then
+if [ -z "$have_specified" ] && [ "$keeper" != 1 ]; then
   linear-cli labels create "specified" -t issue >/dev/null 2>&1 || true
 fi
 specified_label="${have_specified:-specified}"
@@ -142,29 +149,31 @@ if [ -z "$new_id" ]; then
   exit 1
 fi
 
-# 4. Attach the `specified` + `reflection` labels — BEST EFFORT (cross-team constraint documented above in the
-#    header and step 1). The direct `-l` (not linear-add-label.sh) is deliberate — do not "fix" it to call that
-#    helper: this issue was just created with an empty label set, so replace semantics are harmless and skipping
-#    the helper saves API calls. Both labels must ride ONE update (-l sets the whole set; two sequential updates
-#    would clobber the first label with the second). The id is printed FIRST, before the attach attempt, so it
-#    reaches stdout on every path. If the pair fails, retry `specified` alone: certification is the load-bearing
-#    label (/auto eligibility), and a missing/team-scoped `reflection` label must never cost the pickup.
+# 4. Attach the labels — BEST EFFORT (cross-team constraint documented above in the header and step 1). The
+#    direct `-l` (not linear-add-label.sh) is deliberate — do not "fix" it to call that helper: this issue was
+#    just created with an empty label set, so replace semantics are harmless and skipping the helper saves API
+#    calls. All labels must ride ONE update (-l sets the whole set; sequential updates would clobber). The id is
+#    printed FIRST, before the attach attempt, so it reaches stdout on every path. If the full set fails, retry
+#    the load-bearing label alone: `specified` (/auto eligibility) for ordinary batches, `keeper` for --keeper
+#    batches — a keeper filing never attaches `specified` (see the --keeper doc above), so `keeper` is what marks
+#    it as the keeper machine's interactive work.
 printf '%s\n' "$new_id"
 if [ -n "$keeper_label" ]; then
-  if linear-cli issues update "$new_id" -l "$specified_label" -l "$reflection_label" -l "$keeper_label" >/dev/null 2>&1; then
+  if linear-cli issues update "$new_id" -l "$reflection_label" -l "$keeper_label" >/dev/null 2>&1; then
     exit 0
   fi
-else
-  if linear-cli issues update "$new_id" -l "$specified_label" -l "$reflection_label" >/dev/null 2>&1; then
+  if linear-cli issues update "$new_id" -l "$keeper_label" >/dev/null 2>&1; then
+    echo "WARN: filed $new_id with 'keeper' but could not attach 'reflection' — /next will rank it as ordinary work instead of boosting it. Most likely team '$team' has a conflicting team-scoped reflection label (create an attachable one: linear-cli labels create \"reflection\" -t issue)" >&2
     exit 0
   fi
+  echo "WARN: filed $new_id but could not attach the 'keeper' label — the issue is uncertified so /auto ignores it, but nothing marks it as keeper-machine work or hides it from teammates' /next. Attach manually: ~/.claude/scripts/linear-add-label.sh $new_id keeper" >&2
+  exit 2
+fi
+if linear-cli issues update "$new_id" -l "$specified_label" -l "$reflection_label" >/dev/null 2>&1; then
+  exit 0
 fi
 if linear-cli issues update "$new_id" -l "$specified_label" >/dev/null 2>&1; then
-  if [ -n "$keeper_label" ]; then
-    echo "WARN: filed $new_id with 'specified' but could not attach 'reflection'/'keeper' — the issue is NOT keeper-gated, so any machine's /auto may pull this global-config work. Attach 'keeper' manually (~/.claude/scripts/linear-add-label.sh $new_id keeper) or create attachable labels (linear-cli labels create \"keeper\" -t issue)" >&2
-  else
-    echo "WARN: filed $new_id with 'specified' but could not attach the 'reflection' label — /next will rank it as ordinary certified work instead of boosting it. Most likely team '$team' has a conflicting team-scoped reflection label (create an attachable one: linear-cli labels create \"reflection\" -t issue)" >&2
-  fi
+  echo "WARN: filed $new_id with 'specified' but could not attach the 'reflection' label — /next will rank it as ordinary certified work instead of boosting it. Most likely team '$team' has a conflicting team-scoped reflection label (create an attachable one: linear-cli labels create \"reflection\" -t issue)" >&2
   exit 0
 fi
 echo "WARN: filed $new_id but could not attach the 'specified' label — /auto will not pick it up until it is labeled. Most likely team '$team' has no attachable specified issue label (create one: linear-cli labels create \"specified\" -t issue); a transient linear-cli error is also possible" >&2
