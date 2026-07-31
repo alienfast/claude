@@ -21,6 +21,14 @@ Specs describe the **WHAT, never the HOW**. Implementation planning — technica
 
 It reads current labels, merges, sets, and verifies the attach; idempotent when the label is already present; exit 2 with a create-label pointer when the label is missing or unattachable. Direct `-l` is acceptable only on a just-created issue, whose label set is empty by construction.
 
+## The `needs decision` label
+
+- **Semantics:** a human must step in before unattended pickup — the issue hit something no agent may resolve: a product/design decision with no testable success criteria, work needing credentials/console/vendor access, or an explicit do-not-ship-unattended note. The issue **keeps `specified`** — the spec is gated, not wrong; de-certifying would discard grooming work and hide *why* the issue is parked.
+- **What it gates:** `next-candidates.sh` hides `needs decision` issues from every ranking — `/auto` never picks them, `/next` never suggests them — unless invoked with `--label 'needs decision'`, which lists exactly those (how `/spec` pick mode surfaces them). `/start` refuses to claim one in auto mode and warn-asks interactively.
+- **Who applies it:** `/auto` on a durable decline and on a decision-shaped failure, `/auto-prep`'s certification audit, and any skill that discovers a human-decision gate on an issue. Always paired with a comment naming the specific decision or access needed — the label flags, the comment explains.
+- **Who clears it:** a human, once the decision is recorded on the issue — directly (`~/.claude/scripts/linear-remove-label.sh <ID> 'needs decision'`), via `/spec <ID>` (re-certification clears it), or by proceeding through `/start`'s interactive warn-ask (proceeding is the decision).
+- **One workspace-level issue label**, same as `specified`: `linear-cli labels create "needs decision" -t issue`. `linear-add-label.sh` exit 2 gives this pointer when the label doesn't exist yet.
+
 ## Canonical spec template
 
 ```markdown

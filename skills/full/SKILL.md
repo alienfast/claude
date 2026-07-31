@@ -111,7 +111,7 @@ Compose the args string for `/finish` based on mode (in `auto` mode, prepend `au
 | `BLOCKED-ON-RECOVERY` | `wt` mode (`/finish` Step 0/0.5, `finish-detect-mode.sh` exit 4) | Stop. Terminal. The worktree no longer matches its stamped identity — hijacked by a parallel session, or rewritten by this session without a `wt-restamp.sh`; `/finish` detected it and either the user declined recovery or `finish-recover.sh` couldn't complete (conflict / `pnpm check` red / setup error). State unchanged; the corrupted worktree is preserved. **Macro does NOT auto-retry** — recovery is confirm-gated by design. Surface and let the user drive `finish-recover.sh`. (A *successful* recovery emits `SHIPPED-MERGE`, not this tag.) |
 | `BLOCKED-ON-REVIEW` | Either mode | Stop. Terminal. State unchanged; branch (and worktree, if `wt`) intact. (E.g., user picked `abort` at the stale-verdict prompt, or `linear-cli issues update` failed.) |
 
-That tagged line is `/full`'s terminal output. Do not wrap it, do not add a closing summary, do not re-emit the issue title.
+That tagged line is `/full`'s terminal output. Do not wrap it, do not add a closing summary, do not re-emit the issue title. The table's "Stop. Terminal." means `/full` adds nothing after the tag — not that the turn must end there (the Nesting rule in `standards/lifecycle-tags.md`): standalone, stop; under `/auto`, control returns to `/auto` Step 4 in the same turn (outcome recording, `AUTO-CONTINUE`, wakeup), and ending the turn on the tag instead kills a self-paced loop.
 
 ### No Step 4
 

@@ -91,6 +91,8 @@ Only **Backlog / Planned / Todo** issues are workable candidates. Issues in **Tr
 
 A label filter (`--label`) applies after the workable/blocker filtering and before tiering — it never changes the ranking math, only the candidate pool. The script also has `--exclude-label`, `--include-triage`, and `--include-blocked`: those are `/spec`'s grooming-discovery knobs (find uncertified issues, including the Triage inbox and issues with unresolved blockers) and are never used by `/next` itself. The `specified` label contract lives in [standards/issue-spec.md](../../standards/issue-spec.md).
 
+A hard gate sits above all of these: issues labeled `needs decision` are hidden from every ranking — bare `/next` and `/next specified` alike — because a human must step in before pickup (the label contract is in [standards/issue-spec.md](../../standards/issue-spec.md)). The one exception is invoking with `--label 'needs decision'` itself, which lists exactly those issues. Whenever the gate hid candidates, the script appends a hidden-count note, so the thinner list is never silent — surface that note to the user verbatim.
+
 Multi-team runs merge every team's issues **before** tiering: each team contributes its own dependency graph and active-cycle set, then one ranked list comes out — a Tier 3 in-cycle BF issue beats a Tier 6 PL fallback regardless of which team the session was "in." Identifiers carry the team (`PL-…`, `BF-…`), so no extra labeling is needed in the output.
 
 The script applies a tier scheme — see [scripts/next-candidates.sh](../../scripts/next-candidates.sh) for the exact logic. The high-level priority order:

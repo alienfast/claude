@@ -325,9 +325,9 @@ The per-branch instructions below indicate which terminator each branch uses; tr
 
 Runs only when `ACTION` is `merge` or `pr`. Skip entirely when `ACTION` is empty (the standard flow ended at Step 8). `merge` always implies a worktree (`SOURCE_BRANCH` set); `pr` runs with or without one.
 
-**Step 9 is the terminal step of this session** — for all modes. After the merge (or `gh pr create`) completes, present the closing message and stop. Don't run further bash commands.
+**Step 9 is the terminal step of `/finish`** — for all modes. After the merge (or `gh pr create`) completes, present the closing message; `/finish` runs no further bash commands. Whether it also ends the *session* depends on who invoked it (the Nesting rule in `standards/lifecycle-tags.md`): standalone or under a bare `/full`, stop after the closing message. Under an enclosing `/auto` loop, the tag ends `/finish`, not the turn — control returns to `/auto` Step 4 in this same turn (record the outcome, emit `AUTO-CONTINUE`, schedule the wakeup). Ending the turn on the tag under self-paced `/loop /auto` kills the loop: no wakeup is armed, so the session dies at its moment of success (the observed BF-701 stall). The same scoping applies to every terminal tag `/finish` emits in auto mode, `BLOCKED-ON-REVIEW` aborts included — under `/auto`, a terminal tag is `/auto`'s input, never the turn's end.
 
-**Emit the tag bare.** The `SHIPPED-MERGE` / `DEFERRED-MERGE` / `SHIPPED-PR` closing messages below are shown inside ` ```text ` blocks for readability, but the tag you actually emit must be the **bare, final, non-empty line** — no fence around it, nothing after it. A trailing closing ` ``` ` reads as a summary close and defeats the `full-continue.sh` handoff hook (see `standards/lifecycle-tags.md`).
+**Emit the tag bare.** The `SHIPPED-MERGE` / `DEFERRED-MERGE` / `SHIPPED-PR` closing messages below are shown inside ` ```text ` blocks for readability, but the tag you actually emit must be the **bare, non-empty last line of the message that carries it** — no fence around it, nothing after it in that message. A trailing closing ` ``` ` reads as a summary close and defeats the `full-continue.sh` handoff hook (see `standards/lifecycle-tags.md`). The hook anchors on the last line of each message, not of the whole turn, so `/auto` Step 4's output in subsequent messages does not defeat it — end the tag's message on the tag, then continue if `/auto` requires it.
 
 Substitute the values captured from Step 0 (`SOURCE_BRANCH`, `WORKTREE_BRANCH`, `WT_DIR`, `REPO_ROOT`) into the bash commands below as literal strings.
 
@@ -357,7 +357,7 @@ The script brings the worktree branch up to source's tip **inside the worktree**
   1. Run `~/.claude/scripts/mark-ready-for-release.sh <ISSUE-ID>` — moves the issue to Ready For Release with the same team-state fallback Step 8 documents.
      - **Exit 0** → proceed to the closing message below.
      - **Non-zero** → the merge succeeded but the Linear update failed. Do **NOT** undo the merge. Surface the script's error and emit, as the terminal line, `SHIPPED-MERGE: <ISSUE-ID> — <WORKTREE_BRANCH> merged into <SOURCE_BRANCH>, worktree removed, but Linear state update FAILED: <reason>. Mark Ready For Release manually.` (still `SHIPPED-MERGE` — the code shipped; only the bookkeeping needs a manual touch). Then stop.
-  2. On success, surface the merge output and present the closing message. The tagged final line (per `standards/lifecycle-tags.md`) MUST be the last LLM-authored output:
+  2. On success, surface the merge output and present the closing message, ending that message on the tagged line (per `standards/lifecycle-tags.md`). The first line is standalone-only — under `/auto`, omit it (the session is not done; the loop continues) and proceed to `/auto` Step 4 after the tag:
 
      ```text
      This agent-view session is done — close it and dispatch a new session for the next issue.
@@ -365,7 +365,7 @@ The script brings the worktree branch up to source's tip **inside the worktree**
      SHIPPED-MERGE: <ISSUE-ID> — <WORKTREE_BRANCH> merged into <SOURCE_BRANCH>, worktree removed, Ready For Release.
      ```
 
-  Do not run further bash commands.
+  No further bash commands. Standalone: stop here. Under `/auto`: continue with `/auto` Step 4.
 
 - **1 (hard precondition failure)** — surface the script's output and stop. Don't attempt recovery; these are genuine setup problems the user must resolve (source branch missing, worktree gone or on the wrong branch, worktree mid-unrelated-operation or with uncommitted tracked changes, or the merge couldn't be verified). The terminal tagged line is `BLOCKED-ON-REVIEW: <ISSUE-ID> — <reason from the script>. <recovery>.` Do not run further bash commands. (Transient blocks — dirty/on-source main checkout, source checked out elsewhere, main mid-operation, contention — are **exit 3**, not 1; see below.)
 
@@ -377,7 +377,7 @@ The script brings the worktree branch up to source's tip **inside the worktree**
   DEFERRED-MERGE: <ISSUE-ID> — merge queued (<reason>); will retry automatically. Check with /merge-queue.
   ```
 
-  Do not run further bash commands.
+  No further bash commands. Standalone: stop here. Under `/auto`: continue with `/auto` Step 4 (`DEFERRED-MERGE` is a shipped outcome there).
 
 - **2 (merge conflict — resolve in the worktree)** — the script merged `<SOURCE_BRANCH>` into the worktree branch **inside `<WT_DIR>`** and hit conflicts. The main checkout is untouched and clean; the conflict lives in the worktree, which this session **owns** (edits there are permitted even under bgIsolation once it has entered the worktree via `EnterWorktree` — see Step 0) and which is **private** (no lock needed — do **not** wrap these in `with-repo-lock.py`). Conflicted files are listed on the script's stderr as worktree-relative paths.
 
@@ -420,7 +420,7 @@ The branch was pushed in Step 7 (the `no push` + `pr` combination was rejected i
    gh pr create --base '<BASE>' --head '<WORKTREE_BRANCH>' --title '<generated title>' --body-file '<path from step 4>' [--label '<label>' ...]
    ```
 
-After the PR is created, present the closing message. The tagged final line (per `standards/lifecycle-tags.md`) MUST be the last LLM-authored output. Substitute the actual resolved `<BASE>`, branch, and label list (or the bare word `none` when no labels were applied). The message branches on whether a worktree is involved:
+After the PR is created, present the closing message, ending that message on the tagged line (per `standards/lifecycle-tags.md`). Both templates' leading `This agent-view session is done.` sentence is standalone-only — under `/auto`, drop that sentence, keep the rest of the line, and continue with `/auto` Step 4 after the tag. Substitute the actual resolved `<BASE>`, branch, and label list (or the bare word `none` when no labels were applied). The message branches on whether a worktree is involved:
 
 - **`SOURCE_BRANCH` set (worktree PR)** — leave the worktree in place; it's the lifecycle boundary. The leading sentence and the tagged line should NOT duplicate the cleanup hint:
 

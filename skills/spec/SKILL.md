@@ -42,7 +42,15 @@ Team scope resolves mechanically, exactly like `/next` Step 2: `$LINEAR_TEAM` if
 ~/.claude/scripts/next-candidates.sh --exclude-label specified --include-triage --include-blocked --limit 10
 ```
 
-Same ranking as `/next` — so the issues `/auto` would want next are certified first — plus the **Triage inbox**, which is precisely what grooming targets (unlike `/next`, where Triage is never workable). Blocked issues are included deliberately too: certifying a spec before its blocker resolves builds runway `/auto` can pick up the moment it unblocks. The ranking still favors cycle/unblocked work, though — Triage-inbox and blocked items rank low, so raise `--limit` when processing a large inbox. Present the ranked list and let the user pick one (AskUserQuestion, top candidates as options). Empty list → `Everything workable is already certified.` and stop.
+Same ranking as `/next` — so the issues `/auto` would want next are certified first — plus the **Triage inbox**, which is precisely what grooming targets (unlike `/next`, where Triage is never workable). Blocked issues are included deliberately too: certifying a spec before its blocker resolves builds runway `/auto` can pick up the moment it unblocks. The ranking still favors cycle/unblocked work, though — Triage-inbox and blocked items rank low, so raise `--limit` when processing a large inbox.
+
+Issues parked behind a human decision keep `specified` plus a `needs decision` label (`standards/issue-spec.md`), so the exclude filter above hides them — list them with a second invocation:
+
+```bash
+~/.claude/scripts/next-candidates.sh --label 'needs decision' --include-blocked --limit 10
+```
+
+Present any hits as a separate **awaiting a decision** group alongside the uncertified list: grooming one means making and recording the decision in the interview, after which certification clears the label (Step 6 item 5). Then let the user pick one from either group (AskUserQuestion, top candidates as options). Both lists empty → `Everything workable is already certified.` and stop.
 
 ### Step 2: Research (read-only)
 
@@ -104,9 +112,10 @@ Show the user the full draft. Iterate until they explicitly approve. No approval
 
    ```bash
    ~/.claude/scripts/linear-add-label.sh <ID> specified
+   ~/.claude/scripts/linear-remove-label.sh <ID> 'needs decision'
    ```
 
-   Read-merge-set — never a bare `issues update -l`, which replaces the whole label set. Exit 2 → the spec landed but the issue is **not** certified: surface the helper's pointer, report certification incomplete, and skip item 6.
+   Read-merge-set — never a bare `issues update -l`, which replaces the whole label set. Exit 2 on the add → the spec landed but the issue is **not** certified: surface the helper's pointer, report certification incomplete, and skip item 6. The removal is a no-op when the label is absent; when present, this certification is exactly what clears it — the interview recorded the decision the label was waiting on (`standards/issue-spec.md`).
 6. **Certification comment** (only after the label attached): Write a short body to `tmp/spec-comment-<id-lowercase>.md` — certified via `/spec`, one-line scope summary, sub-issues created (if any), original request preserved in the description — then:
 
    ```bash

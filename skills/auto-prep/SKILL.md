@@ -1,6 +1,6 @@
 ---
 name: auto-prep
-description: Prepare a team's certified backlog for a fleet of parallel /loop /auto sessions — audit `specified` labels for unattended-shippability (de-label or flag decision-gated, human-dependent, and run-solo issues), consolidate same-defect-family point fixes into class-scoped sweep issues, wire `blocks` edges between file-colliding candidates, validate through next-candidates.sh, and recommend a parallel-session count. Use when the user says 'auto-prep', 'fleet prep', 'prep the backlog for auto', or before launching multiple /loop /auto sessions.
+description: Prepare a team's certified backlog for a fleet of parallel /loop /auto sessions — audit `specified` labels for unattended-shippability (mark human-dependent issues `needs decision`, flag decision-gated and run-solo ones), consolidate same-defect-family point fixes into class-scoped sweep issues, wire `blocks` edges between file-colliding candidates, validate through next-candidates.sh, and recommend a parallel-session count. Use when the user says 'auto-prep', 'fleet prep', 'prep the backlog for auto', or before launching multiple /loop /auto sessions.
 argument-hint: "[team:KEY | KEY]"
 ---
 
@@ -28,11 +28,11 @@ Split into the certified set (`specified` label) and the rest. Read every certif
 
 `specified` means "an unattended agent may pick this up and ship it" ([standards/issue-spec.md](../../standards/issue-spec.md)). Test every certified issue against that sentence and sort failures into four dispositions:
 
-1. **De-label** — the body itself contradicts unattended shipping. Two tests, both mechanical:
+1. **Mark `needs decision`** — the body itself contradicts unattended shipping. Two tests, both mechanical:
    - The text says so: "must not ship from an unattended run", "needs dedicated review", or equivalent present-tense claims about *this* issue's work. (Past-tense "was deferred from BF-X because too big for that unattended run" does NOT count — being its own issue with its own review cycle is exactly the remedy.)
    - It requires capabilities no agent has: contacting a vendor/support rep, credentials or console access, a product/design decision with **no** testable success criteria (an "## Ask" body with no checkboxes).
 
-   Remove the label (`~/.claude/scripts/linear-remove-label.sh <ID> specified`) and post a comment stating why and what would re-certify it.
+   Post a comment stating the specific decision or access needed, then apply the label: `~/.claude/scripts/linear-add-label.sh <ID> 'needs decision'`. The issue keeps `specified` — the spec is gated, not wrong (`standards/issue-spec.md`) — and `next-candidates.sh` hides it from every ranking until a human decides and clears the label (directly, or via `/spec <ID>`).
 2. **Flag: decision-gated** — the first success criterion is a product/design decision but a conservative implementable path exists (e.g. "apply the same filter the sibling uses"). Keep the label, list it in the report: the user either decides now (best) or accepts that an agent will pick the conservative option and record it.
 3. **Flag: run attended/solo** — implementable unattended but with fleet-hostile blast radius: schema/codegen regeneration, repo-wide audits, changes touching what every other candidate touches. Recommend a targeted `/full <ID>` while the fleet is quiet (first or last), never mid-fleet.
 4. **Pipeline label repair** — `/reflect` filings ("Auto-filed by /reflect…") certify by provenance: ensure `specified` + `reflection`, plus `keeper` when the proposal edits the shared `~/.claude` repo. Duplicate filings (same proposal from different sessions): keep one canonical, `linear-cli relations add <dup> <canonical> -r duplicate`, cross-comment both.
@@ -50,7 +50,7 @@ Then wire **minimal chains** with `linear-cli relations add <BLOCKER> <BLOCKED> 
 - **Same file → serialize.** Adjacent pairs only (A→B, B→C — never a redundant A→C; `/next` requires all blockers terminal, so transitivity is free).
 - **Semantic order → direct the edge**: mechanism before consumers, client display fixes before the server withholds the data they render, code before the docs that describe it, small surgical fixes before the sweep that enumerates the area.
 - **Disjoint-overlap diamonds stay parallel**: if A and C are disjoint but both overlap B, wire A→B and C→B and leave A ∥ C.
-- **Never chain through a Step 2-flagged issue** — a de-labeled or decision-gated blocker never ships unattended, so anything wired behind it is stranded. Flagged issues sit at chain *tails* only.
+- **Never chain through a Step 2-flagged issue** — a `needs decision` or decision-gated blocker never ships unattended, so anything wired behind it is stranded. Flagged issues sit at chain *tails* only.
 
 Fleet safety rails that already exist and need no wiring: Linear is the claim registry (In Progress is invisible to `/next`), worktree creation is repo-locked, `/finish` merges serialize, and `/quality-review` wires same-batch filing collisions itself (BF-581). This step covers what those can't see: overlap across *previously filed* siblings.
 
@@ -71,11 +71,11 @@ Launch checklist for the report:
 - `export LINEAR_TEAM=<KEY>` in every fleet session (else `/next` roams the workspace).
 - Project main checkout clean and parked off the integration branch (`git checkout --detach`) — keeps every merge on the ref-only path.
 - Run the Step 2 "attended/solo" issues via targeted `/full <ID>` before or after the fleet, not during.
-- The decisions (Step 2 flags, de-labeled issues) that would refill the pool once made.
+- The decisions (Step 2 flags, `needs decision` issues) that would refill the pool once made.
 
 ## Report
 
-Lead with the recommended session count. Then: changes made (consolidations as absorbed→canonical with the class named, edges as blocker→blocked with one-line rationale, label ops, priority bumps), the flag lists by disposition (de-labeled / decision-gated / run-solo), and the validated top of the ranked pool. Every write is reversible — say so once.
+Lead with the recommended session count. Then: changes made (consolidations as absorbed→canonical with the class named, edges as blocker→blocked with one-line rationale, label ops, priority bumps), the flag lists by disposition (needs-decision / decision-gated / run-solo), and the validated top of the ranked pool. Every write is reversible — say so once.
 
 ## Error Handling
 

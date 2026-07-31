@@ -33,6 +33,11 @@
 # unresolved-blocker count) are both for /spec's grooming pick-list only — /next
 # itself never uses these.
 #
+# `needs decision`-labeled issues are hidden from every ranking (a human must step in
+# first — standards/issue-spec.md) unless the caller asks for that label itself via
+# --label 'needs decision'. A trailing note reports the hidden count so the thinner
+# list is never silent.
+#
 # Exit codes: 0 success (incl. "no workable issues"), 1 arg error,
 # 2 Linear/network failure, 3 missing dependency.
 #
@@ -394,6 +399,9 @@ candidates_json=$(jq \
       | select(($label == "") or (any(($i.labels // [])[]; ascii_downcase == ($label | ascii_downcase))))
       | select(($xlabel == "") or (all(($i.labels // [])[]; ascii_downcase != ($xlabel | ascii_downcase))))
       | select(($iskeeper == "true") or (all(($i.labels // [])[]; ascii_downcase != "keeper")))
+      # needs-decision gate: a human must step in first (standards/issue-spec.md) —
+      # hidden from every ranking unless the caller asked for this label itself.
+      | select((($label | ascii_downcase) == "needs decision") or (all(($i.labels // [])[]; ascii_downcase != "needs decision")))
       | {
           id: $id,
           title: $i.title,
@@ -434,6 +442,16 @@ keeper_note() {
   return 0
 }
 
+# Same visibility contract for the needs-decision gate.
+nd_hidden=0
+if [ "$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')" != "needs decision" ]; then
+  nd_hidden=$(jq '[.[] | select(any((.labels // [])[]; ascii_downcase == "needs decision"))] | length' "$list_file" 2>/dev/null || echo 0)
+fi
+nd_note() {
+  [ "$nd_hidden" -gt 0 ] && printf '\n_%s issue(s) hidden awaiting a human decision (`needs decision` label) — list with --label "needs decision", resolve via /spec <ID> or by deciding and removing the label._\n' "$nd_hidden"
+  return 0
+}
+
 candidate_count=$(printf '%s' "$candidates_json" | jq 'length')
 if [ "$candidate_count" -eq 0 ]; then
   filter_desc=""
@@ -443,6 +461,7 @@ if [ "$candidate_count" -eq 0 ]; then
   [ ${#teams[@]} -gt 1 ] && team_word="teams"
   printf '## Suggested next\n\n_No workable issues%s in %s %s._\n' "$filter_desc" "$team_word" "$teams_label"
   keeper_note
+  nd_note
   exit 0
 fi
 
@@ -663,3 +682,4 @@ if [ "$remaining" -gt 0 ]; then
   printf '\n_%s more workable candidate(s) available; pass --limit to see more._\n' "$remaining"
 fi
 keeper_note
+nd_note
