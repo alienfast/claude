@@ -59,6 +59,21 @@ Auth: `linear-cli auth oauth` (browser) or `LINEAR_API_KEY`; check with `linear-
 
 12. **`priority` is an integer whose lowest value ranks LAST.** Linear encodes `1` Urgent, `2` High, `3` Medium, `4` Low — and **`0` = No priority**, so a raw `.priority` read inverts if you treat it positionally ("P0 is top"). `scripts/next-candidates.sh` maps it explicitly (`priority_rank`: `Urgent(1)→1 … None(0)→5`), i.e. an unprioritized issue sorts *behind* every prioritized one; the full within-tier ordering is in [next/SKILL.md](../next/SKILL.md). When printing priorities for a human decision, print the **label** — the API's own `priorityLabel` (`No priority`/`Urgent`/`High`/`Medium`/`Low`), or the script's `priority_label` (which renders `3` as `Normal` and `0` as `None`) — never `P<n>`: that form reads like a severity scale running the other way, and a ranking judgment built on it is inverted.
 
+13. **Result shape varies by command — `search issues` and `issues list` return a BARE ARRAY (`.[]`).** There is no single envelope; take the filter from the command you ran, never from a sibling:
+
+    | Command | Top level | Filter |
+    |---|---|---|
+    | `search issues`, `issues list` | bare array | `.[]` |
+    | `issues get <ID>` | bare object (the issue itself) | `.identifier`, `.labels[]` … |
+    | `comments list <ID>` | object wrapping a sub-collection | `.comments.nodes[]` (gotcha #9) |
+    | `api query`/`api mutate` | raw GraphQL envelope | `.data.<field>.nodes[]` (gotcha #6) |
+
+    Only a **sub-collection nested under a parent** carries `.nodes` — top-level results are unwrapped. Copying `.issues.nodes[]` from an `api query` onto `search issues` does **not** quietly return nothing: jq exits **5** with `Cannot index array with string ("issues")` on stderr, and a `// []` guard chain does not rescue it (`//` catches `null`, not a type error). That exit code is the check that matters for the dedup search `/quality-review` requires before filing — a genuinely empty search exits **0** with no output, so treat empty stdout as "no existing issue covers this" only once the command itself succeeded. Unlike gotcha #6's `api query` case, this one is loud if you look.
+
+    ```bash
+    linear-cli search issues "<terms>" -o json | jq -r '.[] | "\(.identifier) [\(.state.name)] \(.title)"'
+    ```
+
 ## Command map
 
 ```bash

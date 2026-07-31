@@ -36,6 +36,17 @@ If a delegated task includes a multi-minute command (Rust/C++ compile, installer
 synchronously with a long Bash timeout (up to 600000ms) — or, if backgrounded, to poll its output file within the same turn. A subagent that ends its
 turn "waiting for a background task/Monitor" does not self-resume — the orchestrator must notice the stall and re-message it, which stalls the whole run.
 
+**Past 600000ms there is no synchronous option, so don't delegate the command at all.** That is the Bash tool's ceiling, and exceeding it does not fail — the harness
+moves the command to the background and returns a task ID, so "run it in the foreground" silently becomes the backgrounded case above, leaving only the fragile
+poll-in-turn path. An agent told to run a suite longer than the ceiling strands whichever way it is instructed, returning no report mid-task. Keep the full test
+suite, the long build, and the end-to-end run in the orchestrator, which handles background completion notifications normally; delegate the edit and give the agent
+only the targeted checks that bound its own work (a single spec file, a type check). Say which in the dispatch — an agent told to "verify" reaches for the most
+complete check available. (`/start` Step 8 already assigns verification to the orchestrator, and its Step 5 rule 1 says the same for suites outside `pnpm check`.)
+
+**A stranded delegation leaves its command still running.** Before re-messaging or re-dispatching, confirm the original process is gone (`pgrep -f`) — otherwise the
+retry runs concurrently with it, and two runs against one set of test databases, one dev-server port, or one lock produce failures that read as real defects but are
+pure contention.
+
 ## Background-agent completion reports
 
 A background agent's completion often surfaces as a bare idle notification — the substantive report may arrive late, separately, or not at all. When delegating to background agents:
