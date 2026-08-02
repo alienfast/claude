@@ -177,6 +177,27 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 - Self-contained workflow in `SKILL.md`
 - Complements `/quality-review`'s same-batch collision wiring by covering overlap across previously filed siblings
 
+### fleet-launch
+
+**Description**: Launch a fleet of parallel `/loop /auto` sessions as background agents in `claude agents`, staggered so each session's first pick sees the previous one's claim, with an optional time budget that winds the fleet down cleanly. The middle bookend: `/auto-prep` → `/fleet-launch` → `/fleet-retro`.
+
+**When Invoked**:
+
+- User says "launch the fleet", "spawn 5 auto loops", "start the fleet for 10 hours", or "wind down the fleet" (`/fleet-launch stop`)
+- After `/auto-prep` has groomed the backlog and recommended a session count
+
+**Key Features**:
+
+- Count defaults to the recommendation `/auto-prep` persists to `tmp/fleet-recommendation.json`; an explicit count is the user's quota throttle
+- Staggers dispatches on worktree appearance (the claim stamp), not a blind timer — the next session launches the moment the previous one's pick is excluded from ranking
+- A duration writes `tmp/fleet-deadline.json`; `/auto` checks it before each pick (never mid-issue), so at the deadline sessions finish in-flight work and end their loops with `NO-CANDIDATES`
+- `stop` writes an already-passed deadline to wind down a running fleet without killing in-flight work
+
+**Structure**:
+
+- All logic in `~/.claude/scripts/fleet-launch.sh`; `SKILL.md` dispatches and narrates
+- Deadline contract shared with `skills/auto/SKILL.md` Step 2's fleet-deadline gate
+
 ### fleet-retro
 
 **Description**: Post-mortem on a finished fleet of parallel `/loop /auto` sessions — measures where the capacity went, reconciles the shipped ledger, audits what the run filed, then applies the fixes you approve. The bookend to `/auto-prep`.

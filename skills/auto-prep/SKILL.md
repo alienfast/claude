@@ -80,6 +80,16 @@ Confirm: tier-0 reflection filings lead; every Step 3 dependent is absent (block
 
 Count **lanes** from the Step 4 ranking, which already excludes both label gates: the immediately-workable candidates minus the decision-gated flags, grouped by cluster (chain heads count once; independent standalones count individually). Recommend `min(lanes, 8)` parallel sessions — beyond ~8, pick races and merge-queue serialization eat the gains; below 4 lanes, recommend the lane count and note when chains will release more work (each blocker's ship unblocks its dependent automatically).
 
+**Persist the recommendation** so `/fleet-launch` can pick it up without re-deriving the lane math (a count-less `/fleet-launch` reads exactly this file):
+
+```bash
+jq -n --argjson sessions <N> --arg team <KEY> --argjson e "$(date +%s)" \
+  '{sessions: $sessions, team: $team, generated_epoch: $e, generated: (now | todate)}' \
+  > tmp/fleet-recommendation.json
+```
+
+Written in the project's main checkout (where the fleet sessions will run), not `~/.claude`. `fleet-launch.sh` warns when the file is older than 24h — a re-run of this skill refreshes it.
+
 Launch checklist for the report:
 
 - `export LINEAR_TEAM=<KEY>` in every fleet session (else `/next` roams the workspace).
@@ -89,7 +99,7 @@ Launch checklist for the report:
 
 ## Report
 
-Lead with the recommended session count. Then: changes made (consolidations as absorbed→canonical with the class named, edges as blocker→blocked with one-line rationale, label ops, priority bumps), the flag lists by disposition (needs-decision / decision-gated / solo), and the validated top of the ranked pool. Give the `solo` list its own running order — it is a work plan for the quiet window, not a warning. Every write is reversible — say so once.
+Lead with the recommended session count and how to launch it (`/fleet-launch [count] [duration]` — count defaults to this run's persisted recommendation; an explicit count is the user's quota throttle). Then: changes made (consolidations as absorbed→canonical with the class named, edges as blocker→blocked with one-line rationale, label ops, priority bumps), the flag lists by disposition (needs-decision / decision-gated / solo), and the validated top of the ranked pool. Give the `solo` list its own running order — it is a work plan for the quiet window, not a warning. Every write is reversible — say so once.
 
 ## Error Handling
 
