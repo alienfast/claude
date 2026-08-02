@@ -87,6 +87,8 @@ linear-cli issues get <ISSUE-ID> -o json | jq -r '.labels | .. | objects | selec
 
 Label absent → refuse and stop with a plain error — no lifecycle tag, no state change; this is invocation-time argument validation and the user is present, having just typed the ID: `<ISSUE-ID> is not certified (no specified label) — run /spec <ISSUE-ID> to certify it, or /full wt <ISSUE-ID> for an interactive run.` (A probe failure from auth/network is Error Handling's `linear-cli` territory, never a silent pass.)
 
+`specified` is the **only** label this probe checks, and a `solo` target is expressly legitimate: that label hides an issue from `/next`'s ranking precisely so it can only arrive here, by a human typing the ID once no fleet is running (`standards/issue-spec.md`). Never extend the probe to refuse it — a refusal would strand work that is fully automatable and leave no path to ship it.
+
 Targeted mode narrows the workflow in exactly four places, each marked at its step: Step 0's sticky terminal-state gate is bypassed, Step 1's preflight is scoped to the target, Step 2 is skipped, and Step 4 never transitions `status` or schedules a wakeup. Everything else — always-`wt`, the run-scoped commit/push grant, auto defaults, outcome recording, the failure Linear comment and `stalled` label — is identical. It is one-shot by nature: run it directly, not under `/loop` (a re-fired loop would just skip-block against the now-terminal issue).
 
 Error on anything else — a second team-shaped token, a second issue ID, or a token failing team validation: `Unrecognized argument 'X'. /auto accepts optional 'pr' plus either one team scope matching a real team key (e.g. BF or PL,BF) or one issue ID for a targeted run; worktree mode is always on.`

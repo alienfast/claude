@@ -38,6 +38,13 @@
 # --label 'needs decision'. A trailing note reports the hidden count so the thinner
 # list is never silent.
 #
+# `solo`-labeled issues are hidden the same way and surfaced via --label solo. They are
+# unattended-shippable but fleet-hostile: the worktree isolates the working tree, not the
+# merge point, the generated artifacts every sibling consumes, or the shared `pnpm check`
+# gate every concurrent session blocks on. Hiding them from the ranking is what keeps a
+# parallel fleet from picking one; a targeted run (/auto <ID>) while the fleet is quiet
+# still ships it, since targeted mode gates on `specified` alone.
+#
 # Exit codes: 0 success (incl. "no workable issues"), 1 arg error,
 # 2 Linear/network failure, 3 missing dependency.
 #
@@ -402,6 +409,13 @@ candidates_json=$(jq \
       # needs-decision gate: a human must step in first (standards/issue-spec.md) —
       # hidden from every ranking unless the caller asked for this label itself.
       | select((($label | ascii_downcase) == "needs decision") or (all(($i.labels // [])[]; ascii_downcase != "needs decision")))
+      # solo gate: shippable unattended but not concurrently (standards/issue-spec.md) —
+      # same hide-unless-asked-for contract, so no ranking ever hands one to a fleet.
+      # It also yields to a `needs decision` listing: an issue can carry both (a durable
+      # decline in /auto labels whatever it declined, solo included), and that listing is
+      # how /spec finds parked issues — no apostrophes in here, the jq program is one
+      # single-quoted string and one would end it mid-filter.
+      | select((($label | ascii_downcase) | . == "solo" or . == "needs decision") or (all(($i.labels // [])[]; ascii_downcase != "solo")))
       | {
           id: $id,
           title: $i.title,
@@ -452,6 +466,16 @@ nd_note() {
   return 0
 }
 
+# Same visibility contract for the solo gate.
+solo_hidden=0
+if [ "$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')" != "solo" ]; then
+  solo_hidden=$(jq '[.[] | select(any((.labels // [])[]; ascii_downcase == "solo"))] | length' "$list_file" 2>/dev/null || echo 0)
+fi
+solo_note() {
+  [ "$solo_hidden" -gt 0 ] && printf '\n_%s issue(s) hidden as fleet-hostile (`solo` label) — list with --label solo, ship one at a time via /auto <ID> or /full <ID> while no fleet is running._\n' "$solo_hidden"
+  return 0
+}
+
 candidate_count=$(printf '%s' "$candidates_json" | jq 'length')
 if [ "$candidate_count" -eq 0 ]; then
   filter_desc=""
@@ -462,6 +486,7 @@ if [ "$candidate_count" -eq 0 ]; then
   printf '## Suggested next\n\n_No workable issues%s in %s %s._\n' "$filter_desc" "$team_word" "$teams_label"
   keeper_note
   nd_note
+  solo_note
   exit 0
 fi
 
@@ -683,3 +708,4 @@ if [ "$remaining" -gt 0 ]; then
 fi
 keeper_note
 nd_note
+solo_note

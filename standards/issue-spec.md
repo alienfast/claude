@@ -29,6 +29,16 @@ It reads current labels, merges, sets, and verifies the attach; idempotent when 
 - **Who clears it:** a human, once the decision is recorded on the issue — directly (`~/.claude/scripts/linear-remove-label.sh <ID> 'needs decision'`), via `/spec <ID>` (re-certification clears it), or by proceeding through `/start`'s interactive warn-ask (proceeding is the decision).
 - **One workspace-level issue label**, same as `specified`: `linear-cli labels create "needs decision" -t issue`. `linear-add-label.sh` exit 2 gives this pointer when the label doesn't exist yet.
 
+## The `solo` label
+
+- **Semantics:** shippable unattended, but not *concurrently*. A `/start wt` worktree isolates the working tree, and nothing that makes these issues dangerous lives there — the merge point every session shares, the generated artifacts (`packages/graphql/src` and the like) siblings gate against, and the `pnpm check` command every concurrent session hard-gates on. Typical members: codegen/schema regeneration, repo-wide sweeps, and edits to the root `package.json` or the shared check suite. The issue **keeps `specified`** — it is certified, just not parallelizable.
+- **What it gates:** exactly one thing — the automatic pick. `next-candidates.sh` hides `solo` issues from every ranking (`/auto` never picks one, `/next` never suggests one) unless invoked with `--label solo`, which lists exactly those. It is deliberately **not** a claim-time refusal: `/auto <ID>` and `/full <ID>` ship a solo issue normally, since targeted mode gates on `specified` alone and running it *is* the remedy. Never add a refusal on this label — that would strand automatable work.
+- **Distinguish from `needs decision`:** that one means a human must *decide* something and the issue must not ship until they do. This one means no human is needed at all, only an empty fleet.
+- **Who applies it:** `/auto-prep`'s certification audit (Step 2's solo disposition), or a human who knows an issue will collide with everything else in flight.
+- **Who clears it:** whoever ships it — a scheduling constraint on an open issue dies with the issue. Clear it early (`~/.claude/scripts/linear-remove-label.sh <ID> solo`) only if the blast radius proves narrower than the audit judged.
+- **How to run one:** while no fleet is active, first or last, never mid-fleet. `~/.claude/scripts/next-candidates.sh --label solo` lists the pool; `/auto <ID>` ships one unattended.
+- **One workspace-level issue label**, same as `specified`: `linear-cli labels create "solo" -t issue`.
+
 ## Canonical spec template
 
 ```markdown
