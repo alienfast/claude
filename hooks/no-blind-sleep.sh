@@ -4,9 +4,11 @@
 # WHY: waiting for delegated work by holding a turn open with `sleep` is pure wall-clock burn. The
 # harness re-invokes you when a backgrounded Agent finishes, and a synchronous Agent call blocks on
 # its own — so a timed sleep adds nothing and cannot end early. Measured on the 2026-08-01 BF fleet
-# run: two of four sessions spent **7.7 hours** in `for i in $(seq 1 22); do sleep 25; done` windows
-# with no exit condition, ~54% and ~81% of their wall-clock. The two sessions that dispatched their
-# subagents synchronously (run_in_background: false) spent 0%. Same work, same skills, same day.
+# run by `scripts/fleet-metrics.py` (re-run it to reproduce these): two of four sessions spent
+# **7.5 hours** in `for i in $(seq 1 22); do sleep 25; done` windows with no exit condition — 32% and
+# 55% of their own wall-clock, and 54%/81% once marker-polling is counted too. The two sessions that
+# dispatched their subagents synchronously (run_in_background: false) spent 0% on either. Same work,
+# same skills, same day.
 #
 # THE DISTINCTION THIS HOOK DRAWS is not "sleep is bad" — it is whether the wait can END EARLY:
 #   - `until [ -f tmp/rspec.done ]; do sleep 20; done`  -> ALLOWED. Polls a completion marker and
@@ -127,7 +129,8 @@ if [[ $RC -ne 0 && -n "${VERDICT:-}" ]]; then
 Command: $COMMAND
 
 This wait has no exit condition, so it burns its full duration no matter when the thing it is waiting for
-finishes. Measured on a real fleet run: 7.7 hours lost to exactly this shape in two sessions.
+finishes. Measured on a real fleet run: 7.5 hours lost to exactly this shape in two sessions
+(scripts/fleet-metrics.py reproduces it).
 
 Use whichever of these fits:
   - Need a subagent's result before you can continue? Dispatch it with run_in_background: false. The call

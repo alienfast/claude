@@ -2,7 +2,7 @@
 # Regression harness for no-blind-sleep.sh. Feeds real and synthetic Bash commands through the hook
 # and asserts BLOCK/ALLOW.
 #
-# Cases 1-2 are verbatim from the 2026-08-01 BF fleet run, where two sessions burned 7.7 hours in
+# Cases 1-2 are verbatim from the 2026-08-01 BF fleet run, where two sessions burned 7.5 hours in
 # this shape. Case 1 is the load-bearing one and the reason the hook strips quoted literals before
 # looking for an exit condition: its trailing `echo "wait window elapsed"` contains the `wait`
 # builtin as prose, which made the single worst offender in the run read as condition-bounded and
