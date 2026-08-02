@@ -17,8 +17,9 @@
 #               loops run until the certified backlog drains.
 #   -- ...      Everything after -- is passed to `claude --bg` verbatim. Defaults are
 #               added only for flags not present there: --model 'opus[1m]'
-#               --effort xhigh --permission-mode acceptEdits (skills/auto/SKILL.md's
-#               unattended-run prerequisites).
+#               --effort xhigh --permission-mode auto (skills/auto/SKILL.md's
+#               unattended-run prerequisites; auto — never acceptEdits — because a
+#               background session has nobody to answer a Bash permission prompt).
 #
 #   stop        Wind down a running fleet: write an already-passed deadline and exit.
 #               Every session ends its loop at its next iteration boundary; in-flight
@@ -132,7 +133,11 @@ have_flag() {
 have_flag --model "${claude_args[@]}" || claude_args+=(--model 'opus[1m]')
 have_flag --effort "${claude_args[@]}" || claude_args+=(--effort xhigh)
 if ! have_flag --permission-mode "${claude_args[@]}" && ! have_flag --dangerously-skip-permissions "${claude_args[@]}"; then
-  claude_args+=(--permission-mode acceptEdits)
+  # auto, not acceptEdits: acceptEdits only auto-accepts FILE EDITS, so the first gated
+  # Bash command (e.g. /start wt's worktree validation) prompts into a background session
+  # where nobody answers, and the session stalls at its first pick. auto mode routes
+  # those commands through the classifier instead.
+  claude_args+=(--permission-mode auto)
 fi
 
 prompt="${FLEET_PROMPT:-/loop /auto}"
