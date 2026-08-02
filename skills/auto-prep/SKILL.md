@@ -10,6 +10,8 @@ argument-hint: "[team:KEY | KEY]"
 
 Read [skills/linear/SKILL.md](../linear/SKILL.md) first (gotchas: relations direction, label add/remove helpers, state-update verification). Interactive by design — the flags it raises are decisions for the user; never run it unattended.
 
+After the fleet finishes, [`/fleet-retro`](../fleet-retro/SKILL.md) is the bookend — it measures where the run's capacity went and audits what it filed, which is where this skill's next inputs come from.
+
 **Writes it may make** (all reversible, all reported): add/remove issue labels, add `blocks`/`duplicate` relations, post explanatory comments, adjust priority. It issues **no unconditional state write** — the `duplicate` relations it wires (Step 2's duplicate-filing cleanup, Step 3's family consolidation) land the absorbed issue in the team's duplicate-type state on their own, and the only state write it may make is Step 3's read-back fallback for when that did not happen; it never touches states otherwise, and never assignees.
 
 ## Step 1: Resolve scope and fetch the pool

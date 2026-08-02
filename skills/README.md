@@ -177,6 +177,28 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 - Self-contained workflow in `SKILL.md`
 - Complements `/quality-review`'s same-batch collision wiring by covering overlap across previously filed siblings
 
+### fleet-retro
+
+**Description**: Post-mortem on a finished fleet of parallel `/loop /auto` sessions — measures where the capacity went, reconciles the shipped ledger, audits what the run filed, then applies the fixes you approve. The bookend to `/auto-prep`.
+
+**When Invoked**:
+
+- User says "fleet retro", "review the fleet run", "how did the fleet do", or "post-mortem the auto run"
+- After a fleet of parallel `/loop /auto` sessions finishes
+
+**Key Features**:
+
+- Measures every session through `scripts/fleet-metrics.py` on a fixed schema, so successive retros are comparable and drift is visible
+- Reads subagent transcripts, where permission blocks and stalls actually land — invisible to the parent session, which sees only a slow `Agent` call
+- Flags silent loop death (no `ScheduleWakeup`), unrecorded ships (Step 4 never ran), blind-sleep burn, classifier blocks, and shipped-without-a-commit
+- Audits the issues the run *filed* — duplicates from phrase-shaped dedup searches, `Triage` strandings, certification gaps
+- Distinguishes a compliance failure from a rule gap, and prefers a mechanical guard when prose has already lost
+
+**Structure**:
+
+- Workflow in `SKILL.md`; measurement in `~/.claude/scripts/fleet-metrics.py` (`--json` for machine use)
+- Routes the config-improvement half to `/reflect` rather than reimplementing its batching and filing
+
 ### quality-review
 
 **Description**: Adversarial implementation review with triage and fix loop, tiered by role. Hard-gates on `pnpm check`, delegates initial discovery to the quality-reviewer agent (opus/xhigh) for categorized findings, then loops triage/fix/re-review — small fixes applied directly by the orchestrator, substantive ones via sonnet-tier developer dispatches, re-reviews and confirmations on the lighter quality-verifier agent — until convergence (no new substantive findings — prose-only and mechanical fixes do not block it; 5-cycle soft ceiling, extended once in auto mode when the findings trend is decreasing), and reflects on the session at the tail.
