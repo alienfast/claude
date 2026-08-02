@@ -22,7 +22,9 @@ Use this skill when:
    - Identify the core problem being solved
 
 2. **Create the Epic/Parent Issue**
-   Use `linear-cli issues create` with a clear, action-oriented title and a body following the canonical spec template in [standards/issue-spec.md](../../standards/issue-spec.md) — problem, desired outcome, requirements (must-have vs nice-to-have), testable success criteria, boundaries.
+   Give it a clear, action-oriented title and a body following the canonical spec template in [standards/issue-spec.md](../../standards/issue-spec.md) — problem, desired outcome, requirements (must-have vs nice-to-have), testable success criteria, boundaries.
+
+   Create it through `~/.claude/scripts/linear-create-child.sh` with `-` for the parent (top-level), **never a bare `linear-cli issues create`**. A bare create passes no workflow state, and on a triage-enabled team the team default is Triage — where `next-candidates.sh`'s `WORKABLE_STATES` (Backlog/Planned/Todo) cannot see it, so a certified epic is invisible to `/next` and `/auto` with nothing reporting the omission. The helper resolves a workable state and verifies it landed.
 
 3. **Break Down into Sub-Issues**
    Each sub-issue body is itself a spec (same template) and should:
@@ -42,6 +44,8 @@ Use this skill when:
 
    `specified` marks a certified spec — the gate `/auto` picks up ([standards/issue-spec.md](../../standards/issue-spec.md)). Label post-create rather than via `issues create -l`, so a label problem can never fail issue creation. On exit 2, surface the helper's create-label pointer and tell the user certification is incomplete.
 
+   `linear-create-child.sh`'s optional label argument already attaches post-create with those same best-effort semantics (id on stdout either way, exit 2 when the attach fails), so passing `specified` there satisfies this step. Re-running the helper above on an issue that already carries it is idempotent — this step is the backstop, not a second mechanism.
+
 ## Spec Shape
 
 The canonical template and quality bar live in [standards/issue-spec.md](../../standards/issue-spec.md): `Problem` → `Desired Outcome` → `Requirements` (Must/Nice checkboxes) → `Success Criteria` (testable checkboxes) → `Boundaries` (In/Out of Scope).
@@ -51,11 +55,11 @@ Specs are problem + outcomes + success criteria only — **no implementation pla
 ## Example Commands
 
 ```bash
-# Create parent issue with description from file
-~/.claude/scripts/linear-stdin.sh tmp/prd-description.md issues create "User Authentication System" \
-  --team ENG \
-  --priority 2 \
-  -d -
+# Create the top-level epic — `-` as the parent means no parent. Same helper as the
+# sub-issue below: it resolves and verifies the workflow state, so the epic cannot land
+# in Triage and fall out of /next's WORKABLE_STATES unnoticed.
+#   ...write the description to tmp/prd-description.md via the Write tool...
+~/.claude/scripts/linear-create-child.sh - ENG Planned "User Authentication System" tmp/prd-description.md specified 2
 
 # Create a sub-issue linked to a parent. `linear-cli issues create` has no --parent
 # flag (set the parent's UUID via `--data` parentId instead), but prefer the helper — it

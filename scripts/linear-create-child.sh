@@ -72,6 +72,20 @@ fi
 # `relations parent` so the link can be VERIFIED (below). The header explains why this
 # two-step path is preferred over a single `--data` create.
 create_args=(issues create "$title" --team "$team" -o json -d -)
+# Resolve a workable state whenever the caller did not name one. "Team default" is NOT a
+# safe fallback: on a triage-enabled team, omitting --state lands the issue in Triage, and
+# next-candidates.sh's WORKABLE_STATES covers only Backlog/Planned/Todo — so a `specified`
+# issue filed that way is invisible to /next and /auto permanently, with no note anywhere
+# (the hidden-count notes cover the label gates only). Verified on BF: --state Planned
+# lands in Planned, omitting it lands in Triage. Same preference order and `ready`
+# exclusion as linear-file-improvement.sh, which already guards this.
+if [ -z "$state" ] || [ "$state" = "-" ]; then
+  if states_json=$(linear-cli statuses list -t "$team" -o json 2>/dev/null); then
+    state_names=$(printf '%s' "$states_json" | jq -r '.. | objects | select(has("name")) | .name' 2>/dev/null || true)
+    state=$(printf '%s\n' "$state_names" | grep -Fxi 'Planned' | head -1 || true)
+    [ -z "$state" ] && state=$(printf '%s\n' "$state_names" | grep -iE '^(planned|backlog|to.?do)$' | head -1 || true)
+  fi
+fi
 if [ -n "$state" ] && [ "$state" != "-" ]; then
   create_args+=(--state "$state")
 fi
@@ -89,6 +103,23 @@ new_id=$(printf '%s' "$created" | jq -r '.identifier // .id // empty')
 if [ -z "$new_id" ]; then
   echo "ERROR: issue created but no identifier returned" >&2
   exit 1
+fi
+
+# Verify the state landed. `issues create --state` can report success without the state
+# taking (the create sibling of linear/SKILL.md gotcha #8), and the silent-failure landing
+# spot on a triage-enabled team is Triage — invisible to /next forever. Correct it rather
+# than failing: the issue and its body already exist, and stranding it is the outcome this
+# check exists to prevent. Only a state we could not fix is worth aborting for.
+if [ -n "$state" ] && [ "$state" != "-" ]; then
+  landed=$(linear-cli issues get "$new_id" -o json --no-cache 2>/dev/null | jq -r '.state.name // empty')
+  if [ -n "$landed" ] && ! printf '%s' "$landed" | grep -Fqxi -- "$state"; then
+    linear-cli issues update "$new_id" -s "$state" >/dev/null 2>&1 || true
+    landed=$(linear-cli issues get "$new_id" -o json --no-cache 2>/dev/null | jq -r '.state.name // empty')
+    if ! printf '%s' "$landed" | grep -Fqxi -- "$state"; then
+      echo "ERROR: created $new_id but its state is '${landed:-unknown}', expected '$state', and the correcting update did not take" >&2
+      exit 1
+    fi
+  fi
 fi
 
 # Link the parent (relations parent <CHILD> <PARENT>) and VERIFY it took — a created
