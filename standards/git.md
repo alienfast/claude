@@ -210,6 +210,27 @@ Reflog does not track working tree files, dangling blobs rarely help for unstage
 The `git-permissions.sh` hook blocks these commands. It unblocks only on an explicit user
 instruction naming the command — the hook is the floor, not the reasoning.
 
+## Verifying a git config value was registered
+
+`git config --get <key>` reads **system, then global, then local** and returns the highest-precedence value it finds — local overrides global overrides system, and within a single file the last entry wins. It is therefore not a valid check that a setup step — a `prepare` script, an installer, a bootstrap command — registered the value in *this* clone: when the same key is also set in `~/.gitconfig` or `~/.config/git/config`, the command prints the expected value and exits 0 whether the setup step ran, failed, or was reverted. It reads green either way and pins nothing.
+
+Scope the read to the level you are actually asserting about:
+
+```bash
+git config --local --get <key>              # this repository only; exits 1 when unset — that failure is the whole signal
+git config --show-origin --get-all <key>    # every level, naming the file each value came from
+```
+
+For a from-scratch reproduction — fresh clone, setup step deliberately not yet run — neutralize the outer levels too:
+
+```bash
+GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null git config --get <key>
+```
+
+`--local` is per-**repository**, not per-worktree: inside a `/start wt` worktree it reads the main clone's shared `$GIT_DIR/config`, so a sibling worktree's setup step satisfies your check. Only `config.worktree` (gated on `extensions.worktreeConfig`) is worktree-scoped.
+
+This is [negative control](problem-solving.md#a-verification-you-never-watched-fail-is-not-a-verification) applied to a one-line check: run the command against the pre-change state and confirm it reads *differently*. Do it especially when the check is going into a **success criterion** — nothing re-verifies a criterion at pickup, so an unfalsifiable one passes every time it is read.
+
 ## Commit and Push Authorization
 
 Commits and pushes are **separate, explicit grants**. Neither is implied by implementation verbs.
