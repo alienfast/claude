@@ -31,6 +31,12 @@ Never cite a number that moves with ambient machine state (a file count, a
 timing, a line count). It reads as evidence but reproduces nowhere else — state
 the qualitative claim the reader can re-test instead.
 
+The sharpest case is a comment calling code redundant, defensive, or kept for a
+future refactor — it does not describe the line, it licenses deleting it. Prove
+it first: remove the line, run the tests covering it, restore by file copy (never
+`git restore`). Anything red means the claim is false; nothing red means check
+the tests reach that line at all before you claim it.
+
 ## Proportion: size to the reader, not the effort
 
 Size a comment to what a reader needs **at that line**, not to the effort it
