@@ -74,6 +74,33 @@ Auth: `linear-cli auth oauth` (browser) or `LINEAR_API_KEY`; check with `linear-
     linear-cli search issues "<terms>" -o json | jq -r '.[] | "\(.identifier) [\(.state.name)] \(.title)"'
     ```
 
+14. **`search issues` matches a CONTIGUOUS PHRASE, not a set of words — so a multi-word query is almost always
+    zero hits, and it exits 0.** The query is matched as a substring of the title/description, in order. Words
+    that all appear but are not adjacent do **not** match. Verified against one issue whose title reads
+    `Security: client-supplied GraphQL scopes (rewhere) bypass row-level authorization on any list_field`:
+
+    | query | hits | why |
+    |---|---|---|
+    | `rewhere` | 2 | single token |
+    | `row-level authorization` | 1 | adjacent, in order |
+    | `client-supplied GraphQL scopes` | 1 | adjacent, in order |
+    | `scopes authorization` | **0** | both words present, not adjacent |
+    | `resolve_list scopes injection` | **0** | a description, not a substring |
+
+    This is the **dedup search `/quality-review` requires before filing**, and it fails in the worst possible
+    direction: an invented descriptive phrase returns empty with **exit 0** and no error, which is exactly the
+    signature of "no existing issue covers this." Gotcha #13's exit-code check does not catch it — the command
+    genuinely succeeded. It found nothing because nothing could have matched.
+
+    **So search single tokens only** — code identifiers, symbol/method/field names, `snake_case`, `camelCase`,
+    error strings — one per query, several queries. Never a phrase you composed to describe the defect. If a
+    multi-word query is unavoidable, it must be text you have *seen verbatim* in an existing title.
+
+    Real cost of getting this wrong: BF-777 was filed Urgent against `ListHelper#resolve_list` after three
+    dedup searches — `resolve_list scopes injection`, `list_helper scopes`, `SQL injection anonymous` — all
+    multi-word, all structurally guaranteed to return nothing. BF-490 had described the same defect in the same
+    file for weeks and is returned by the single token `rewhere`.
+
 ## Command map
 
 ```bash
