@@ -81,7 +81,16 @@ The checkboxes are load-bearing: `/start` Step 6 treats description checkboxes a
 - [ ] Boundaries name at least one explicit exclusion
 - [ ] Sized for one focused session (<150k tokens of context); epic-sized work is broken into sub-issues — each certified individually — via `~/.claude/scripts/linear-create-child.sh`
 - [ ] No implementation planning: no technical approach, no file lists, no verification-command blocks
+- [ ] No success criterion asks for a decision ("decide X", "determine whether Y") — open product/design questions are resolved *before* certification, and the criterion prescribes the chosen behavior
 - [ ] Original human text preserved under `## Original request` when regrooming
+
+## A decision belongs in the description, never in a comment
+
+A criterion reading "decide X" is not unattended-shippable. `/start` Step 6 takes "the issue description, checkboxes, and parent context as requirements", so the run re-derives the same open question and stops — and that decline is per-session (`/auto`'s skip lists live in `tmp/auto-state-<runKey>.json`, and `next-candidates.sh` reads no comments at all), so a fresh session ranks the issue first again and stops the same way.
+
+Answering it in a comment does not fix this. The digest `/start` reads shows anchored comments in full but truncates standalone comments to their first line (`/start` Step 4), and even a fully-read comment leaves the checkbox still saying "decide X". A comment recording only that a conversation happened — `Confirmed with <name>.` — is worse than none, because it looks like an answer.
+
+When the decision lands, re-groom through `/spec <ISSUE-ID>`: write the answer into the description, quoting whoever decided and keeping any constraint they attached, and rewrite the criterion to prescribe the chosen behavior. Then leave a comment pointing at the description so an earlier `/auto` skip reads as resolved. This is the interactive, pre-run edit; an in-flight implementation run never rewrites the description.
 
 ## Producers
 
