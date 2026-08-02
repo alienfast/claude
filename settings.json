@@ -142,6 +142,8 @@
       "Bash(~/.claude/scripts/detect-issue-id.sh --validate-only --input PL-458)",
       "Bash(~/.claude/scripts/detect-issue-id.sh)",
       "Bash(~/.claude/scripts/reap-worktrees.sh list *)",
+      "Bash(~/.claude/scripts/wt-rspec.sh *)",
+      "Bash(~/.claude/scripts/wt-rspec.sh:*)",
       "mcp__storybook-react__preview-stories"
     ],
     "deny": [],
@@ -165,6 +167,10 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/scratch-path-guard.sh"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/no-blind-sleep.sh"
           }
         ]
       }
@@ -175,6 +181,10 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/full-continue.sh"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/auto-heartbeat.sh"
           }
         ]
       }

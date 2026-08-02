@@ -78,6 +78,16 @@ Delegate work that is genuinely independent and big enough to deserve a fresh co
 
 The named review gates are the deliberate exception. `/quality-review`'s reviewer dispatches (`quality-reviewer` discovery; `quality-verifier` re-reviews and fix confirmations — including confirming fixes the orchestrator applied directly) and `/reflect`'s verifier bring a fresh context to the session's output as a mandated independent gate — that is not self-critique, and it stays.
 
+### Waiting on delegated work
+
+**Need the result before you can continue? Dispatch with `run_in_background: false`.** The call blocks and hands back the result, so there is nothing to wait for and nothing to write. This is the right default for a review, a fix batch, or an implementation whose output the next step consumes — which is nearly every in-flight dispatch.
+
+**Don't need it yet? Leave it in the background and end the turn.** The harness re-invokes you when it finishes. Ending the turn is not abandoning the work.
+
+**Never hold a turn open with a timed `sleep` to wait for something the harness already tracks.** A `for i in $(seq 1 22); do sleep 25; done` window cannot end early: it burns its full duration whether the agent finished in ten seconds or never started. Measured on one fleet run, two of four sessions lost **7.7 hours** to exactly this shape — 54% and 81% of their wall-clock — while the two sessions that dispatched synchronously lost none. This applies just as much when a human is watching: a session that sleeps through a nine-minute window it cannot exit is wasting the operator's time, not just the machine's. The `no-blind-sleep.sh` PreToolUse hook enforces it; a denied command means pick one of the three routes above, not retry with a different loop shape.
+
+The one sanctioned poll is for work the harness genuinely cannot see — a detached test run, CI, a remote queue. Poll a completion **marker** so the wait ends when the work does: `n=0; until [ -f tmp/run.done ] || [ $n -ge 60 ]; do sleep 10; n=$((n+1)); done`.
+
 ## Memory
 
 Auto memory persists learned context across sessions in `~/.claude/projects/<project>/memory/`. It is **gitignored and machine-local — never shared with the team.** Treat it as private scratch space, not a knowledge base.
