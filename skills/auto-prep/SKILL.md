@@ -66,7 +66,7 @@ Then wire **minimal chains** with `linear-cli relations add <BLOCKER> <BLOCKED> 
 - **Never chain through a Step 2-flagged issue** — a `needs decision` or decision-gated blocker never ships unattended, so anything wired behind it is stranded. Flagged issues sit at chain *tails* only.
 - **A `solo` blocker is a chain head or nothing.** Unlike the flags above it does ship — just outside the fleet window — and blocker resolution reads the blocker's *state*, never its labels, so a dependent behind it stays blocked for the whole fleet run. Wire one as a blocker only when you will run it in the pre-fleet solo pass; otherwise leave it at a tail and let its dependents run free.
 
-Fleet safety rails that already exist and need no wiring: Linear is the claim registry (In Progress is invisible to `/next`), worktree creation is repo-locked, `/finish` merges serialize, and `/quality-review` wires same-batch filing collisions itself (BF-581). This step covers what those can't see: overlap across *previously filed* siblings.
+Fleet safety rails that already exist and need no wiring: Linear is the claim registry (In Progress is invisible to `/next`), worktree creation is repo-locked, `/finish` merges serialize, and `/quality-review` wires same-batch filing collisions itself (BF-581), plus one dedup-adjacent edge per filed item against an open same-file sibling. This step covers what those can't see: the rest of the overlap across *previously filed* siblings.
 
 ## Step 4: Validate through the real ranking
 

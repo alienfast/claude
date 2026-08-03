@@ -102,7 +102,7 @@ Show the user the full draft. Iterate until they explicitly approve. No approval
 
    ```bash
    ~/.claude/scripts/linear-create-child.sh <ID> <TEAM> Planned "<title>" <body-file>
-   linear-cli relations add <BLOCKER> <BLOCKED> -r blocks     # blocker FIRST (blocked-by enum is broken on 0.3.26)
+   linear-cli relations add <BLOCKER> <BLOCKED> -r blocks     # blocker FIRST (blocked-by 400s in every published version through 0.3.27)
    ```
 
    Each child is certified too (item 5 applies to every created issue).
@@ -115,8 +115,14 @@ Show the user the full draft. Iterate until they explicitly approve. No approval
    ~/.claude/scripts/linear-remove-label.sh <ID> 'needs decision'
    ```
 
-   Read-merge-set — never a bare `issues update -l`, which replaces the whole label set. Exit 2 on the add → the spec landed but the issue is **not** certified: surface the helper's pointer, report certification incomplete, and skip item 6. The removal is a no-op when the label is absent; when present, this certification is exactly what clears it — the interview recorded the decision the label was waiting on (`standards/issue-spec.md`).
-6. **Certification comment** (only after the label attached): Write a short body to `tmp/spec-comment-<id-lowercase>.md` — certified via `/spec`, one-line scope summary, sub-issues created (if any), original request preserved in the description — then:
+   Read-merge-set — never a bare `issues update -l`, which replaces the whole label set. Exit 2 on the add → the spec landed but the issue is **not** certified: surface the helper's pointer, report certification incomplete, and skip items 6–7. The removal is a no-op when the label is absent; when present, this certification is exactly what clears it — the interview recorded the decision the label was waiting on (`standards/issue-spec.md`).
+6. **Collision edges — wire them now; prose is not a control.** Certification is what makes this issue pickable by `/auto`, and grooming is the moment its touched files/methods are actually known (Step 2 just read the code) — so this is the cheapest and last reliable point to make sequencing mechanical (`/auto-prep` re-derives collisions later from description text alone, and the quality bar keeps file lists out of descriptions). Check the issue (and every sub-issue just created) against other open issues touching the same code — including issues certified earlier in the same session, which are the commonest colliders. Beyond those, run 2–3 `linear-cli search issues "<token>"` probes on the change's most distinctive single tokens — method/predicate names, distinctive file basenames (skip generic ones like `SKILL.md`, `CLAUDE.md`, or `README.md` — substitute a method/predicate token, the skill's directory name, the full repo-relative path of a nested file, or the project name for a project `CLAUDE.md` or a repo-root `README.md`, whose path is just the bare basename), one token per call, never a composed phrase (matches are contiguous substrings) — and read the non-terminal hits for file overlap. Calibration:
+   - **Same file or same method** → `linear-cli relations add <BLOCKER> <BLOCKED> -r blocks` (blocker = the logically-prior issue; when no order is discernible, the earlier/already-open one). When the collider is uncertified, `needs decision`, or `solo`, use `related` + comment instead — a blocks edge behind a never-unattended-shipping blocker strands this issue (standards/issue-spec.md). For a `blocks` edge, verify it took (`linear-cli relations list <BLOCKED>`) and confirm the blocked issue no longer appears in `~/.claude/scripts/next-candidates.sh` output — run it with a generous `--limit` (the default is 3, so absence at the default limit can be truncation, not blocking — and a `solo` label alone also hides the issue there, independent of any edge); a `related` edge changes no ranking, so that absence check does not apply to it.
+   - **Disjoint files sharing a mechanism** (a concern or helper both are likely to reach for) → `-r related` plus a comment naming the mechanism; don't serialize speculatively.
+   - **No overlap** → no edge.
+
+   A sequencing constraint recorded only in description prose is invisible to automation — `next-candidates.sh` reads relations and labels, never description or comment text — so two colliding certified issues WILL be picked concurrently by a fleet unless the edge exists. Wire it immediately after item 5 certifies — the standard's accepted residual window (standards/issue-spec.md) is seconds long, not a step to defer.
+7. **Certification comment** (only after the label attached): Write a short body to `tmp/spec-comment-<id-lowercase>.md` — certified via `/spec`, one-line scope summary, sub-issues created (if any), original request preserved in the description — then:
 
    ```bash
    ~/.claude/scripts/linear-post.sh comment <ID> tmp/spec-comment-<id-lowercase>.md
@@ -124,7 +130,7 @@ Show the user the full draft. Iterate until they explicitly approve. No approval
 
 ### Step 7: Report and continue
 
-Compact summary: what was rewritten, Triage → Planned (if moved), label applied, sub-issues created — and the handoff line: *eligible for `/next specified` and `/auto` pickup*. In pick mode, offer the next uncertified candidate; stop when the user is done.
+Compact summary: what was rewritten, Triage → Planned (if moved), label applied, collision edges wired (if any), sub-issues created — and the handoff line: *eligible for `/next specified` and `/auto` pickup*. In pick mode, offer the next uncertified candidate; stop when the user is done.
 
 ## What /spec must NOT do
 
@@ -135,6 +141,6 @@ Compact summary: what was rewritten, Triage → Planned (if moved), label applie
 ## Error Handling
 
 - **Issue not found / linear-cli failure** → surface the error verbatim and stop.
-- **`linear-add-label.sh` exit 2** → the spec landed but the issue is NOT certified; give the `linear-cli labels create "specified" -t issue` pointer and stop before the comment.
+- **`linear-add-label.sh` exit 2** → the spec landed but the issue is NOT certified; give the `linear-cli labels create "specified" -t issue` pointer and stop before the collision step and the comment.
 - **Explore agent unavailable** → proceed on Linear context alone and say so before the interview.
 - **`linear-cli auth status` logged out** → prompt: `linear-cli auth oauth`.

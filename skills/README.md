@@ -175,7 +175,7 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 **Structure**:
 
 - Self-contained workflow in `SKILL.md`
-- Complements `/quality-review`'s same-batch collision wiring by covering overlap across previously filed siblings
+- Complements `/quality-review`'s same-batch collision wiring by covering overlap across previously filed siblings (beyond the single dedup-adjacent edge `/quality-review` wires per filed item)
 
 ### fleet-launch
 

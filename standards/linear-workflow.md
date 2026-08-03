@@ -49,7 +49,7 @@ Any skill that checks whether blockers are resolved (triage, next) should treat 
 
 ## Certified Specs (the `specified` label)
 
-The `specified` issue label marks a certified spec — problem, desired outcome, and testable success criteria, human-reviewed or produced by a trusted pipeline — and gates autonomous pickup: `/auto` dispatches `/next specified`, so only certified issues ship unattended. The canonical template, quality bar, and read-merge-set label mechanics live in [issue-spec.md](issue-spec.md); `/prd` certifies on create, `/spec` grooms existing issues into shape.
+The `specified` issue label marks a certified spec — problem, desired outcome, and testable success criteria, human-reviewed or produced by a trusted pipeline — and gates autonomous pickup: `/auto` dispatches `/next specified`, so only certified issues ship unattended. The canonical template, quality bar, and read-merge-set label mechanics live in [issue-spec.md](issue-spec.md); `/prd` certifies on create for single-issue runs (batches certify after collision edges are wired), `/spec` grooms existing issues into shape.
 
 ## Spawned Issues Must Link to Their Parent
 
