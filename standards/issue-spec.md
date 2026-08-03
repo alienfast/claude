@@ -21,6 +21,10 @@ Specs describe the **WHAT, never the HOW**. Implementation planning — technica
 
 It reads current labels, merges, sets, and verifies the attach; idempotent when the label is already present; exit 2 with a create-label pointer when the label is missing or unattachable. Direct `-l` is acceptable only on a just-created issue, whose label set is empty by construction.
 
+## Certification includes collision edges
+
+`specified` is the pickability gate: the moment it attaches, `/auto` may select the issue in any session, so sequencing between issues must already be mechanical by then. Every producer attaching the label owes a collision check at attach time: an issue that touches the same file or method as another open issue gets a `blocks` edge (`linear-cli relations add <BLOCKER> <BLOCKED> -r blocks`) — `next-candidates.sh` hides blocked issues, which is what actually prevents concurrent pickup. Disjoint files that share only a mechanism take `related` plus a comment; no overlap takes nothing. Description prose is never a scheduling control — `next-candidates.sh` reads relations and labels, not text. `/auto-prep`'s batch linking remains the pool-level sweep (collisions between issues certified far apart, and edges gone stale after ships); attach-time linking closes the window between certification and the next prep run.
+
 ## The `needs decision` label
 
 - **Semantics:** a human must step in before unattended pickup — the issue hit something no agent may resolve: a product/design decision with no testable success criteria, work needing credentials/console/vendor access, or an explicit do-not-ship-unattended note. The issue **keeps `specified`** — the spec is gated, not wrong; de-certifying would discard grooming work and hide *why* the issue is parked.
