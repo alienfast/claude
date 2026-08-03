@@ -1,6 +1,8 @@
 ---
 name: prd
 description: Create agent-friendly Linear tickets with PRDs, sub-issues, and clear success criteria. Use when planning features or breaking down work for agentic coding.
+model: fable
+effort: high
 ---
 
 # PRD Skill - Create Agent-Friendly Tickets
