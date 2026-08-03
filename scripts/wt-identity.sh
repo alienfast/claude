@@ -715,6 +715,16 @@ wt_owner_alive() {
   if [ -z "$cur_comm" ]; then
     # MSYS ps can't see native processes, so an empty result there proves nothing.
     if [ "$msys" = 1 ]; then return 2; fi
+    # Sandboxed shells have the same blindness (BF-510): a sandboxed background-job Bash sees only its own
+    # sandbox's PIDs, so an empty result is positive evidence of death only when ps demonstrably reaches
+    # beyond this shell. Two known-alive canaries: PID 1 (init/launchd — exists on every host and is visible
+    # to any unsandboxed ps; deliberately NOT a claude-lineage probe, so non-session contexts like the
+    # launchd drainer or a bare terminal keep their dead verdicts), and this session's own harness when the
+    # caller pre-resolved it. Either one invisible means ps cannot be trusted here, and the verdict stays
+    # "unknown" per this function's invariant. BF-510 recorded the cost of skipping this: four live siblings
+    # read "dead" in one preflight, and one was resumed mid-run.
+    if [ -z "$(ps -o comm= -p 1 2>/dev/null | tail -1)" ]; then return 2; fi
+    if [ -n "${CLAUDE_HARNESS_PID:-}" ] && [ -z "$(ps -o comm= -p "$CLAUDE_HARNESS_PID" 2>/dev/null | tail -1)" ]; then return 2; fi
     WTID_OWNER_ALIVE="dead"; return 1
   fi
   base=$(basename "$cur_comm" 2>/dev/null)

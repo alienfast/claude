@@ -1000,6 +1000,17 @@ mkrepo ownerunknown
 stamp_env "TEST_SHIM=$PSSHIM" "$WT"
 ck "2:unknown" "$(alive "$WT")" "no owner pid and no release marker adjudicates unknown (rc 2)"
 
+# Broken ps visibility, the BF-510 shape: a sandboxed background-job shell whose ps sees only its own
+# sandbox returns empty for a pid that is genuinely alive outside it — four live siblings read "dead" in
+# one /auto preflight, and one was resumed mid-run. "dead" needs POSITIVE evidence, and an empty result
+# from a blind ps is not it: the PID-1 canary (alive on every host, visible to any unsandboxed ps) is what
+# separates "the owner is gone" from "this shell cannot see". The stamp lands under a REAL ps — only the
+# adjudication runs under the all-failing shim, exactly the asymmetry of the observed incident.
+mkrepo ownerblindps
+stamp_env "CLAUDE_SESSION_ID=sess-A CLAUDE_HARNESS_PID=$$" "$WT"
+ck "yes" "$(nonempty "$(cfg start.owner-pid)")" "sanity: the blind-ps fixture stamped a live owner pid"
+ck "2:unknown" "$(alive "$WT" "TEST_SHIM=$PSSHIM")" "an owner pid a blind ps cannot see adjudicates unknown, never dead"
+
 # Death by RECYCLING, the case a bare "is the pid still there" test cannot see: the owning harness exited and
 # the OS handed its pid to something else entirely. The reaped-pid fixture above exits on the empty comm and
 # never reaches the allowlist, so without this the branch is dead code — and a broken one reports every

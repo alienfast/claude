@@ -7,12 +7,43 @@
 # dangerous-path confirmation — stalling an unattended run on a prompt. Denying the WRITE here (exit 2 feeds stderr back
 # to the model) converts that stall into an instant self-correction.
 #
-# Triggered: PreToolUse hook for Bash commands
-# Blocks: redirections, tee, and rm/mv/cp targeting root-level files (/name) or system temp (/tmp, /private/tmp) —
-#         except the harness session scratchpads (/tmp/claude-*, /private/tmp/claude-*), which stay fully allowed.
+# Triggered: PreToolUse hook for Bash commands AND the file tools (Write|Edit|NotebookEdit — see the matchers in
+#            settings.json). Guarding only Bash left the file-tool surface open: a Write to /tmp/x.rb landed unguarded,
+#            and the rm-block below then stranded it as permanent litter (BF-807).
+# Blocks: Bash — redirections, tee, and rm/mv/cp targeting root-level files (/name) or system temp (/tmp, /private/tmp);
+#         file tools — file_path/notebook_path in those same zones. The harness session scratchpads
+#         (/tmp/claude-*, /private/tmp/claude-*) stay fully allowed on both surfaces.
 
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
+
+# File-tool surface: Write/Edit use file_path, NotebookEdit uses notebook_path. One absolute target, no parsing needed.
+FILE_TARGET=$(echo "$INPUT" | jq -r '.tool_input.file_path // .tool_input.notebook_path // empty')
+if [ -n "$FILE_TARGET" ]; then
+  case "$FILE_TARGET" in
+    /tmp/claude-*|/private/tmp/claude-*) exit 0 ;;
+    /tmp/*|/private/tmp/*)
+      target_zone="file write into system /tmp" ;;
+    /*/*) exit 0 ;;
+    /*)
+      target_zone="file write to a root-level file" ;;
+    *) exit 0 ;;
+  esac
+  cat >&2 <<EOF
+🛑 BLOCKED: scratch write to a system path ($target_zone)
+
+Target: $FILE_TARGET
+
+Scratch and intermediate files (captured output, run logs, staging files) belong in the PROJECT-RELATIVE tmp/ directory
+(mkdir -p tmp first) or the harness-assigned session scratchpad — never a bare root path and never system /tmp. These
+writes pollute the host, and cleanup is itself guarded — a stray file here becomes permanent litter.
+
+Retry the same edit with the target under tmp/. If a system path is genuinely required, say so to the user and let them
+approve it explicitly.
+EOF
+  exit 2
+fi
+
 [ -z "$COMMAND" ] && exit 0
 
 # Scan a copy with heredoc bodies and quoted strings stripped: prose inside them (a commit message describing an
@@ -61,7 +92,7 @@ fi
 if [[ "$SCAN" =~ (^|[[:space:]\;\&\|])tee[[:space:]]+(-[A-Za-z]+[[:space:]]+)*${ROOT_FILE}([[:space:]\;\&\|\)]|$) ]]; then
   block "tee to a root-level file"
 fi
-if [[ "$SCAN" =~ (^|[[:space:]\;\&\|])(rm|mv|cp)[[:space:]][^\;\&\|]*[[:space:]]${ROOT_FILE}([[:space:]\;\&\|\)]|$) ]]; then
+if [[ "$SCAN" =~ (^|[[:space:]\;\&\|])(rm|mv|cp)[[:space:]]([^\;\&\|]*[[:space:]])?${ROOT_FILE}([[:space:]\;\&\|\)]|$) ]]; then
   block "rm/mv/cp on a root-level file"
 fi
 
@@ -73,7 +104,9 @@ fi
 if [[ "$SCAN" =~ (^|[[:space:]\;\&\|])tee[[:space:]]+(-[A-Za-z]+[[:space:]]+)*${SYSTMP} ]] && [[ "${BASH_REMATCH[4]}" != claude-* ]]; then
   block "tee into system /tmp"
 fi
-if [[ "$SCAN" =~ (^|[[:space:]\;\&\|])(rm|mv|cp)[[:space:]][^\;\&\|]*[[:space:]]${SYSTMP} ]] && [[ "${BASH_REMATCH[4]}" != claude-* ]]; then
+# The middle group is optional so the bare form (`rm /tmp/x`, no flags) matches too — with it, the
+# path capture lands in BASH_REMATCH[5], not [4].
+if [[ "$SCAN" =~ (^|[[:space:]\;\&\|])(rm|mv|cp)[[:space:]]([^\;\&\|]*[[:space:]])?${SYSTMP} ]] && [[ "${BASH_REMATCH[5]}" != claude-* ]]; then
   block "rm/mv/cp in system /tmp"
 fi
 

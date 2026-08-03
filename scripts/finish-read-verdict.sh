@@ -173,8 +173,22 @@ if [ -n "$verdict_file" ]; then
   # a human doing additional work after review — minutes to hours, not seconds.
   skew_tolerance=120
   if [ "$vmtime" -gt 0 ] && [ "$head_ctime" -gt 0 ] && [ "$vmtime" -lt "$((head_ctime - skew_tolerance))" ]; then
-    stale=1
-    stale_reason="verdict file last written $(fmt_epoch "$vmtime"); HEAD commit landed $(fmt_epoch "$head_ctime") — additional commits since /quality-review ran"
+    # A post-verdict window whose every changed path is under .claude/ is the workflow's own config
+    # commit — /reflect's mandated Step 5 commit lands after /quality-review persists the verdict and
+    # touches only <project>/.claude/ rule/config text, which the review never looked at. That is not
+    # staleness, and treating it as such strands a passing unattended run (BF-803; /quality-review
+    # Step 7's mtime-refresh bullet is the primary mitigation — this is the backstop for a missed
+    # refresh). The carve-out is deliberately .claude/-only, NOT docs-or-markdown-wide: on a doc
+    # deliverable the markdown IS the reviewed surface, so any broader rule would wave through real
+    # staleness. Any path outside .claude/ — or an empty file list, which proves nothing — keeps the
+    # gate armed.
+    window_paths=$(git log --since="@$vmtime" --name-only --format='' HEAD 2>/dev/null | sed '/^$/d' | sort -u || true)
+    if [ -n "$window_paths" ] && ! printf '%s\n' "$window_paths" | grep -qv '^\.claude/'; then
+      echo "NOTE: commits since the verdict touch only .claude/ ($(printf '%s\n' "$window_paths" | paste -sd' ' -)) — workflow config, not treated as staleness." >&2
+    else
+      stale=1
+      stale_reason="verdict file last written $(fmt_epoch "$vmtime"); HEAD commit landed $(fmt_epoch "$head_ctime") — additional commits since /quality-review ran"
+    fi
   fi
 fi
 

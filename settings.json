@@ -175,6 +175,15 @@
             "command": "~/.claude/hooks/no-blind-sleep.sh"
           }
         ]
+      },
+      {
+        "matcher": "Write|Edit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/scratch-path-guard.sh"
+          }
+        ]
       }
     ],
     "Stop": [
