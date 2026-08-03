@@ -51,6 +51,9 @@ QUOTED = re.compile(r"\x27[^\x27]*\x27|\"[^\"]*\"")
 EXECUTOR = re.compile(r"\b(?:ba|z|k)?sh\s+-[A-Za-z]*c\b|\beval\b|\bxargs\b")
 CLASSIFIER = re.compile(r"auto mode classifier|Blocked by classifier")
 SHIPPED_TAG = re.compile(r"\b(SHIPPED-MERGE|SHIPPED-PR|RELEASED|DEFERRED-MERGE):\s*([A-Z]+-\d+)")
+# Canceled is its own ledger, never a shipped variant: recording cancellations in shipped[] is what
+# overstated the 2026-08-02 fleet's tally 29 vs 25 (skills/auto Step 4 now keeps a canceled[] list).
+CANCELED_TAG = re.compile(r"\bCANCELED:\s*([A-Z]+-\d+)")
 # Anchored to line start: these tags are also NAMED in prose all over skills/auto/SKILL.md and in the
 # model's own reasoning about what it should emit. An unanchored match counts those discussions as
 # emissions and reports a silently-dead loop as having ended cleanly.
@@ -130,6 +133,8 @@ def scan_transcript(path, agg):
                 body = b.get("text", "")
                 for _tag, issue in SHIPPED_TAG.findall(body):
                     agg["ship_tags"].add(issue)
+                for issue in CANCELED_TAG.findall(body):
+                    agg["cancel_tags"].add(issue)
                 if TERMINAL_TAG.search(body):
                     agg["terminal_tags"] += 1
             elif b.get("type") == "tool_use":
@@ -174,7 +179,7 @@ def new_agg():
         "loop_firings": 0, "human_prompts": 0, "terminal_tags": 0, "dangling": 0,
         "dispatch": Counter(), "classifier_blocks": [], "gaps": [],
         "sleep_blind_s": 0.0, "sleep_blind_n": 0, "sleep_marker_s": 0.0, "sleep_marker_n": 0,
-        "ship_tags": set(), "subagents": 0,
+        "ship_tags": set(), "cancel_tags": set(), "subagents": 0,
     }
 
 
@@ -266,6 +271,8 @@ def main():
                 "run_key": s["run_key"],
                 "recorded_shipped": s["state"].get("shipped") or [],
                 "observed_shipped": sorted(s["agg"]["ship_tags"]),
+                "recorded_canceled": s["state"].get("canceled") or [],
+                "observed_canceled": sorted(s["agg"]["cancel_tags"]),
                 "status": s["state"].get("status"), "reason": s["state"].get("reason"),
                 "span_h": round(((s["agg"]["last"] - s["agg"]["first"]).total_seconds() / 3600), 2)
                           if s["agg"]["first"] and s["agg"]["last"] else None,
@@ -290,17 +297,18 @@ def main():
           f"  ·  window: {'all' if not cutoff else cutoff.strftime('%Y-%m-%d %H:%M UTC')}\n")
 
     print("## Per session\n")
-    print("| run | span | shipped (rec/obs) | wakeups | dispatch bg/sync | blind sleep | marker | cls | dangling |")
-    print("|---|---|---|---|---|---|---|---|---|")
+    print("| run | span | shipped (rec/obs) | canceled (rec/obs) | wakeups | dispatch bg/sync | blind sleep | marker | cls | dangling |")
+    print("|---|---|---|---|---|---|---|---|---|---|")
     tot = Counter()
     for s in sessions:
         a = s["agg"]
         span = ((a["last"] - a["first"]).total_seconds() / 3600) if a["first"] and a["last"] else 0.0
         rec, obs = len(s["state"].get("shipped") or []), len(a["ship_tags"])
+        crec, cobs = len(s["state"].get("canceled") or []), len(a["cancel_tags"])
         blind_pct = f"{a['sleep_blind_s'] / 3600:.1f}h ({100 * a['sleep_blind_s'] / (span * 3600):.0f}%)" if span else "-"
         unrecorded = a["ship_tags"] - set(s["state"].get("shipped") or [])
         flag = "  ⚠" if (a["wakeups"] == 0 and a["loop_firings"]) or unrecorded else ""
-        print(f"| `{s['run_key']}`{flag} | {span:.1f}h | {rec}/{obs} | "
+        print(f"| `{s['run_key']}`{flag} | {span:.1f}h | {rec}/{obs} | {crec}/{cobs} | "
               f"{a['wakeups']} ({a['wakeup_stops']} stop) | "
               f"{a['dispatch']['background']}/{a['dispatch']['sync']} | {blind_pct} | "
               f"{a['sleep_marker_s'] / 3600:.1f}h | {len(a['classifier_blocks'])} | {a['dangling']} |")
@@ -310,8 +318,9 @@ def main():
         tot["cls"] += len(a["classifier_blocks"])
         tot["bg"] += a["dispatch"]["background"]
         tot["sync"] += a["dispatch"]["sync"]
+    blind_share = f"({100 * tot['blind'] / tot['span'] / 3600:.0f}% of fleet wall-clock)" if tot["span"] else "(no transcript window)"
     print(f"\n**Totals** — {tot['span']:.1f} session-hours · blind sleep {tot['blind'] / 3600:.1f}h "
-          f"({100 * tot['blind'] / tot['span'] / 3600:.0f}% of fleet wall-clock) · marker polls "
+          f"{blind_share} · marker polls "
           f"{tot['marker'] / 3600:.1f}h · dispatch {tot['bg']} background / {tot['sync']} sync · "
           f"{tot['cls']} classifier blocks\n")
 
