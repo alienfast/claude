@@ -10,20 +10,28 @@
 # comma list. With neither, EVERY team in the workspace is searched (discovered
 # via `linear-cli teams list`) and candidates are ranked in one merged list —
 # tiers, priority, and estimates are comparable across teams.
-# Fans out three parallel Linear CLI calls per team (workable list, deps graph,
-# current cycle), filters to issues with all blockers resolved, buckets into
-# tiers (reflection-improvement → assigned-to-me → newly-unblocked-in-cycle →
-# cycle-ready → newly-unblocked → sibling-under-completed-parent →
-# priority-fallback), then walks parent chains for the top-K candidates to apply
-# parent-status weighting (In Progress epic > Planned > Backlog > Triage).
-# Within a tier: Urgent priority first (it pierces the class ordering — a deliberate
-# human escalation outranks any label), then security/bug label class > remaining
-# priority > spread (a sibling under the same parent In Progress/In Review soft
-# de-ranks the candidate — parallel /auto sessions collide in sibling files) >
-# parent weight > cycle > estimate. A candidate
+# Fans out two parallel Linear CLI calls per team (workable list, deps graph),
+# filters to issues with all blockers resolved, buckets into tiers
+# (reflection-improvement → assigned-to-me → newly-unblocked →
+# sibling-under-completed-parent → priority-fallback), then walks parent chains for
+# the top-K candidates to apply parent-status weighting (In Progress epic > Planned >
+# Backlog > Triage).
+# Within a tier: Urgent priority first (it pierces everything below — a deliberate
+# human escalation outranks any label), then workflow stage (Planned/Todo before
+# Backlog — the only planning signal in the pool a human sets by hand) > security/bug
+# label class > remaining priority > spread (a sibling under the same parent In
+# Progress/In Review soft de-ranks the candidate — parallel /auto sessions collide in
+# sibling files) > parent weight > estimate. A candidate
 # whose children carry all the work (1+ children, none workable) is de-ranked below
 # everything and annotated "Delegated" (BF-504 — epics kept `specified` by design
 # recur as top picks with nothing to implement).
+#
+# Linear cycle membership is deliberately NOT a signal. On a team with Linear's
+# auto-assign-on-start/complete settings it records what was already worked rather than
+# what is planned, and cycle rollover keeps never-started issues in it indefinitely
+# (BF-183, filed April, rolled forward for months while outranking the whole Planned
+# column). Stage carries the planning signal instead.
+#
 # Emits a ranked markdown list to stdout.
 #
 # --label/--exclude-label filter candidates client-side by ASCII-case-insensitive label
@@ -162,7 +170,6 @@ trap 'rm -rf "$tmpdir"' EXIT
 
 list_file="$tmpdir/list.json"
 deps_file="$tmpdir/deps.json"
-cycle_file="$tmpdir/cycle.json"
 
 # Paginated team-issue fetch via the api. `issues list` omits `estimate`, returns
 # assignee.name (a display name on real workspaces — NOT the email the ranking compares
@@ -197,23 +204,16 @@ fetch_team_issues() {
   rm -f "$pages_file"
 }
 
-# All three fetch kinds fan out per team in parallel (3 × N background jobs), then merge.
+# Both fetch kinds fan out per team in parallel (2 × N background jobs), then merge.
 # Deps graph goes via the api-backed helper (paginated internally; no `deps` command).
-# The cycle fetch uses the active-cycle filter (a cycle's issue count is small, so a
-# single page is fine) and is allowed to fail / be empty (team may have no active cycle).
 list_pids=()
 deps_pids=()
-cycle_pids=()
 for i in "${!teams[@]}"; do
   t="${teams[$i]}"
   fetch_team_issues "$t" "$tmpdir/list.$t.json" &
   list_pids[$i]=$!
   "$SCRIPT_DIR/linear-deps-graph.sh" --team "$t" >"$tmpdir/deps.raw.$t.json" 2>"$tmpdir/deps.err.$t" &
   deps_pids[$i]=$!
-  linear-cli api query -q -o json -v team="$t" \
-    'query($team:String!){issues(filter:{team:{key:{eq:$team}}, cycle:{isActive:{eq:true}}}, first:250){nodes{identifier}}}' \
-    >"$tmpdir/cycle.raw.$t.json" 2>/dev/null &
-  cycle_pids[$i]=$!
 done
 
 # On a fatal per-team failure, reap the sibling background fetches first — they would
@@ -221,7 +221,7 @@ done
 # tmpdir (the EXIT trap deletes it) after the primary error line.
 kill_fetches() {
   local p
-  for p in "${list_pids[@]}" "${deps_pids[@]}" "${cycle_pids[@]}"; do
+  for p in "${list_pids[@]}" "${deps_pids[@]}"; do
     kill "$p" 2>/dev/null || true
   done
 }
@@ -230,27 +230,21 @@ for i in "${!teams[@]}"; do
   t="${teams[$i]}"
   wait "${list_pids[$i]}" || { kill_fetches; echo "ERROR: team-issue fetch (team $t) failed (auth? network?)" >&2; exit 2; }
   wait "${deps_pids[$i]}" || { kill_fetches; echo "ERROR: linear-deps-graph.sh (team $t) failed:" >&2; cat "$tmpdir/deps.err.$t" >&2; exit 2; }
-  wait "${cycle_pids[$i]}" || printf '{}' >"$tmpdir/cycle.raw.$t.json"   # no active cycle is not fatal — tiers 2/3 collapse
 done
 
 # Merge per-team results and normalize into the pipeline shapes (team order = ranking-input
 # order; the tier sort downstream is what actually orders candidates).
 #   list  → one array (already normalized by fetch_team_issues)
 #   deps  → {nodes:[{identifier, state:<name>}], edges:[{from,to,type}]}
-#   cycle → array of {identifier}
 list_parts=()
 deps_parts=()
-cycle_parts=()
 for t in "${teams[@]}"; do
   list_parts+=("$tmpdir/list.$t.json")
   deps_parts+=("$tmpdir/deps.raw.$t.json")
-  cycle_parts+=("$tmpdir/cycle.raw.$t.json")
 done
 jq -s 'add' "${list_parts[@]}" > "$list_file"
 jq -s '{nodes: [ .[] | (.nodes // [])[] | {identifier, state: (.state.name // .state // "?")} ],
         edges: [ .[] | (.edges // [])[] ]}' "${deps_parts[@]}" >"$deps_file"
-jq -s '[ .[] | (.data.issues.nodes // [])[] | {identifier} ]' "${cycle_parts[@]}" >"$cycle_file" 2>/dev/null \
-  || printf '[]' >"$cycle_file"
 
 # ---------- my email ----------
 
@@ -308,11 +302,6 @@ jq '
   | from_entries
 ' "$deps_file" > "$reverse_blocker_map_file"
 
-# Cycle set: identifiers in current cycle (empty if cycle fetch failed/empty).
-cycle_set_file="$tmpdir/cycle_set.json"
-jq '[.[] | .identifier]' "$cycle_file" > "$cycle_set_file" 2>/dev/null || printf '[]' > "$cycle_set_file"
-[ -s "$cycle_set_file" ] || printf '[]' > "$cycle_set_file"
-
 # ---------- transitive unblocking (BFS) ----------
 
 newly_unblocked_file="$tmpdir/newly_unblocked.json"
@@ -361,7 +350,6 @@ candidates_json=$(jq \
   --argjson terminal "$TERMINAL_STATES" \
   --slurpfile sm_doc "$state_map_file" \
   --slurpfile bm_doc "$blocker_map_file" \
-  --slurpfile cycle_doc "$cycle_set_file" \
   --slurpfile newly_doc "$newly_unblocked_file" \
   --arg me "${me_email:-}" \
   --arg label "$label" \
@@ -371,7 +359,6 @@ candidates_json=$(jq \
   --arg iskeeper "$is_keeper" '
     ($sm_doc[0]) as $sm
     | ($bm_doc[0]) as $bm
-    | ($cycle_doc[0]) as $cycle
     | ($newly_doc[0]) as $newly
     | ($terminal | map(ascii_downcase)) as $terminal_lc
     # Hot parents: a sibling In Progress/In Review under the same parent means a live
@@ -426,7 +413,6 @@ candidates_json=$(jq \
           estimate: ($i.estimate // 0),
           assignee: $i.assignee,
           is_me: (($me != "") and ($i.assignee == $me)),
-          in_cycle: (($cycle | index($id)) != null),
           newly_unblocked: (($newly | index($id)) != null),
           unresolved_count: ($unresolved | length),
           is_reflection: ((($i.labels // []) | map(ascii_downcase)) as $ls
@@ -436,6 +422,14 @@ candidates_json=$(jq \
           # deliberate human "drop everything" escalation, and a bulk-applied category
           # label must not overrule it. Agreed with Blake (BF-583).
           urgent_first: (if $i.priority == 1 then 0 else 1 end),
+          # Backlog is a deliberate human deferral, and the only planning signal in the pool
+          # a person sets by hand — so it outranks the class ordering too: bouncing an area
+          # of work to Backlog has to actually defer it, defect labels included. Keyed on
+          # state TYPE so a renamed workable state still sorts right; the name check covers a
+          # team that renamed a state without changing its type. Triage is deliberately left
+          # at 0 — the only mode that admits it is --include-triage grooming discovery (used
+          # by /spec), where an unreviewed inbox item is the most worth surfacing.
+          state_rank: (if ($i.state_type == "backlog") or (($i.state // "") | ascii_downcase) == "backlog" then 1 else 0 end),
           class_rank: ((($i.labels // []) | map(ascii_downcase)) as $ls
             | if ($ls | index("security")) != null then 0
               elif ($ls | index("bug")) != null then 1
@@ -492,33 +486,31 @@ fi
 
 # ---------- pre-rank into tiers (parent-agnostic) ----------
 
-# Tier assignment (without parent data yet — tier 5 deferred to step 7).
+# Tier assignment (without parent data yet — tier 3 deferred to step 7).
 # Tier 0: certified reflection improvement (`specified` + `reflection` labels, /reflect's
 #         filings) — config/process fixes change how every later issue runs, so they ship
 #         ahead of the work they improve
 # Tier 1: assigned to me + workable
-# Tier 2: in current cycle + newly unblocked + no open blockers
-# Tier 3: in current cycle
-# Tier 4: newly unblocked + no open blockers
-# Tier 6: anything else workable (tier 5 reassignment happens post-parent-walk)
+# Tier 2: newly unblocked + no open blockers
+# Tier 4: anything else workable (tier 3 reassignment happens post-parent-walk)
 #
-# The unresolved_count==0 guard on tiers 2/4 matters only under --include-blocked (a no-op
+# The unresolved_count==0 guard on tier 2 matters only under --include-blocked (a no-op
 # otherwise, since the candidate select above already requires it): newly_unblocked marks
 # descendants of the completed issue in the blocks-graph, not "fully unblocked" — a candidate
 # can be newly_unblocked and still have another, unrelated open blocker.
 #
-# Within a tier: class_rank (security 0 > bug 1 > other 2 — defects ship before improvements)
-# > priority > spread_penalty (sibling in flight under the same parent) > cycle > estimate.
+# Most candidates land in tier 4, so the within-tier order below is what actually ranks the
+# pool: urgent_first > state_rank (Planned/Todo 0 before Backlog 1) > class_rank (security 0
+# > bug 1 > other 2 — defects ship before improvements, but within a stage) > priority >
+# spread_penalty (sibling in flight under the same parent) > estimate.
 ranked_json=$(printf '%s' "$candidates_json" | jq '
   map(
     . + {
       tier: (
         if .is_reflection then 0
         elif .is_me then 1
-        elif (.in_cycle and .newly_unblocked and .unresolved_count == 0) then 2
-        elif .in_cycle then 3
-        elif (.newly_unblocked and .unresolved_count == 0) then 4
-        else 6
+        elif (.newly_unblocked and .unresolved_count == 0) then 2
+        else 4
         end
       )
     }
@@ -527,7 +519,7 @@ ranked_json=$(printf '%s' "$candidates_json" | jq '
     # else the pool excludes it), so it front-runs project-level reflection filings.
     | . + { keeper_rank: (if .tier == 0 and .is_keeper then 0 else 1 end) }
   )
-  | sort_by([.tier, .keeper_rank, .urgent_first, .class_rank, .priority_rank, .spread_penalty, (if .in_cycle then 0 else 1 end), .estimate])
+  | sort_by([.tier, .keeper_rank, .urgent_first, .state_rank, .class_rank, .priority_rank, .spread_penalty, .estimate])
 ')
 
 # ---------- parent walk for top-K ----------
@@ -611,7 +603,7 @@ if [ "$parent_walk" -eq 1 ] && [ -n "$top_ids" ]; then
     ancestors_json=$(jq -c --arg id "$id" --argjson chain "$chain" '. + {($id): $chain}' <<< "$ancestors_json")
   done <<< "$top_ids"
 
-  # Step 3: apply parent weight + tier 5 (sibling under completed parent).
+  # Step 3: apply parent weight + tier 3 (sibling under completed parent).
   # parent_weight: lower = better (matches priority_rank convention).
   #   In Progress=1, Planned=2, Backlog=3, Triage=4, none/other=5.
   # Use the deepest-found ancestor's state (root of the chain).
@@ -639,25 +631,25 @@ if [ "$parent_walk" -eq 1 ] && [ -n "$top_ids" ]; then
         | (if ($chain | length) > 0 then $chain[-1] else null end) as $root
         | (if ($chain | length) > 0 then $chain[0] else null end) as $direct_parent
         | (if $root then weight($root.state) else 5 end) as $pw
-        # Tier 5: sibling under the completed issue'\''s parent.
+        # Tier 3: sibling under the completed issue'\''s parent.
         | (if ($completed != "")
               and ($completed_parent_id != "")
               and ($direct_parent != null)
               and ($direct_parent.identifier == $completed_parent_id)
-            then 5 else null end) as $sibling_tier
+            then 3 else null end) as $sibling_tier
         | ($del[$c.id] // null) as $kids
         | . + {
             parent_chain: $chain,
             parent_root: $root,
             parent_direct: $direct_parent,
             parent_weight: $pw,
-            tier: (if $sibling_tier != null and .tier > 5 then $sibling_tier else .tier end),
+            tier: (if $sibling_tier != null and .tier > 3 then $sibling_tier else .tier end),
             delegated_penalty: (if $kids != null and $kids.total > 0 and $kids.workable == 0 then 1 else 0 end),
             delegated_open: (if $kids != null then $kids.open else 0 end)
           }
       )
-      | sort_by([.delegated_penalty, .tier, .keeper_rank, .urgent_first, .class_rank, .priority_rank, .spread_penalty, .parent_weight,
-                 (if .in_cycle then 0 else 1 end), .estimate])
+      | sort_by([.delegated_penalty, .tier, .keeper_rank, .urgent_first, .state_rank, .class_rank, .priority_rank, .spread_penalty,
+                 .parent_weight, .estimate])
     ')
 fi
 
@@ -671,16 +663,13 @@ printf '%s' "$ranked_json" | jq -r --argjson lim "$limit" '
         then "certified keeper reflection improvement — shared ~/.claude config; only this machine can ship it"
         else "certified reflection improvement — affects how future work runs" end)
     elif c.tier == 1 then "assigned to you"
-    elif c.tier == 2 then "in current cycle + newly unblocked"
-    elif c.tier == 3 then "in current cycle"
-    elif c.tier == 4 then "newly unblocked"
-    elif c.tier == 5 then "sibling under completed parent"
+    elif c.tier == 2 then "newly unblocked"
+    elif c.tier == 3 then "sibling under completed parent"
     else "highest-priority workable"
     end;
   .[0:$lim] | to_entries | .[] |
     "\(.key + 1). **\(.value.id)** — \"\(.value.title)\"" +
     "\n   - State: \(.value.state)" +
-    (if .value.in_cycle then " (in cycle)" else "" end) +
     " | Priority: \(.value.priority_label)" +
     (if .value.class_rank == 0 then " | security" elif .value.class_rank == 1 then " | bug" else "" end) +
     (if .value.estimate != null and .value.estimate != 0 then " | Estimate: \(.value.estimate)" else "" end) +

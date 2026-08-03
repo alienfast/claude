@@ -146,7 +146,8 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 
 **Key Features**:
 
-- 5-tier candidate ranking: cycle + unblocked > cycle + ready > unblocked + priority > sibling > backlog
+- 5-tier candidate ranking: certified reflection > assigned to you > newly unblocked > sibling of the just-completed issue > everything else workable
+- Within a tier: Urgent pierces all, then Planned before Backlog, then `security`/`bug`, then priority
 - Works standalone (fresh day/week) or post-finish (with just-completed context)
 - Respects triage decisions as highest-signal indicators
 - Analyzes transitive unblocking from dependency graph, not just direct blockers

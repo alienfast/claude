@@ -42,7 +42,7 @@ Team scope resolves mechanically, exactly like `/next` Step 2: `$LINEAR_TEAM` if
 ~/.claude/scripts/next-candidates.sh --exclude-label specified --include-triage --include-blocked --limit 10
 ```
 
-Same ranking as `/next` — so the issues `/auto` would want next are certified first — plus the **Triage inbox**, which is precisely what grooming targets (unlike `/next`, where Triage is never workable). Blocked issues are included deliberately too: certifying a spec before its blocker resolves builds runway `/auto` can pick up the moment it unblocks. The ranking still favors cycle/unblocked work, though — Triage-inbox and blocked items rank low, so raise `--limit` when processing a large inbox.
+Same ranking as `/next` — so the issues `/auto` would want next are certified first — plus the **Triage inbox**, which is precisely what grooming targets (unlike `/next`, where Triage is never workable). Blocked issues are included deliberately too: certifying a spec before its blocker resolves builds runway `/auto` can pick up the moment it unblocks. The ranking still favors triaged work, though — inbox items usually carry no priority or class label, so they land near the bottom of the fallback tier; raise `--limit` when processing a large inbox.
 
 Issues parked behind a human decision keep `specified` plus a `needs decision` label (`standards/issue-spec.md`), so the exclude filter above hides them — list them with a second invocation:
 

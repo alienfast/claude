@@ -1,12 +1,12 @@
 ---
 name: next
-description: Suggest the best next issue to work on. Considers current cycle, dependency graph, triage status, and what's unblocked. Optionally filters to a label — `/next specified` restricts to certified specs (what /auto runs). Use when the user says 'what's next', 'next issue', or invokes /next.
+description: Suggest the best next issue to work on. Considers workflow stage (Planned before Backlog), dependency graph, triage status, and what's unblocked. Optionally filters to a label — `/next specified` restricts to certified specs (what /auto runs). Use when the user says 'what's next', 'next issue', or invokes /next.
 argument-hint: "[label] [team:KEYS]"
 ---
 
 # Next Issue
 
-Suggests the most logical next issue to work on by combining cycle planning, dependency analysis, and triage signals. All fetching, blocker verification, and tier ranking is delegated to [scripts/next-candidates.sh](../../scripts/next-candidates.sh) — this skill is just the entry point and result narration.
+Suggests the most logical next issue to work on by combining workflow stage, dependency analysis, and triage signals. All fetching, blocker verification, and tier ranking is delegated to [scripts/next-candidates.sh](../../scripts/next-candidates.sh) — this skill is just the entry point and result narration.
 
 ## When to Use
 
@@ -76,7 +76,7 @@ Read the script's stdout and narrate it naturally — and **definitively**:
 - If there's a runner-up that's qualitatively different from the top pick (different tier, different parent epic, different team), mention it as "also consider."
 - If the script reported no workable issues, say so plainly — do not invent a suggestion. When the filter was `--label specified`, suggest running `/spec` to certify backlog issues (or `/prd` to seed new certified ones).
 
-The script's tier reasons (e.g. "in current cycle + newly unblocked", "sibling under completed parent") already explain the *why* — surface them rather than rephrasing.
+The script's tier reasons (e.g. "newly unblocked", "sibling under completed parent") already explain the *why* — surface them rather than rephrasing.
 
 ## Error Handling
 
@@ -89,23 +89,27 @@ The script's tier reasons (e.g. "in current cycle + newly unblocked", "sibling u
 
 Only **Backlog / Planned / Todo** issues are workable candidates. Issues in **Triage** — Linear's unreviewed inbox — are excluded outright before any tiering, since they haven't been accepted for work yet (a Triage issue is never a valid "next"). Terminal states (Done, Canceled, Ready For Release, …) are likewise excluded.
 
+Workable is not the same as equal: **Backlog sorts behind Planned/Todo** in every tier. Stage is the one planning signal in the pool a human sets by hand, so bouncing an area of work to Backlog has to actually defer it — see the within-tier order below.
+
 A label filter (`--label`) applies after the workable/blocker filtering and before tiering — it never changes the ranking math, only the candidate pool. The script also has `--exclude-label`, `--include-triage`, and `--include-blocked`: those are `/spec`'s grooming-discovery knobs (find uncertified issues, including the Triage inbox and issues with unresolved blockers) and are never used by `/next` itself. The `specified` label contract lives in [standards/issue-spec.md](../../standards/issue-spec.md).
 
 A hard gate sits above all of these: issues labeled `needs decision` are hidden from every ranking — bare `/next` and `/next specified` alike — because a human must step in before pickup (the label contract is in [standards/issue-spec.md](../../standards/issue-spec.md)). The one exception is invoking with `--label 'needs decision'` itself, which lists exactly those issues. Issues labeled `solo` are hidden by the identical mechanism (surfaced by `--label solo`) for a different reason — they ship fine unattended but not alongside a fleet, so only the automatic pick is blocked and a targeted `/auto <ID>` still runs one. Whenever either gate hid candidates, the script appends a hidden-count note, so the thinner list is never silent — surface those notes to the user verbatim.
 
-Multi-team runs merge every team's issues **before** tiering: each team contributes its own dependency graph and active-cycle set, then one ranked list comes out — a Tier 3 in-cycle BF issue beats a Tier 6 PL fallback regardless of which team the session was "in." Identifiers carry the team (`PL-…`, `BF-…`), so no extra labeling is needed in the output.
+Multi-team runs merge every team's issues **before** tiering: each team contributes its own dependency graph, then one ranked list comes out — a Tier 2 newly-unblocked BF issue beats a Tier 4 PL fallback regardless of which team the session was "in." Identifiers carry the team (`PL-…`, `BF-…`), so no extra labeling is needed in the output.
 
-The script applies a tier scheme — see [scripts/next-candidates.sh](../../scripts/next-candidates.sh) for the exact logic. The high-level priority order:
+The script applies a tier scheme — see [scripts/next-candidates.sh](../../scripts/next-candidates.sh) for the exact logic. Tier numbers below match what the output prints:
 
-1. Certified reflection improvement (`specified` + `reflection` labels — `/reflect`'s filings): config/process fixes change how every later issue runs, so they ship ahead of the work they improve. Those additionally labeled `keeper` (they edit the shared user-level `~/.claude` repo) appear **only** on the keeper's machine (`git -C ~/.claude config reflect.keeper` → `true`); everywhere else the script excludes them from the pool entirely — `/auto` included — and prints a trailing note with the hidden count. On the keeper's machine, keeper filings rank **first within this tier**: their multiplier is cross-project rather than per-repo, and no other machine can ever drain them
-2. Already assigned to you (finish what you started)
-3. In current cycle + newly unblocked by `<COMPLETED-ID>`
-4. In current cycle, ready
-5. Newly unblocked anywhere
-6. Sibling under the same parent as `<COMPLETED-ID>`
-7. Highest-priority workable fallback
+- **Tier 0** — certified reflection improvement (`specified` + `reflection` labels — `/reflect`'s filings): config/process fixes change how every later issue runs, so they ship ahead of the work they improve. Those additionally labeled `keeper` (they edit the shared user-level `~/.claude` repo) appear **only** on the keeper's machine (`git -C ~/.claude config reflect.keeper` → `true`); everywhere else the script excludes them from the pool entirely — `/auto` included — and prints a trailing note with the hidden count. On the keeper's machine, keeper filings rank **first within this tier**: their multiplier is cross-project rather than per-repo, and no other machine can ever drain them
+- **Tier 1** — already assigned to you (finish what you started)
+- **Tier 2** — newly unblocked by `<COMPLETED-ID>`
+- **Tier 3** — sibling under the same parent as `<COMPLETED-ID>`
+- **Tier 4** — everything else workable
 
-Within each tier: **Urgent priority pierces everything** (a deliberate human "drop everything" escalation outranks any label — agreed policy, BF-583), then label class (`security` > `bug` > everything else — defects ship before improvements) > remaining priority (High > Normal > Low > None) > spread penalty (a sibling under the same parent is In Progress/In Review, so a live session is likely in nearby files — soft de-rank, annotated in the output) > parent-epic state (In Progress > Planned > Backlog > Triage) > cycle membership > estimate. Terminal-blocker matching is case-insensitive (workspace state names vary: "Ready for Release" vs "Ready For Release").
+Tiers 2 and 3 only ever populate under `--completed`, so a standalone run puts almost everything in tier 4 and **the within-tier order below is what actually ranks the pool**: **Urgent priority pierces everything** (a deliberate human "drop everything" escalation outranks any label — agreed policy, BF-583), then **workflow stage** (Planned/Todo before Backlog) > label class (`security` > `bug` > everything else — defects ship before improvements, but within a stage) > remaining priority (High > Normal > Low > None) > spread penalty (a sibling under the same parent is In Progress/In Review, so a live session is likely in nearby files — soft de-rank, annotated in the output) > parent-epic state (In Progress > Planned > Backlog > Triage) > estimate. Terminal-blocker matching is case-insensitive (workspace state names vary: "Ready for Release" vs "Ready For Release").
+
+Stage sits above label class deliberately. Moving an issue to Backlog is how a human defers a whole area of work, and that has to hold for defects too or the deferral only half-lands — `Urgent` remains the escape hatch for anything parked that genuinely cannot wait. Triage is not de-ranked (it ranks with Planned): the only mode that admits Triage issues is `--include-triage` grooming discovery, where an unreviewed inbox item is the most worth surfacing.
+
+**Linear cycle membership is deliberately not a signal.** On a team with Linear's auto-assign-on-start/complete settings the cycle records what has already been worked rather than what is planned, and cycle rollover keeps never-started issues in it indefinitely — one BF issue rolled forward for four months while outranking the entire Planned column on that basis alone. Stage carries the planning signal instead. A team that curates cycles by hand can reintroduce the tier, but nothing in this toolkit reads cycles today.
 
 Two structural de-ranks sit outside the tier scheme:
 
