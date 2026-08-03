@@ -235,7 +235,7 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 - Working Application Contract enforcement (`pnpm check` gate)
 - Categorized findings (Critical/High/Medium/Nice-to-Have/Approved)
 - Parallel domain-scoped reviewers for large changes
-- Mandatory re-review after the initial review's fixes and after every substantive fix, dispatched to the quality-verifier agent with the fix delta as an inline diff; converges when no new substantive findings surface — prose-only and mechanical findings surfaced by a re-review are fixed directly by the orchestrator without consuming a cycle, and after cycle 2 new Mediums are filed as deferred items instead of re-arming the loop (5-cycle soft ceiling)
+- Mandatory re-review after every substantive fix, dispatched to the quality-verifier agent with the fix delta as an inline diff; converges when no new substantive findings surface — prose-only and mechanical findings from any cycle, the initial review included, are fixed directly by the orchestrator and verified by their own lanes without consuming a cycle (an all-prose/mechanical batch skips the re-review entirely), and after cycle 2 new Mediums are filed as deferred items instead of re-arming the loop (5-cycle soft ceiling)
 - Deferred-items triage (`fix-now` / `defer-as-issue` / `note-only`); auto-applies safe fixes, files ticket-worthy ones as sub-issues, records the rest as dropped
 - Session-reflection tail (Step 7) — invokes `/reflect` to turn process friction into shared-config improvements
 - Standalone or delegated invocation; auto-detects scope from `git diff`
