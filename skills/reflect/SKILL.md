@@ -155,6 +155,16 @@ First, for each `propose` item, show its destination and a ready-to-paste diff �
    ```
 
    Reference the originating issue as a bare `<ISSUE-ID>` (Linear auto-links it). Do **not** parent-link — a config/process improvement is standalone, not a child of the feature that surfaced it. This body certifies via the trusted-pipeline carve-out documented in [standards/issue-spec.md](../../standards/issue-spec.md) — observation = problem, diff = outcome, checkboxes = criteria — so filing self-certifies without an interview.
+
+   **When a proposal's text describes code that landed under an issue — usually the originating one — record it as a checkable precondition, not just a link.** This skill runs as `/quality-review` Step 7, i.e. `/start` Step 9 — *before* `/finish` commits (its Step 7) and merges (its Step 9) — so the code the proposal describes is not on the source branch yet and **there is no merge SHA to cite**. Name the issue instead, as its own line in the body:
+
+   ```text
+   Precondition: this text describes code landed under <ORIGIN-ID>. Before editing, confirm it is in this tree —
+   `git log --oneline | grep -q '<ORIGIN-ID>'` — and if absent, `git merge <source-branch>` first (merge, never
+   rebase: a rebase detaches the stamped baseline and /finish refuses, exit 4).
+   ```
+
+   Grep the issue ID, not a `Merge <ID>` subject: `finish-merge.sh` creates a merge commit only when the source branch moved during the worktree's life, so the landed work often appears solely as its own `<ORIGIN-ID>: <summary>` line. A worktree cut for this proposal forks from the main checkout's HEAD at pick time (`start-wt-create.sh`, `mode=fresh`), which in a parallel `/auto` fleet routinely predates that merge — BF-790's forked one minute before its originating BF-744 landed, and `start-wt-create.sh` runs its behind/ahead drift warning only on the reuse path, so nothing flags it. Without this line every present-tense claim in the proposal is false against the very tree the implementer is editing, and the doc ships describing code absent from its own commit.
 3. **File it,** capturing the exit code — pass `--keeper` iff **≥1 proposal targets the user-level `~/.claude` repo** (any target outside the project — `~/.claude/CLAUDE.md`, `~/.claude/rules/`, `standards/`, `skills/`, `scripts/`):
 
    ```bash

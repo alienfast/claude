@@ -84,6 +84,16 @@ concurrent session, not of an error to tidy up. Name the unexpected paths, say t
 work, and ask whether to include them or leave them — do not discard them on your own read of what
 "should" be modified.
 
+**Timing is not attribution.** A file's mtime falling inside your own subagents' run window is
+correlation — a concurrent session or an editor autosave leaves the identical signature, and a
+mechanism you invented to explain it ("the tool must have rewritten this") is not evidence. Treat
+anything you did not positively write as another session's.
+
+**Prefer the response that needs no attribution: leave it in the working tree and stage your commit
+by name.** Excluding a file is free and reversible; reverting destroys work you may not own — and
+asking the user to approve a disposition premised on your guess just launders the guess through
+them.
+
 #### Branch operations mutate the SHARED working tree — never reach for them unasked
 
 The rules above cover file-level destruction (`restore`/`reset`/`clean`), and the hook blocks those. Branch operations are the other multi-session hazard — and the hook does NOT catch them: `git branch` is hook-allowed, and `git checkout`/`git switch` only trip it in the `--`-separated file-restore form, so `git checkout -b` / `git switch -c` / `git branch -D` all run unguarded. In a checkout shared by concurrent sessions they mutate state every session in that directory sees.

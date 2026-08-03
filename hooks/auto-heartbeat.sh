@@ -3,8 +3,8 @@
 #
 # WHY: under self-paced /loop, every iteration must end with a ScheduleWakeup or the loop dies
 # SILENTLY — no NO-CANDIDATES, no AUTO-HALTED, no recorded outcome, nothing in the transcript that
-# reads as a failure. skills/auto/SKILL.md already mandates an unconditional ~1800s fallback
-# heartbeat in its most emphatic paragraph, and prose has now failed three times: BF-701 and BF-665
+# reads as a failure. skills/auto/SKILL.md long mandated an unconditional ~1800s fallback
+# heartbeat in its most emphatic paragraph, and prose failed three times: BF-701 and BF-665
 # are cited in that skill, and BF-695 (2026-08-01) is the third — that session shipped its issue at
 # 12:45, never called ScheduleWakeup once, and idled ~7.75h of a four-session fleet run while its
 # state file still read shipped: []. Nothing surfaced it until the fleet was reviewed the next day.
