@@ -142,6 +142,8 @@
       "Bash(~/.claude/scripts/detect-issue-id.sh --validate-only --input PL-458)",
       "Bash(~/.claude/scripts/detect-issue-id.sh)",
       "Bash(~/.claude/scripts/reap-worktrees.sh list *)",
+      "Bash(~/.claude/scripts/wt-ci.sh *)",
+      "Bash(~/.claude/scripts/wt-ci.sh:*)",
       "Bash(~/.claude/scripts/wt-rspec.sh *)",
       "Bash(~/.claude/scripts/wt-rspec.sh:*)",
       "mcp__storybook-react__preview-stories"
