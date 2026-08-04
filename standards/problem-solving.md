@@ -75,6 +75,12 @@ A sweep, checker, or audit whose passing result gates a decision — ship it, ma
 
 A harness that silently matches nothing — a wrong glob, an ignore rule that excludes the fixtures, a parser regex that no longer matches the tool's output format — returns exactly the same "no problems found" as a genuinely clean run. That is the answer everyone wants, which makes it the one nobody questions.
 
+### Measure the quantity that moves, not the call you are deleting
+
+An invalidation — a cache clear, a memo reset, a connection flush — is cheap *at the call* and expensive *downstream*, in the re-population it forces on everything after it. A stopwatch around the call therefore times bookkeeping, can understate the real cost by orders of magnitude, and reads like evidence. When the change is "stop doing X," measure the whole workload with and without X — back to back on one machine, with X as the only variable. Reach for a stopwatch around X only when nothing downstream re-derives what X discarded.
+
+The A/B also survives being wrong about *why*. Attribution to the single changed variable is what the measurement establishes; the mechanism behind it is a separate claim, and pinning the number does not license asserting the mechanism.
+
 ### Complexity Response Pattern
 
 When two or more attempts have failed, stop and hand the decision over with everything needed to make

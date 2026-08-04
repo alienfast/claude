@@ -269,3 +269,16 @@ Ask: "Want me to commit this, or leave it staged for review?" or "Want me to pus
 ### Why
 
 Review IS the workflow. Each commit is a recorded artifact the user wants to inspect before it's written to history. Each push is visible to others and triggers CI — both gates exist for the same reason: nothing leaves the user's control without explicit say-so.
+
+## A throwaway worktree tests HEAD, not your working tree
+
+`git worktree add --detach <path> HEAD` checks out **committed** content — exactly right for capturing a HEAD baseline, and exactly wrong for exercising a change that is still uncommitted (the normal case mid-issue). The worktree runs the *pre-change* code and nothing says so. The failure is biased toward a false PASS: pre-change code exercised against a newly-added guard reproduces the old permissive behavior, which reads as "the command ran fine" rather than as an error, so a guard that never executed gets reported as verified. Run it before and after carrying the change in — the first run is the [negative control](problem-solving.md#a-verification-you-never-watched-fail-is-not-a-verification), and only the difference between the two is evidence.
+
+Carry the change in as a patch rather than enumerating files by hand; one file you forget to copy reproduces the same silent pass:
+
+```bash
+git -C <repo> diff HEAD > tmp/wt.diff && git -C <wt> apply tmp/wt.diff   # all tracked modifications
+cp <repo>/<new-file> <wt>/<new-file>                                     # untracked additions
+```
+
+Undo it before `git worktree remove`: removal refuses on **modified or untracked** files (`fatal: … contains modified or untracked files, use --force to delete it`), and `--force` is blocked by the git-permissions hook, so the flag git suggests is not available. Restore tracked files with `git show HEAD:<path> > <wt>/<path>` — not `git restore`/`git checkout`, also hook-blocked — and delete any file you added.
