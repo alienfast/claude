@@ -404,7 +404,7 @@ Task for [agent]: [Specific, focused task]
 Context: [Why this task matters, relevant issue context]
 Files: [Exact paths and lines]
 
-WORKING APPLICATION CONTRACT: We are modifying a working application. The baseline `pnpm check` passed before this work began. If your changes cause `pnpm check` to fail, that is your failure — not a pre-existing issue, not out of scope, not someone else's problem. You must leave the application in a working state. Run `pnpm check` before reporting your task as complete. If it fails, fix it.
+WORKING APPLICATION CONTRACT: We are modifying a working application. The baseline `pnpm check` passed before this work began. If your changes cause `pnpm check` to fail, that is your failure — not a pre-existing issue, not out of scope, not someone else's problem. You must leave the application in a working state. Run `pnpm check` before reporting your task as complete — in the foreground of your own turn, never backgrounded, giving the Bash call a generous explicit timeout (it can exceed the 120s default on a cold cache): a backgrounded check ends your turn with a waiting message as your entire report, leaving your work unverified. If it fails, fix it.
 
 READ-SCOPING:
 Your working tree is <WT_ABS>. Run `pwd` first and confirm you are there — if it is not <WT_ABS>, STOP and report the actual cwd; do not `cd`, do not proceed.
