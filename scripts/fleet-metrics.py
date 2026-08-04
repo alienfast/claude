@@ -11,9 +11,12 @@ diffed. Add columns; do not quietly change what an existing one means.
 
 WHAT IT READS
   <checkout>/tmp/auto-state-<runKey>.json   run bookkeeping written by /auto Step 4
+  <checkout>/tmp/quality-review-verdict-*.md  per-issue review outcomes written by /quality-review —
+                                            cycles, findings with SEVERITY/origin tags, deferred filings
   ~/.claude/projects/<mangled-cwd>/*.jsonl  session transcripts, main + worktree dirs
   ~/.claude/projects/.../subagents/*.jsonl  delegated work — where classifier blocks actually land,
                                             invisible to the parent except as a slow Agent call
+  .../subagents/agent-<id>.meta.json        the dispatch's agentType, for exact token attribution
 
 Sessions are discovered from state files, then matched to transcripts by runKey (a state file's key
 is the leading segment of its session UUID). A session whose state file says nothing shipped may
@@ -29,6 +32,7 @@ Usage:
 """
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -36,7 +40,8 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-PROJ = Path.home() / ".claude" / "projects"
+# Overridable so the regression suite can point at a fixture tree instead of the live transcripts.
+PROJ = Path(os.environ.get("CLAUDE_PROJECTS_DIR", str(Path.home() / ".claude" / "projects")))
 
 # A wait that cannot end early. Mirrors hooks/no-blind-sleep.sh: any of these means the loop exits
 # when the work does, so its duration is legitimate rather than burned. Kept deliberately generous —
@@ -61,6 +66,19 @@ TERMINAL_TAG = re.compile(r"^\s*(NO-CANDIDATES|AUTO-HALTED):", re.M)
 LOOP_CMD = re.compile(r"<command-name>/loop</command-name>")
 LOOP_AUTO_ARGS = re.compile(r"<command-args>[^<]*/auto")
 GAP_MIN = 240  # seconds; a tool call slower than this is worth naming, not necessarily a fault
+
+# Verdict-file fields (skills/quality-review Output block). Severity tags may carry a /origin class
+# (SEVERITY/origin, added 2026-08-04); files written before that render bare severities, so origin
+# coverage is reported as tagged/total rather than assumed complete.
+V_VERDICT = re.compile(r"^Verdict:\s*(\S+)", re.M)
+V_CYCLES = re.compile(r"^Cycles:\s*(\d+)", re.M)
+V_RESOLVED = re.compile(r"^Findings resolved:\s*(\d+|none)", re.M)
+V_RESOLVED_BLOCK = re.compile(r"^Findings resolved:.*?(?=^\S|\Z)", re.M | re.S)
+V_FILED_LINE = re.compile(r"^Deferred filed as issues:\s*(.+?)$", re.M)
+V_SEVERITY = re.compile(r"\b(CRIT(?:ICAL)?|HIGH|MED(?:IUM)?)\b")
+V_ORIGIN = re.compile(r"\b(?:CRIT(?:ICAL)?|HIGH|MED(?:IUM)?)/(plan|impl|spec|test|latent)\b")
+V_ISSUE_ID = re.compile(r"\b[A-Z][A-Z0-9]*-\d+\b")
+SEV_SHORT = {"CRITICAL": "CRIT", "MEDIUM": "MED"}
 
 
 def ts(value):
@@ -105,7 +123,17 @@ def load(path):
     return rows
 
 
-def scan_transcript(path, agg):
+def subagent_type_of(path):
+    """agent-<id>.jsonl sits next to agent-<id>.meta.json, which records the Agent dispatch's
+    agentType — exact attribution, vs. guessing the type from prompt text."""
+    try:
+        meta = json.loads(path.with_name(path.stem + ".meta.json").read_text())
+        return meta.get("agentType") or "unknown"
+    except (OSError, json.JSONDecodeError):
+        return "unknown"
+
+
+def scan_transcript(path, agg, agent_type="main"):
     """Fold one transcript (session or subagent) into agg. Subagents share the parent's totals on
     purpose: a classifier block inside a delegated reviewer is the parent's lost time."""
     rows = load(path)
@@ -116,6 +144,17 @@ def scan_transcript(path, agg):
             times.append(t)
         msg = r.get("message")
         content = msg.get("content") if isinstance(msg, dict) else None
+
+        # A message's usage repeats verbatim on every transcript row sharing its message id, so a
+        # row-wise sum double-counts — credit each id once. `<synthetic>` rows carry no API usage.
+        if isinstance(msg, dict):
+            usage = msg.get("usage") or {}
+            mid = msg.get("id")
+            model = msg.get("model") or "?"
+            if usage.get("output_tokens") is not None and mid and mid not in agg["seen_msg_ids"] \
+                    and not model.startswith("<"):
+                agg["seen_msg_ids"].add(mid)
+                agg["tokens"][(agent_type, model)] += usage["output_tokens"]
 
         if r.get("type") == "user" and not r.get("isSidechain"):
             body = text_of(content)
@@ -180,7 +219,43 @@ def new_agg():
         "dispatch": Counter(), "classifier_blocks": [], "gaps": [],
         "sleep_blind_s": 0.0, "sleep_blind_n": 0, "sleep_marker_s": 0.0, "sleep_marker_n": 0,
         "ship_tags": set(), "cancel_tags": set(), "subagents": 0,
+        "tokens": Counter(), "seen_msg_ids": set(),
     }
+
+
+def parse_verdicts(checkout, cutoff):
+    """One row per quality-review verdict file in the window: the review-churn half of the retro.
+    Counts are self-reported by the review pipeline — the audit record, not independent ground truth."""
+    rows = []
+    for p in sorted((checkout / "tmp").glob("quality-review-verdict-*.md")):
+        mtime = datetime.fromtimestamp(p.stat().st_mtime, timezone.utc)
+        if cutoff and mtime < cutoff:
+            continue
+        try:
+            text = p.read_text(errors="replace")
+        except OSError:
+            continue
+        m = V_RESOLVED.search(text)
+        resolved = int(m.group(1)) if m and m.group(1).isdigit() else 0
+        block = V_RESOLVED_BLOCK.search(text)
+        blob = block.group(0) if block else ""
+        sev = Counter(SEV_SHORT.get(s, s) for s in V_SEVERITY.findall(blob))
+        m = V_FILED_LINE.search(text)
+        # Parenthetical annotations name OTHER issues — `(sub-issues of TT-9)`, `(collision edge to
+        # TT-8 not wired)` — so ids are extracted only from the unparenthesized remainder.
+        filed = [] if not m or m.group(1).strip().lower().startswith("none") \
+            else V_ISSUE_ID.findall(re.sub(r"\([^)]*\)", " ", m.group(1)))
+        rows.append({
+            "issue": p.stem.replace("quality-review-verdict-", "").upper(),
+            "mtime": mtime,
+            "verdict": (V_VERDICT.search(text) or [None, "?"])[1],
+            "cycles": int(V_CYCLES.search(text).group(1)) if V_CYCLES.search(text) else None,
+            "resolved": resolved,
+            "sev": sev,
+            "origin": Counter(V_ORIGIN.findall(blob)),
+            "filed": filed,
+        })
+    return rows
 
 
 def git_merged(checkout, issues):
@@ -255,14 +330,35 @@ def main():
         for tpath in transcripts:
             if "/subagents/" in str(tpath):
                 agg["subagents"] += 1
-            scan_transcript(tpath, agg)
+                scan_transcript(tpath, agg, subagent_type_of(tpath))
+            else:
+                scan_transcript(tpath, agg)
         sessions.append({"run_key": run_key, "state": state, "state_mtime": mtime,
                          "transcripts": len(transcripts), "agg": agg})
 
     all_shipped = set()
+    issue_run = {}
     for s in sessions:
-        all_shipped |= set(s["state"].get("shipped") or []) | s["agg"]["ship_tags"]
+        shipped = set(s["state"].get("shipped") or []) | s["agg"]["ship_tags"]
+        all_shipped |= shipped
+        for issue in shipped:
+            issue_run.setdefault(issue, s["run_key"])
     merged = git_merged(checkout, all_shipped)
+
+    verdicts = parse_verdicts(checkout, cutoff)
+    filed_total = sum(len(v["filed"]) for v in verdicts)
+    # The ratio pairs this fleet's filings with this fleet's ships: verdicts for issues no session in
+    # the window shipped (run `-` in the table) stay out of the numerator, or a window that catches an
+    # earlier run's reviews inflates the rate.
+    filed_matched = sum(len(v["filed"]) for v in verdicts if v["issue"] in all_shipped)
+    filed_per_shipped = round(filed_matched / len(all_shipped), 2) if all_shipped else None
+    # Verdict existence is checked against every file on disk, not just the window — the filename
+    # alone names the issue, and a review persisted just before the cutoff is not a missing verdict.
+    verdict_issues_all = {p.stem.replace("quality-review-verdict-", "").upper()
+                          for p in (checkout / "tmp").glob("quality-review-verdict-*.md")}
+    fleet_tokens = Counter()
+    for s in sessions:
+        fleet_tokens.update(s["agg"]["tokens"])
 
     if args.json:
         print(json.dumps({
@@ -285,9 +381,17 @@ def main():
                 "classifier_blocks": len(s["agg"]["classifier_blocks"]),
                 "dangling_tool_calls": s["agg"]["dangling"],
                 "subagent_transcripts": s["agg"]["subagents"],
+                "output_tokens": {f"{t}/{m}": n for (t, m), n in s["agg"]["tokens"].most_common()},
                 "long_gaps": [{"minutes": round(g[0] / 60, 1), "tool": g[1], "what": g[2]}
                               for g in sorted(s["agg"]["gaps"], reverse=True)[:5]],
             } for s in sessions],
+            "review_churn": [{
+                "issue": v["issue"], "run": issue_run.get(v["issue"]),
+                "verdict": v["verdict"], "cycles": v["cycles"], "findings_resolved": v["resolved"],
+                "severity": dict(v["sev"]), "origin": dict(v["origin"]), "filed": v["filed"],
+            } for v in verdicts],
+            "filed_per_shipped": filed_per_shipped,
+            "output_tokens": {f"{t}/{m}": n for (t, m), n in fleet_tokens.most_common()},
             "merge_reconciliation": merged,
         }, indent=2))
         return 0
@@ -322,7 +426,47 @@ def main():
     print(f"\n**Totals** — {tot['span']:.1f} session-hours · blind sleep {tot['blind'] / 3600:.1f}h "
           f"{blind_share} · marker polls "
           f"{tot['marker'] / 3600:.1f}h · dispatch {tot['bg']} background / {tot['sync']} sync · "
-          f"{tot['cls']} classifier blocks\n")
+          f"{tot['cls']} classifier blocks · {sum(fleet_tokens.values()):,} output tokens\n")
+
+    print("## Review churn\n")
+    if verdicts:
+        print("| issue | run | verdict | cycles | findings | C/H/M | origins | filed |")
+        print("|---|---|---|---|---|---|---|---|")
+        for v in verdicts:
+            origins = " ".join(f"{k}:{n}" for k, n in v["origin"].most_common()) or "-"
+            print(f"| {v['issue']} | `{issue_run.get(v['issue'], '-')}` | {v['verdict']} | "
+                  f"{v['cycles'] if v['cycles'] is not None else '?'} | {v['resolved']} | "
+                  f"{v['sev']['CRIT']}/{v['sev']['HIGH']}/{v['sev']['MED']} | {origins} | "
+                  f"{len(v['filed'])} |")
+        cyc = [v["cycles"] for v in verdicts if v["cycles"] is not None]
+        resolved_total = sum(v["resolved"] for v in verdicts)
+        tagged = sum(sum(v["origin"].values()) for v in verdicts)
+        origin_tot = Counter()
+        for v in verdicts:
+            origin_tot.update(v["origin"])
+        origins = " ".join(f"{k}:{n}" for k, n in origin_tot.most_common()) or "none"
+        ratio = (f"{filed_per_shipped} filed per shipped issue ({filed_matched} from this fleet's reviews)"
+                 if filed_per_shipped is not None else "no shipped issues to pair against")
+        print(f"\n**Churn totals** — {len(verdicts)} reviews · avg cycles "
+              f"{sum(cyc) / len(cyc):.1f} (max {max(cyc)}) · {resolved_total} findings resolved · "
+              f"severity C/H/M {sum(v['sev']['CRIT'] for v in verdicts)}/"
+              f"{sum(v['sev']['HIGH'] for v in verdicts)}/{sum(v['sev']['MED'] for v in verdicts)} · "
+              f"origin-tagged {tagged}/{resolved_total} ({origins}) · "
+              f"{filed_total} deferred filings in window → {ratio}. Review-pipeline filings only — "
+              f"the Linear window query (retro Step 3) is the full filing census.\n")
+    else:
+        print("- no verdict files in the window\n")
+
+    print("## Output tokens by agent type\n")
+    if fleet_tokens:
+        total_out = sum(fleet_tokens.values())
+        print("| agent type | model | output tokens | share |")
+        print("|---|---|---|---|")
+        for (typ, model), n in fleet_tokens.most_common():
+            print(f"| {typ} | {model} | {n:,} | {100 * n / total_out:.0f}% |")
+        print()
+    else:
+        print("- no usage data found in transcripts\n")
 
     print("## Flags\n")
     flagged = False
@@ -355,6 +499,12 @@ def main():
     if missing:
         flagged = True
         print(f"- **Shipped but no commit found**: {', '.join(missing)} — verify before trusting the count.")
+    no_verdict = sorted(i for i in all_shipped if i not in verdict_issues_all)
+    if no_verdict:
+        flagged = True
+        print(f"- **Shipped with no persisted review verdict**: {', '.join(no_verdict)} — either "
+              f"/quality-review never persisted (its Output-block mandate failed) or the issue shipped "
+              f"outside the review pipeline. The churn table undercounts by these.")
     no_merge = [i for i, m in merged.items() if m["commit"] and not m["merge"]]
     if no_merge:
         print(f"- Landed without a `Merge <ID>` commit (usually a fast-forward, worth one check): "

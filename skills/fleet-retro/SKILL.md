@@ -1,6 +1,6 @@
 ---
 name: fleet-retro
-description: Post-mortem on a finished fleet of parallel /loop /auto sessions — measures each session with scripts/fleet-metrics.py (blind-sleep burn, dispatch mode, heartbeat compliance, classifier blocks, state-vs-reality drift), reconciles the shipped ledger against git and Linear, audits the issues the run FILED for duplicates and stranded states, then reports ranked findings and applies the fixes you approve. The bookend to /auto-prep. Use when the user says 'fleet retro', 'review the fleet run', 'how did the fleet do', 'post-mortem the auto run', or invokes /fleet-retro.
+description: Post-mortem on a finished fleet of parallel /loop /auto sessions — measures each session with scripts/fleet-metrics.py (blind-sleep burn, dispatch mode, heartbeat compliance, classifier blocks, state-vs-reality drift, review churn with findings origins, output-token attribution by agent type and model), reconciles the shipped ledger against git and Linear, audits the issues the run FILED for duplicates and stranded states, then reports ranked findings and applies the fixes you approve. The bookend to /auto-prep. Use when the user says 'fleet retro', 'review the fleet run', 'how did the fleet do', 'post-mortem the auto run', or invokes /fleet-retro.
 argument-hint: "[--since YYYY-MM-DD | --hours N] [checkout-path]"
 model: opus
 effort: xhigh
@@ -24,9 +24,18 @@ Interactive by design. Report the findings, get approval, then apply. Never run 
 ```
 
 Discovers sessions from `<repo>/tmp/auto-state-*.json`, matches each to its transcripts (main **and**
-worktree dirs, **including `subagents/`**), and emits a fixed table plus a Flags section. `--json` for
-machine use. Subagent transcripts matter disproportionately: a delegated reviewer that gets blocked or
-stalls is invisible to its parent, which sees only a slow `Agent` call.
+worktree dirs, **including `subagents/`**), and emits fixed per-session, review-churn, and
+token-attribution tables plus a Flags section. `--json` for machine use. Subagent transcripts matter
+disproportionately: a delegated reviewer that gets blocked or stalls is invisible to its parent, which
+sees only a slow `Agent` call.
+
+The review-churn table reads `tmp/quality-review-verdict-*.md`: cycles, findings by severity, the
+SEVERITY/origin split (`plan`/`impl`/`spec`/`test`/`latent` — verdicts written before 2026-08-04
+predate the tag, so coverage is reported as tagged/total, not assumed), and deferred filings paired
+against the fleet's ships as a filed-per-shipped rate. Cycles alone is a weak churn signal — the
+review loop's convergence design pins it near 2 — so read findings volume, severity, and origin mix
+instead. The token table is what turns model/effort tuning into arithmetic: it shows where output
+tokens actually went (orchestration vs. exploration vs. review vs. fixes), by agent type and model.
 
 The schema is fixed so two retros are comparable — that cross-run diff is the main long-term value. Add
 columns freely; never quietly redefine an existing one.
@@ -43,6 +52,10 @@ The script finds *shapes*; it does not explain them. Each flag is a lead:
 | dangling tool calls | unanswered prompt or killed turn | the tail of that transcript |
 | high blind-sleep % | agents waiting on background dispatch | correlate with the `bg/sync` column |
 | shipped but no commit | the ledger is wrong, or the merge never landed | `git log --all --grep=<ID>`, `/merge-queue` |
+| shipped with no persisted verdict | `/quality-review` never persisted its Output block, or the issue shipped outside the review pipeline | that issue's `/full` run in the session transcript |
+| plan-heavy origin mix | the posted plans leak requirements/scope — planning is the stage to tune (model, effort, or a dedicated plan/plan-review step) | the tagged findings' issues; diff each posted plan against what the review had to fix |
+| impl-heavy origin mix | plans were right, code diverged — developer model/effort or delegation prompts are the lever, not more planning | the fix-dispatch prompts and the findings they addressed |
+| high filed-per-shipped rate | each shipped issue spawns near or above one new issue — at that rate the backlog cannot drain | Step 3's Linear census: severity + certification mix of what was filed |
 
 **Correlate across sessions before concluding.** The 2026-08-01 run's biggest finding existed only in the
 comparison: blind-sleep burn tracked dispatch mode exactly (0% at 0 background dispatches; 55% at 32). No
@@ -66,8 +79,20 @@ linear-cli api query 'query { issues(filter: { team: { key: { eq: "<KEY>" } }, c
   | jq -r '.data.issues.nodes | sort_by(.createdAt) | .[] | "\(.identifier) | \(.state.name) | [\(.labels.nodes|map(.name)|join(","))] | \(.title)"'
 ```
 
-- **Net backlog delta** — drained vs. filed. A security sweep legitimately grows the backlog as each fix
-  exposes adjacent surface; that is a conscious call to surface, not a defect to hide.
+- **Net backlog delta** — drained vs. filed, stated as the reproduction ratio **R = issues filed /
+  issues shipped** for the window (the script's filed-per-shipped rate covers only review-pipeline
+  filings; this census is the full number). **The pool is the workable backlog only — `Planned`,
+  `Backlog`, `Triage`, plus in-flight — and `Ready for Release` counts as done in every metric
+  here.** Deployment cadence is a separate axis; RFR is an unstarted-*type* state in Linear, so a
+  naive state-type census sweeps shipped-awaiting-deploy work into "open" and overstates the pool
+  (the 2026-08-04 census misread it by 220 issues before this rule existed). Track R across retros — it is the convergence gauge:
+  below 1 the backlog drains and the drain rate says when it empties; at or above 1 no amount of
+  fleet capacity catches up, and the lever is filing policy or defect prevention, not more sessions.
+  Read it with the severity mix of what was filed: an R near 1 made of Medium deferrals is the
+  reviewer mining a finite latent pool and should decay across runs; an R near 1 with fresh
+  Critical/High findings means new code is minting defects as fast as the fleet retires them. A
+  security sweep legitimately grows the backlog as each fix exposes adjacent surface; that is a
+  conscious call to surface, not a defect to hide.
 - **Remaining pool** — `~/.claude/scripts/next-candidates.sh --team <KEY> --label specified` so the next
   run's fuel is a known quantity.
 
