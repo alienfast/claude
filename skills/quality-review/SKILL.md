@@ -179,6 +179,15 @@ Acceptance: Produce a categorized findings report following the Required finding
 
 For large changes spanning multiple domains, **always** spawn parallel reviewers scoped by domain in a single message (e.g., one for backend, one for frontend). The same parallelism principle applies here — reviews are independent and must run simultaneously. Consolidate findings before proceeding.
 
+**Parallel reviewers share one tree, and each is licensed to probe it.** The delegation mechanics above tell every read-only dispatch that a temporary probe is
+legitimate, and `standards/git.md` has it restored by file copy — so between an agent's edit and its restore the tree is genuinely broken, and a sibling running specs
+in that window sees real failures in files neither agent's scope names. Every parallel read-only dispatch therefore also carries: *"Other reviewers are working in this
+same worktree and may be transiently editing files to test a claim. A red run, or a diff you did not write, may be a sibling's in-flight probe — re-run or re-read
+before you report it, and do not assert who wrote it."* This narrows `standards/git.md`'s "treat anything you did not positively write as another session's" without
+weakening it: that rule governs **disposition** — never revert, discard, or tidy away what you did not write — and holds in full. What it must not license is an
+**attribution** in a report. Say the tree was transiently dirty and the cause was not attributable; never name a concurrent session. Where a clean signal matters more
+than wall-clock, serialize the reviewers instead of warning them.
+
 **Required findings format** (this is the parsed contract — the `quality-reviewer` agent's system prompt also specifies it; both must agree):
 
 ```markdown
@@ -345,7 +354,7 @@ Reply with `1` (optionally `1 5` for a custom N), `2`, or `3`.
 The two branches:
 
 - **Any surviving Critical or High, or any surviving finding that is a regression/defect of the change under review** → option 2 immediately (terminate with `terminated-with-open-items`, surviving findings as Open items). Five cycles of *genuine* non-convergence in an unattended run is a signal for a human, not more unattended cycles; the failing verdict makes `/finish auto` abort and `/auto` count the issue as a failure, which is the intended surfacing path.
-- **Every surviving finding is Medium AND adjudicates here as pre-existing** → the implementation itself has converged; the residue is reviewer scope-widening into adjacent gaps, not this change's defects (the BF-435 pattern: 28 findings fixed across 4 cycles, then blocked by a sibling-method one-worder and a "file siblings separately" recommendation). Treat as convergence: exit Step 5 with verdict `passed-after-fixes` and route every surviving finding into Step 6 as a severity-carrying deferred item (the same lane item 5's pre-existing bullet uses — rendered in sub-step 6's "Suggested defer as issue" group with severity in the tag slot, filed `Planned` with the `specified` label), where auto mode's `suggested` default files them.
+- **Every surviving finding is Medium AND adjudicates here as pre-existing** → the implementation itself has converged; the residue is reviewer scope-widening into adjacent gaps, not this change's defects (the BF-435 pattern: 28 findings fixed across 4 cycles, then blocked by a sibling-method one-worder and a "file siblings separately" recommendation). Treat as convergence: exit Step 5 with verdict `passed-after-fixes` and route every surviving finding into Step 6 as a severity-carrying deferred item (the same lane item 5's pre-existing bullet uses — rendered in sub-step 6's "Suggested defer as issue" group with severity in the tag slot, filed with the `specified` label into sub-step 6's state split — `Backlog` for these Mediums unless `security`-labeled), where auto mode's `suggested` default files them.
 
 This trend-then-drain-then-provenance resolution is what auto mode substitutes for the prompt above and nothing more: it does not scope item 5's lane split, which routes every re-review's findings in both modes, on every cycle, ceiling or no ceiling.
 
@@ -518,10 +527,16 @@ body_file=$(mktemp -u tmp/deferred-XXXXXX)   # -u = name only; Write creates it.
 # ...write body to "$body_file" via the Write tool...
 
 # 2. Create the issue under the resolved parent (the helper links it + verifies).
-#    --state Planned: deferred items have a known design intent and a documented
-#    location/rationale (sub-step 1's consolidated list). They should not need
-#    triage — they're triaged the moment we file them. Filing them into Triage
-#    instead would queue them for re-evaluation that's already been done.
+#    State — never Triage: deferred items have a known design intent and a documented
+#    location/rationale (sub-step 1's consolidated list), so filing into Triage would
+#    queue them for re-evaluation that's already been done. Between the two workable
+#    states, `Backlog` is the DEFAULT: Planned is the human-curated "work next" queue,
+#    and machine filings crowd it out (2026-08-04: 96 of 140 Planned issues were
+#    review-pipeline filings; 77 were bulk-demoted). File into `Planned` ONLY when the
+#    item is severity-carrying at Critical/High (priority 1-2) or takes the `security`
+#    class label below — release-relevant risks a human should see queued. Backlog
+#    filings lose nothing: `specified` keeps them /auto-eligible, and /next simply
+#    ranks them behind Planned — which is the intended ordering.
 #    If no issue was resolved in Step 1, pass "-" as the parent (a top-level issue) —
 #    do not invent a parent.
 # 3. Label arg (comma-separated): `specified` ONLY for severity-carrying items (their
@@ -547,14 +562,14 @@ body_file=$(mktemp -u tmp/deferred-XXXXXX)   # -u = name only; Write creates it.
 #    the sub-step 6 render (the prompt display), not the filed title: the priority field
 #    now carries the grade, and a tag baked into the title duplicates it and goes stale
 #    if the grade is later revised.
-new_id=$(~/.claude/scripts/linear-create-child.sh <ISSUE-ID> <team> Planned "<short title>" "$body_file" <specified|-> <1|2|3|->)
+new_id=$(~/.claude/scripts/linear-create-child.sh <ISSUE-ID> <team> <Backlog|Planned per the state rule above> "<short title>" "$body_file" <specified|-> <1|2|3|->)
 create_status=$?   # captured immediately, before any other command — the discriminator the
                    # filing-failure rules below branch on: 0 = filed and parent-linked; 2 = filed
                    # and linked, label not attached (keep the issue); anything else = create
                    # failed — stop filing (see below)
 ```
 
-If `--state Planned` is rejected (the team uses different state names), follow this explicit fallback algorithm:
+If the chosen state (`Backlog` or `Planned`) is rejected (the team uses different state names), follow this explicit fallback algorithm:
 
 1. Derive the team key from the issue ID prefix (e.g., `PL-13` → team `PL`). Then probe: `linear-cli statuses list -t PL`.
 2. Pick the first state whose name matches `/^(planned|backlog|to.?do)$/i` (case-insensitive, exact match — NOT a prefix match). **Deliberately exclude `ready` from this regex**: a prefix match on `ready` would latch onto `Ready For Release` or `Ready For Review` on teams that have those states, silently filing new deferred issues into a release/review state.
@@ -578,6 +593,20 @@ A `create_status` of **2** means the issue was created and parent-linked but the
 
 **Wire same-file collision edges across the just-filed batch.** After the last chosen item files successfully (and only when the batch created 2+ issues), group the new issues by the file paths their findings name (the `file:line` locations; a finding naming several files belongs to every group it names). For each group sharing a file, chain the issues in filed order — `linear-cli relations add <earlier-ID> <later-ID> -r blocks`, earlier blocks later, adjacent pairs only (A→B and B→C; never a redundant A→C). `/next` observes only `blocks` edges, so unwired same-file siblings are offered to parallel `/auto` sessions simultaneously and collide in their worktree merges (the BF-434 batch filed 10 unwired siblings, several overlapping in the same components — wired by hand afterward, BF-581). Best-effort: a failed `relations add` annotates the affected issue in the verdict block's `Deferred filed as issues` entry (`BF-XX (collision edge to BF-YY not wired — add manually)`) and never stops filing, re-opens the loop, or changes the verdict.
 
+**Wire the parent→child edge too.** Items filed here are sub-issues of the issue under review, and on the `/start` Step 9 path that issue is `In Progress` — a
+non-terminal state, so an unwired child is fleet-pickable the moment it files, while the work it was discovered inside has not reached the source branch at all
+(`/finish` has not run yet). Nothing existing catches this: `next-candidates.sh`'s `spread_penalty` fires only on a started *sibling*, and its `parent_weight` actively
+ranks a child of an In Progress parent **best** (weight 1) — which is how BF-867 was offered to a parallel session two minutes after filing, on a finding whose
+still-in-flight parent could change its premise. After a successful create, wire `linear-cli relations add <ISSUE-ID> <new-ID> -r blocks` (parent blocks child; `/next`
+observes only `blocks` edges). Scope it exactly like the search-before-filing edge above, honoring both halves of standards/issue-spec.md's guard: wire it **only for
+severity-carrying items** (the ones filed `specified`, hence fleet-pickable — an unlabeled deferred item `/auto` cannot pick gains nothing and only loses its place in
+a bare `/next`), and **only while this run's verdict is still passing** — a run already headed for `terminated-with-open-items` (Step 5's option 2 reaches this
+sub-step) ends with `/auto` abandoning the parent In Progress and `stalled`, which is precisely the blocker-that-never-ships that strands the child invisibly. Skip it
+when Step 1 resolved no issue (`-` parent, a top-level issue) or when the helper reported the nesting cap (create_status 3/4), where the issue is a `related` peer
+rather than a child. On a passing verdict the edge is self-clearing: `/finish` moves the parent to `Ready For Release`, which `next-candidates.sh` counts as terminal
+(case-insensitively), and the child unblocks minutes later. Best-effort, exactly like the same-file edges above: a failed `relations add` annotates the affected issue
+in the verdict block's `Deferred filed as issues` entry and never stops filing, re-opens the loop, or changes the verdict.
+
 **Every fileable item rendered at this prompt that the chosen reply did not select for filing** goes to `Deferred dropped` — explicit declines, numbers simply omitted from a numeric list, and the whole rendered fileable set under `none` alike. These dropped items join **any `note-only` items — from sub-step 2 or classified by the sub-step 5 re-reviews** — record them all as one list for the verdict block. (Two classes route to `Open items` instead: items that never reached this prompt because Step 6 terminated early in sub-step 5 — see sub-step 5 — and chosen items a create failure left unfiled — see the filing-failure rules above.)
 
 ## Output
@@ -587,19 +616,27 @@ When the skill returns to its caller (or to the user, when standalone), present 
 ```text
 Verdict: <one of: passed-clean | passed-after-fixes | terminated-with-open-items | escalated-to-architect>
 Cycles: N (initial + N-1 re-reviews)
-Findings resolved: [list, or the bare word none if passed-clean]
+Findings resolved: [list — every severity tag carries an origin class, SEVERITY/origin; or the bare word none if passed-clean]
 Deferred fixed in-session: [list of items applied in-session, including auto-applied fix-now items even when sub-step 6 was skipped; or the bare word none]
 Deferred filed as issues: [PL-XX, PL-YY (sub-issues of <PARENT>), or the bare word none]
 Deferred dropped: [items intentionally not filed — note-only items auto-classified too minor to track, plus every fileable item rendered at sub-step 6's prompt that the chosen reply did not select for filing; list, or the bare word none]
 Open items: [list, or the bare word none — populated only on terminated-with-open-items or escalated-to-architect; includes any deferred items not handled above]
 ```
 
+**Every severity tag carries an origin class** — written `SEVERITY/origin` (e.g. `HIGH/plan`), wherever a severity tag renders in this block: `Findings resolved`, severity-carrying deferred items, and `Open items`. Origin names the stage that would have prevented the finding; `fleet-retro` aggregates it across a fleet to decide where to tune (a plan-heavy fleet argues for a stronger or higher-model planning step, an impl-heavy one for developer model/effort, a spec-heavy one for `/spec` rigor). Pick exactly one:
+
+- `plan` — the posted plan was wrong or incomplete: a missed requirement or absorbed criterion, wrong scope, a missed sibling/adjacent issue, or a design choice the review had to reverse.
+- `impl` — the plan was right; the code diverged from it or carries a code-level defect (nil guard, race, wrong predicate, broken error path).
+- `spec` — the Linear issue's own description or success criteria were wrong or incomplete; no plan composed from that spec could have avoided the finding.
+- `test` — coverage-only gap: behavior is correct but unpinned.
+- `latent` — the finding adjudicated as pre-existing (Step 6 sub-step 5's provenance split, or Step 5's pre-existing deferred route): it was already true before this change and belongs to the codebase's latent pool, not to any stage of this session.
+
 **Substitute resolved values before rendering — never emit the schema verbatim.** The `Verdict:` line MUST contain exactly one of the four enum values, with no `|` separators and no remaining angle-bracket placeholders. A concrete passing example:
 
 ```text
 Verdict: passed-after-fixes
 Cycles: 3 (initial + 2 re-reviews)
-Findings resolved: 2 (CRIT: null-pointer in handler; HIGH: race in retry loop)
+Findings resolved: 2 (CRIT/impl: null-pointer in handler; HIGH/plan: race in retry loop)
 Deferred fixed in-session: 1 (dead-code in spec_helper.rb)
 Deferred filed as issues: PL-299, PL-300 (sub-issues of PL-190)
 Deferred dropped: none
@@ -673,7 +710,7 @@ Rules for this step:
   ```text
   Verdict: terminated-with-open-items
   Cycles: 2 (the cycle-2 re-review was malformed; one corrective re-spawn also malformed)
-  Findings resolved: 3 (CRIT: null-pointer in handler; HIGH: race in retry loop; MED: unchecked cast)
+  Findings resolved: 3 (CRIT/impl: null-pointer in handler; HIGH/impl: race in retry loop; MED/test: unchecked cast)
   Deferred fixed in-session: none
   Deferred filed as issues: none
   Deferred dropped: none
@@ -685,7 +722,7 @@ Rules for this step:
   ```text
   Verdict: terminated-with-open-items
   Cycles: 2 (initial + 1 re-review)
-  Findings resolved: 1 (HIGH: unclosed file handle on the error path)
+  Findings resolved: 1 (HIGH/impl: unclosed file handle on the error path)
   Deferred fixed in-session: none
   Deferred filed as issues: none
   Deferred dropped: none

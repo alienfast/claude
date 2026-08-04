@@ -30,6 +30,11 @@ Before dispatch, confirm no two delegations in the batch share a write target. I
 - Make the two delegations sequential instead of parallel, or
 - Bundle both pieces of work into a single delegation.
 
+**Read-only delegations are not exempt.** A reviewer's prompt names no write targets, so the enumeration above returns empty for it — yet a revert-based probe (edit a
+line out, run the tests, restore by file copy) makes it a transient writer anyway, and the resulting failures read as real defects. Parallel read-only agents in one
+tree need the mitigation from the observer's side: tell each that a red run or an unexpected diff may be a sibling's in-flight probe, to be re-checked before it is
+reported and never attributed to a named session (`skills/quality-review/SKILL.md` § Step 3 carries the dispatch sentence).
+
 ## Long-running commands in delegations
 
 If a delegated task includes a multi-minute command (Rust/C++ compile, installer build, dev-server smoke test), tell the agent explicitly to run it
