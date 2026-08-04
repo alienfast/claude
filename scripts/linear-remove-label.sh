@@ -38,7 +38,7 @@ for cmd in linear-cli jq; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "ERROR: '$cmd' not found on PATH" >&2; exit 1; }
 done
 
-label_names() { jq -r '.labels | (if type == "object" then (.nodes // []) else . end) | .[]?.name? // empty'; }
+label_names() { jq -r '.labels.nodes[].name'; }
 
 # Same shape guard as linear-add-label.sh: a GraphQL error envelope or degenerate labels
 # field must not read as "zero labels" — on the initial read that would no-op a real
@@ -52,10 +52,7 @@ is_issue_json() {
       and (.name | test("[\\x00-\\x1f]") | not)
     );
     type == "object" and .identifier == $id
-    and (
-      ((.labels | type) == "object" and (.labels.nodes | usable))
-      or (.labels | usable)
-    )' >/dev/null 2>&1
+    and ((.labels | type) == "object" and (.labels.nodes | usable))' >/dev/null 2>&1
 }
 
 issue_json=$(linear-cli issues get "$issue_id" -o json -q --no-cache 2>/dev/null) \

@@ -50,9 +50,7 @@ for cmd in linear-cli jq; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "ERROR: '$cmd' not found on PATH" >&2; exit 1; }
 done
 
-# Tolerates the two labels shapes is_issue_json() accepts below: {nodes:[...]} (today's shape) or
-# a bare array (if the CLI changes).
-label_names() { jq -r '.labels | (if type == "object" then (.nodes // []) else . end) | .[]?.name? // empty'; }
+label_names() { jq -r '.labels.nodes[].name'; }
 
 # Recursively plucks every `name` field regardless of the `labels list` envelope shape.
 workspace_label_names() { jq -r '.. | objects | select(has("name")) | .name'; }
@@ -62,9 +60,9 @@ workspace_label_names() { jq -r '.. | objects | select(has("name")) | .name'; }
 # "zero labels" misread is wrong on both call sites this guards: on the initial read it would make the
 # update below REPLACE the whole label set with just the new one; on the verify re-read it would falsely
 # trigger the concurrent-modification alarm. has("labels") alone isn't enough: `.labels: null` passes it
-# but reads as zero labels, and `.labels: "weird"` passes it but reads as zero labels too. Require labels
-# to be an array of objects with non-degenerate string names, in either shape label_names tolerates:
-# {nodes:[...]} or a bare array.
+# but reads as zero labels, and `.labels: "weird"` passes it but reads as zero labels too. Require
+# .labels.nodes to be an array of objects with non-degenerate string names — the one issues-get shape
+# (linear skill gotcha #13), which label_names above then reads unguarded.
 is_issue_json() {
   jq -e --arg id "$issue_id" '
     def usable: type == "array" and all(.[];
@@ -74,10 +72,7 @@ is_issue_json() {
       and (.name | test("[\\x00-\\x1f]") | not)
     );
     type == "object" and .identifier == $id
-    and (
-      ((.labels | type) == "object" and (.labels.nodes | usable))
-      or (.labels | usable)
-    )' >/dev/null 2>&1
+    and ((.labels | type) == "object" and (.labels.nodes | usable))' >/dev/null 2>&1
 }
 
 issue_json=$(linear-cli issues get "$issue_id" -o json -q --no-cache 2>/dev/null) \

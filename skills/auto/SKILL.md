@@ -82,7 +82,7 @@ Tokens are case-insensitive and order-insensitive.
 **Targeted mode requires the `specified` label** — the invariant stays one sentence: `/auto` ships only certified specs, picked or targeted (`standards/issue-spec.md`). Probe before dispatching anything:
 
 ```bash
-linear-cli issues get <ISSUE-ID> -o json | jq -r '.labels | .. | objects | select(has("name")) | .name' | grep -qix specified
+linear-cli issues get <ISSUE-ID> -o json | jq -r '.labels.nodes[].name' | grep -qix specified
 ```
 
 Label absent → refuse and stop with a plain error — no lifecycle tag, no state change; this is invocation-time argument validation and the user is present, having just typed the ID: `<ISSUE-ID> is not certified (no specified label) — run /spec <ISSUE-ID> to certify it, or /full wt <ISSUE-ID> for an interactive run.` (A probe failure from auth/network is Error Handling's `linear-cli` territory, never a silent pass.)
