@@ -394,6 +394,20 @@ resolve_repos() {
     | awk 'NF && !seen[$0]++'
 }
 
+# The Linear workspace is a property of the REPO, but a linear-cli API key is scoped to one workspace and
+# launchd hands this script no environment — so whatever single `current` profile the CLI falls back to is
+# wrong for every registered repo but one, and the Linear evidence silently comes back empty for the rest
+# (linear-cli is a soft dependency here, so an unauthorized/empty answer degrades to the local merged check
+# instead of failing). Read the same per-repo value Claude Code itself uses.
+#
+# Empty output is deliberate and safe when a repo has no setting: an empty LINEAR_CLI_PROFILE behaves
+# exactly like an unset one (falls back to `current`), preserving prior behavior for single-workspace users.
+linear_profile_for() {
+  local settings="$1/.claude/settings.local.json"
+  [ -f "$settings" ] || return 0
+  jq -r '.env.LINEAR_CLI_PROFILE // empty' "$settings" 2>/dev/null || true
+}
+
 cmd_reap() {
   local repos=() repo key
   while IFS= read -r repo; do [ -n "$repo" ] && repos+=("$repo"); done < <(resolve_repos "${1:-}")
@@ -401,6 +415,7 @@ cmd_reap() {
   for repo in "${repos[@]}"; do
     [ -d "$repo" ] || { err "registered repo missing, skipping: $repo"; continue; }
     if ! key=$(repo_key_for "$repo"); then err "not a git repo, skipping: $repo"; continue; fi
+    export LINEAR_CLI_PROFILE="$(linear_profile_for "$repo")"
     # Serialize per repo on the SAME key finish-merge.sh locks (absolute common git dir), so a reap and
     # an in-flight /finish merge of this repo never overlap. The lock helper re-execs SELF under flock.
     "$LOCK_HELPER" "$key" "$SELF" __reap_one "$repo"
@@ -415,6 +430,7 @@ cmd_list() {
     [ -d "$repo" ] || { echo "$repo — MISSING (stale registry entry)"; continue; }
     git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "$repo — not a git repo"; continue; }
     [ -d "$repo/$WT_SUBDIR" ] || continue
+    export LINEAR_CLI_PROFILE="$(linear_profile_for "$repo")"
     git -C "$repo" fetch --quiet 2>/dev/null || true
     echo "$repo:"
     had_any=0
