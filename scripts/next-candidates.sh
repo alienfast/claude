@@ -51,7 +51,11 @@
 # merge point, the generated artifacts every sibling consumes, or the shared `pnpm check`
 # gate every concurrent session blocks on. Hiding them from the ranking is what keeps a
 # parallel fleet from picking one; a targeted run (/auto <ID>) while the fleet is quiet
-# still ships it, since targeted mode gates on `specified` alone.
+# still ships it — targeted mode refuses only missing certification and the `human` label.
+#
+# `human`-labeled issues are hidden the same way and surfaced via --label human. The work
+# itself is human-performed (standards/issue-spec.md), so unlike `solo` there is no
+# targeted-mode carve-out: /auto refuses a human-labeled target in any mode.
 #
 # Exit codes: 0 success (incl. "no workable issues"), 1 arg error,
 # 2 Linear/network failure, 3 missing dependency.
@@ -394,15 +398,25 @@ candidates_json=$(jq \
       | select(($xlabel == "") or (all(($i.labels // [])[]; ascii_downcase != ($xlabel | ascii_downcase))))
       | select(($iskeeper == "true") or (all(($i.labels // [])[]; ascii_downcase != "keeper")))
       # needs-decision gate: a human must step in first (standards/issue-spec.md) —
-      # hidden from every ranking unless the caller asked for this label itself.
-      | select((($label | ascii_downcase) == "needs decision") or (all(($i.labels // [])[]; ascii_downcase != "needs decision")))
+      # hidden from every ranking unless the caller asked for this label itself, or for
+      # the human label (both listings are human-facing discovery views and an issue can
+      # carry both labels — hiding one from the other would recreate the count-vs-listing
+      # confusion the trailing notes exist to prevent).
+      | select((($label | ascii_downcase) | . == "needs decision" or . == "human") or (all(($i.labels // [])[]; ascii_downcase != "needs decision")))
       # solo gate: shippable unattended but not concurrently (standards/issue-spec.md) —
       # same hide-unless-asked-for contract, so no ranking ever hands one to a fleet.
-      # It also yields to a `needs decision` listing: an issue can carry both (a durable
-      # decline in /auto labels whatever it declined, solo included), and that listing is
-      # how /spec finds parked issues — no apostrophes in here, the jq program is one
-      # single-quoted string and one would end it mid-filter.
-      | select((($label | ascii_downcase) | . == "solo" or . == "needs decision") or (all(($i.labels // [])[]; ascii_downcase != "solo")))
+      # It also yields to a `needs decision` or `human` listing: an issue can carry both
+      # labels (a durable decline in /auto labels whatever it declined, solo included),
+      # and those listings are how /spec and a human owner find parked work — no
+      # apostrophes in here, the jq program is one single-quoted string and one would end
+      # it mid-filter.
+      | select((($label | ascii_downcase) | . == "solo" or . == "needs decision" or . == "human") or (all(($i.labels // [])[]; ascii_downcase != "solo")))
+      # human gate: the work itself is human-performed (standards/issue-spec.md) — no agent
+      # path exists at any time, so it is hidden from every ranking and never offered to
+      # /auto in any mode. Yields to its own listing and to a needs-decision listing, but
+      # NOT to a solo listing — that one is a running order for targeted /auto, and a
+      # human-labeled issue must never appear runnable there.
+      | select((($label | ascii_downcase) | . == "human" or . == "needs decision") or (all(($i.labels // [])[]; ascii_downcase != "human")))
       | {
           id: $id,
           title: $i.title,
@@ -470,6 +484,16 @@ solo_note() {
   return 0
 }
 
+# Same visibility contract for the human gate.
+human_hidden=0
+if [ "$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')" != "human" ]; then
+  human_hidden=$(jq '[.[] | select(any((.labels // [])[]; ascii_downcase == "human"))] | length' "$list_file" 2>/dev/null || echo 0)
+fi
+human_note() {
+  [ "$human_hidden" -gt 0 ] && printf '\n_%s issue(s) hidden as human-owned work (`human` label) — list with --label human; agents never work these, in any mode._\n' "$human_hidden"
+  return 0
+}
+
 candidate_count=$(printf '%s' "$candidates_json" | jq 'length')
 if [ "$candidate_count" -eq 0 ]; then
   filter_desc=""
@@ -481,6 +505,7 @@ if [ "$candidate_count" -eq 0 ]; then
   keeper_note
   nd_note
   solo_note
+  human_note
   exit 0
 fi
 
@@ -698,3 +723,4 @@ fi
 keeper_note
 nd_note
 solo_note
+human_note

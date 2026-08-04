@@ -29,11 +29,19 @@ Wiring a `blocks` edge is a guard, not a reflex: wire one only when the blocked 
 
 ## The `needs decision` label
 
-- **Semantics:** a human must step in before unattended pickup — the issue hit something no agent may resolve: a product/design decision with no testable success criteria, work needing credentials/console/vendor access, or an explicit do-not-ship-unattended note. The issue **keeps `specified`** — the spec is gated, not wrong; de-certifying would discard grooming work and hide *why* the issue is parked.
+- **Semantics:** a human must step in before unattended pickup — the issue hit something no agent may resolve: a product/design decision with no testable success criteria, an unstated scope or mapping a criterion silently depends on, or an explicit do-not-ship-unattended note. (Work that is *itself* human-performed takes [`human`](#the-human-label) instead — that gate is permanent; this one clears when the decision lands.) The issue **keeps `specified`** — the spec is gated, not wrong; de-certifying would discard grooming work and hide *why* the issue is parked.
 - **What it gates:** `next-candidates.sh` hides `needs decision` issues from every ranking — `/auto` never picks them, `/next` never suggests them — unless invoked with `--label 'needs decision'`, which lists exactly those (how `/spec` pick mode surfaces them). `/start` refuses to claim one in auto mode and warn-asks interactively.
 - **Who applies it:** `/auto` on a durable decline and on a decision-shaped mid-flight stop (which also parks the issue back to `Planned`, unassigned — never `stalled`, which is reserved for pipeline failures), `/auto-prep`'s certification audit, and any skill that discovers a human-decision gate on an issue. Always paired with a comment naming the specific decision or access needed — the label flags, the comment explains.
 - **Who clears it:** a human, once the decision is recorded on the issue — directly (`~/.claude/scripts/linear-remove-label.sh <ID> 'needs decision'`), via `/spec <ID>` (re-certification clears it), or by proceeding through `/start`'s interactive warn-ask (proceeding is the decision).
 - **One workspace-level issue label**, same as `specified`: `linear-cli labels create "needs decision" -t issue`. `linear-add-label.sh` exit 2 gives this pointer when the label doesn't exist yet.
+
+## The `human` label
+
+- **Semantics:** the work itself is human-performed — customer outreach, vendor contact, production data remediation, sign-offs, briefings, or a roll-up a person owns. Unlike `needs decision` (agent work parked until a human decides), no pending input ever hands it back to an agent: no mode of any skill can ship it. The issue **keeps `specified`** when its spec meets the bar — certification records spec quality; this label records the executor.
+- **What it gates:** `next-candidates.sh` hides `human` issues from every ranking unless invoked with `--label human`, which lists exactly those — the team's own to-do view. Unlike `solo` there is **no targeted-mode carve-out**: `/auto <ID>` refuses a `human`-labeled target, and `/start` warns interactively (proceeding assists a human owner; the label stays) and skips in auto mode — running it is not a remedy an agent can provide.
+- **Distinguish from `needs decision`:** that one clears — decision recorded, label removed, an agent ships it. This one lives as long as the issue does; it clears only by re-scoping through `/spec`, typically splitting the agent-shippable slice into its own issue while the human acts keep the label.
+- **Who applies it:** `/prd` at certification for human-executed sub-issues, `/auto-prep`'s Step 2 audit for the same class, or a human. Pair it with an assignee or a comment naming who owns the work when known.
+- **One workspace-level issue label**, like the others: `linear-cli labels create "human" -t issue`.
 
 ## The `solo` label
 

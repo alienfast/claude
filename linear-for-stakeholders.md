@@ -14,7 +14,7 @@ Linear is not a status report the agents write to — it is the **control plane*
 - **Ranking is mechanical**, computed fresh on every pick from labels, workflow state, priority, and issue relations. Prose in a description or a comment never affects *when* something is worked — only *what* gets built once it is picked.
 - **Your levers, strongest first:** `Urgent` priority → `Planned` vs `Backlog` → `security`/`bug` labels → `High` priority. Planned work is drained before Backlog work, so stage is the main thing deciding when something happens (see [the tiebreaks](#the-tiebreaks--this-is-the-real-ranking)).
 - **To see a human-readable board**, filter the label `specified` and invert the filter to *does not include*. The technical work the agents generate for themselves disappears and your product backlog is left.
-- **Do not rename or delete these labels:** `specified`, `needs decision`, `solo`, `reflection`, `keeper`, `security`, `bug`, `stalled`. They are load-bearing — the automation matches on the exact names.
+- **Do not rename or delete these labels:** `specified`, `needs decision`, `human`, `solo`, `reflection`, `keeper`, `security`, `bug`, `stalled`. They are load-bearing — the automation matches on the exact names.
 
 ## What the agents actually read
 
@@ -22,7 +22,7 @@ An autonomous session ranks the whole workable backlog before every issue it pic
 
 | Signal | Where it lives | Effect |
 | ------ | -------------- | ------ |
-| Labels | Issue labels | Gate pickup (`specified`), hide from pickup (`needs decision`, `solo`), boost (`reflection`, `security`, `bug`) |
+| Labels | Issue labels | Gate pickup (`specified`), hide from pickup (`needs decision`, `human`, `solo`), boost (`reflection`, `security`, `bug`) |
 | Workflow state | Issue status | Planned and Backlog are both workable — but Planned is drained first. Triage and all terminal states are excluded |
 | Priority | Issue priority | `Urgent` jumps the queue outright; the rest order work within a stage |
 | Relations | Blocks / blocked by / parent | A blocked issue is hidden until its blocker reaches Ready for Release or Done |
@@ -59,6 +59,7 @@ The fleet generates a lot of technical issues for itself. To get the product vie
 Two other filters worth keeping around:
 
 - **Label → needs decision** — issues waiting on a human. This is where your input is most valuable; [When an agent parks an issue](#when-an-agent-parks-an-issue) covers how to clear one.
+- **Label → human** — the work that is yours outright: outreach, remediation, sign-offs. Agents never take these, so nothing happens here unless a person picks it up.
 - **Label → stalled** — issues an agent abandoned after a pipeline failure. Developer territory rather than stakeholder, but worth watching as a health signal.
 
 ## How the queue is ranked
@@ -86,7 +87,7 @@ Each rule below is applied in turn, and the first one that separates two issues 
 
 The first two are the ones you control directly, and they decide most picks: **Planned versus Backlog is your lever, `Urgent` is your override.**
 
-Two rules work by removal rather than ordering. A **`blocks` relation** hides the blocked issue until its blocker is done — the only hard sequencing control available. The **`needs decision` label** hides an issue until a human resolves it. Also hidden: `solo` issues, anything in Triage, and everything in a terminal state. An epic whose children carry all the work is de-ranked below real work.
+Two rules work by removal rather than ordering. A **`blocks` relation** hides the blocked issue until its blocker is done — the only hard sequencing control available. The **`needs decision` label** hides an issue until a human resolves it, and the **`human` label** hides one permanently — that work ships through people, never agents. Also hidden: `solo` issues, anything in Triage, and everything in a terminal state. An epic whose children carry all the work is de-ranked below real work.
 
 If an issue matters and you are not sure which lever to pull: move it to `Planned`, set the priority, and say why in a comment. Stage plus a clear reason is enough for a human to place it correctly.
 
@@ -98,6 +99,7 @@ Please don't inflate priorities. `Urgent` works precisely because it is rare; a 
 | ----- | ------- |
 | `specified` | Certified spec. The gate for autonomous pickup — no label, no unattended work |
 | `needs decision` | A human must decide something before this can ship. Keeps `specified` (the spec is gated, not wrong) and is hidden from every ranking. Always paired with a comment naming the decision |
+| `human` | Work only a person can do — outreach, account remediation, sign-offs, briefings. Stays on the board with full tracking but is permanently invisible to agents, in every mode; no pending decision will ever hand it back to one. Filter on it to see your team's own to-do list |
 | `solo` | Certified and shippable unattended, but not *concurrently* — a broad sweep that would collide with everything else in flight. Run alone, when no fleet is active |
 | `reflection` | A meta-issue about the toolkit's own rules or skills, filed from session friction. Ranked top tier because it prevents repeated friction and wasted tokens in every future session |
 | `keeper` | Only valid alongside `reflection`. Marks an improvement to the *shared, cross-project* configuration, which only its keeper can ship. Filed uncertified on purpose and hidden on every other machine — it waits for the keeper to pick up by hand |
