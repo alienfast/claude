@@ -101,12 +101,12 @@ Launch checklist for the report:
 
 - `export LINEAR_TEAM=<KEY>` in every fleet session (else `/next` roams the workspace).
 - Project main checkout clean and parked off the integration branch (`git checkout --detach`) — keeps every merge on the ref-only path.
-- Run the `solo` issues via targeted `/auto <ID>` (or `/full <ID>`) before or after the fleet, not during — `next-candidates.sh --label solo --include-blocked` lists the whole plan in order, blocked ones included.
+- Run the `solo` issues via targeted `/auto <ID>` (or `/full <ID>`) before or after the fleet, not during. Two invocations split the plan: bare `--label solo` is the **workable-now** set (its blocker filter hides the rest), and the `--include-blocked` diff is the **blocked** set — workable ones are the pre-fleet knock-out candidates; blocked ones wait on their blockers regardless of the quiet window.
 - The decisions (Step 2 flags, `needs decision` issues) that would refill the pool once made.
 
 ## Report
 
-Lead with the recommended session count and how to launch it (`/fleet-launch [count] [duration]` — count defaults to this run's persisted recommendation; an explicit count is the user's quota throttle). Then: changes made (consolidations as absorbed→canonical with the class named, edges as blocker→blocked with one-line rationale, label ops, priority bumps), the flag lists by disposition (needs-decision / decision-gated / solo), and the validated top of the ranked pool. Give the `solo` list its own running order — it is a work plan for the quiet window, not a warning. Every write is reversible — say so once.
+Lead with the recommended session count and how to launch it (`/fleet-launch [count] [duration]` — count defaults to this run's persisted recommendation; an explicit count is the user's quota throttle). Then: changes made (consolidations as absorbed→canonical with the class named, edges as blocker→blocked with one-line rationale, label ops, priority bumps), the flag lists by disposition (needs-decision / decision-gated / solo), and the validated top of the ranked pool. Render the `solo` list in two groups, each in running order — it is a work plan for the quiet window, not a warning: **workable now** (bare `next-candidates.sh --label solo` — no open blockers; what the keeper can knock out before launching the fleet) and **blocked** (the `--include-blocked` remainder, each annotated with the blocker it waits on and whether that blocker is itself in the workable-now group). Every write is reversible — say so once.
 
 ## Error Handling
 
