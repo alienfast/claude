@@ -53,6 +53,18 @@ EOF
 
 # TT-2 is shipped but has NO verdict file — the shipped-with-no-verdict flag must fire.
 
+# Off-schema verdict: Verdict + Cycles present, no `Findings resolved:` line — the free-form-prose
+# shape the 2026-08-03 fleet produced. Must flag as malformed, not silently count 0 findings.
+cat > "$CHECKOUT/tmp/quality-review-verdict-tt-4.md" <<'EOF'
+# Quality Review Verdict — TT-4
+
+Verdict: passed-after-fixes
+Cycles: 2
+
+The review resolved two findings in prose form: a null deref in the handler and a race in the retry
+loop. Both fixed and confirmed.
+EOF
+
 # Mangle from git's resolved toplevel, not $CHECKOUT — the script resolves through git rev-parse,
 # and on macOS mktemp's /var/folders is a symlink to /private/var/folders, so the two differ.
 MANGLED="$(git -C "$CHECKOUT" rev-parse --show-toplevel | tr / -)"
@@ -106,8 +118,8 @@ ck "main tokens dedup"  "1750"     "$(q "d['sessions'][0]['output_tokens']['main
 ck "subagent tokens"    "700"      "$(q "d['sessions'][0]['output_tokens']['developer/claude-sonnet-5']")"
 ck "fleet token total"  "2450"     "$(q "sum(d['output_tokens'].values())")"
 
-# review churn: two verdicts; TT-1 matched to the session, TT-3 unmatched.
-ck "churn rows"         "2"        "$(q "len(d['review_churn'])")"
+# review churn: three verdicts; TT-1 matched to the session, TT-3 unmatched, TT-4 off-schema.
+ck "churn rows"         "3"        "$(q "len(d['review_churn'])")"
 ck "tt1 cycles"         "3"        "$(q "[v for v in d['review_churn'] if v['issue']=='TT-1'][0]['cycles']")"
 ck "tt1 findings"       "4"        "$(q "[v for v in d['review_churn'] if v['issue']=='TT-1'][0]['findings_resolved']")"
 ck "tt1 severity"       "{'CRIT': 1, 'HIGH': 1, 'MED': 2}" "$(q "[v for v in d['review_churn'] if v['issue']=='TT-1'][0]['severity']")"
@@ -117,6 +129,8 @@ ck "tt1 run matched"    "abc12345" "$(q "[v for v in d['review_churn'] if v['iss
 ck "tt3 old-format sev" "{'HIGH': 1, 'MED': 1}" "$(q "[v for v in d['review_churn'] if v['issue']=='TT-3'][0]['severity']")"
 ck "tt3 no origins"     "{}"       "$(q "[v for v in d['review_churn'] if v['issue']=='TT-3'][0]['origin']")"
 ck "tt3 run unmatched"  "None"     "$(q "[v for v in d['review_churn'] if v['issue']=='TT-3'][0]['run']")"
+ck "tt1 well-formed"    "[]"       "$(q "[v for v in d['review_churn'] if v['issue']=='TT-1'][0]['missing_fields']")"
+ck "tt4 missing fields" "['Findings resolved']" "$(q "[v for v in d['review_churn'] if v['issue']=='TT-4'][0]['missing_fields']")"
 
 # filed-per-shipped pairs THIS fleet's filings (TT-1's two) with its ships (TT-1, TT-2); TT-3's
 # filing stays out of the numerator.
@@ -127,6 +141,8 @@ ck_has "churn table row"     "| TT-1 | \`abc12345\` | passed-after-fixes | 3 | 4
 ck_has "origin cell"         "impl:1" "$MD"
 ck_has "tokens table"        "| developer | claude-sonnet-5 | 700 |" "$MD"
 ck_has "no-verdict flag"     "Shipped with no persisted review verdict**: TT-2" "$MD"
+ck_has "off-schema flag"     "Off-schema verdict body**: TT-4 (no Findings resolved line)" "$MD"
+ck_has "off-schema ? render" "| TT-4 | \`-\` | passed-after-fixes | 2 | ? |" "$MD"
 ck_has "origin coverage"     "origin-tagged 4/6" "$MD"
 
 echo

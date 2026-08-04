@@ -245,6 +245,11 @@ def parse_verdicts(checkout, cutoff):
         # TT-8 not wired)` — so ids are extracted only from the unparenthesized remainder.
         filed = [] if not m or m.group(1).strip().lower().startswith("none") \
             else V_ISSUE_ID.findall(re.sub(r"\([^)]*\)", " ", m.group(1)))
+        # A free-form body (Verdict: present, schema lines absent) parses as 0 findings, which is
+        # indistinguishable from a quiet review — 4 of the 2026-08-03 fleet's verdicts were composed
+        # off-schema and silently deflated the totals. Name the missing fields so the flag can fire.
+        missing = [name for name, rx in (("Findings resolved", V_RESOLVED), ("Cycles", V_CYCLES))
+                   if not rx.search(text)]
         rows.append({
             "issue": p.stem.replace("quality-review-verdict-", "").upper(),
             "mtime": mtime,
@@ -254,6 +259,7 @@ def parse_verdicts(checkout, cutoff):
             "sev": sev,
             "origin": Counter(V_ORIGIN.findall(blob)),
             "filed": filed,
+            "missing_fields": missing,
         })
     return rows
 
@@ -389,6 +395,7 @@ def main():
                 "issue": v["issue"], "run": issue_run.get(v["issue"]),
                 "verdict": v["verdict"], "cycles": v["cycles"], "findings_resolved": v["resolved"],
                 "severity": dict(v["sev"]), "origin": dict(v["origin"]), "filed": v["filed"],
+                "missing_fields": v["missing_fields"],
             } for v in verdicts],
             "filed_per_shipped": filed_per_shipped,
             "output_tokens": {f"{t}/{m}": n for (t, m), n in fleet_tokens.most_common()},
@@ -434,8 +441,9 @@ def main():
         print("|---|---|---|---|---|---|---|---|")
         for v in verdicts:
             origins = " ".join(f"{k}:{n}" for k, n in v["origin"].most_common()) or "-"
+            findings = "?" if "Findings resolved" in v["missing_fields"] else v["resolved"]
             print(f"| {v['issue']} | `{issue_run.get(v['issue'], '-')}` | {v['verdict']} | "
-                  f"{v['cycles'] if v['cycles'] is not None else '?'} | {v['resolved']} | "
+                  f"{v['cycles'] if v['cycles'] is not None else '?'} | {findings} | "
                   f"{v['sev']['CRIT']}/{v['sev']['HIGH']}/{v['sev']['MED']} | {origins} | "
                   f"{len(v['filed'])} |")
         cyc = [v["cycles"] for v in verdicts if v["cycles"] is not None]
@@ -505,6 +513,13 @@ def main():
         print(f"- **Shipped with no persisted review verdict**: {', '.join(no_verdict)} — either "
               f"/quality-review never persisted (its Output-block mandate failed) or the issue shipped "
               f"outside the review pipeline. The churn table undercounts by these.")
+    malformed = [v for v in verdicts if v["missing_fields"]]
+    if malformed:
+        flagged = True
+        detail = "; ".join(f"{v['issue']} (no {', '.join(v['missing_fields'])} line)" for v in malformed)
+        print(f"- **Off-schema verdict body**: {detail} — composed as free-form prose instead of the "
+              f"Output-block schema, so its findings data is unparseable and the churn totals "
+              f"undercount. The review ran; only the machine-readable record is lost.")
     no_merge = [i for i, m in merged.items() if m["commit"] and not m["merge"]]
     if no_merge:
         print(f"- Landed without a `Merge <ID>` commit (usually a fast-forward, worth one check): "
