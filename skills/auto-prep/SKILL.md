@@ -2,6 +2,8 @@
 name: auto-prep
 description: Prepare a team's certified backlog for a fleet of parallel /loop /auto sessions — audit `specified` labels for unattended-shippability (mark human-dependent issues `needs decision` and fleet-hostile ones `solo`, flag decision-gated ones), consolidate same-defect-family point fixes into class-scoped sweep issues, wire `blocks` edges between file-colliding candidates, validate through next-candidates.sh, and recommend a parallel-session count. Use when the user says 'auto-prep', 'fleet prep', 'prep the backlog for auto', or before launching multiple /loop /auto sessions.
 argument-hint: "[team:KEY | KEY]"
+model: opus
+effort: xhigh
 ---
 
 # Auto-Prep — Certified-Pool Review Before a Parallel /auto Fleet
