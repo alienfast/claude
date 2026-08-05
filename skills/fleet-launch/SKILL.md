@@ -1,6 +1,6 @@
 ---
 name: fleet-launch
-description: Launch a fleet of parallel /loop /auto sessions as background agents in `claude agents`, staggered so each session's first pick sees the previous session's claim, with an optional time budget that winds the fleet down cleanly (in-flight issues finish; no new picks). Count defaults to /auto-prep's persisted recommendation; an explicit count is the quota throttle. Also stops a running fleet (`/fleet-launch stop`). Use when the user says 'fleet launch', 'launch the fleet', 'spawn N auto loops', 'start 5 loops for 10 hours', 'wind down the fleet', or invokes /fleet-launch.
+description: Launch a fleet of parallel /loop /auto sessions as background agents in `claude agents`, staggered so each session's first pick sees the previous session's claim, with an optional time budget that winds the fleet down cleanly (in-flight issues finish; no new picks). Count defaults to /auto-prep's persisted recommendation; an explicit count is the quota throttle. The `stop` form is also the early-end command — it ends the timer immediately and lets current work finish. Use when the user says 'fleet launch', 'launch the fleet', 'spawn N auto loops', 'start 5 loops for 10 hours', 'wind down the fleet', 'end the fleet early', 'discontinue the fleet', 'stop the fleet', or invokes /fleet-launch.
 ---
 
 # Fleet Launch
@@ -18,7 +18,7 @@ This skill does NOT run `/auto-prep` (its solo/decision-gated advice needs human
 - **(none)** — launch the count `/auto-prep` persisted to `tmp/fleet-recommendation.json`, no deadline: loops run until the certified backlog drains (`NO-CANDIDATES`).
 - `<count>` (e.g. `/fleet-launch 5`) — launch exactly that many sessions. This is the quota throttle: auto-prep recommends from lane math alone and knows nothing about the user's remaining quota.
 - `<duration>` (e.g. `/fleet-launch 5 10 hours`, `/fleet-launch 90m`) — also write `tmp/fleet-deadline.json`. Each session's `/auto` checks it **before picking new work, never mid-issue**: at the deadline every session finishes its in-flight issue, then ends its loop with `NO-CANDIDATES: fleet deadline reached`. Accepted forms: `10h`, `10 hours`, `90m`, `45 minutes`.
-- `stop` — wind down a **running** fleet: writes an already-passed deadline and exits. Every session stops at its next iteration boundary; in-flight issues run to completion. To abort in-flight work too, the user kills sessions in `claude agents` — this skill never does.
+- `stop` — wind down a **running** fleet: writes an already-passed deadline and exits. Every session stops at its next iteration boundary; in-flight issues run to completion. This IS the "end the fleet early" / "discontinue" command — there is no separate fleet-end skill, and quota rationing is its primary use. To abort in-flight work too, the user kills sessions in `claude agents` — this skill never does. Two launch-interaction facts worth knowing: every launch clears the marker first (so a later top-up launch resets or erases a running deadline — re-pass the remaining duration when adding sessions), and a count re-launch dispatches that many MORE sessions, not a target total. Check the current picture any time with [`/fleet-status`](../fleet-status/SKILL.md).
 
 ## Behavior
 
