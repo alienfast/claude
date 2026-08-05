@@ -41,21 +41,36 @@
 #         - COMMITTED WORK, or completion evidence that does not depend on it. A zero-commit branch
 #           (tip == baseline) is what PL-459 tripped over, so for one the trivially-true "merged"
 #           evidence does not count. Evidence INDEPENDENT of commit count still does: a terminal Linear
-#           issue means the work is over whether or not it ever earned a commit. So a `/start wt`
-#           worktree whose issue was canceled in Linear before the first commit IS reaped — idle and a
-#           clean tree still required, which together leave nothing recoverable to lose. (Guard skipped
-#           when no baseline is recorded — pre-identity-stamp/legacy worktrees keep prior behavior.)
+#           issue means the work is over whether or not it ever earned a commit, and an owning session
+#           that is provably dead or has released its claim (wt_owner_alive) means nobody is coming back
+#           for it. So a `/start wt` worktree whose issue was canceled in Linear before the first commit,
+#           or whose session died before it, IS reaped — idle and a clean tree still required, which
+#           together leave nothing recoverable to lose. (Guard skipped when no baseline is recorded —
+#           pre-identity-stamp/legacy worktrees keep prior behavior.)
 #   ABANDONED-for-resumption worktrees (branch unmerged, PR open, issue still active) fail the
 #   evidence test and are preserved automatically — no special-casing needed.
 #
-# KNOWN LIMITATIONS (accepted trade-offs; both lean toward keeping work safe):
+# KNOWN LIMITATIONS (accepted trade-offs; each leans toward keeping work safe):
 #   • Liveness is approximated by index mtime, not a true session signal. A worktree whose work is
 #     ALREADY merged/PR-merged/issue-terminal AND that then goes git-idle past the grace while its
 #     session is still alive could still be reaped. This is narrow — a normally-active in-progress
 #     session has not reached terminal evidence yet, so it is kept as "active" by the evidence test;
-#     and active git ops keep the index fresh. The robust fix is a session-maintained heartbeat (the
-#     owning session's job-dir mtime was evaluated and rejected: it tracks dir creation, not activity,
-#     and WT_IDENTITY_OWNER's format is not a reliable job-dir key).
+#     and active git ops keep the index fresh. No heartbeat backs it up: the owning session's job-dir
+#     mtime was evaluated and rejected (it tracks dir creation, not activity). The stamped owner tuple
+#     (wt_owner_alive and the WTID_OWNER_* globals) IS a true session signal, but it only ever reports
+#     that a session is GONE — nothing refreshes it while one works — so it is consulted where absence
+#     is the question: guard A below.
+#   • Owner death/release is reap-side evidence only for a zero-commit worktree, and it under-fires in a
+#     fleet: every `claude agents` session resolves the same fleet-ROOT harness pid, so a session that
+#     dies while its root still runs reads `alive` and its worktree stays preserved until the root exits.
+#     `released` is what covers the interim — /auto's documented walk-away paths call wt-disown.sh.
+#     Reaping on `released` deliberately includes /auto's stall/park worktrees, whose issues are still
+#     resumable: a zero-commit CLEAN worktree holds nothing, so deletion is lossless by construction —
+#     a later resume re-forks an identical worktree in seconds. The same bound caps the `dead` verdict's
+#     inherited risk: its evidence quality is wt-identity.sh's harness recognition (a comm allowlist), so
+#     a live session whose harness comm falls outside that allowlist — a nonstandard wrapper binary, or a
+#     misconfigured CLAUDE_HARNESS_PID pointing at one — can read as dead, and lose only an empty,
+#     re-creatable directory.
 #   • The zero-commit + terminal-issue reap narrows the PL-459 mechanism rather than closing it: a live
 #     session idle past the grace, on an issue canceled underneath it, still loses its worktree DIR (not
 #     its work — the clean-tree and zero-commit facts are what make it empty), and would write to the
@@ -299,19 +314,30 @@ evaluate_worktree() {
   # on a worktree a session just forked; reaping that one landed its edits in the main checkout (PL-459).
   # Evidence independent of commit count is still good: a terminal Linear issue says the work is over
   # whether or not it ever earned a commit, which is the `/start wt` → canceled-in-Linear leak this guard
-  # used to hold forever. Idle (guard B) and clean are already established, so such a worktree is empty.
+  # used to hold forever, and a provably dead or released owning session says the same from the other side —
+  # nobody is coming back for it. Idle (guard B) and clean are already established, so such a worktree is empty.
   if [ "$zero_commit" = 1 ]; then
     if [ "$dirty" = 1 ]; then
       printf '  %-12s %s\n' "$issue" "KEEP — no commits since baseline and the worktree is dirty (just-forked/unstarted); a live session likely owns it."
       return 0
     fi
-    ltype=$(linear_state_type "$issue")
-    case "$ltype" in
-      completed|canceled|duplicate) reason="Linear issue $ltype, no commits since baseline" ;;
-      *)
-        printf '  %-12s %s\n' "$issue" "KEEP — no commits since baseline (just-forked/unstarted); a live session likely owns it."
-        return 0 ;;
-    esac
+    # Clobbering the WTID_* globals here (wt_owner_alive re-loads) is safe: $baseline is snapshotted.
+    if declare -f wt_owner_alive >/dev/null 2>&1; then
+      wt_owner_alive "$dir" >/dev/null 2>&1 || true
+      case "${WTID_OWNER_ALIVE:-}" in
+        dead)     reason="owner session dead, no commits since baseline" ;;
+        released) reason="owner session released, no commits since baseline" ;;
+      esac
+    fi
+    if [ -z "$reason" ]; then
+      ltype=$(linear_state_type "$issue")
+      case "$ltype" in
+        completed|canceled|duplicate) reason="Linear issue $ltype, no commits since baseline" ;;
+        *)
+          printf '  %-12s %s\n' "$issue" "KEEP — no commits since baseline (just-forked/unstarted); a live session likely owns it."
+          return 0 ;;
+      esac
+    fi
   fi
 
   # Completion evidence. The local merged check is free; only consult gh/linear-cli when not locally
@@ -368,21 +394,151 @@ evaluate_worktree() {
   fi
 }
 
+# Reclaim host processes (dev servers, watchers, job runners) a removed worktree left running. Every teardown
+# path is git-only, and the worktree's own pidfiles go with the directory, so a resolved-cwd sweep here is the
+# only handle left. What makes killing safe is the gate: a process is a candidate only when its cwd is under
+# <repo>/.claude/worktrees/<name> and that <name> directory DOES NOT EXIST — compared as a path STRING,
+# because a deleted directory cannot be resolved. A live worktree, or a sibling of a dead one, therefore can
+# never be selected. NEVER match on argv/process name: puma and sidekiq rewrite their proctitle, so a
+# `pkill -f` pass misses real orphans and can hit unrelated processes; resolved cwd is the only reliable key.
+# lsof reports symlink-resolved paths (/private/var, not /var), so the repo root must be compared in its
+# PHYSICAL form — and an unresolvable root would leave a prefix that matches outside the repo entirely, so
+# that case sweeps nothing rather than guessing.
+# The reaper's own process tree can appear as a candidate: with-repo-lock.py execvp's in place, so only
+# two hops (this shell, its parent) are visible from $$/$PPID even though the invoking harness or terminal
+# sits several hops higher and may share the caller's cwd if that cwd is inside a worktree this pass
+# removes. Walk the full ppid chain instead, capped at 64 so a `ps` failure or an unexpected cycle can't
+# hang the sweep — mainline chains are a handful of hops deep, so the cap is never reached in practice.
+sweep_ancestry_pids() {
+  local pid=$$ ppid n=0 pids=" $$ "
+  while [ "$pid" != 1 ] && [ "$n" -lt 64 ]; do
+    ppid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d '[:space:]')
+    case "$ppid" in ''|*[!0-9]*) break ;; esac
+    pids="$pids$ppid "
+    pid="$ppid"
+    n=$((n+1))
+  done
+  printf '%s' "$pids"
+}
+
+# Re-verify identity immediately before EVERY signal (TERM and, after the grace, KILL): a pid can exit and
+# be recycled between the lsof snapshot (or the previous signal) and now, and a bare signal only proves a
+# pid exists, not that it is still the process this sweep selected. Re-querying lsof for THIS pid and
+# requiring the SAME cwd it was selected under, with the worktree dir still absent, re-confirms identity;
+# any mismatch, ESRCH, or lsof failure means skip — the process is gone or isn't the one picked, and
+# guessing is not an option here. This also catches lsof's own transient children and process-substitution
+# helpers from the selection pass: they are dead by the time a signal is due, so they fail verification
+# instead of producing a bogus REAPED-PROC line.
+sweep_verify_victim() {
+  local pid="$1" cwd="$2" prefix="$3" out cur_cwd name
+  out=$(lsof -b -a -p "$pid" -d cwd -Fn 2>/dev/null) || return 1
+  cur_cwd=$(printf '%s\n' "$out" | sed -n 's/^n//p' | head -n1)
+  [ -n "$cur_cwd" ] && [ "$cur_cwd" = "$cwd" ] || return 1
+  name="${cwd#"$prefix"}"; name="${name%%/*}"
+  [ -n "$name" ] && [ ! -d "$prefix$name" ]
+}
+
+# Signals one victim after re-verifying it, and logs REAPED-PROC only when the signal actually landed —
+# not merely attempted — so a log line never claims cleanup that EPERM/ESRCH silently skipped.
+sweep_signal_victim() {
+  local pid="$1" cwd="$2" prefix="$3" sig="$4"
+  sweep_verify_victim "$pid" "$cwd" "$prefix" || return 0
+  if kill "-$sig" "$pid" 2>/dev/null; then
+    printf '  REAPED-PROC pid=%s cwd=%s\n' "$pid" "$cwd"
+  elif kill -0 "$pid" 2>/dev/null; then
+    err "WARN: pid $pid still alive but $sig delivery failed (permission denied?); cwd=$cwd"
+  else
+    err "WARN: pid $pid gone before $sig could be delivered; cwd=$cwd"
+  fi
+}
+
+sweep_orphan_processes() {
+  local repo="$1" mode="$2" phys prefix pid cwd rest name entry victims=() ancestry lsof_out lsof_rc line
+  have lsof || { err "  (lsof not found — orphan process sweep skipped)"; return 0; }
+  # Without ps the ancestry walk collapses to $$ alone — LESS protection than the pre-walk $$/$PPID floor —
+  # so the sweep must not run at all: skipping is the fail-safe, exactly like the lsof gate above.
+  have ps || { err "  (ps not found — orphan process sweep skipped; ancestry protection unavailable)"; return 0; }
+  phys=$( (cd "$repo" 2>/dev/null && pwd -P) || true )
+  [ -n "$phys" ] || { err "cannot resolve physical path, orphan process sweep skipped: $repo"; return 0; }
+  prefix="$phys/$WT_SUBDIR/"
+  ancestry=$(sweep_ancestry_pids)
+
+  # Capture to a variable instead of piping through process substitution so lsof's OWN exit status is
+  # checkable: a stream truncated mid-write (stale mount, killed lsof) would otherwise read identically to
+  # "no matches" and hand the parser a truncated final line, whose cut-off name reads as a nonexistent dir
+  # and would false-positive a LIVE worktree's process as an orphan. Skip the whole sweep for this repo
+  # instead and let the next cycle retry. `&& … || …` (not `|| true`) is what lets the exit code survive
+  # under `set -e` without aborting the script on the routine "no matches" case.
+  lsof_out=$(lsof -b -a -d cwd -u "$(id -u)" -Fpn 2>/dev/null) && lsof_rc=0 || lsof_rc=$?
+  if [ "$lsof_rc" -ne 0 ]; then
+    err "lsof exited $lsof_rc scanning processes, orphan process sweep skipped: $repo"
+    return 0
+  fi
+
+  pid=""
+  while IFS= read -r line; do
+    case "$line" in
+      p*) pid="${line#p}" ;;
+      n*)
+        cwd="${line#n}"
+        [ -n "$pid" ] || continue
+        case "$ancestry" in *" $pid "*) continue ;; esac
+        case "$cwd" in "$prefix"*) ;; *) continue ;; esac
+        # lsof escapes non-printables (e.g. a literal newline) into literal backslash sequences, so a slug
+        # containing one would read back as a name matching no on-disk dir — "missing" — and get killed
+        # despite the worktree being live. Real slugs are issue-id-shaped and never contain a backslash,
+        # so skipping the entry is the fail-safe direction; killing on a misread name is not.
+        case "$cwd" in *'\'*) continue ;; esac
+        rest="${cwd#"$prefix"}"
+        name="${rest%%/*}"
+        [ -n "$name" ] || continue
+        if [ -d "$prefix$name" ]; then continue; fi
+        victims+=("$pid $cwd") ;;
+    esac
+  done <<< "$lsof_out"
+
+  [ "${#victims[@]}" -gt 0 ] || return 0
+
+  for entry in "${victims[@]}"; do
+    pid="${entry%% *}"; cwd="${entry#* }"
+    if [ "$mode" = "list" ]; then
+      printf '  ORPHAN-PROC pid=%s cwd=%s\n' "$pid" "$cwd"
+    else
+      sweep_signal_victim "$pid" "$cwd" "$prefix" TERM
+    fi
+  done
+  [ "$mode" != "list" ] || return 0
+
+  sleep 2
+  for entry in "${victims[@]}"; do
+    pid="${entry%% *}"; cwd="${entry#* }"
+    sweep_signal_victim "$pid" "$cwd" "$prefix" KILL
+  done
+  return 0
+}
+
 # Body of a per-repo reap, run under the common-git-dir lock by cmd_reap. A best-effort fetch refreshes
 # remote-tracking refs so the merged/pushed checks see the current origin state (offline is fine).
 cmd_reap_one() {
   local repo="$1" wt_root="$1/$WT_SUBDIR" dir had_any=0
-  [ -d "$wt_root" ] || { echo "$repo — no worktrees directory"; return 0; }
   git -C "$repo" fetch --quiet 2>/dev/null || true
   echo "$repo:"
-  shopt -s nullglob
-  for dir in "$wt_root"/*/; do
-    dir="${dir%/}"
-    had_any=1
-    evaluate_worktree "$repo" "$dir" reap
-  done
-  shopt -u nullglob
-  [ "$had_any" = 1 ] || echo "  (no worktrees)"
+  # A missing worktrees dir is exactly the state with the most orphans (the whole dir was removed out from
+  # under a running process), so it must not skip the sweep below — only the evaluate_worktree loop is
+  # conditional on the dir existing.
+  if [ -d "$wt_root" ]; then
+    shopt -s nullglob
+    for dir in "$wt_root"/*/; do
+      dir="${dir%/}"
+      had_any=1
+      evaluate_worktree "$repo" "$dir" reap
+    done
+    shopt -u nullglob
+    [ "$had_any" = 1 ] || echo "  (no worktrees)"
+  else
+    echo "  (no worktrees directory)"
+  fi
+  sweep_orphan_processes "$repo" reap
 }
 
 # Resolve the repo set: an explicit arg, else the deduped union of both registries. Missing dirs are
@@ -429,18 +585,24 @@ cmd_list() {
   for repo in "${repos[@]}"; do
     [ -d "$repo" ] || { echo "$repo — MISSING (stale registry entry)"; continue; }
     git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "$repo — not a git repo"; continue; }
-    [ -d "$repo/$WT_SUBDIR" ] || continue
     export LINEAR_CLI_PROFILE="$(linear_profile_for "$repo")"
     git -C "$repo" fetch --quiet 2>/dev/null || true
     echo "$repo:"
     had_any=0
-    shopt -s nullglob
-    for dir in "$repo/$WT_SUBDIR"/*/; do
-      dir="${dir%/}"; had_any=1
-      evaluate_worktree "$repo" "$dir" list
-    done
-    shopt -u nullglob
-    [ "$had_any" = 1 ] || echo "  (no worktrees)"
+    # A missing worktrees dir is exactly the state with the most orphans (the whole dir was removed out
+    # from under a running process), so it must not skip the sweep below — see cmd_reap_one (same shape).
+    if [ -d "$repo/$WT_SUBDIR" ]; then
+      shopt -s nullglob
+      for dir in "$repo/$WT_SUBDIR"/*/; do
+        dir="${dir%/}"; had_any=1
+        evaluate_worktree "$repo" "$dir" list
+      done
+      shopt -u nullglob
+      [ "$had_any" = 1 ] || echo "  (no worktrees)"
+    else
+      echo "  (no worktrees directory)"
+    fi
+    sweep_orphan_processes "$repo" list
   done
 }
 

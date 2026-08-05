@@ -41,6 +41,12 @@ completion** — never on mere inactivity. A worktree is reaped iff **all** hold
   ancestor of its source, so the merged test says nothing about it (reaping on that alone destroyed a live
   just-forked worktree once — PL-459). A terminal Linear issue is independent of commit count and does
   count, which is what reclaims a `/start wt` worktree whose issue was canceled before the first commit.
+  So is a **dead or released owning session** (`wt_owner_alive`, from the `/start` identity stamp): a
+  zero-commit worktree whose session provably died, or that was released via
+  [wt-disown.sh](../../scripts/wt-disown.sh), is abandoned no matter what its issue says, and would
+  otherwise be preserved forever. `alive` and `unknown` never reap — an unresolvable owner has to fail
+  safe, and in a `claude agents` fleet every session shares the fleet-root pid, so a session that dies
+  while its root runs still reads `alive` and keeps its worktree until the root exits.
 
 **Abandoned-for-resumption worktrees are preserved automatically** — branch unmerged, PR open, issue
 still active means they fail the evidence test, so no special-casing is needed. A worktree that is
@@ -55,6 +61,18 @@ The gates are regression-guarded by [reap-worktrees.test.sh](../../scripts/reap-
 (`bash ~/.claude/scripts/reap-worktrees.test.sh`) — run it after any change to them, and add the case
 alongside the fix. This script deletes work; an unguarded gate is one that quietly reopens.
 
+## Orphan host processes
+
+Every teardown path is git-only, so the dev servers, watchers, and job runners a worktree started keep
+running after it is removed — and its pidfiles went with the directory, leaving the resolved cwd as the only
+handle. So each reap pass also sweeps processes (yours only) whose cwd sits under
+`<repo>/.claude/worktrees/<name>` **where that `<name>` directory no longer exists on disk**. That gate is
+what makes the kill safe: a live worktree, or a sibling of a dead one, can never be selected. `list` prints
+`ORPHAN-PROC pid=… cwd=…` and kills nothing; `reap` sends `TERM`, then `KILL` to survivors, logging
+`REAPED-PROC pid=… cwd=…`. Process names are deliberately **not** matched — puma and sidekiq rewrite their
+proctitle, so a `pkill -f` pass misses real orphans and can hit unrelated processes. Without `lsof` the sweep
+notes itself and skips.
+
 ## Usage
 
 **Inspect (dry run — mutates nothing, takes no lock):**
@@ -65,7 +83,7 @@ alongside the fix. This script deletes work; an unguarded gate is one that quiet
 ```
 
 Each worktree prints one of: `REAP-ELIGIBLE`, `KEEP` (with the reason — active, unpushed, or dirty),
-`SKIP` (detached / merge-queued), or `STRAY`.
+`SKIP` (detached / merge-queued), or `STRAY`, followed by an `ORPHAN-PROC` line per leftover host process.
 
 **Reap (mutating — removes eligible worktrees, serialized per repo under the same common-git-dir lock
 `/finish merge` uses, so it can never race an in-flight merge):**
