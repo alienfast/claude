@@ -66,6 +66,11 @@ CANCELED_TAG = re.compile(r"\bCANCELED:\s*([A-Z]+-\d+)")
 # model's own reasoning about what it should emit. An unanchored match counts those discussions as
 # emissions and reports a silently-dead loop as having ended cleanly.
 TERMINAL_TAG = re.compile(r"^\s*(NO-CANDIDATES|AUTO-HALTED):", re.M)
+# The contamination hard stop's tagged line (skills/start Step 8 item 1). Line-anchored like
+# TERMINAL_TAG, and keyed by issue so repeated renders of one halt (chat print + Step 10 summary)
+# count once. Counts HALTS only — the benign-continue branch posts a Linear note instead and is
+# invisible here; /fleet-retro adjudicates each halt true/false-positive against those notes.
+CONTAM_HALT = re.compile(r"^\s*BLOCKED-ON-REVIEW:\s*([A-Z][A-Z0-9]*-\d+)\b[^\n]*MAIN-CHECKOUT-CONTAMINATION", re.M)
 LOOP_CMD = re.compile(r"<command-name>/loop</command-name>")
 LOOP_AUTO_ARGS = re.compile(r"<command-args>[^<]*/auto")
 GAP_MIN = 240  # seconds; a tool call slower than this is worth naming, not necessarily a fault
@@ -246,6 +251,8 @@ def scan_transcript(path, agg, agent_type="main"):
                     agg["ship_tags"].add(issue)
                 for issue in CANCELED_TAG.findall(body):
                     agg["cancel_tags"].add(issue)
+                for issue in CONTAM_HALT.findall(body):
+                    agg["contam_halts"].add(issue)
                 if TERMINAL_TAG.search(body):
                     agg["terminal_tags"] += 1
             elif b.get("type") == "tool_use":
@@ -292,7 +299,7 @@ def new_agg():
         "loop_firings": 0, "human_prompts": 0, "terminal_tags": 0, "dangling": 0,
         "dispatch": Counter(), "classifier_blocks": [], "gaps": [],
         "sleep_blind_s": 0.0, "sleep_blind_n": 0, "sleep_marker_s": 0.0, "sleep_marker_n": 0,
-        "ship_tags": set(), "cancel_tags": set(), "subagents": 0,
+        "ship_tags": set(), "cancel_tags": set(), "contam_halts": set(), "subagents": 0,
         "tokens": Counter(), "seen_msg_ids": set(),
         "usage": {}, "visible_chars": Counter(),
     }
@@ -521,6 +528,7 @@ def main():
                 "sleep_blind_h": round(s["agg"]["sleep_blind_s"] / 3600, 2),
                 "sleep_marker_h": round(s["agg"]["sleep_marker_s"] / 3600, 2),
                 "classifier_blocks": len(s["agg"]["classifier_blocks"]),
+                "contamination_halts": sorted(s["agg"]["contam_halts"]),
                 "dangling_tool_calls": s["agg"]["dangling"],
                 "subagent_transcripts": s["agg"]["subagents"],
                 "output_tokens": {f"{t}/{m}": n for (t, m), n in s["agg"]["tokens"].most_common()},
@@ -553,8 +561,8 @@ def main():
           f"  ·  window: {'all' if not cutoff else cutoff.strftime('%Y-%m-%d %H:%M UTC')}\n")
 
     print("## Per session\n")
-    print("| run | span | shipped (rec/obs) | canceled (rec/obs) | wakeups | dispatch bg/sync | blind sleep | marker | cls | dangling |")
-    print("|---|---|---|---|---|---|---|---|---|---|")
+    print("| run | span | shipped (rec/obs) | canceled (rec/obs) | wakeups | dispatch bg/sync | blind sleep | marker | cls | contam | dangling |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|")
     tot = Counter()
     for s in sessions:
         a = s["agg"]
@@ -569,18 +577,21 @@ def main():
         print(f"| `{s['run_key']}`{flag} | {span:.1f}h | {rec}/{obs} | {crec}/{cobs} | "
               f"{a['wakeups']} ({a['wakeup_stops']} stop) | "
               f"{a['dispatch']['background']}/{a['dispatch']['sync']} | {blind_pct} | "
-              f"{a['sleep_marker_s'] / 3600:.1f}h | {len(a['classifier_blocks'])} | {a['dangling']} |")
+              f"{a['sleep_marker_s'] / 3600:.1f}h | {len(a['classifier_blocks'])} | "
+              f"{len(a['contam_halts'])} | {a['dangling']} |")
         tot["span"] += span
         tot["blind"] += a["sleep_blind_s"]
         tot["marker"] += a["sleep_marker_s"]
         tot["cls"] += len(a["classifier_blocks"])
+        tot["contam"] += len(a["contam_halts"])
         tot["bg"] += a["dispatch"]["background"]
         tot["sync"] += a["dispatch"]["sync"]
     blind_share = f"({100 * tot['blind'] / tot['span'] / 3600:.0f}% of fleet wall-clock)" if tot["span"] else "(no transcript window)"
     print(f"\n**Totals** — {tot['span']:.1f} session-hours · blind sleep {tot['blind'] / 3600:.1f}h "
           f"{blind_share} · marker polls "
           f"{tot['marker'] / 3600:.1f}h · dispatch {tot['bg']} background / {tot['sync']} sync · "
-          f"{tot['cls']} classifier blocks · {sum(fleet_tokens.values()):,} output tokens\n")
+          f"{tot['cls']} classifier blocks · {tot['contam']} contamination halt(s) · "
+          f"{sum(fleet_tokens.values()):,} output tokens\n")
 
     print("## Review churn\n")
     if verdicts:
@@ -669,6 +680,13 @@ def main():
             print(f"- `{s['run_key']}` hit {len(a['classifier_blocks'])} classifier block(s):")
             for c in a["classifier_blocks"][:3]:
                 print(f"    - `{c}`")
+        if a["contam_halts"]:
+            flagged = True
+            print(f"- **`{s['run_key']}` hit {len(a['contam_halts'])} contamination halt(s)** "
+                  f"({', '.join(sorted(a['contam_halts']))}) — adjudicate each true/false positive "
+                  f"(mis-bound delegate vs concurrent main-checkout activity); the false-positive "
+                  f"rate is what decides whether further relaxation of the contamination response "
+                  f"is justified.")
     missing = [i for i, m in merged.items() if not m["commit"]]
     if missing:
         flagged = True

@@ -105,7 +105,7 @@ EOF
 cat > "$TDIR/def45678-0000.jsonl" <<'EOF'
 {"type":"user","timestamp":"2026-08-04T11:00:00Z","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
 {"type":"assistant","timestamp":"2026-08-04T11:15:00Z","message":{"role":"assistant","id":"msg_N","model":"claude-nova-2","usage":{"input_tokens":10,"output_tokens":50},"content":[{"type":"text","text":"noted"}]}}
-{"type":"assistant","timestamp":"2026-08-04T11:30:00Z","message":{"role":"assistant","id":"msg_D","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":300},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-7 done"}]}}
+{"type":"assistant","timestamp":"2026-08-04T11:30:00Z","message":{"role":"assistant","id":"msg_D","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":300},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-7 done"},{"type":"text","text":"BLOCKED-ON-REVIEW: TT-8 — MAIN-CHECKOUT-CONTAMINATION: path(s) changed in the main checkout during this session (src/widget.ts) — most likely a mis-bound delegate; manual recovery required."},{"type":"text","text":"BLOCKED-ON-REVIEW: TT-8 — MAIN-CHECKOUT-CONTAMINATION: path(s) changed in the main checkout during /quality-review (src/widget.ts); manual recovery required."},{"type":"text","text":"planning to emit BLOCKED-ON-REVIEW: TT-9 — MAIN-CHECKOUT-CONTAMINATION if the diff flags anything"}]}}
 EOF
 
 # NOT an /auto session — an ordinary interactive session in the same project dir. The discovery
@@ -180,6 +180,15 @@ ck "tt3 run unmatched"  "None"     "$(q "[v for v in d['review_churn'] if v['iss
 ck "tt1 well-formed"    "[]"       "$(q "[v for v in d['review_churn'] if v['issue']=='TT-1'][0]['missing_fields']")"
 ck "tt4 missing fields" "['Findings resolved']" "$(q "[v for v in d['review_churn'] if v['issue']=='TT-4'][0]['missing_fields']")"
 
+# contamination halts: the tagged hard-stop line in def45678 counts once per issue despite two
+# renders (chat print + Step 10 summary); the mid-line prose mention of TT-9 must NOT count (the
+# line anchor); abc12345 emitted none.
+ck "contam halts dedup" "['TT-8']" "$(q "[s['contamination_halts'] for s in d['sessions'] if s['run_key']=='def45678'][0]")"
+ck "contam clean"       "[]"       "$(q "d['sessions'][0]['contamination_halts']")"
+ck_has "contam column"       "| cls | contam | dangling |" "$MD"
+ck_has "contam flag"         "\`def45678\` hit 1 contamination halt(s)** (TT-8)" "$MD"
+ck_has "contam totals"       "1 contamination halt(s)" "$MD"
+
 # filed-per-shipped pairs THIS fleet's filings (TT-1's two) with its ships (TT-1, TT-2); TT-3's
 # filing stays out of the numerator.
 # Denominator is 3 now — TT-7 comes from the ledger-less session, which is exactly the point: a
@@ -194,7 +203,9 @@ ck_has "cost cell"           "| developer | claude-sonnet-5 | 700 | 25% | \$0.01
 ck_has "unpriced cell"       "| main | claude-nova-2 | 50 | 2% | unpriced |" "$MD"
 ck_has "cost footer"         "\$0.13 at list prices" "$MD"
 ck_has "per-shipped footer"  "\$0.04 / 933 output tokens per shipped issue (3 shipped)" "$MD"
-ck_has "thinking footer"     "thinking ≈ 96% of its output tokens" "$MD"
+# Fleet-level share (all sessions' main tiers), so def45678's contamination-halt text dilutes it;
+# the per-session 0.96 assertion above still pins abc12345's math.
+ck_has "thinking footer"     "thinking ≈ 91% of its output tokens" "$MD"
 ck_has "unpriced footer"     "excluded from \$ (no price row): claude-nova-2" "$MD"
 ck_has "no-verdict flag"     "Shipped with no persisted review verdict**: TT-2" "$MD"
 ck_has "off-schema flag"     "Off-schema verdict body**: TT-4 (no Findings resolved line)" "$MD"

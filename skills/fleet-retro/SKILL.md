@@ -49,6 +49,7 @@ The script finds *shapes*; it does not explain them. Each flag is a lead:
 | never armed a ScheduleWakeup | silent loop death — the run stopped with no `NO-CANDIDATES`/`AUTO-HALTED` | should now be caught by `hooks/auto-heartbeat.sh`; if it recurs, that hook failed |
 | shipped without recording it | Step 4 never ran; the run's own tally undercounts | compare against `git log` and Linear state |
 | classifier blocks | a permission-shaped stall; check whether the agent rerouted or silently dropped the step | the subagent transcript — read what it did *next* |
+| contamination halts | the graduated contamination response (`/start` Step 8 item 1) hard-stopped an issue — each is either a real mis-bound delegate or a false positive the graduation failed to absorb | adjudicate every halt **true/false positive** — flagged paths vs the delegation's scope and footprint, via the issue's contamination comment and the transcript — and read the benign-continue note comments on issues alongside; the false-positive rate is the number that decides whether further relaxation is justified |
 | dangling tool calls | unanswered prompt or killed turn | the tail of that transcript |
 | high blind-sleep % | agents waiting on background dispatch | correlate with the `bg/sync` column |
 | shipped but no commit | the ledger is wrong, or the merge never landed | `git log --all --grep=<ID>`, `/merge-queue` |
