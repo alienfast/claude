@@ -59,7 +59,11 @@ Pass `--input` only when the user typed an explicit ID (e.g., `/quality-review P
 2. Auto-detected via:
 
    ```bash
-   git diff --name-only "$(git merge-base HEAD origin/main)"...HEAD
+   git merge-base HEAD origin/main   # run alone first; substitute the literal SHA below — the `$(git merge-base …)` inline form is refused in `wt` sessions (standards/git.md § Worktree-isolated sessions)
+   ```
+
+   ```bash
+   git diff --name-only <merge-base-sha>...HEAD
    git status --porcelain -z --untracked-files=all --no-renames | tr '\0' '\n' | cut -c4-
    ```
 
@@ -70,14 +74,17 @@ Pass `--input` only when the user typed an explicit ID (e.g., `/quality-review P
    **Worktree source-branch awareness.** Before defaulting to `origin/main` as the merge-base target, check whether this session is inside a `/start wt` worktree with a recorded source branch:
 
    ```bash
-   WT_ABS="$(git rev-parse --show-toplevel)"
-   git -C "$WT_ABS" config --worktree --get start.source-branch
+   git rev-parse --show-toplevel   # output = WT_ABS; run alone, then substitute the literal below
    ```
 
-   If it returns a value, use that branch instead of `origin/main` for the merge-base diff:
+   ```bash
+   git -C <WT_ABS> config --worktree --get start.source-branch
+   ```
+
+   If it returns a value, use that branch instead of `origin/main` for the merge-base diff (same two-call form as above — `git merge-base HEAD <source-branch>` alone, then substitute the literal SHA):
 
    ```bash
-   git diff --name-only "$(git merge-base HEAD <source-branch>)"...HEAD
+   git diff --name-only <merge-base-sha>...HEAD
    ```
 
    `origin/main` is very likely NOT this worktree's actual parent — diffing against it can return the entire accumulated history of a long-running feature branch (thousands of files) instead of the session's actual changes. Fall back to `origin/main` when the config is absent.
@@ -90,39 +97,32 @@ linear-cli issues get PL-13
 
 Cache the output for the entire run — do not re-fetch on each review cycle.
 
-> **Worktree isolation (`wt` mode) — pin every delegation, verify every placement.** This skill can't see `/start`'s session-level `IS_WT` (Step 0), so it gates on the caller-independent form `/start` Step 8 item 1 names for exactly this purpose — reusing `/start`'s own derivation verbatim:
+> **Worktree isolation (`wt` mode) — pin every delegation, verify every placement.** This skill can't see `/start`'s session-level `IS_WT` (Step 0), so it gates on the caller-independent form `/start` Step 8 item 1 names for exactly this purpose — the same two plain probes, **each its own Bash call** (the worktree-isolation guard refuses `$(git …)` command substitution in exactly the sessions this blockquote governs — `standards/git.md` § Worktree-isolated sessions):
 >
 > ```bash
-> WT_ABS="$(git rev-parse --show-toplevel)"
-> MAIN_CHECKOUT="$(dirname "$(git -C "$WT_ABS" rev-parse --path-format=absolute --git-common-dir)")"
->
-> # Hard precondition guard — `git -C ""` is a documented no-op (leaves cwd unchanged, exits 0), so an
-> # empty/wrong path here would silently measure the wrong tree instead of failing loudly. Only the
-> # first two lines of /start's equivalent guard apply here — NOT its third line asserting
-> # WT_ABS != MAIN_CHECKOUT. In /start, equality means worktree registration failed (a hard error). Here,
-> # equality is the legitimate not-a-worktree case — this skill running standalone outside any /start wt
-> # worktree — so the gate below (WT_ABS != MAIN_CHECKOUT) simply doesn't arm. Do not "fix" this
-> # asymmetry by importing /start's third line; it would hard-fail every plain non-worktree
-> # /quality-review run.
-> [ -n "$WT_ABS" ] && [ -d "$WT_ABS" ] || { echo "FAILED: WT_ABS unset or not a directory" >&2; exit 1; }
-> [ -n "$MAIN_CHECKOUT" ] && [ -d "$MAIN_CHECKOUT" ] || { echo "FAILED: MAIN_CHECKOUT unset or not a directory" >&2; exit 1; }
+> git rev-parse --show-toplevel   # output = WT_ABS
 > ```
+>
+> ```bash
+> git rev-parse --path-format=absolute --git-common-dir   # prints <MAIN_CHECKOUT>/.git — its parent directory is MAIN_CHECKOUT
+> ```
+>
+> Apply the guards by inspection and carry the resulting **literal absolute paths** through this run (shell variables do not survive across Bash calls): both values must be non-empty, existing directories — `git -C ""` is a documented no-op, so an empty value silently measures the wrong tree instead of failing loudly; STOP on either. Do NOT additionally require `WT_ABS != MAIN_CHECKOUT` the way `/start`'s derivation does: there, equality means worktree registration failed (a hard error); here, equality is the legitimate not-a-worktree case — this skill running standalone outside any `/start wt` worktree — so the gate below simply doesn't arm.
 >
 > **`WT_ABS != MAIN_CHECKOUT` is the gate — necessary and sufficient.** Unequal means a separate main checkout exists this session and can be contaminated; that alone is enough to arm the mitigation below, regardless of any config value. Equal means there is no separate checkout in the picture at all (this session's cwd IS the main checkout), so `wt` mode is false — there is nothing a mis-bound delegate could contaminate beyond the tree it's already in.
 >
-> As corroboration only — never as a necessary condition — the per-worktree config confirms this is specifically a `/start wt` worktree with a recorded source branch:
+> As corroboration only — never as a necessary condition — the per-worktree config confirms this is specifically a `/start wt` worktree with a recorded source branch (`<WT_ABS>` is the literal derived above; an in-worktree `-C` target runs under the guard normally):
 >
 > ```bash
-> WT_ABS="$(git rev-parse --show-toplevel)"
-> git -C "$WT_ABS" config --worktree --get start.source-branch
+> git -C <WT_ABS> config --worktree --get start.source-branch
 > ```
 >
 > Do NOT require this probe to return a value before arming the mitigation: `standards/lifecycle-tags.md`'s `BLOCKED-ON-RECOVERY` row documents "source-branch config wiped" as a real hijack-corruption scenario, so a wiped config in a genuine, still-separate worktree would otherwise silently disarm the mitigation exactly when it matters most. A missing value here is worth noting, not trusting as "not a worktree."
 >
-> **Ensure the baseline is session-fresh before this skill's first delegation** — `/start` Step 0 sub-step 2 requires exactly this of "any skill that arms this mitigation," and a standalone `/quality-review` is the case it names explicitly. Both the capture and the item-1 placement check go through `~/.claude/scripts/wt-baseline.sh` (`capture` / `diff`), which anchors its files to `$WT_ABS` (derived above) rather than bare `tmp/` — the calls run as separate Bash invocations with no shared cwd. Pass the lowercased issue ID as the token, or the literal `no-issue` if Step 1 resolved no issue ID (which can only happen standalone, since `/start` Step 9 always dispatches this skill with an explicit issue ID). The script is authoritative for the measurement mechanics; do not re-implement them here.
+> **Ensure the baseline is session-fresh before this skill's first delegation** — `/start` Step 0 sub-step 2 requires exactly this of "any skill that arms this mitigation," and a standalone `/quality-review` is the case it names explicitly. Both the capture and the item-1 placement check go through `~/.claude/scripts/wt-baseline.sh` (`capture` / `diff`), which anchors its files to `WT_ABS` (derived above) rather than bare `tmp/` — the calls run as separate Bash invocations with no shared cwd. Pass the lowercased issue ID as the token, or the literal `no-issue` if Step 1 resolved no issue ID (which can only happen standalone, since `/start` Step 9 always dispatches this skill with an explicit issue ID). The script is authoritative for the measurement mechanics; do not re-implement them here.
 >
 > - **Delegated from `/start` Step 9:** Step 0 already took this session's baseline before Step 8 ran. Reuse it as-is — do NOT retake it here. Retaking now would fold Step 8's already-verified-clean activity into a brand-new baseline, blinding this skill's own checks to anything that slipped past Step 8's per-delegation verification in the interim.
-> - **Standalone** (the user invoked `/quality-review` directly): no session-fresh baseline exists yet. Take it now, before Step 2's first delegation — `~/.claude/scripts/wt-baseline.sh capture "$WT_ABS" <issue-id-lowercased|no-issue>` — which overwrites any stale file left on disk, per `/start` Step 0's "never reused across sessions" rule. Proceed only on `CAPTURED`; a `FAILED` verdict is a fail-closed STOP.
+> - **Standalone** (the user invoked `/quality-review` directly): no session-fresh baseline exists yet. Take it now, before Step 2's first delegation — `~/.claude/scripts/wt-baseline.sh capture <WT_ABS> <issue-id-lowercased|no-issue>` (the literal path, per the derivation above) — which overwrites any stale file left on disk, per `/start` Step 0's "never reused across sessions" rule. Proceed only on `CAPTURED`; a `FAILED` verdict is a fail-closed STOP.
 > - **Telling them apart:** the reliable signal is session continuity — a delegated run has `/start` Step 0 moments earlier in this same conversation; a standalone run has no such history. When that history cannot be confirmed, treat it as standalone and retake: an unneeded retake before the first delegation costs one hash recompute, while reusing a baseline that turns out stale reproduces the exact bug this note exists to prevent (false accusations from paths main acquired since, misses from paths already dirty then). Concretely: retake whenever the baseline file (`<wt-abs>/tmp/main-dirty-baseline-<token>.txt` — the file `wt-baseline.sh capture` writes) is absent, or its this-session provenance cannot be confirmed — never skip retaking merely because a file happens to exist on disk.
 >
 > When `wt` mode is detected, every delegation below is exposed to the hazard `/start` Step 8 documents — `EnterWorktree`'s isolation registration is best-effort, not a guarantee, and a delegate can write into the main checkout while reporting success and while `pnpm check` stays green (a worktree missing a delegate's changes still type-checks). `/start` Step 8 is the single source of truth for the response: its delegation-format template's READ-SCOPING and WRITE-PLACEMENT blocks, and its "After each delegation completes" item 1 placement check with its **graduated classification** — a hard-stop delta (any `VANISHED` path, overlap with the delegation's scope or reported footprint, expected edits missing from the worktree, a missing report from a write-capable delegate, or a `FAILED` measurement) is a STOP handed to a human with no automated recovery, while a benign disjoint delta (the concurrent-activity signature) is logged, absorbed with a fresh `wt-baseline.sh capture`, and continued past — and in neither branch does this skill restore, extract, or apply anything in either tree. Do not restate those commands, classification rules, or reporting steps here. Split by agent type, mirroring `/start` Step 8: READ-SCOPING is a floor required on **every** delegation below regardless of agent type; the WRITE-PLACEMENT *prompt* block (the changed-path self-report instructions) applies only to this skill's write-capable delegations (`developer`) — its read-only delegations (`quality-reviewer`, `quality-verifier`, `architect`) get no such block, since they change nothing and produce no changed-path list. The item-1 placement check itself is **not** scoped this way: mirroring `/start` Step 8's final form, it runs after **every** delegation below regardless of agent type — a read-only delegate can still write into the main checkout under a mis-bound registration, and the check costs the same one `git status`-equivalent pass either way. That is every delegation site in this skill: Step 2's `developer` fix delegation; Step 3's `quality-reviewer` review; Step 5 item 2's `developer` fix delegations and item 3's further-fix delegation; Step 5 item 4's `quality-verifier` re-review; item 5's `quality-verifier` `Targeted fix confirmation` dispatches (wherever they are issued — the mechanical lane, the convergence drain, or the ceiling's lane drain, all of which land after the last re-review, which makes them more exposed, not less — nothing downstream would notice a late problem that went unverified); option 3's `architect` escalation; Step 6 sub-step 5's `developer` fix delegations (the fix-now items above the direct-apply bound, and the corrective pass) and its `quality-verifier` re-reviews (the mandatory one and the optional confirmatory one under the upgrade-on-success exception); and the Error Handling section's corrective reviewer re-spawn (same agent type as the malformed dispatch) and its zero-tool `SendMessage` resume of any of the above. The mechanical-lane, prose-lane, drain, and gate-clearing fix-now fixes are **not** delegation sites: the orchestrator applies those edits itself (see Dispatch tiers below), in its own working tree, so they sit outside this delegation machinery and its placement checks — the session's own edits land where the session runs.

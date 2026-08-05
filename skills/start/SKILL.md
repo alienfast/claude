@@ -247,9 +247,14 @@ Then `Read` the downloaded path (`tmp/linear-img.png`) to view the image.
 
 **If this probe is what arms `IS_WT` this session — Step 0's own worktree-existence gate did not fire** (e.g., cwd started this session already inside a leftover worktree directory such as `.claude/worktrees/pl-99/`, and the user ran a plain `/start <ISSUE-ID>`) **— no baseline has been captured yet.** Do not let Step 8's mitigation arm with nothing to diff against: a bare `IS_WT`-true with a missing baseline fails Step 8 item 1 closed on the very first delegation, and the session can never do any work. Before doing anything else, capture it now. Unlike Step 0's `start-wt-verify.sh` call (sub-step 3) — where `pwd -P` is safe because its first stage cross-checks it against the setup script's own `WT_ABS` output — this path has no such cross-check: cwd may be a **subdirectory** of the worktree (e.g. `.claude/worktrees/pl-99/src`) rather than its root, so derive `WT_ABS` with the canonical `git rev-parse --show-toplevel` form instead of `pwd -P`; using `pwd -P` here would silently substitute the wrong root into every later delegation's READ-SCOPING:
 
+Run it as two separate Bash calls — the assign-and-run compound (`WT_ABS="$(git rev-parse …)"; …`) is refused by the worktree-isolation guard in exactly these sessions (`standards/git.md` § Worktree-isolated sessions):
+
 ```bash
-WT_ABS="$(git rev-parse --show-toplevel)"
-~/.claude/scripts/wt-baseline.sh capture "$WT_ABS" <issue-id-lowercased>
+git rev-parse --show-toplevel   # output = WT_ABS; carry the literal value
+```
+
+```bash
+~/.claude/scripts/wt-baseline.sh capture <WT_ABS> <issue-id-lowercased>
 ```
 
 The script derives and guards `MAIN_CHECKOUT` itself and fails closed (`FAILED: ...`, exit 1) on any precondition it can't prove — including `WT_ABS == MAIN_CHECKOUT`, which here means isolation was never registered. Continue below only on `CAPTURED <file>`; on `FAILED` — **STOP and surface**.
@@ -378,19 +383,17 @@ If you catch yourself reading a source file or editing code, stop — delegate i
 
 **Pre-delegation baseline.** Captured once, every session — by Step 0 sub-step 1's setup script (verified — or re-captured on sub-step 1 failure — in sub-step 3), or by Step 5's backstop when cwd began the session inside another issue's worktree — never here. It is the primary contamination-detection signal: item 1 below diffs the main checkout's current dirty state against it (`wt-baseline.sh diff` — content hashes, not just which paths are dirty, so a stray write landing on top of an already-dirty path is caught too) after every delegation. `~/.claude/scripts/wt-baseline.sh` is authoritative for the snapshot mechanics.
 
-**Derive and carry `WT_ABS` and `MAIN_CHECKOUT` before composing any delegation.** The READ-SCOPING/WRITE-PLACEMENT template below substitutes `<WT_ABS>` and `<MAIN_CHECKOUT>` into the very first delegation prompt this step composes — both values must be known before that composition, not derived lazily inside "After each delegation completes" (by then the first prompt would already have had nothing to substitute). Step 0 sub-step 1 emitted `WT_ABS=` on stdout (and `wt-baseline.sh capture` printed `MAIN_CHECKOUT=` on stderr), and those values are carried in the orchestrator's own context (for `<WT_ABS>`/`<MAIN_CHECKOUT>` prompt substitution) — not in shell state, which never survives across separate Bash tool calls. So re-derive them canonically in a fresh, self-contained bash block before composing the first delegation — the same derivation "After each delegation completes" item 1 uses:
+**Derive and carry `WT_ABS` and `MAIN_CHECKOUT` before composing any delegation.** The READ-SCOPING/WRITE-PLACEMENT template below substitutes `<WT_ABS>` and `<MAIN_CHECKOUT>` into the very first delegation prompt this step composes — both values must be known before that composition, not derived lazily inside "After each delegation completes" (by then the first prompt would already have had nothing to substitute). Step 0 sub-step 1 emitted `WT_ABS=` on stdout (and `wt-baseline.sh capture` printed `MAIN_CHECKOUT=` on stderr), and those values are carried in the orchestrator's own context (for `<WT_ABS>`/`<MAIN_CHECKOUT>` prompt substitution) — not in shell state, which never survives across separate Bash tool calls. If either value is missing from context, re-derive it with two plain probes, **each its own Bash call** — the worktree-isolation guard refuses `$(git …)` command substitution in exactly these sessions (`standards/git.md` § Worktree-isolated sessions), so a single assign-and-guard block cannot run here:
 
 ```bash
-WT_ABS="$(git rev-parse --show-toplevel)"
-MAIN_CHECKOUT="$(dirname "$(git -C "$WT_ABS" rev-parse --path-format=absolute --git-common-dir)")"
-
-# Hard precondition guard — see Step 8 item 1 for the full rationale: `git -C ""` is a documented
-# no-op (leaves cwd unchanged, exits 0), so an empty/wrong path here would silently substitute the
-# wrong tree into every delegation's READ-SCOPING instead of failing loudly.
-[ -n "$WT_ABS" ] && [ -d "$WT_ABS" ] || { echo "FAILED: WT_ABS unset or not a directory" >&2; exit 1; }
-[ -n "$MAIN_CHECKOUT" ] && [ -d "$MAIN_CHECKOUT" ] || { echo "FAILED: MAIN_CHECKOUT unset or not a directory" >&2; exit 1; }
-[ "$WT_ABS" != "$MAIN_CHECKOUT" ] || { echo "FAILED: WT_ABS == MAIN_CHECKOUT (isolation not registered)" >&2; exit 1; }
+git rev-parse --show-toplevel   # output = WT_ABS (the worktree root)
 ```
+
+```bash
+git rev-parse --path-format=absolute --git-common-dir   # prints <MAIN_CHECKOUT>/.git — its parent directory is MAIN_CHECKOUT
+```
+
+Apply the guards by inspection before substituting the resulting **literal absolute paths** anywhere: both values non-empty and existing directories, and `WT_ABS != MAIN_CHECKOUT` — equality means isolation was never registered. STOP and surface on any violation; substituting an empty or wrong value would silently scope every delegation's READ-SCOPING to the wrong tree instead of failing loudly (`git -C ""` is a documented no-op).
 
 **Delegation format:**
 
@@ -440,11 +443,10 @@ Acceptance: [How to verify success — MUST include "pnpm check passes"]
 
    Do not derive `IS_WT` here by running `git config --worktree --get start.source-branch` against cwd and treating a NEGATIVE result as proof `IS_WT` is false — if Step 0's `EnterWorktree` registration silently failed and cwd is still the main checkout, that cwd-scoped probe reads the *main* checkout's config, finds nothing, and concludes "plain `/start`" — skipping this entire check exactly when it matters most. Per Step 0's `IS_WT` rule, a negative probe result must never disarm; a positive result, from anywhere, only ever arms (safe). `git -C "$WT_ABS" config --worktree --get start.source-branch`, explicitly scoped to a known worktree root, is safe from anywhere within `/start`'s own `IS_WT` derivation. **This is NOT how `/quality-review` determines it's in a worktree, and must not become that.** `/quality-review`'s own gate is `WT_ABS != MAIN_CHECKOUT` — necessary and sufficient on its own — precisely because a wiped `start.source-branch` is a documented hijack scenario the config probe cannot see through; requiring the config probe there would make that hijack undetectable. Step 5's own copy of this probe runs the cwd-scoped form too and is unaffected by any of this: at the point Step 5 runs it, cwd genuinely IS the worktree by construction (Step 5 short-circuits before any branch-switching), so a positive result there is trustworthy and is exactly the second `IS_WT` trigger from Step 0 — it is a positive-arms case, not the unscoped-negative-disarms case this paragraph warns against.
 
-   **The check is one self-contained call to `~/.claude/scripts/wt-baseline.sh diff`** — the script derives and guards `MAIN_CHECKOUT` itself (including the `git -C ""`-is-a-no-op hazard and the space-in-path `awk` truncation hazard that older inline versions of this check had to defend against in prose), computes the current dirty map with the same content-hash mechanics as the capture, and classifies the delta. Nothing is "carried" into it from Step 0 or Step 5 — only the worktree root and the issue token are passed:
+   **The check is one self-contained call to `~/.claude/scripts/wt-baseline.sh diff`** — the script derives and guards `MAIN_CHECKOUT` itself (including the `git -C ""`-is-a-no-op hazard and the space-in-path `awk` truncation hazard that older inline versions of this check had to defend against in prose), computes the current dirty map with the same content-hash mechanics as the capture, and classifies the delta. Only the worktree root and the issue token are passed — `<WT_ABS>` is the literal carried per this step's derivation note (an inline `"$(git rev-parse …)"` prefix is refused by the isolation guard in exactly these sessions):
 
    ```bash
-   WT_ABS="$(git rev-parse --show-toplevel)"
-   ~/.claude/scripts/wt-baseline.sh diff "$WT_ABS" <issue-id-lowercased>   # or `no-issue` when no issue ID was resolved — see /quality-review
+   ~/.claude/scripts/wt-baseline.sh diff <WT_ABS> <issue-id-lowercased>   # or `no-issue` when no issue ID was resolved — see /quality-review
    ```
 
    **Branch on the FIRST line of stdout — never on empty output** (both a broken redirect and a broken `comm` print only to stderr, indistinguishable from "clean" if you only look at stdout; the script's verdict line exists precisely so there is always something on stdout to branch on). A green `pnpm check` is not evidence either — a worktree missing a delegate's changes still type-checks.
