@@ -70,6 +70,29 @@ LOOP_CMD = re.compile(r"<command-name>/loop</command-name>")
 LOOP_AUTO_ARGS = re.compile(r"<command-args>[^<]*/auto")
 GAP_MIN = 240  # seconds; a tool call slower than this is worth naming, not necessarily a fault
 
+# $/MTok (input, output) at Claude API list prices, cached from the claude-api skill 2026-08-05.
+# Sonnet 5 has a $2/$10 intro rate through 2026-08-31 — the sticker is used so fleets stay comparable
+# across that boundary; current 1M-context models carry no long-context premium, so no per-request
+# tier logic. Cache reads bill at 0.1x input; cache writes at 2x — Claude Code sessions write 1h-TTL
+# cache entries (a 5m-TTL write would be 1.25x). Models are prefix-matched so dated ids
+# (claude-haiku-4-5-20251001) resolve; unmatched models are reported unpriced, never silently dropped.
+PRICES = {
+    "claude-fable-5": (10.00, 50.00),
+    "claude-opus-5": (5.00, 25.00),
+    "claude-opus-4-8": (5.00, 25.00),
+    "claude-opus-4-7": (5.00, 25.00),
+    "claude-opus-4-6": (5.00, 25.00),
+    "claude-sonnet-5": (3.00, 15.00),
+    "claude-sonnet-4-6": (3.00, 15.00),
+    "claude-haiku-4-5": (1.00, 5.00),
+}
+CACHE_READ_X, CACHE_WRITE_X = 0.1, 2.0
+# Transcripts never carry thinking text (display defaults to omitted — verified on live fleet
+# transcripts 2026-08-05, every thinking block empty), so thinking spend is estimated as the
+# residual: output_tokens minus visible output (text + tool_use inputs) at ~4 chars/token. Good for
+# "bulk or sliver", not for billing.
+VISIBLE_CHARS_PER_TOKEN = 4
+
 # Verdict-file fields (skills/quality-review Output block). Severity tags may carry a /origin class
 # (SEVERITY/origin, added 2026-08-04); files written before that render bare severities, so origin
 # coverage is reported as tagged/total rather than assumed complete.
@@ -192,6 +215,11 @@ def scan_transcript(path, agg, agent_type="main"):
                     and not model.startswith("<"):
                 agg["seen_msg_ids"].add(mid)
                 agg["tokens"][(agent_type, model)] += usage["output_tokens"]
+                u = agg["usage"].setdefault((agent_type, model), Counter())
+                u["input"] += usage.get("input_tokens") or 0
+                u["cache_write"] += usage.get("cache_creation_input_tokens") or 0
+                u["cache_read"] += usage.get("cache_read_input_tokens") or 0
+                u["output"] += usage["output_tokens"]
 
         if r.get("type") == "user" and not r.get("isSidechain"):
             body = text_of(content)
@@ -202,11 +230,18 @@ def scan_transcript(path, agg, agent_type="main"):
 
         if not isinstance(content, list):
             continue
+        # visible_chars backs the thinking-share estimate: assistant-emitted text + tool inputs are
+        # the visible part of output_tokens; the residual is thinking, whose text is never recorded.
+        # Rows sharing a message id each carry DISTINCT blocks of it (verified on live transcripts),
+        # so blocks are counted per row with no message-id dedup.
+        emitted = r.get("type") == "assistant"
         for b in content:
             if not isinstance(b, dict):
                 continue
             if b.get("type") == "text":
                 body = b.get("text", "")
+                if emitted:
+                    agg["visible_chars"][agent_type] += len(body)
                 for _tag, issue in SHIPPED_TAG.findall(body):
                     agg["ship_tags"].add(issue)
                 for issue in CANCELED_TAG.findall(body):
@@ -216,6 +251,8 @@ def scan_transcript(path, agg, agent_type="main"):
             elif b.get("type") == "tool_use":
                 name = b.get("name", "")
                 inp = b.get("input") or {}
+                if emitted:
+                    agg["visible_chars"][agent_type] += len(json.dumps(inp))
                 pending[b.get("id")] = (t, name, inp)
                 agg["tool_calls"] += 1
                 if name == "Agent":
@@ -257,7 +294,35 @@ def new_agg():
         "sleep_blind_s": 0.0, "sleep_blind_n": 0, "sleep_marker_s": 0.0, "sleep_marker_n": 0,
         "ship_tags": set(), "cancel_tags": set(), "subagents": 0,
         "tokens": Counter(), "seen_msg_ids": set(),
+        "usage": {}, "visible_chars": Counter(),
     }
+
+
+def price_of(model):
+    return next((p for k, p in PRICES.items() if model.startswith(k)), None)
+
+
+def est_cost(usage_by_key):
+    """Dollar estimate for {(agent_type, model): usage Counter}; unmatched models come back named."""
+    total, unpriced = 0.0, set()
+    for (_typ, model), u in usage_by_key.items():
+        p = price_of(model)
+        if not p:
+            unpriced.add(model)
+            continue
+        inp, out = p
+        total += (u["input"] * inp + u["cache_write"] * inp * CACHE_WRITE_X
+                  + u["cache_read"] * inp * CACHE_READ_X + u["output"] * out) / 1e6
+    return total, unpriced
+
+
+def thinking_share(aggs, agent_type="main"):
+    """Estimated fraction of the tier's output tokens spent thinking (see VISIBLE_CHARS_PER_TOKEN)."""
+    out = sum(n for a in aggs for (typ, _m), n in a["tokens"].items() if typ == agent_type)
+    if not out:
+        return None
+    visible = sum(a["visible_chars"][agent_type] for a in aggs) / VISIBLE_CHARS_PER_TOKEN
+    return max(0.0, round(1 - visible / out, 2))
 
 
 def parse_verdicts(checkout, cutoff):
@@ -426,8 +491,15 @@ def main():
     verdict_issues_all = {p.stem.replace("quality-review-verdict-", "").upper()
                           for p in (checkout / "tmp").glob("quality-review-verdict-*.md")}
     fleet_tokens = Counter()
+    fleet_usage = {}
     for s in sessions:
         fleet_tokens.update(s["agg"]["tokens"])
+        for k, u in s["agg"]["usage"].items():
+            fleet_usage.setdefault(k, Counter()).update(u)
+    fleet_cost, unpriced = est_cost(fleet_usage)
+    fleet_think = thinking_share([s["agg"] for s in sessions])
+    out_per_shipped = round(sum(fleet_tokens.values()) / len(all_shipped)) if all_shipped else None
+    cost_per_shipped = round(fleet_cost / len(all_shipped), 2) if all_shipped else None
 
     if args.json:
         print(json.dumps({
@@ -452,6 +524,9 @@ def main():
                 "dangling_tool_calls": s["agg"]["dangling"],
                 "subagent_transcripts": s["agg"]["subagents"],
                 "output_tokens": {f"{t}/{m}": n for (t, m), n in s["agg"]["tokens"].most_common()},
+                "usage": {f"{t}/{m}": dict(u) for (t, m), u in s["agg"]["usage"].items()},
+                "est_cost_usd": round(est_cost(s["agg"]["usage"])[0], 4),
+                "main_thinking_share_est": thinking_share([s["agg"]]),
                 "long_gaps": [{"minutes": round(g[0] / 60, 1), "tool": g[1], "what": g[2]}
                               for g in sorted(s["agg"]["gaps"], reverse=True)[:5]],
             } for s in sessions],
@@ -463,6 +538,12 @@ def main():
             } for v in verdicts],
             "filed_per_shipped": filed_per_shipped,
             "output_tokens": {f"{t}/{m}": n for (t, m), n in fleet_tokens.most_common()},
+            "usage": {f"{t}/{m}": dict(u) for (t, m), u in
+                      sorted(fleet_usage.items(), key=lambda kv: -kv[1]["output"])},
+            "est_cost_usd": round(fleet_cost, 4),
+            "unpriced_models": sorted(unpriced),
+            "main_thinking_share_est": fleet_think,
+            "per_shipped": {"output_tokens": out_per_shipped, "est_cost_usd": cost_per_shipped},
             "merge_reconciliation": merged,
         }, indent=2))
         return 0
@@ -534,11 +615,19 @@ def main():
     print("## Output tokens by agent type\n")
     if fleet_tokens:
         total_out = sum(fleet_tokens.values())
-        print("| agent type | model | output tokens | share |")
-        print("|---|---|---|---|")
+        print("| agent type | model | output tokens | share | est cost |")
+        print("|---|---|---|---|---|")
         for (typ, model), n in fleet_tokens.most_common():
-            print(f"| {typ} | {model} | {n:,} | {100 * n / total_out:.0f}% |")
-        print()
+            c, _ = est_cost({(typ, model): fleet_usage.get((typ, model), Counter())})
+            print(f"| {typ} | {model} | {n:,} | {100 * n / total_out:.0f}% | "
+                  f"{f'${c:,.2f}' if price_of(model) else 'unpriced'} |")
+        per_ship = (f"${cost_per_shipped:,.2f} / {out_per_shipped:,} output tokens per shipped issue "
+                    f"({len(all_shipped)} shipped)" if all_shipped else "no shipped issues to normalize against")
+        think = (f"main-loop thinking ≈ {100 * fleet_think:.0f}% of its output tokens (residual estimate)"
+                 if fleet_think is not None else "main-loop thinking share unmeasurable")
+        unpriced_note = f" · excluded from $ (no price row): {', '.join(sorted(unpriced))}" if unpriced else ""
+        print(f"\n**Cost estimate** — ${fleet_cost:,.2f} at list prices (input + cache + output; cache "
+              f"writes at the 1h-TTL rate) · {per_ship} · {think}{unpriced_note}\n")
     else:
         print("- no usage data found in transcripts\n")
 

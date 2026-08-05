@@ -80,8 +80,8 @@ mkdir -p "$SUBDIR"
 # message ids — the duplicated id must be counted once (the double-count bug this suite pins).
 cat > "$TDIR/abc12345-0000.jsonl" <<'EOF'
 {"type":"user","timestamp":"2026-08-04T10:00:00Z","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
-{"type":"assistant","timestamp":"2026-08-04T10:00:10Z","message":{"role":"assistant","id":"msg_A","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":1000},"content":[{"type":"text","text":"working"},{"type":"tool_use","id":"toolu_1","name":"Agent","input":{"description":"bg dispatch","prompt":"x"}}]}}
-{"type":"assistant","timestamp":"2026-08-04T10:00:11Z","message":{"role":"assistant","id":"msg_A","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":1000},"content":[{"type":"tool_use","id":"toolu_2","name":"Agent","input":{"description":"sync dispatch","prompt":"x","run_in_background":false}}]}}
+{"type":"assistant","timestamp":"2026-08-04T10:00:10Z","message":{"role":"assistant","id":"msg_A","model":"claude-opus-5","usage":{"input_tokens":10,"cache_creation_input_tokens":2000,"cache_read_input_tokens":100000,"output_tokens":1000},"content":[{"type":"text","text":"working"},{"type":"tool_use","id":"toolu_1","name":"Agent","input":{"description":"bg dispatch","prompt":"x"}}]}}
+{"type":"assistant","timestamp":"2026-08-04T10:00:11Z","message":{"role":"assistant","id":"msg_A","model":"claude-opus-5","usage":{"input_tokens":10,"cache_creation_input_tokens":2000,"cache_read_input_tokens":100000,"output_tokens":1000},"content":[{"type":"tool_use","id":"toolu_2","name":"Agent","input":{"description":"sync dispatch","prompt":"x","run_in_background":false}}]}}
 {"type":"user","timestamp":"2026-08-04T10:01:00Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"done"},{"type":"tool_result","tool_use_id":"toolu_2","content":"done"}]}}
 {"type":"assistant","timestamp":"2026-08-04T10:02:00Z","message":{"role":"assistant","id":"msg_B","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":500},"content":[{"type":"tool_use","id":"toolu_3","name":"Bash","input":{"command":"sleep 300"}},{"type":"tool_use","id":"toolu_4","name":"Bash","input":{"command":"until [ -f tmp/run.done ]; do sleep 10; done"}}]}}
 {"type":"user","timestamp":"2026-08-04T10:07:00Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_3","content":"ok"}]}}
@@ -104,6 +104,7 @@ EOF
 # Starts AFTER abc12345 so the span-ordered session list keeps abc12345 at index 0.
 cat > "$TDIR/def45678-0000.jsonl" <<'EOF'
 {"type":"user","timestamp":"2026-08-04T11:00:00Z","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"2026-08-04T11:15:00Z","message":{"role":"assistant","id":"msg_N","model":"claude-nova-2","usage":{"input_tokens":10,"output_tokens":50},"content":[{"type":"text","text":"noted"}]}}
 {"type":"assistant","timestamp":"2026-08-04T11:30:00Z","message":{"role":"assistant","id":"msg_D","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":300},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-7 done"}]}}
 EOF
 
@@ -135,7 +136,25 @@ ck "observed ship tag"  "['TT-1']" "$(q "d['sessions'][0]['observed_shipped']")"
 # token attribution: msg_A counted ONCE (1000, not 2000) despite two rows; main = 1000+500+250.
 ck "main tokens dedup"  "1750"     "$(q "d['sessions'][0]['output_tokens']['main/claude-opus-5']")"
 ck "subagent tokens"    "700"      "$(q "d['sessions'][0]['output_tokens']['developer/claude-sonnet-5']")"
-ck "fleet token total"  "2750"     "$(q "sum(d['output_tokens'].values())")"
+ck "fleet token total"  "2800"     "$(q "sum(d['output_tokens'].values())")"
+
+# full usage + cost: input/cache fields dedup by message id exactly like output (msg_A once), cost is
+# price-weighted (input 5 + cache write 2x + cache read 0.1x + output 25, per MTok), the unknown
+# model is named rather than silently dropped, and per-shipped normalizes over all 3 fleet ships.
+# abc12345: opus (30*5 + 2000*10 + 100000*0.5 + 1750*25)/1e6 + sonnet (5*3 + 700*15)/1e6 = 0.1244.
+ck "usage input dedup"  "30"       "$(q "d['sessions'][0]['usage']['main/claude-opus-5']['input']")"
+ck "usage cache write"  "2000"     "$(q "d['sessions'][0]['usage']['main/claude-opus-5']['cache_write']")"
+ck "usage cache read"   "100000"   "$(q "d['sessions'][0]['usage']['main/claude-opus-5']['cache_read']")"
+ck "subagent usage"     "5"        "$(q "d['sessions'][0]['usage']['developer/claude-sonnet-5']['input']")"
+ck "session est cost"   "0.1244"   "$(q "d['sessions'][0]['est_cost_usd']")"
+ck "fleet est cost"     "0.132"    "$(q "d['est_cost_usd']")"
+ck "unpriced named"     "['claude-nova-2']" "$(q "d['unpriced_models']")"
+ck "per-shipped tokens" "933"      "$(q "d['per_shipped']['output_tokens']")"
+ck "per-shipped cost"   "0.04"     "$(q "d['per_shipped']['est_cost_usd']")"
+
+# thinking share: the residual after visible output (text + tool_use input chars at 4 chars/token).
+# abc12345 main emits 274 visible chars against 1750 output tokens -> 1 - 68.5/1750 = 0.96.
+ck "thinking share"     "0.96"     "$(q "d['sessions'][0]['main_thinking_share_est']")"
 
 # ledger-less discovery: def45678 has no state file and must still be measured and flagged; the
 # non-/auto session 99900001 must not appear at all (its SHIPPED tag is not a fleet ship).
@@ -170,7 +189,13 @@ ck "filed per shipped"  "0.67"     "$(q "d['filed_per_shipped']")"
 # markdown-mode sections and flags
 ck_has "churn table row"     "| TT-1 | \`abc12345\` | passed-after-fixes | 3 | 4 | 1/1/2 |" "$MD"
 ck_has "origin cell"         "impl:1" "$MD"
-ck_has "tokens table"        "| developer | claude-sonnet-5 | 700 |" "$MD"
+ck_has "tokens table"        "| main | claude-opus-5 | 2,050 | 73% | \$0.12 |" "$MD"
+ck_has "cost cell"           "| developer | claude-sonnet-5 | 700 | 25% | \$0.01 |" "$MD"
+ck_has "unpriced cell"       "| main | claude-nova-2 | 50 | 2% | unpriced |" "$MD"
+ck_has "cost footer"         "\$0.13 at list prices" "$MD"
+ck_has "per-shipped footer"  "\$0.04 / 933 output tokens per shipped issue (3 shipped)" "$MD"
+ck_has "thinking footer"     "thinking ≈ 96% of its output tokens" "$MD"
+ck_has "unpriced footer"     "excluded from \$ (no price row): claude-nova-2" "$MD"
 ck_has "no-verdict flag"     "Shipped with no persisted review verdict**: TT-2" "$MD"
 ck_has "off-schema flag"     "Off-schema verdict body**: TT-4 (no Findings resolved line)" "$MD"
 ck_has "off-schema ? render" "| TT-4 | \`-\` | passed-after-fixes | 2 | ? |" "$MD"
@@ -204,6 +229,7 @@ q2() { python3 -c "import json,sys; d=json.load(open('$J2')); print($1)"; }
 ck "total-loss session"  "1"        "$(q2 "len(d['sessions'])")"
 ck "total-loss flagged"  "True"     "$(q2 "d['sessions'][0]['ledger_missing']")"
 ck "total-loss ships"    "['TT-5']" "$(q2 "d['sessions'][0]['observed_shipped']")"
+ck "total-loss per-ship" "120"      "$(q2 "d['per_shipped']['output_tokens']")"
 
 echo
 echo "$PASS passed / $FAIL failed"

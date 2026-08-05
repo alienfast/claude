@@ -1,6 +1,6 @@
 ---
 name: fleet-retro
-description: Post-mortem on a finished fleet of parallel /loop /auto sessions — measures each session with scripts/fleet-metrics.py (blind-sleep burn, dispatch mode, heartbeat compliance, classifier blocks, state-vs-reality drift, review churn with findings origins, output-token attribution by agent type and model), reconciles the shipped ledger against git and Linear, audits the issues the run FILED for duplicates and stranded states, then reports ranked findings and applies the fixes you approve. The bookend to /auto-prep. Use when the user says 'fleet retro', 'review the fleet run', 'how did the fleet do', 'post-mortem the auto run', or invokes /fleet-retro.
+description: Post-mortem on a finished fleet of parallel /loop /auto sessions — measures each session with scripts/fleet-metrics.py (blind-sleep burn, dispatch mode, heartbeat compliance, classifier blocks, state-vs-reality drift, review churn with findings origins, token and estimated-dollar attribution by agent type and model — cache-aware, with main-loop thinking share and cost per shipped issue), reconciles the shipped ledger against git and Linear, audits the issues the run FILED for duplicates and stranded states, then reports ranked findings and applies the fixes you approve. The bookend to /auto-prep. Use when the user says 'fleet retro', 'review the fleet run', 'how did the fleet do', 'post-mortem the auto run', or invokes /fleet-retro.
 argument-hint: "[--since YYYY-MM-DD | --hours N] [checkout-path]"
 model: opus
 effort: xhigh
