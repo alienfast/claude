@@ -49,7 +49,7 @@ The primary shipping mode: N parallel autonomous sessions draining the certified
 | Prep | `/auto-prep` | Certification honesty audit (the `needs decision` / `solo` / `human` gates), family consolidation, `blocks` edges between file-colliding issues, and a recommended session count — interactive; run it before every launch |
 | Launch | `/fleet-launch 3 10 hours` | Staggered background sessions. Count defaults to prep's persisted recommendation (an explicit count is your quota throttle); the duration winds the fleet down cleanly at the deadline |
 | Watch | `/fleet-status` | One screen, any time, read-only: time remaining, per-session shipped/failed ledgers with liveness, in-flight issues, merges cross-checked against git, remaining runway |
-| End early | `/fleet-launch stop` | Rationing quota or done for the day — ends the timer; in-flight issues finish; nothing is killed |
+| End early | `/fleet-stop` | Rationing quota or done for the day — ends the timer; in-flight issues finish; nothing is killed |
 | Post-mortem | `/fleet-retro` | Where the capacity went, what the run filed, what to fix before the next launch — its findings feed the next `/auto-prep` |
 
 Top-ups compose (`/fleet-launch 2 <remaining>` adds two sessions) — but every launch resets the shared deadline, so re-pass the remaining duration. What keeps N sessions honest is the label contract ([standards/issue-spec.md](standards/issue-spec.md)) plus worktree isolation and the serialized merge — see [Parallel safety](#parallel-safety).

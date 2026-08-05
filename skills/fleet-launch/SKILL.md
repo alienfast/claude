@@ -1,6 +1,6 @@
 ---
 name: fleet-launch
-description: Launch a fleet of parallel /loop /auto sessions as background agents in `claude agents`, staggered so each session's first pick sees the previous session's claim, with an optional time budget that winds the fleet down cleanly (in-flight issues finish; no new picks). Count defaults to /auto-prep's persisted recommendation; an explicit count is the quota throttle. The `stop` form is also the early-end command — it ends the timer immediately and lets current work finish. Use when the user says 'fleet launch', 'launch the fleet', 'spawn N auto loops', 'start 5 loops for 10 hours', 'wind down the fleet', 'end the fleet early', 'discontinue the fleet', 'stop the fleet', or invokes /fleet-launch.
+description: Launch a fleet of parallel /loop /auto sessions as background agents in `claude agents`, staggered so each session's first pick sees the previous session's claim, with an optional time budget that winds the fleet down cleanly (in-flight issues finish; no new picks). Count defaults to /auto-prep's persisted recommendation; an explicit count is the quota throttle. Ending a running fleet early is /fleet-stop, not this skill. Use when the user says 'fleet launch', 'launch the fleet', 'spawn N auto loops', 'start 5 loops for 10 hours', or invokes /fleet-launch.
 ---
 
 # Fleet Launch
@@ -13,12 +13,13 @@ This skill does NOT run `/auto-prep` (its solo/decision-gated advice needs human
 
 ## Arguments
 
-`/fleet-launch [count] [duration] | stop`
+`/fleet-launch [count] [duration]`
 
 - **(none)** — launch the count `/auto-prep` persisted to `tmp/fleet-recommendation.json`, no deadline: loops run until the certified backlog drains (`NO-CANDIDATES`).
-- `<count>` (e.g. `/fleet-launch 5`) — launch exactly that many sessions. This is the quota throttle: auto-prep recommends from lane math alone and knows nothing about the user's remaining quota.
+- `<count>` (e.g. `/fleet-launch 5`) — launch exactly that many sessions — that many MORE when a fleet is already running, not a target total. This is the quota throttle: auto-prep recommends from lane math alone and knows nothing about the user's remaining quota.
 - `<duration>` (e.g. `/fleet-launch 5 10 hours`, `/fleet-launch 90m`) — also write `tmp/fleet-deadline.json`. Each session's `/auto` checks it **before picking new work, never mid-issue**: at the deadline every session finishes its in-flight issue, then ends its loop with `NO-CANDIDATES: fleet deadline reached`. Accepted forms: `10h`, `10 hours`, `90m`, `45 minutes`.
-- `stop` — wind down a **running** fleet: writes an already-passed deadline and exits. Every session stops at its next iteration boundary; in-flight issues run to completion. This IS the "end the fleet early" / "discontinue" command — there is no separate fleet-end skill, and quota rationing is its primary use. To abort in-flight work too, the user kills sessions in `claude agents` — this skill never does. Two launch-interaction facts worth knowing: every launch clears the marker first (so a later top-up launch resets or erases a running deadline — re-pass the remaining duration when adding sessions), and a count re-launch dispatches that many MORE sessions, not a target total. Check the current picture any time with [`/fleet-status`](../fleet-status/SKILL.md).
+
+Ending a running fleet early is [`/fleet-stop`](../fleet-stop/SKILL.md), not a form of this skill. Check the current picture any time with [`/fleet-status`](../fleet-status/SKILL.md).
 
 ## Behavior
 
@@ -26,7 +27,6 @@ Run from the project the fleet should work on (sessions inherit the cwd — the 
 
 ```bash
 ~/.claude/scripts/fleet-launch.sh 5 10 hours
-~/.claude/scripts/fleet-launch.sh stop
 ```
 
 Surface the script's output: the deadline (if any), each dispatch line, each claim-landed/timeout line, and the closing `claude agents` pointer. A claim-wait timeout is a WARN, not a failure — the session may be in preflight, resuming a dead worktree, or the pool may have drained mid-launch.
@@ -35,9 +35,9 @@ Model/permission defaults follow `/auto`'s unattended-run prerequisites (`--mode
 
 ## The deadline contract (shared with /auto)
 
-- Marker: `<main-checkout>/tmp/fleet-deadline.json` — `{deadline_epoch, deadline, count}` (`stopped: true` for the stop form).
+- Marker: `<main-checkout>/tmp/fleet-deadline.json` — `{deadline_epoch, deadline, count}` (`stopped: true` when written by [`/fleet-stop`](../fleet-stop/SKILL.md)).
 - `/auto` reads it at Step 2 (after preflight, before the pick), so in-flight work always completes and targeted `/auto <ISSUE-ID>` ignores it by construction.
-- Sessions never delete the marker (siblings still mid-issue must see it); `fleet-launch.sh` clears any stale marker on every launch, so a no-duration launch never inherits a dead fleet's deadline.
+- Sessions never delete the marker (siblings still mid-issue must see it); `fleet-launch.sh` clears any stale marker on every launch, so a no-duration launch never inherits a dead fleet's deadline — which also means a top-up launch resets or erases a running fleet's deadline: re-pass the remaining duration when adding sessions.
 
 ## Error Handling
 

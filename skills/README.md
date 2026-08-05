@@ -184,7 +184,7 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 
 **When Invoked**:
 
-- User says "launch the fleet", "spawn 5 auto loops", "start the fleet for 10 hours", or "wind down the fleet" (`/fleet-launch stop`)
+- User says "launch the fleet", "spawn 5 auto loops", or "start the fleet for 10 hours"
 - After `/auto-prep` has groomed the backlog and recommended a session count
 
 **Key Features**:
@@ -192,7 +192,7 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 - Count defaults to the recommendation `/auto-prep` persists to `tmp/fleet-recommendation.json`; an explicit count is the user's quota throttle
 - Staggers dispatches on worktree appearance (the claim stamp), not a blind timer — the next session launches the moment the previous one's pick is excluded from ranking
 - A duration writes `tmp/fleet-deadline.json`; `/auto` checks it before each pick (never mid-issue), so at the deadline sessions finish in-flight work and end their loops with `NO-CANDIDATES`
-- `stop` writes an already-passed deadline to wind down a running fleet without killing in-flight work
+- Ending a running fleet early is `/fleet-stop` — a thin wrapper over the same script's `stop` form, which writes an already-passed deadline so in-flight work finishes and no new picks happen
 
 **Structure**:
 
