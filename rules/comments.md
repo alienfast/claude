@@ -31,6 +31,14 @@ Never cite a number that moves with ambient machine state (a file count, a
 timing, a line count). It reads as evidence but reproduces nowhere else — state
 the qualitative claim the reader can re-test instead.
 
+The same applies to a **roster or count of code facts** — the callers of a
+helper, the implementations of an interface, the sites sharing a shape.
+Verifiability is what makes these tempting, and they rot on the next commit that
+adds a caller — leaving a reader who spots one stale entry unable to tell whether
+the comment's *argument* is stale too. Name the property that makes the set
+interesting ("most of its callers add no guard of their own") rather than listing
+its members, and let a grep produce the current membership.
+
 The sharpest case is a comment calling code redundant, defensive, or kept for a
 future refactor — it does not describe the line, it licenses deleting it. Prove
 it first: remove the line, run the tests covering it, restore by file copy (never
@@ -75,6 +83,12 @@ old 80-column convention produces stubby, multi-line comments that are
 harder to read than one long line. Let the comment breathe — break only
 when the line genuinely exceeds the soft limit, or at a natural sentence
 boundary inside a long block.
+
+**Measure characters, not bytes.** macOS's `/usr/bin/awk` counts bytes whatever
+the locale, so the obvious `awk 'length > 160'` over-counts every multi-byte
+character (+2 per em-dash) and flags prose already inside the limit. It never
+misses a genuinely long line, so it is fine as a cheap first pass — but confirm
+before rewording: `grep -n '.\{161,\}' <file>` counts characters.
 
 ## Scope: fixing comments while you're in the file
 
