@@ -17,6 +17,9 @@ ck() { # ck <label> <expected> <actual>
 ck_has() { # ck_has <label> <needle> <haystack-file>
   if grep -qF "$2" "$3"; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL: $1 — missing [$2]"; fi
 }
+ck_lacks() { # ck_lacks <label> <needle> <haystack-file>
+  if grep -qF "$2" "$3"; then FAIL=$((FAIL+1)); echo "FAIL: $1 — unexpected [$2]"; else PASS=$((PASS+1)); fi
+}
 
 # ---- fixture: a checkout with state + verdict files, and a projects dir with transcripts ----
 CHECKOUT="$WORK/checkout"
@@ -95,6 +98,22 @@ cat > "$SUBDIR/agent-t1.meta.json" <<'EOF'
 {"agentType":"developer","description":"fix batch","toolUseId":"toolu_1","spawnDepth":1}
 EOF
 
+# LEDGER-LESS session: a real /loop /auto run with NO tmp/auto-state-def45678.json. This is the
+# 2026-08-04 shape — /auto's Step 0 GC deleted two drained ledgers, and the fleet then measured as
+# two sessions instead of four. Must be discovered from the transcript and flagged, never dropped.
+# Starts AFTER abc12345 so the span-ordered session list keeps abc12345 at index 0.
+cat > "$TDIR/def45678-0000.jsonl" <<'EOF'
+{"type":"user","timestamp":"2026-08-04T11:00:00Z","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"2026-08-04T11:30:00Z","message":{"role":"assistant","id":"msg_D","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":300},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-7 done"}]}}
+EOF
+
+# NOT an /auto session — an ordinary interactive session in the same project dir. The discovery
+# pass must ignore it, or every retro invents sessions out of unrelated work.
+cat > "$TDIR/99900001-0000.jsonl" <<'EOF'
+{"type":"user","timestamp":"2026-08-04T12:00:00Z","message":{"role":"user","content":"fix the flaky spec in the payments suite"}}
+{"type":"assistant","timestamp":"2026-08-04T12:01:00Z","message":{"role":"assistant","id":"msg_E","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":90},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-99 done"}]}}
+EOF
+
 # ---- run ----
 JSON="$WORK/out.json"
 MD="$WORK/out.md"
@@ -104,7 +123,7 @@ CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CHECKOUT" --all > "$
 q() { python3 -c "import json,sys; d=json.load(open('$JSON')); print($1)"; }
 
 # session metrics (pre-existing schema — regression guard)
-ck "one session"        "1"        "$(q "len(d['sessions'])")"
+ck "two sessions"       "2"        "$(q "len(d['sessions'])")"
 ck "loop firing"        "1"        "$(q "d['sessions'][0]['loop_firings']")"
 ck "wakeups"            "1"        "$(q "d['sessions'][0]['wakeups']")"
 ck "dispatch bg"        "1"        "$(q "d['sessions'][0]['dispatch'].get('background',0)")"
@@ -116,7 +135,17 @@ ck "observed ship tag"  "['TT-1']" "$(q "d['sessions'][0]['observed_shipped']")"
 # token attribution: msg_A counted ONCE (1000, not 2000) despite two rows; main = 1000+500+250.
 ck "main tokens dedup"  "1750"     "$(q "d['sessions'][0]['output_tokens']['main/claude-opus-5']")"
 ck "subagent tokens"    "700"      "$(q "d['sessions'][0]['output_tokens']['developer/claude-sonnet-5']")"
-ck "fleet token total"  "2450"     "$(q "sum(d['output_tokens'].values())")"
+ck "fleet token total"  "2750"     "$(q "sum(d['output_tokens'].values())")"
+
+# ledger-less discovery: def45678 has no state file and must still be measured and flagged; the
+# non-/auto session 99900001 must not appear at all (its SHIPPED tag is not a fleet ship).
+ck "ledgerless found"    "1"        "$(q "len([s for s in d['sessions'] if s['ledger_missing']])")"
+ck "ledgerless key"      "def45678" "$(q "[s['run_key'] for s in d['sessions'] if s['ledger_missing']][0]")"
+ck "ledgerless ships"    "['TT-7']" "$(q "[s['observed_shipped'] for s in d['sessions'] if s['ledger_missing']][0]")"
+ck "ledgerless no rec"   "[]"       "$(q "[s['recorded_shipped'] for s in d['sessions'] if s['ledger_missing']][0]")"
+ck "stateful not flagged" "False"   "$(q "[s['ledger_missing'] for s in d['sessions'] if s['run_key']=='abc12345'][0]")"
+ck "non-auto ignored"    "0"        "$(q "len([s for s in d['sessions'] if s['run_key']=='99900001'])")"
+ck "non-auto ship excluded" "0"     "$(q "len([s for s in d['sessions'] if 'TT-99' in s['observed_shipped']])")"
 
 # review churn: three verdicts; TT-1 matched to the session, TT-3 unmatched, TT-4 off-schema.
 ck "churn rows"         "3"        "$(q "len(d['review_churn'])")"
@@ -134,7 +163,9 @@ ck "tt4 missing fields" "['Findings resolved']" "$(q "[v for v in d['review_chur
 
 # filed-per-shipped pairs THIS fleet's filings (TT-1's two) with its ships (TT-1, TT-2); TT-3's
 # filing stays out of the numerator.
-ck "filed per shipped"  "1.0"      "$(q "d['filed_per_shipped']")"
+# Denominator is 3 now — TT-7 comes from the ledger-less session, which is exactly the point: a
+# discovered session's ships count toward the fleet's totals like any other.
+ck "filed per shipped"  "0.67"     "$(q "d['filed_per_shipped']")"
 
 # markdown-mode sections and flags
 ck_has "churn table row"     "| TT-1 | \`abc12345\` | passed-after-fixes | 3 | 4 | 1/1/2 |" "$MD"
@@ -144,6 +175,35 @@ ck_has "no-verdict flag"     "Shipped with no persisted review verdict**: TT-2" 
 ck_has "off-schema flag"     "Off-schema verdict body**: TT-4 (no Findings resolved line)" "$MD"
 ck_has "off-schema ? render" "| TT-4 | \`-\` | passed-after-fixes | 2 | ? |" "$MD"
 ck_has "origin coverage"     "origin-tagged 4/6" "$MD"
+ck_has "ledgerless flag"     "\`def45678\` ran without a surviving ledger" "$MD"
+ck_has "ledgerless names it" "no \`tmp/auto-state-def45678.json\`" "$MD"
+ck_has "ledgerless rec dash" "| \`def45678\`  ⚠ | 0.5h | -/1 | -/0 |" "$MD"
+# "Step 4 never ran" is the wrong diagnosis for a deleted ledger — Step 4 did run. Not double-flagged.
+ck_lacks "no double flag"    "\`def45678\` shipped without recording it" "$MD"
+
+# ---- total-loss fixture: every ledger GC'd, transcripts intact ----
+# The worst case of the 2026-08-04 fault, taken to its limit. Before the discovery pass this exited
+# 1 with "No auto-state files", i.e. a fleet that shipped real work reported as never having run.
+CK2="$WORK/checkout2"
+mkdir -p "$CK2/tmp"
+git -C "$CK2" init -q 2>/dev/null
+git -C "$CK2" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "init"
+M2="$(git -C "$CK2" rev-parse --show-toplevel | tr / -)"
+mkdir -p "$WORK/projects/$M2"
+cat > "$WORK/projects/$M2/aaa11111-0000.jsonl" <<'EOF'
+{"type":"user","timestamp":"2026-08-04T09:00:00Z","message":{"role":"user","content":"<command-name>/auto</command-name><command-args>TT-5</command-args>"}}
+{"type":"assistant","timestamp":"2026-08-04T09:40:00Z","message":{"role":"assistant","id":"msg_F","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":120},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-5 done"}]}}
+EOF
+J2="$WORK/out2.json"
+if CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK2" --all --json > "$J2" 2>/dev/null; then
+  PASS=$((PASS+1))
+else
+  FAIL=$((FAIL+1)); echo "FAIL: total-loss run exited non-zero — a ledger-less fleet must still report"
+fi
+q2() { python3 -c "import json,sys; d=json.load(open('$J2')); print($1)"; }
+ck "total-loss session"  "1"        "$(q2 "len(d['sessions'])")"
+ck "total-loss flagged"  "True"     "$(q2 "d['sessions'][0]['ledger_missing']")"
+ck "total-loss ships"    "['TT-5']" "$(q2 "d['sessions'][0]['observed_shipped']")"
 
 echo
 echo "$PASS passed / $FAIL failed"

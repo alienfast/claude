@@ -113,6 +113,28 @@ if [ ${#dur_tokens[@]} -gt 0 ]; then
   deadline_human=$(date -r "$deadline_epoch" '+%Y-%m-%d %H:%M %Z' 2>/dev/null || date -d "@$deadline_epoch" '+%Y-%m-%d %H:%M %Z')
 fi
 
+# Preflight: /auto Step 1 halts on a dirty main checkout it cannot attribute to an in-progress
+# issue, and every session re-discovers that independently — so one uncommitted file kills the
+# whole fleet, N times over, in under two minutes each. Observed 2026-08-04: a 6-line
+# .claude/rules/bash.md edit on a branch with no issue ID halted all three sessions of a launch
+# (19:44/19:47/19:50), and only a human committing it at 19:56 saved the run. Check once, here,
+# before anything is dispatched or the deadline marker is touched.
+dirty=$(git -C "$main_checkout" status --porcelain 2>/dev/null || true)
+if [ -n "$dirty" ]; then
+  branch=$(git -C "$main_checkout" branch --show-current 2>/dev/null || true)
+  if printf '%s' "$branch" | grep -qiE '[a-z]{2,}-[0-9]+'; then
+    echo "WARN: main checkout is dirty on '$branch', which carries an issue ID — each session's /auto will" >&2
+    echo "      try to attribute and finish that work before picking. Launching anyway." >&2
+  else
+    echo "ERROR: main checkout is dirty and the branch carries no issue ID — every session would halt at" >&2
+    echo "       /auto's Step 1 preflight (AUTO-HALTED: dirty working tree ... not attributable)." >&2
+    echo "       branch: ${branch:-(detached)}" >&2
+    printf '%s\n' "$dirty" | sed 's/^/       /' >&2
+    echo "       Commit or stash the above, then re-run. Nothing was dispatched." >&2
+    exit 1
+  fi
+fi
+
 # A stale marker from a previous fleet would end every new loop at its first pick —
 # always clear it; write a fresh one only when this launch carries a duration.
 rm -f "$marker"

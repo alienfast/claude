@@ -20,7 +20,10 @@ WHAT IT READS
 
 Sessions are discovered from state files, then matched to transcripts by runKey (a state file's key
 is the leading segment of its session UUID). A session whose state file says nothing shipped may
-still have shipped — that mismatch is itself a finding (BF-695), so both are reported.
+still have shipped — that mismatch is itself a finding (BF-695), so both are reported. A SECOND pass
+then sweeps the same transcript dirs for /auto sessions with no state file at all and reports them
+flagged: /auto's Step 0 GC can delete a finished run's ledger, and a fleet measured only from the
+survivors reads as smaller and healthier than it was (2026-08-04: 2 of 4 sessions, 7 of 12 ships).
 
 Usage:
   fleet-metrics.py [--checkout DIR] [--since YYYY-MM-DD | --hours N | --all] [--json]
@@ -121,6 +124,40 @@ def load(path):
             except json.JSONDecodeError:
                 continue  # a half-flushed final line is normal on a live session
     return rows
+
+
+def is_auto_session(path, probe_lines=60):
+    """True when this transcript's opening prompt is /auto or /loop /auto.
+
+    Session discovery cannot rest on state files alone: /auto's Step 0 GC deletes sibling state
+    files, so a finished run's ledger can be gone before the retro reads it — and then the whole
+    session, transcripts included, is invisible here. Reported as a smaller, healthier fleet, which
+    is the worst possible failure for a tool whose one job is to measure. Observed 2026-08-04: two
+    of four sessions (10.2h, 7 of 12 ships) vanished exactly this way. Streams the head of the file
+    rather than load()ing it — this runs over every transcript in every matching project dir."""
+    try:
+        with path.open(errors="replace") as fh:
+            for _ in range(probe_lines):
+                line = fh.readline()
+                if not line:
+                    break
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if row.get("type") != "user":
+                    continue
+                text = text_of((row.get("message") or {}).get("content"))
+                if not text:
+                    continue
+                if "<command-name>/auto</command-name>" in text:
+                    return True
+                if "<command-name>/loop</command-name>" in text and "/auto" in text:
+                    return True
+                return False  # first human turn was something else — not an /auto run
+    except OSError:
+        return False
+    return False
 
 
 def subagent_type_of(path):
@@ -317,17 +354,10 @@ def main():
         except (json.JSONDecodeError, OSError):
             continue
 
-    if not states:
-        print(f"No auto-state files under {checkout}/tmp matching the window. "
-              f"Try --hours/--since/--all.", file=sys.stderr)
-        return 1
-
     mangled = str(checkout).replace("/", "-")
     dirs = [d for d in PROJ.glob(f"{mangled}*") if d.is_dir()]
 
-    sessions = []
-    for path, state, mtime in states:
-        run_key = path.stem.replace("auto-state-", "")
+    def measure(run_key, state, mtime, ledger_missing=False):
         agg = new_agg()
         transcripts = []
         for d in dirs:
@@ -339,8 +369,41 @@ def main():
                 scan_transcript(tpath, agg, subagent_type_of(tpath))
             else:
                 scan_transcript(tpath, agg)
-        sessions.append({"run_key": run_key, "state": state, "state_mtime": mtime,
-                         "transcripts": len(transcripts), "agg": agg})
+        return {"run_key": run_key, "state": state, "state_mtime": mtime,
+                "ledger_missing": ledger_missing,
+                "transcripts": len(transcripts), "agg": agg}
+
+    # Second discovery pass: an /auto session whose ledger no longer exists. See is_auto_session —
+    # a deleted state file must surface as a flagged session, never as a fleet that was one session
+    # smaller than it really was. Keyed on the transcript stem's leading segment, which is what
+    # /auto uses for <runKey>.
+    ledgerless = []
+    state_keys = {p.stem.replace("auto-state-", "") for p, _, _ in states}
+    seen_keys = set(state_keys)
+    for d in dirs:
+        for tpath in sorted(d.glob("*.jsonl")):
+            run_key = tpath.stem.split("-")[0]
+            if run_key in seen_keys:
+                continue
+            mtime = datetime.fromtimestamp(tpath.stat().st_mtime, timezone.utc)
+            if cutoff and mtime < cutoff:
+                continue
+            if not is_auto_session(tpath):
+                continue
+            seen_keys.add(run_key)
+            ledgerless.append((run_key, mtime))
+
+    if not states and not ledgerless:
+        print(f"No auto-state files or /auto transcripts under {checkout}/tmp matching the window. "
+              f"Try --hours/--since/--all.", file=sys.stderr)
+        return 1
+
+    sessions = []
+    for path, state, mtime in states:
+        sessions.append(measure(path.stem.replace("auto-state-", ""), state, mtime))
+    for run_key, mtime in ledgerless:
+        sessions.append(measure(run_key, {}, mtime, ledger_missing=True))
+    sessions.sort(key=lambda s: s["agg"]["first"] or datetime.max.replace(tzinfo=timezone.utc))
 
     all_shipped = set()
     issue_run = {}
@@ -376,6 +439,7 @@ def main():
                 "recorded_canceled": s["state"].get("canceled") or [],
                 "observed_canceled": sorted(s["agg"]["cancel_tags"]),
                 "status": s["state"].get("status"), "reason": s["state"].get("reason"),
+                "ledger_missing": s["ledger_missing"],
                 "span_h": round(((s["agg"]["last"] - s["agg"]["first"]).total_seconds() / 3600), 2)
                           if s["agg"]["first"] and s["agg"]["last"] else None,
                 "wakeups": s["agg"]["wakeups"], "wakeup_stops": s["agg"]["wakeup_stops"],
@@ -416,9 +480,11 @@ def main():
         span = ((a["last"] - a["first"]).total_seconds() / 3600) if a["first"] and a["last"] else 0.0
         rec, obs = len(s["state"].get("shipped") or []), len(a["ship_tags"])
         crec, cobs = len(s["state"].get("canceled") or []), len(a["cancel_tags"])
+        if s["ledger_missing"]:
+            rec, crec = "-", "-"   # no ledger to record against; obs is the only truth for this row
         blind_pct = f"{a['sleep_blind_s'] / 3600:.1f}h ({100 * a['sleep_blind_s'] / (span * 3600):.0f}%)" if span else "-"
         unrecorded = a["ship_tags"] - set(s["state"].get("shipped") or [])
-        flag = "  ⚠" if (a["wakeups"] == 0 and a["loop_firings"]) or unrecorded else ""
+        flag = "  ⚠" if (a["wakeups"] == 0 and a["loop_firings"]) or unrecorded or s["ledger_missing"] else ""
         print(f"| `{s['run_key']}`{flag} | {span:.1f}h | {rec}/{obs} | {crec}/{cobs} | "
               f"{a['wakeups']} ({a['wakeup_stops']} stop) | "
               f"{a['dispatch']['background']}/{a['dispatch']['sync']} | {blind_pct} | "
@@ -481,6 +547,15 @@ def main():
     for s in sessions:
         a, st = s["agg"], s["state"]
         rec, obs = set(st.get("shipped") or []), a["ship_tags"]
+        if s["ledger_missing"]:
+            flagged = True
+            span = ((a["last"] - a["first"]).total_seconds() / 3600) if a["first"] and a["last"] else 0.0
+            print(f"- **`{s['run_key']}` ran without a surviving ledger** — an /auto session spanning "
+                  f"{span:.1f}h with {len(obs)} observed ship(s) ({', '.join(sorted(obs)) or 'none'}) and "
+                  f"no `tmp/auto-state-{s['run_key']}.json`. Its run bookkeeping was deleted (usually by "
+                  f"a sibling's /auto Step 0 GC) or never written; the shipped/canceled/skipped/failed "
+                  f"counts for this row come from transcript tags alone and undercount if the session "
+                  f"was compacted.")
         if a["loop_firings"] and a["wakeups"] == 0:
             flagged = True
             print(f"- **`{s['run_key']}` never armed a ScheduleWakeup** across {a['loop_firings']} "
@@ -489,7 +564,9 @@ def main():
         # Only an UNRECORDED ship is a fault. The reverse — recorded issues absent from the
         # transcript — is the ordinary result of a compacted session losing its earlier tags, and
         # flagging it buries the real signal under a false one on every long-running session.
-        if obs - rec:
+        # Skipped when the ledger is gone entirely: "Step 4 never ran" would be a wrong diagnosis
+        # (it did run; the file it wrote was deleted), and the ledger-missing flag above says it.
+        if (obs - rec) and not s["ledger_missing"]:
             flagged = True
             print(f"- **`{s['run_key']}` shipped without recording it** — transcript shows "
                   f"{sorted(obs - rec)}, absent from the state file (recorded {sorted(rec) or '[]'}). "
