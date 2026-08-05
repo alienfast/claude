@@ -50,7 +50,7 @@ Issues parked behind a human decision keep `specified` plus a `needs decision` l
 ~/.claude/scripts/next-candidates.sh --label 'needs decision' --include-blocked --limit 10
 ```
 
-Present any hits as a separate **awaiting a decision** group alongside the uncertified list: grooming one means making and recording the decision in the interview, after which certification clears the label (Step 6 item 5). Then let the user pick one from either group (AskUserQuestion, top candidates as options). Both lists empty → `Everything workable is already certified.` and stop.
+Present any hits as a separate **awaiting a decision** group alongside the uncertified list: grooming one means making and recording the decision in the interview, after which certification clears the label (Step 6 item 5). Present the roster as text first — one line per candidate, `ID — title`, plus a clause on why it ranks (tier, priority, Triage inbox, blocked-but-certifiable) — then AskUserQuestion with the top candidates as options: issue ID as the label, title + gist as the description. The dialog is where the user decides, so it must be legible on its own — a bare-ID option list sends them to Linear to find out what they're choosing. Both lists empty → `Everything workable is already certified.` and stop.
 
 ### Step 2: Research (read-only)
 
@@ -76,9 +76,12 @@ Present any hits as a separate **awaiting a decision** group alongside the uncer
 
 ### Step 3: Interview the user
 
-Present the research findings first (current behavior, related issues, anything that reframes the request), then elicit what the quality bar needs: problem + who's affected, desired outcome, success criteria, scope boundaries (at least one explicit exclusion), priority, estimate.
+**Issue brief first — the user answers from your summary, never from a Linear tab.** Immediately before the first AskUserQuestion — so it sits directly above the dialog, not scrolled away behind research narration — emit a compact brief: `<ID> — <title>`; state / priority / estimate / labels; a 2–4 sentence digest of the description as filed (what's being asked and why); anything load-bearing from the comments; and the research findings that reframe the request (current behavior, related issues). This is the recurring failure the brief exists to prevent: interview questions arriving unanchored, and the user opening Linear mid-interview to work out what issue they're even deciding about.
+
+Then elicit what the quality bar needs: problem + who's affected, desired outcome, success criteria, scope boundaries (at least one explicit exclusion), priority, estimate.
 
 - Use AskUserQuestion with batched questions and **pre-filled drafts as options** — the user corrects rather than authors.
+- Each dialog stands alone: a later batch may arrive long after the brief scrolled by, so restate in the question text the sliver of context that decision needs (what the trade-off is, what the draft currently says) rather than assuming the brief is still on screen.
 - Skip what the issue + research already answer confidently — confirm, don't re-ask.
 - Iterate until every quality-bar item can be checked honestly.
 
