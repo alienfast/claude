@@ -17,11 +17,11 @@ This started as a fix for one problem and grew into an opinionated operating sys
 - **Safety rails and quality gates** baked in as hooks — destructive git commands blocked, Biome and markdownlint auto-fixing every edit.
 - **Codified standards and path-scoped rules** so every agent shares the same conventions for git, commenting, problem-solving, and language-specific style.
 
-The [developer workflow](#developer-workflow) below ties these together end to end.
+[How we use it](#how-we-use-it) below ties these together end to end.
 
-## Developer workflow
+## How we use it
 
-A research-augmented path for shipping something large, from raw idea to merged code.
+Top-down, in the order the work actually flows: research the idea, turn it into certified Linear issues, then ship the backlog with a fleet. The hands-on tiers below that — targeted `/auto`, `/full`, `/start`/`/finish` — are the same machinery driven one step at a time, for when a single issue needs your judgment mid-flight.
 
 ### 1. Research & plan
 
@@ -30,7 +30,7 @@ A research-augmented path for shipping something large, from raw idea to merged 
 | Research | `/do research foo bar baz, write your analysis to doc/analysis-foo.md` | Delegates to research agents; lands an analysis doc you can review |
 | Plan | `Read @doc/analysis-foo.md and create an implementation plan as doc/plan-foo.md` | Use plan mode. Consider workstreams and agent teams unless single-threaded |
 
-### 2. Create & prioritize issues
+### 2. Seed & certify the backlog
 
 | Step | Command | Notes |
 | ---- | ------- | ----- |
@@ -40,20 +40,35 @@ A research-augmented path for shipping something large, from raw idea to merged 
 | Prioritize | Move stage 1 to "Planned", stage 2 to "Backlog" | |
 | Certify | `/spec` | Interviews you, rewrites the issue in the canonical spec shape, and adds the `specified` label — the certification gate [`/auto`](#autonomous-auto) requires. Interactive only; no args surfaces the top uncertified issues, including the Triage inbox |
 
-### 3. Build loop
+### 3. Ship with a fleet
 
-Per issue, the loop is two commands — `/start` then `/finish`:
+The primary shipping mode: N parallel autonomous sessions draining the certified backlog as background agents in `claude agents`, bookended by prep and retro.
 
 | Step | Command | Notes |
 | ---- | ------- | ----- |
-| Build | `/start PL-12` | Assigns, creates branch, plans, implements, then auto-runs `/quality-review`. Append `wt` to work in an isolated worktree |
-| Finish | `/finish` | Reads the review verdict, commits, pushes, marks Ready For Release |
+| Prep | `/auto-prep` | Certification honesty audit (the `needs decision` / `solo` / `human` gates), family consolidation, `blocks` edges between file-colliding issues, and a recommended session count — interactive; run it before every launch |
+| Launch | `/fleet-launch 3 10 hours` | Staggered background sessions. Count defaults to prep's persisted recommendation (an explicit count is your quota throttle); the duration winds the fleet down cleanly at the deadline |
+| Watch | `/fleet-status` | One screen, any time, read-only: time remaining, per-session shipped/failed ledgers with liveness, in-flight issues, merges cross-checked against git, remaining runway |
+| End early | `/fleet-launch stop` | Rationing quota or done for the day — ends the timer; in-flight issues finish; nothing is killed |
+| Post-mortem | `/fleet-retro` | Where the capacity went, what the run filed, what to fix before the next launch — its findings feed the next `/auto-prep` |
 
-Or collapse both into one: `/full PL-12` runs `/start` → `/quality-review` → `/finish` end to end, gated on the review verdict, pausing only for plan approval and the deferred-items decision. Append `wt` to run it in an isolated worktree.
+Top-ups compose (`/fleet-launch 2 <remaining>` adds two sessions) — but every launch resets the shared deadline, so re-pass the remaining duration. What keeps N sessions honest is the label contract ([standards/issue-spec.md](standards/issue-spec.md)) plus worktree isolation and the serialized merge — see [Parallel safety](#parallel-safety).
 
-### Parallelism
+### Stepping down: one loop, one issue, one command
 
-The `wt` token is what makes fan-out safe. Spin up several concurrent Claude agents — one per issue — and let each drive a `wt` run at the same time:
+Every tier runs the same pipeline (`/start` → `/quality-review` → `/finish`); each step down trades autonomy for control.
+
+| Tier | Command | You decide | It decides |
+| ---- | ------- | ---------- | ---------- |
+| One autonomous session | `/loop /auto` | when to stop | everything else |
+| Targeted auto | `/auto BF-123` | the issue | plan, review, merge — fully unattended |
+| End-to-end, attended | `/full wt BF-123` | the issue, plan approval, the deferred-items call | implementation and review flow |
+| Two-command loop | `/start wt BF-123` … `/finish` | everything above, plus when to finish | review still runs inside `/start` |
+| Human in a worktree | `/start interactive BF-123` | all of it — claims the issue, sets up the isolated worktree, hands off | nothing |
+
+### Parallel safety
+
+The `wt` token is what makes fan-out safe — it is how every fleet session runs, and the same mechanics protect a hand-driven fan-out:
 
 ```text
 agent 1:  /full wt PL-1
@@ -83,7 +98,7 @@ Reach for these as needed — between loop steps or on their own:
 
 ## Autonomous (`/auto`)
 
-The developer workflow above is hands-on: you pick issues and drive `/full` per issue. `/auto` is the same machinery with the human taken out of the pick-and-ship loop — or, in targeted mode, out of everything but the pick — and `/loop` is what keeps it running unattended.
+`/auto` is the engine every fleet session runs — the pick-and-ship loop with the human taken out, or in targeted mode out of everything but the pick — and `/loop` is what keeps it running unattended. `/fleet-launch` dispatches N of these as background agents; this section is the single-session mechanics reference.
 
 - **`/auto`** ships **exactly one Linear issue per invocation**, end to end: finish any in-flight work, pick the best unblocked issue via `/next specified` (certified issues only), ship it via `/full auto wt`, record the outcome. Worktree mode is always on (so successive issues chain without stacking branches), and every underlying `auto` default chooses abort/preserve over guess — the worst acceptable outcome is "nothing happened and Linear says why," never "something wrong shipped." Invoking `/auto` **is** the run-scoped grant for the commits and pushes it makes (see [standards/git.md](standards/git.md)).
 - **`/auto BF-123`** is **targeted mode** — same run, your pick. It skips the `/next` pick and ships exactly that issue: still certified-only (the issue must carry the `specified` label — `/spec` it first if not, or drop to `/full wt BF-123` for an interactive run), still always-worktree, still the full unattended gauntlet (plan composed and posted to Linear with no approval pause, adversarial review, finish/merge, a Linear comment on failure). One-shot by nature — run it directly, not under `/loop`. This is the middle ground between driving `/full wt` by hand and letting the loop choose.
@@ -152,22 +167,27 @@ Automated multi-step workflows invoked by trigger phrases or slash commands.
 
 **Linear Integration:** ([see CLI](https://github.com/Finesssee/linear-cli))
 
+In workflow order — seed, certify, fleet, then the per-issue tiers and upkeep:
+
 | Skill | Description |
 |-------|-------------|
 | [linear](skills/linear/) | `linear-cli` quick-reference — the gotchas (anchored comments, dependency graph, parent-linked create) + helper scripts |
+| [prd](skills/prd/) | Create agent-friendly tickets with PRDs and success criteria |
+| [spec](skills/spec/) | Groom and certify an issue into a `specified` spec — the certification gate `/auto` requires |
+| [triage](skills/triage/) | Analyze backlog for staleness, blockers, and priority suggestions |
+| [next](skills/next/) | Suggest best next issue using cycle, dependency, and triage signals |
+| [auto-prep](skills/auto-prep/) | Fleet prep — certification honesty audit (`needs decision` / `solo` / `human`), family consolidation, collision `blocks` edges, recommended session count |
+| [fleet-launch](skills/fleet-launch/) | Launch N parallel `/loop /auto` background sessions, staggered and deadline-bounded; `stop` ends a run early, letting in-flight work finish |
+| [fleet-status](skills/fleet-status/) | Read-only mid-run readout — time remaining, per-session ledgers with liveness, in-flight issues, merges cross-checked against git, runway |
+| [fleet-retro](skills/fleet-retro/) | Post-mortem a finished fleet — capacity metrics, filed-issue audit, state reconciliation; feeds the next prep |
+| [auto](skills/auto/) | Autonomous backlog iteration — ships one issue per invocation; run continuously as `/loop /auto` (see [Autonomous](#autonomous-auto)) |
+| [full](skills/full/) | End-to-end macro: `/start` → `/quality-review` → `/finish`, gated on verdict |
 | [start](skills/start/) | Start a Linear issue — check blockers, assign, create branch, plan, execute, auto-review |
 | [checkpoint](skills/checkpoint/) | Save progress — commit WIP and post progress update to Linear |
 | [quality-review](skills/quality-review/) | Adversarial review + triage/fix loop until convergence (gates `pnpm check`) |
 | [finish](skills/finish/) | Finish an issue — read verdict, commit/push, mark Ready For Release |
-| [full](skills/full/) | End-to-end macro: `/start` → `/quality-review` → `/finish`, gated on verdict |
-| [auto](skills/auto/) | Autonomous backlog iteration — ships one issue per invocation; run continuously as `/loop /auto` (see [Autonomous](#autonomous-auto)) |
-| [auto-prep](skills/auto-prep/) | Fleet prep before parallel `/loop /auto` sessions — audit `specified` labels for unattended-shippability, wire `blocks` edges between file-colliding candidates, recommend a session count |
-| [next](skills/next/) | Suggest best next issue using cycle, dependency, and triage signals |
-| [triage](skills/triage/) | Analyze backlog for staleness, blockers, and priority suggestions |
-| [prd](skills/prd/) | Create agent-friendly tickets with PRDs and success criteria |
-| [spec](skills/spec/) | Groom and certify an issue into a `specified` spec — the certification gate `/auto` requires |
-| [reap-worktrees](skills/reap-worktrees/) | Inspect and reclaim leftover `/start wt` worktrees (PR/branch merged, or issue Done/Canceled) |
 | [merge-queue](skills/merge-queue/) | Inspect and drain `/finish` merges that were deferred, then retried by the launchd drainer |
+| [reap-worktrees](skills/reap-worktrees/) | Inspect and reclaim leftover `/start wt` worktrees (PR/branch merged, or issue Done/Canceled) |
 | [reflect](skills/reflect/) | Turn session friction into shared-config edits — auto-applies the safe ones, files the rest as certified Linear issues (auto-runs at the `/quality-review` tail; `sweep` mode audits a project's config against its codebase) |
 
 **Development skills:**
