@@ -12,7 +12,7 @@ Turns a rough human-entered issue into a **certified spec** and marks it `specif
 
 ## Interactive-only — refuse autonomous contexts
 
-`/spec` interviews a human and requires explicit signoff; there is no autonomous mode. If invoked with an `auto` token, or from an unattended context with no user to interview, stop immediately: `ERROR: /spec is interactive-only — it needs a human for the interview and signoff. Run it directly.` `/auto` never dispatches `/spec`; its NO-CANDIDATES message only *suggests* a human run it.
+`/spec` interviews a human and requires signoff (Step 5 — implicit for a purely-codifying draft, explicit on divergence); there is no autonomous mode. If invoked with an `auto` token, or from an unattended context with no user to interview, stop immediately: `ERROR: /spec is interactive-only — it needs a human for the interview and signoff. Run it directly.` `/auto` never dispatches `/spec`; its NO-CANDIDATES message only *suggests* a human run it.
 
 ## When to Use
 
@@ -85,13 +85,26 @@ Then elicit what the quality bar needs: problem + who's affected, desired outcom
 - Skip what the issue + research already answer confidently — confirm, don't re-ask.
 - Iterate until every quality-bar item can be checked honestly.
 
+**Decisive for autonomous processing is the bar — the spec's consumer is an unattended session that cannot ask anything.** "Groomed" means every judgment call the implementation will face is either answered in the spec or explicitly excluded. When the interview surfaces an open question, do not certify around it — route by what is missing:
+
+- **Continue the interview** until the spec is decisive — the default; most gaps close with one more batched question.
+- **A named human decision the user is not ready to make** → finish the spec, certify, and park it: `~/.claude/scripts/linear-add-label.sh <ID> 'needs decision'` plus a comment naming the pending decision (the certified-but-parked state from `standards/issue-spec.md`, hidden from every ranking until the label clears — see Step 6 item 5 for the ordering).
+- **The work turns out human-performed** with no agent-shippable slice → apply the `human` label instead and skip certification.
+
+An indecisive spec certified anyway does not ship — it burns an `/auto` slot and comes back as a skip or a review block.
+
 ### Step 4: Draft the spec
 
 Write `tmp/spec-<id-lowercase>.md` in the canonical template shape ([standards/issue-spec.md](../../standards/issue-spec.md)). Append the original human text verbatim as a trailing `## Original request` blockquote (from the raw description captured in Step 2). Omit that section only when the original description is empty or already spec-shaped (e.g. re-grooming a `/prd`-created body — edit in place instead of quoting). Self-check against the quality bar before presenting.
 
-### Step 5: Signoff — hard gate
+### Step 5: Signoff — implicit when the draft only codifies the interview
 
-Show the user the full draft. Iterate until they explicitly approve. No approval → stop; nothing has been written to Linear.
+Show the user the full draft either way — it is the artifact about to overwrite the Linear description, and it must be visible in chat before it lands. Whether to *ask* is what graduates:
+
+- **Faithful codification → no approval prompt.** If every substantive element of the draft — problem, outcome, each success criterion, each scope exclusion, priority, estimate — traces to an interview answer the user gave or corrected, to the issue's own description and comments, or to template boilerplate, the interview already WAS the approval. Asking again re-asks settled questions. State in one line that the draft codifies the interview answers unchanged, present it, and proceed directly to Step 6.
+- **Material divergence → explicit approval, asked on the delta.** If the draft carries anything the interview never put to the user — a research-driven reframing, a criterion or exclusion you authored rather than they selected, a scope change discovered after their answers — lead with that delta (what is new and why), then iterate until they explicitly approve it. No approval → stop; nothing has been written to Linear.
+
+Cheapest way to stay on the first branch: when drafting surfaces something new, fold it into a final interview batch as pre-filled options (Step 3's correct-don't-author pattern) rather than carrying it silently into the draft.
 
 ### Step 6: Apply to Linear (order matters)
 
@@ -118,9 +131,9 @@ Show the user the full draft. Iterate until they explicitly approve. No approval
    ~/.claude/scripts/linear-remove-label.sh <ID> 'needs decision'
    ```
 
-   Read-merge-set — never a bare `issues update -l`, which replaces the whole label set. Exit 2 on the add → the spec landed but the issue is **not** certified: surface the helper's pointer, report certification incomplete, and skip items 6–7. The removal is a no-op when the label is absent; when present, this certification is exactly what clears it — the interview recorded the decision the label was waiting on (`standards/issue-spec.md`).
+   Read-merge-set — never a bare `issues update -l`, which replaces the whole label set. Exit 2 on the add → the spec landed but the issue is **not** certified: surface the helper's pointer, report certification incomplete, and skip items 6–7. The removal is a no-op when the label is absent; when present, this certification is exactly what clears it — the interview recorded the decision the label was waiting on (`standards/issue-spec.md`). The one exception: when this run is what parked the issue (Step 3's decisiveness rule left a named decision open), skip the removal and instead apply the label — with its naming comment — right after `specified` attaches.
 6. **Collision edges — wire them now; prose is not a control.** Certification is what makes this issue pickable by `/auto`, and grooming is the moment its touched files/methods are actually known (Step 2 just read the code) — so this is the cheapest and last reliable point to make sequencing mechanical (`/auto-prep` re-derives collisions later from description text alone, and the quality bar keeps file lists out of descriptions). Check the issue (and every sub-issue just created) against other open issues touching the same code — including issues certified earlier in the same session, which are the commonest colliders. Beyond those, run 2–3 `linear-cli search issues "<token>"` probes on the change's most distinctive single tokens — method/predicate names, distinctive file basenames (skip generic ones like `SKILL.md`, `CLAUDE.md`, or `README.md` — substitute a method/predicate token, the skill's directory name, the full repo-relative path of a nested file, or the project name for a project `CLAUDE.md` or a repo-root `README.md`, whose path is just the bare basename), one token per call, never a composed phrase (matches are contiguous substrings) — and read the non-terminal hits for file overlap. Calibration:
-   - **Same file or same method** → `linear-cli relations add <BLOCKER> <BLOCKED> -r blocks` (blocker = the logically-prior issue; when no order is discernible, the earlier/already-open one). When the collider is uncertified, `needs decision`, or `solo`, use `related` + comment instead — a blocks edge behind a never-unattended-shipping blocker strands this issue (standards/issue-spec.md). For a `blocks` edge, verify it took (`linear-cli relations list <BLOCKED>`) and confirm the blocked issue no longer appears in `~/.claude/scripts/next-candidates.sh` output — run it with a generous `--limit` (the default is 3, so absence at the default limit can be truncation, not blocking — and a `solo` label alone also hides the issue there, independent of any edge); a `related` edge changes no ranking, so that absence check does not apply to it.
+   - **Same file or same method** → `linear-cli relations add <BLOCKER> <BLOCKED> -r blocks` (blocker = the logically-prior issue; when no order is discernible, the earlier/already-open one). When the collider is uncertified, `needs decision`, or `solo`, use `related` + comment instead — a blocks edge behind a never-unattended-shipping blocker strands this issue (standards/issue-spec.md). For a `blocks` edge, verify it took (`linear-cli relations list <BLOCKED>`) and confirm the blocked issue no longer appears in `~/.claude/scripts/next-candidates.sh` output — run it with a generous `--limit` (the default is 3, so absence at the default limit can be truncation, not blocking — and a `solo` label alone also hides the issue there, independent of any edge); a `related` edge changes no ranking, so that absence check does not apply to it. When reporting blocker status anywhere in this skill, use the ranking's own semantics: a blocker in `Done`, `Canceled`, `Duplicate`, or `Ready for Release` (the script's `TERMINAL_STATES`, matched case-insensitively) is RESOLVED — Linear's UI shows a `blocks` relation as blocking until the issue closes, and repeating that framing misreports shipped blockers as still open.
    - **Disjoint files sharing a mechanism** (a concern or helper both are likely to reach for) → `-r related` plus a comment naming the mechanism; don't serialize speculatively.
    - **No overlap** → no edge.
 
@@ -139,7 +152,7 @@ Compact summary: what was rewritten, Triage → Planned (if moved), label applie
 
 - **No implementation planning** — no technical approach, no step-by-step code plan, no key-file lists, no verification-command blocks. `/start` Step 6 (plan mode) owns all of that.
 - **No claiming** — no assignment, no In Progress, no branch creation, no code edits.
-- **No certification without signoff** — Step 5 is a hard gate; a spec the user never approved never gets the label.
+- **No certification without signoff** — Step 5's approval is implicit only for a draft that purely codifies the interview answers; a spec carrying material the user never saw or approved never gets the label.
 
 ## Error Handling
 

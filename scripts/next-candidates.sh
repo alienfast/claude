@@ -432,13 +432,16 @@ candidates_json=$(jq \
           is_reflection: ((($i.labels // []) | map(ascii_downcase)) as $ls
             | (($ls | index("specified")) != null and ($ls | index("reflection")) != null)),
           is_keeper: (((($i.labels // []) | map(ascii_downcase)) | index("keeper")) != null),
-          # Urgent — and only Urgent — pierces the class ordering below: it is a rare,
-          # deliberate human "drop everything" escalation, and a bulk-applied category
-          # label must not overrule it. Agreed with Blake (BF-583).
+          # Urgent — and only Urgent — pierces the class ordering below WITHIN a stage: it is
+          # a rare, deliberate human "drop everything" escalation, and a bulk-applied category
+          # label must not overrule it (BF-583). It does NOT pierce workflow stage — see
+          # state_rank, which sorts ahead of it (keeper decision 2026-08-05, narrowing the
+          # BF-583 pierce-everything rule: an Urgent Backlog issue is still deferred work).
           urgent_first: (if $i.priority == 1 then 0 else 1 end),
           # Backlog is a deliberate human deferral, and the only planning signal in the pool
-          # a person sets by hand — so it outranks the class ordering too: bouncing an area
-          # of work to Backlog has to actually defer it, defect labels included. Keyed on
+          # a person sets by hand — so it outranks the class ordering AND priority, Urgent
+          # included: Planned/Todo drains fully before any Backlog issue is offered (keeper
+          # decision 2026-08-05 — bouncing work to Backlog has to actually defer it). Keyed on
           # state TYPE so a renamed workable state still sorts right; the name check covers a
           # team that renamed a state without changing its type. Triage is deliberately left
           # at 0 — the only mode that admits it is --include-triage grooming discovery (used
@@ -525,9 +528,10 @@ fi
 # can be newly_unblocked and still have another, unrelated open blocker.
 #
 # Most candidates land in tier 4, so the within-tier order below is what actually ranks the
-# pool: urgent_first > state_rank (Planned/Todo 0 before Backlog 1) > class_rank (security 0
-# > bug 1 > other 2 — defects ship before improvements, but within a stage) > priority >
-# spread_penalty (sibling in flight under the same parent) > estimate.
+# pool: state_rank (Planned/Todo 0 drains fully before Backlog 1 — Urgent included) >
+# urgent_first > class_rank (security 0 > bug 1 > other 2 — defects ship before improvements,
+# but within a stage) > priority > spread_penalty (sibling in flight under the same parent) >
+# estimate.
 ranked_json=$(printf '%s' "$candidates_json" | jq '
   map(
     . + {
@@ -544,7 +548,7 @@ ranked_json=$(printf '%s' "$candidates_json" | jq '
     # else the pool excludes it), so it front-runs project-level reflection filings.
     | . + { keeper_rank: (if .tier == 0 and .is_keeper then 0 else 1 end) }
   )
-  | sort_by([.tier, .keeper_rank, .urgent_first, .state_rank, .class_rank, .priority_rank, .spread_penalty, .estimate])
+  | sort_by([.tier, .keeper_rank, .state_rank, .urgent_first, .class_rank, .priority_rank, .spread_penalty, .estimate])
 ')
 
 # ---------- parent walk for top-K ----------
@@ -673,7 +677,7 @@ if [ "$parent_walk" -eq 1 ] && [ -n "$top_ids" ]; then
             delegated_open: (if $kids != null then $kids.open else 0 end)
           }
       )
-      | sort_by([.delegated_penalty, .tier, .keeper_rank, .urgent_first, .state_rank, .class_rank, .priority_rank, .spread_penalty,
+      | sort_by([.delegated_penalty, .tier, .keeper_rank, .state_rank, .urgent_first, .class_rank, .priority_rank, .spread_penalty,
                  .parent_weight, .estimate])
     ')
 fi
