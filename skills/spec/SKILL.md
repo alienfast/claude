@@ -119,6 +119,7 @@ Cheapest way to stay on the first branch: when drafting surfaces something new, 
    ```bash
    ~/.claude/scripts/linear-create-child.sh <ID> <TEAM> Planned "<title>" <body-file>
    linear-cli relations add <BLOCKER> <BLOCKED> -r blocks     # blocker FIRST (blocked-by 400s in every published version through 0.3.27)
+   ~/.claude/scripts/linear-add-label.sh <ID> epic            # the groomed issue is now a delegated epic — its children carry the work
    ```
 
    Each child is certified too (item 5 applies to every created issue).

@@ -58,3 +58,5 @@ Any Linear issue created as a follow-up from another issue's workflow (deferred 
 Do not hand-roll create-then-link in a skill (`linear-cli issues create ...` followed by a separate `relations parent`/`issues update --data '{"parentId":...}'`). An un-verified second call is easy to skip when filing several issues in a row, easy to silently fail (the new issue already exists, so the workflow looks successful), and easy to mis-substitute when `<ISSUE-ID>` is a literal placeholder — leaving the issue orphaned in Linear's UI (no "Sub-issues" entry under the parent, no breadcrumb on the child). The helper exists precisely so the link is always made AND verified in one invocation; always route through it.
 
 If the originating context has no issue ID, file the new issue without `--parent` — never invent a parent.
+
+Parent linkage does not make the parent an epic. The workspace `epic` label marks issues deliberately decomposed into sub-issues that carry the work — `/prd` batch runs and `/spec` breakdowns attach it. A worked issue that accumulates deferred-item children stays unlabeled.

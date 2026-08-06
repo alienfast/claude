@@ -28,6 +28,8 @@ Use this skill when:
 
    Create it through `~/.claude/scripts/linear-create-child.sh` with `-` for the parent (top-level), **never a bare `linear-cli issues create`**. A bare create passes no workflow state, and on a triage-enabled team the team default is Triage — where `next-candidates.sh`'s `WORKABLE_STATES` (Backlog/Planned/Todo) cannot see it, so a certified epic is invisible to `/next` and `/auto` with nothing reporting the omission. The helper resolves a workable state and verifies it landed.
 
+   On a run that will create sub-issues, pass the workspace `epic` label in the helper's label slot — the parent is a delegated epic whose work its children carry, and certification (Step 5) leaves that slot free on batch runs. A single-issue run is not an epic: no `epic` label, and its slot carries `specified` per Step 5.
+
 3. **Break Down into Sub-Issues**
    Each sub-issue body is itself a spec (same template) and should:
    - Be completable in one focused session (<150k tokens of context)
@@ -54,7 +56,7 @@ Use this skill when:
 
    One class of sub-issue certifies **gated**: work only a human can perform — customer outreach, vendor contact, production data remediation, a confirmation pass the body itself assigns to a person. The quality bar tests spec shape, not agent capability, so these pass it and then sit rankable in the certified pool until a fleet session picks one and declines it. Attach `human` alongside `specified` here, naming the owner when known — the spec is right, the executor is a person ([standards/issue-spec.md](../../standards/issue-spec.md)); `needs decision` is the wrong gate for these, since it advertises a pending decision that would hand the issue back to agents. `/auto-prep` Step 2 applies the identical disposition later, but only after the issue has already spent time rankable.
 
-   `linear-create-child.sh`'s optional label argument already attaches post-create with those same best-effort semantics (id on stdout either way, exit 2 when the attach fails), so passing `specified` there satisfies this step **on a single-issue run only** — a run that creates exactly one issue total (an epic with no sub-issues) and so may certify on create; a run creating two or more issues (epic + sub-issues) is a batch and certifies here, at Step 5, after the collision pass. A single-issue run still owes the collision pass — run it (the Discovering Related Work search against open issues; the sibling-vs-sibling half is vacuous with no siblings) immediately after the create that certified it, wiring edges per the same calibration above. This is the accepted attach-then-wire residual window that [standards/issue-spec.md](../../standards/issue-spec.md) § Certification includes collision edges describes, not a gap. When the run creates several issues (an epic with sub-issues), pass `-` for the label at create and certify here instead — `specified` is the pickability gate, so a fleet can pick a sub-issue seconds after it is created, before its siblings exist and before any edge is wired; sequencing has to be mechanical before the label attaches. Re-running the helper above on an issue that already carries it is idempotent — this step is the backstop, not a second mechanism.
+   `linear-create-child.sh`'s optional label argument already attaches post-create with those same best-effort semantics (id on stdout either way, exit 2 when the attach fails), so passing `specified` there satisfies this step **on a single-issue run only** — a run that creates exactly one issue total (an epic with no sub-issues) and so may certify on create; a run creating two or more issues (epic + sub-issues) is a batch and certifies here, at Step 5, after the collision pass. A single-issue run still owes the collision pass — run it (the Discovering Related Work search against open issues; the sibling-vs-sibling half is vacuous with no siblings) immediately after the create that certified it, wiring edges per the same calibration above. This is the accepted attach-then-wire residual window that [standards/issue-spec.md](../../standards/issue-spec.md) § Certification includes collision edges describes, not a gap. When the run creates several issues (an epic with sub-issues), pass `epic` for the label at create (Step 2) and certify here instead — `specified` is the pickability gate, so a fleet can pick a sub-issue seconds after it is created, before its siblings exist and before any edge is wired; sequencing has to be mechanical before the label attaches. Re-running the helper above on an issue that already carries it is idempotent — this step is the backstop, not a second mechanism.
 
 ## Spec Shape
 
@@ -67,11 +69,12 @@ Specs are problem + outcomes + success criteria only — **no implementation pla
 ```bash
 # Create the top-level epic — `-` as the parent means no parent. Same helper as the
 # sub-issue below: it resolves and verifies the workflow state, so the epic cannot land
-# in Triage and fall out of /next's WORKABLE_STATES unnoticed. `-` for the label as well:
-# this run creates a batch, so certification waits for step 5, after the collision edges are
-# wired. A single-issue run may pass `specified` in that position instead.
+# in Triage and fall out of /next's WORKABLE_STATES unnoticed. `epic` in the label slot:
+# this run creates a batch, so the parent is a delegated epic and certification waits for
+# step 5, after the collision edges are wired. A single-issue run passes `specified` in
+# that position instead (a standalone issue is not an epic).
 #   ...write the description to tmp/prd-description.md via the Write tool...
-~/.claude/scripts/linear-create-child.sh - ENG Planned "User Authentication System" tmp/prd-description.md - 2
+~/.claude/scripts/linear-create-child.sh - ENG Planned "User Authentication System" tmp/prd-description.md epic 2
 
 # Create a sub-issue linked to a parent. `linear-cli issues create` has no --parent
 # flag (set the parent's UUID via `--data` parentId instead), but prefer the helper — it
