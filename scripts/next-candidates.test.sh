@@ -54,7 +54,7 @@ cat > "$FIX/issues-page.json" <<'EOF'
  {"identifier":"TT-5","title":"planned high","estimate":null,"priority":2,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[]},"parent":null},
  {"identifier":"TT-6","title":"backlog security","estimate":null,"priority":3,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[{"name":"security"}]},"parent":null},
  {"identifier":"TT-7","title":"planned rfr-blocked","estimate":null,"priority":0,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[]},"parent":null},
- {"identifier":"TT-8","title":"shipped blocker","estimate":null,"priority":0,"state":{"name":"Ready for Release","type":"started"},"assignee":null,"labels":{"nodes":[]},"parent":null},
+ {"identifier":"TT-8","title":"shipped blocker","estimate":null,"priority":0,"state":{"name":"Ready for Release","type":"completed"},"assignee":null,"labels":{"nodes":[]},"parent":null},
  {"identifier":"TT-9","title":"planned open-blocked","estimate":null,"priority":4,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[]},"parent":null},
  {"identifier":"TT-10","title":"open blocker","estimate":null,"priority":0,"state":{"name":"In Progress","type":"started"},"assignee":null,"labels":{"nodes":[]},"parent":null},
  {"identifier":"TT-11","title":"parked decision","estimate":null,"priority":3,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[{"name":"needs decision"}]},"parent":null},
@@ -66,7 +66,7 @@ EOF
 # Deps page (linear-deps-graph.sh --team shape): TT-8 blocks TT-7, TT-10 blocks TT-9.
 cat > "$FIX/deps-page.json" <<'EOF'
 {"data":{"issues":{"nodes":[
- {"identifier":"TT-8","title":"shipped blocker","state":{"name":"Ready for Release","type":"started"},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-7"}}]}},
+ {"identifier":"TT-8","title":"shipped blocker","state":{"name":"Ready for Release","type":"completed"},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-7"}}]}},
  {"identifier":"TT-10","title":"open blocker","state":{"name":"In Progress","type":"started"},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-9"}}]}}
 ],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
 EOF

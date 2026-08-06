@@ -364,14 +364,9 @@ candidates_json=$(jq \
     ($sm_doc[0]) as $sm
     | ($bm_doc[0]) as $bm
     | ($newly_doc[0]) as $newly
-    | ($terminal | map(ascii_downcase)) as $terminal_lc
     # Hot parents: a sibling In Progress/In Review under the same parent means a live
     # session is likely editing nearby files — feeds the soft spread de-rank below.
-    # "Ready for Release" is type started but terminal-by-name (merged), so it is not hot.
-    | ([ .[] | (.state | ascii_downcase) as $slc
-          | select(.state_type == "started"
-              and (($terminal_lc | index($slc)) == null)
-              and (.parent != null)) | .parent ] | unique) as $hot
+    | ([ .[] | select(.state_type == "started" and (.parent != null)) | .parent ] | unique) as $hot
     | def priority_label(p):
       if p == 1 then "Urgent"
       elif p == 2 then "High"
