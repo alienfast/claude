@@ -1,6 +1,6 @@
 ---
 name: auto-prep
-description: Prepare a team's certified backlog for a fleet of parallel /loop /auto sessions — audit `specified` labels for unattended-shippability (mark human-dependent issues `needs decision` and fleet-hostile ones `solo`, flag decision-gated ones), consolidate same-defect-family point fixes into class-scoped sweep issues, wire `blocks` edges between file-colliding candidates, validate through next-candidates.sh, and recommend a parallel-session count. Use when the user says 'auto-prep', 'fleet prep', 'prep the backlog for auto', or before launching multiple /loop /auto sessions.
+description: Prepare a team's certified backlog for a fleet of parallel /loop /auto sessions — audit `specified` labels for unattended-shippability (mark human-dependent issues `needs decision` and fleet-hostile ones `solo`, flag decision-gated ones), consolidate same-defect-family point fixes into class-scoped sweep issues, wire `blocks` edges between file-colliding candidates, validate through next-candidates.sh, surface stage inversions (a Planned/Todo candidate blocked by a Backlog/Triage issue — propose promoting the blocker), and recommend a parallel-session count. Use when the user says 'auto-prep', 'fleet prep', 'prep the backlog for auto', or before launching multiple /loop /auto sessions.
 argument-hint: "[team:KEY | KEY]"
 model: opus
 effort: xhigh
@@ -14,7 +14,7 @@ Read [skills/linear/SKILL.md](../linear/SKILL.md) first (gotchas: relations dire
 
 After the fleet finishes, [`/fleet-retro`](../fleet-retro/SKILL.md) is the bookend — it measures where the run's capacity went and audits what it filed, which is where this skill's next inputs come from.
 
-**Writes it may make** (all reversible, all reported): add/remove issue labels, add `blocks`/`duplicate` relations, post explanatory comments, adjust priority. It issues **no unconditional state write** — the `duplicate` relations it wires (Step 2's duplicate-filing cleanup, Step 3's family consolidation) land the absorbed issue in the team's duplicate-type state on their own, and the only state write it may make is Step 3's read-back fallback for when that did not happen; it never touches states otherwise, and never assignees.
+**Writes it may make** (all reversible, all reported): add/remove issue labels, add `blocks`/`duplicate` relations, post explanatory comments, adjust priority. It issues **no unconditional state write** — the `duplicate` relations it wires (Step 2's duplicate-filing cleanup, Step 3's family consolidation) land the absorbed issue in the team's duplicate-type state on their own, and the only state writes it may make are Step 3's read-back fallback for when that did not happen and Step 4's user-approved Backlog-blocker promotion (stage-inversion check); it never touches states otherwise, and never assignees.
 
 ## Step 1: Resolve scope and fetch the pool
 
@@ -82,6 +82,19 @@ Fleet safety rails that already exist and need no wiring: Linear is the claim re
 ```
 
 Confirm: tier-0 reflection filings lead; every Step 3 dependent is absent (blocked); de-labeled issues are gone; every issue marked `solo` is absent and accounted for by the trailing hidden-count note; delegated epics annotated. To reconcile that count against what Step 2 marked, re-list with **`--label solo --include-blocked`**. Two independent causes make the numbers disagree, neither a bug. The blocker filter is one: a bare `--label solo` ranking still hides an issue behind an open blocker, which `--include-blocked` restores. The larger one is usually **state span** — the fetch excludes only the `completed` and `canceled` state *types*, and the hidden-count notes run over that unfiltered list, so a labeled issue in any other state the fetch admits is counted as hidden even though it was never workable and the `--label solo` listing correctly omits it. That is not just the `started` states (`In Progress`, `In Review`, and BF's `Ready for Release`) — `triage` and `duplicate` survive too, and Step 3's own `duplicate` wiring moves absorbed issues into one of them. On one BF run the note read 8 against a listing of 4: four Planned, four already in `Ready for Release`. The `needs decision`, `human`, and keeper notes span the same states. **Reconcile against the listing, not the note** — and read a note that exceeds the listing as shipped, parked, or blocked siblings before suspecting a wiring fault. If a blocker already in the team's ship state still reads as unresolved, suspect a state-name mismatch against the script's `TERMINAL_STATES` before suspecting the wiring.
+
+**Stage-inversion check — a workable-stage candidate blocked by a deferred-stage blocker.** The ranking is stage-first (Planned/Todo drains fully before Backlog, Urgent included — `/next`), so a Planned dependent behind a Backlog or Triage blocker is stranded for the whole run: the blocker sorts below the entire Planned stage even though it must ship first. Surface every such edge:
+
+```bash
+~/.claude/scripts/linear-deps-graph.sh --team <KEY> | jq -r '
+  ([.nodes[] | {key: .identifier, value: .state}] | from_entries) as $s
+  | .edges[] | select(.type == "blocks")
+  | ($s[.from] // {}) as $b | ($s[.to] // {}) as $t
+  | select((($t.name // "") | IN("Planned","Todo")) and (($b.type // "") | IN("backlog","triage")))
+  | "\(.to) [\($t.name)] blocked by \(.from) [\($b.name)]"'
+```
+
+The natural remedy — propose it per hit, apply only on the user's approval — is promoting the blocker into the workable stage: `linear-cli issues update <BLOCKER> -s Planned` for a Backlog blocker (verify the write per linear skill gotcha #8), noting its certification status alongside — an uncertified Planned blocker still ships nothing in a fleet, so pair the promotion with `/spec <BLOCKER>` when the chain should drain this run. A **Triage** blocker routes through `/spec <BLOCKER>` instead of a bare state write — grooming is triage acceptance, and promoting around it would put an unreviewed inbox item in the pool. If the user declines, report the dependent as stranded for this run; if inspection shows the edge itself is stale, dropping the edge is the fix, not the promotion.
 
 ## Step 5: Fleet size and launch checklist
 
