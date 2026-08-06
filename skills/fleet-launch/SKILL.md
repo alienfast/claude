@@ -31,6 +31,20 @@ Run from the project the fleet should work on (sessions inherit the cwd — the 
 
 Surface the script's output: the deadline (if any), each dispatch line, each claim-landed/timeout line, and the closing `claude agents` pointer. A claim-wait timeout is a WARN, not a failure — the session may be in preflight, resuming a dead worktree, or the pool may have drained mid-launch.
 
+### Record the quota reading BEFORE dispatching
+
+Ask the user for their current **weekly %** and **5h burst %** remaining (`/usage`), and write them alongside the deadline. Ten seconds of their time, and it is the only way the allowance ever becomes a measurement:
+
+```bash
+jq -n --argjson weekly <PCT> --argjson burst <PCT> --argjson n <COUNT> --argjson e "$(date +%s)" \
+  '{at_launch: {weekly_pct: $weekly, burst_pct: $burst, sessions: $n, epoch: $e}}' \
+  > tmp/fleet-quota-launch.json
+```
+
+**Why this one file matters more than it looks.** Without a launch reading, the allowance can only ever be *inferred* from a run ending at zero — and that inference is unsound, because a run consumes whatever was left, not the whole budget. On 2026-08-06 that reasoning put a weekly allowance at ~5x under its real size and produced a recommendation the user correctly rejected. With a launch reading, `/fleet-retro`'s closing reading brackets the run and the allowance falls out by subtraction: `consumed% -> tokens` calibrates the absolute basis against whatever the limit actually meters, so nobody has to know whether it counts output, cache reads, or a weighted blend.
+
+Proceed if the user does not have the numbers to hand — note their absence in the report rather than blocking the launch, and say that this run will not calibrate.
+
 Model/permission defaults follow `/auto`'s unattended-run prerequisites (`--model 'opus[1m]' --effort xhigh --permission-mode auto` — `auto`, not `acceptEdits`, because acceptEdits only auto-accepts file edits and the first gated Bash command would stall a background session at an unanswerable prompt); anything after `--` passes through to `claude --bg` and overrides them. `FLEET_PROMPT` overrides the dispatched prompt — e.g. `FLEET_PROMPT='/loop /auto BF'` to team-scope the run.
 
 ## The deadline contract (shared with /auto)

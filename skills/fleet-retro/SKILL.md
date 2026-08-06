@@ -40,6 +40,38 @@ tokens actually went (orchestration vs. exploration vs. review vs. fixes), by ag
 The schema is fixed so two retros are comparable — that cross-run diff is the main long-term value. Add
 columns freely; never quietly redefine an existing one.
 
+### Close the quota bracket — the one measurement only the user can supply
+
+Ask for the current **weekly %** and **5h burst %** (`/usage`) and pair them with what `/fleet-launch`
+recorded at dispatch. Two readings plus the run's measured tokens calibrate the allowance's absolute
+size, which nothing else can:
+
+```bash
+jq -s '.[0].at_launch as $a | {launch: $a, end: {weekly_pct: <PCT>, burst_pct: <PCT>},
+        consumed_weekly_pct: ($a.weekly_pct - <PCT>)}' tmp/fleet-quota-launch.json
+```
+
+Then divide the run's output tokens by `consumed_weekly_pct/100` to get the 100% basis, and report it
+against `windows.peak_168h_output_tokens` — they should agree within noise, and a large gap means the
+limit is metering something other than output tokens (cache reads run ~400x output volume here), which
+is worth knowing explicitly rather than rediscovering.
+
+**Report three numbers back to `/auto-prep`'s next run**, all in the `windows` block already emitted:
+
+1. `peak_5h_output_tokens` with `peak_5h_concurrency` — the burst-window floor, and the basis for the
+   concurrency cap. It rises only when a fleet survives a denser window, so it is worth noting when a
+   run sets a new one.
+2. `output_tokens_per_session_hour_at_peak` paired with that concurrency — one point on the burn-rate
+   curve. Recorded across runs at different `n`, these replace the flat-rate assumption that makes
+   large-`n` projections optimistic.
+3. Any `quota_stall_groups` — sessions that died together untagged. **This is the fingerprint that
+   distinguishes a clean deadline wind-down from an allowance cutoff**, and only the second leaves
+   in-flight worktrees needing a human. Check those worktrees before reaping anything.
+
+Compare realized burn against the `sizing.rate_tok_per_session_hour` that
+`tmp/fleet-recommendation.json` assumed. A projection that missed by 2x is the finding — silently
+repeating it next run is how a sizing error becomes permanent.
+
 ## Step 2 — Read the flags, then chase them
 
 The script finds *shapes*; it does not explain them. Each flag is a lead:

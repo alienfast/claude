@@ -220,6 +220,8 @@ def scan_transcript(path, agg, agent_type="main"):
                     and not model.startswith("<"):
                 agg["seen_msg_ids"].add(mid)
                 agg["tokens"][(agent_type, model)] += usage["output_tokens"]
+                if t:
+                    agg["token_events"].append((t.timestamp(), usage["output_tokens"]))
                 u = agg["usage"].setdefault((agent_type, model), Counter())
                 u["input"] += usage.get("input_tokens") or 0
                 u["cache_write"] += usage.get("cache_creation_input_tokens") or 0
@@ -301,8 +303,65 @@ def new_agg():
         "sleep_blind_s": 0.0, "sleep_blind_n": 0, "sleep_marker_s": 0.0, "sleep_marker_n": 0,
         "ship_tags": set(), "cancel_tags": set(), "contam_halts": set(), "subagents": 0,
         "tokens": Counter(), "seen_msg_ids": set(),
+        # (epoch_seconds, output_tokens) per credited message — the time dimension the
+        # (agent, model) Counter above throws away. Rolling-window burn needs it: the
+        # account's rate limits meter a moving window, so a total tells you nothing about
+        # whether a run ever approached one. See rolling_peak().
+        "token_events": [],
         "usage": {}, "visible_chars": Counter(),
     }
+
+
+def rolling_peak(events, window_h):
+    """Max output tokens credited inside any `window_h`-long sliding window, fleet-wide.
+
+    Rate limits meter a MOVING window, so a run total says nothing about whether the fleet ever
+    approached one — only this does. Events are pooled across sessions on purpose: the limit is
+    account-level, so two concurrent sessions burn one budget.
+
+    Returns (peak_tokens, window_start) — and that peak is a FLOOR on the real ceiling, never the
+    ceiling itself. It reports what was survived, and every observation to date comes from runs
+    that were never throttled hard enough to notice. Read it as "at least this much fits".
+    """
+    if not events:
+        return 0, None
+    ev = sorted(events)
+    span = window_h * 3600.0
+    total, lo, best = 0, 0, (0, None)
+    for t, n in ev:
+        total += n
+        while ev[lo][0] < t - span:
+            total -= ev[lo][1]
+            lo += 1
+        if total > best[0]:
+            best = (total, datetime.fromtimestamp(ev[lo][0], timezone.utc))
+    return best
+
+
+def quota_stalls(sessions, cluster_s=120):
+    """Sessions that died together with no terminal tag — the allowance-exhaustion fingerprint.
+
+    A fleet winding down on its deadline ends one session at a time, each emitting a terminal tag
+    as its loop closes. An account-level cutoff ends every live session at once, mid-issue, with no
+    tag from any of them. Clustering last-activity times is what separates the two, and the
+    difference matters: a clean wind-down needs no follow-up, where a stall leaves in-flight
+    worktrees for a human to finish.
+    """
+    live = [s for s in sessions if s["agg"]["last"] and not s["agg"]["terminal_tags"]]
+    if len(live) < 2:
+        return []
+    live.sort(key=lambda s: s["agg"]["last"])
+    out, group = [], [live[0]]
+    for s in live[1:]:
+        if (s["agg"]["last"] - group[-1]["agg"]["last"]).total_seconds() <= cluster_s:
+            group.append(s)
+        else:
+            if len(group) >= 2:
+                out.append(group)
+            group = [s]
+    if len(group) >= 2:
+        out.append(group)
+    return out
 
 
 def price_of(model):
@@ -523,6 +582,31 @@ def main():
     out_per_shipped = round(sum(fleet_tokens.values()) / len(all_shipped)) if all_shipped else None
     cost_per_shipped = round(fleet_cost / len(all_shipped), 2) if all_shipped else None
 
+    # Burn against the moving windows the account actually meters. /auto-prep sizes a fleet from
+    # these: the 5h peak caps CONCURRENCY (n x 5 x rate), the weekly caps total session-hours.
+    all_events = [e for s in sessions for e in s["agg"]["token_events"]]
+    peak_5h, peak_5h_at = rolling_peak(all_events, 5)
+    peak_wk, peak_wk_at = rolling_peak(all_events, 168)
+    session_hours = sum(((s["agg"]["last"] - s["agg"]["first"]).total_seconds() / 3600)
+                        for s in sessions if s["agg"]["first"] and s["agg"]["last"])
+    # A rate averaged over EVERY session in the window is the wrong number to size a fleet with: it
+    # pools dense fleet sessions with idle and interactive ones and lands roughly half the truth
+    # (measured 55.9k vs 84.9k on the same BF data). Scope it to the peak window instead — that is
+    # the densest observed fleet activity, and the only place the rate reflects a session actually
+    # working. Sizing then scales a proportion (peak x n/concurrency) rather than trusting a mean.
+    peak_5h_concurrency, peak_5h_rate = 0, None
+    if peak_5h_at:
+        w0 = peak_5h_at.timestamp()
+        w1 = w0 + 5 * 3600
+        peak_5h_concurrency = sum(
+            1 for s in sessions
+            if s["agg"]["first"] and s["agg"]["last"]
+            and s["agg"]["first"].timestamp() < w1 and s["agg"]["last"].timestamp() > w0)
+        if peak_5h_concurrency:
+            peak_5h_rate = round(peak_5h / (peak_5h_concurrency * 5))
+    burn_rate_all = round(sum(fleet_tokens.values()) / session_hours) if session_hours else None
+    stall_groups = quota_stalls(sessions)
+
     if args.json:
         print(json.dumps({
             "checkout": str(checkout),
@@ -536,6 +620,8 @@ def main():
                 "ledger_missing": s["ledger_missing"],
                 "span_h": round(((s["agg"]["last"] - s["agg"]["first"]).total_seconds() / 3600), 2)
                           if s["agg"]["first"] and s["agg"]["last"] else None,
+                "start_epoch": s["agg"]["first"].timestamp() if s["agg"]["first"] else None,
+                "end_epoch": s["agg"]["last"].timestamp() if s["agg"]["last"] else None,
                 "wakeups": s["agg"]["wakeups"], "wakeup_stops": s["agg"]["wakeup_stops"],
                 "loop_firings": s["agg"]["loop_firings"], "human_prompts": s["agg"]["human_prompts"],
                 "terminal_tags": s["agg"]["terminal_tags"],
@@ -567,6 +653,17 @@ def main():
             "unpriced_models": sorted(unpriced),
             "main_thinking_share_est": fleet_think,
             "per_shipped": {"output_tokens": out_per_shipped, "est_cost_usd": cost_per_shipped},
+            "windows": {
+                "peak_5h_output_tokens": peak_5h,
+                "peak_5h_window_start": peak_5h_at.isoformat() if peak_5h_at else None,
+                "peak_168h_output_tokens": peak_wk,
+                "peak_168h_window_start": peak_wk_at.isoformat() if peak_wk_at else None,
+                "session_hours": round(session_hours, 2),
+                "peak_5h_concurrency": peak_5h_concurrency,
+                "output_tokens_per_session_hour_at_peak": peak_5h_rate,
+                "output_tokens_per_session_hour_all_sessions": burn_rate_all,
+                "quota_stall_groups": [[s["run_key"] for s in g] for g in stall_groups],
+            },
             "merge_reconciliation": merged,
         }, indent=2))
         return 0
@@ -656,6 +753,35 @@ def main():
               f"writes at the 1h-TTL rate) · {per_ship} · {think}{unpriced_note}\n")
     else:
         print("- no usage data found in transcripts\n")
+
+    print("## Rate-limit windows\n")
+    if peak_5h:
+        print(f"| window | peak output tokens | window started |")
+        print(f"|---|---|---|")
+        print(f"| 5h (burst) | {peak_5h:,} | {peak_5h_at:%Y-%m-%d %H:%M UTC} |")
+        print(f"| 168h (weekly) | {peak_wk:,} | {peak_wk_at:%Y-%m-%d %H:%M UTC} |")
+        print(f"\nAt the 5h peak: **{peak_5h_concurrency} concurrent sessions**, "
+              f"**{peak_5h_rate:,} output tokens per session-hour**.  "
+              f"Across all {len(sessions)} sessions ({session_hours:,.0f} session-hours) the mean is "
+              f"{burn_rate_all:,} — lower because it pools idle and interactive sessions with fleet "
+              f"ones. **Size with the peak rate, not the mean.**\n")
+        print("Both peaks are FLOORS on the real ceilings — they record what was survived, and every "
+              "observation comes from a run that was never throttled hard enough to notice. Size a "
+              "fleet so its projected burn stays under the observed peak, never up to a limit these "
+              "numbers do not establish. Scale by proportion — at concurrency `n` expect roughly "
+              f"`{peak_5h:,} x n/{peak_5h_concurrency}` per 5h window — and treat that as an "
+              "over-estimate: the rate sags as sessions are added, because merge-queue "
+              "serialization buys idle time.\n")
+    else:
+        print("- no timestamped usage found; rolling-window burn not computable\n")
+    if stall_groups:
+        for g in stall_groups:
+            keys = ", ".join(f"`{s['run_key']}`" for s in g)
+            when = g[-1]["agg"]["last"]
+            print(f"- **quota-stall fingerprint** — {len(g)} sessions ({keys}) went quiet within "
+                  f"120s of each other at {when:%Y-%m-%d %H:%M UTC}, none emitting a terminal tag. "
+                  f"A deadline wind-down ends sessions one at a time, each tagged; an account-level "
+                  f"cutoff ends them together, mid-issue. Check those worktrees for unfinished work.\n")
 
     print("## Flags\n")
     flagged = False

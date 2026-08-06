@@ -95,19 +95,49 @@ Present the hits grouped by remedy — this is the daytime attention list that m
 
 Count **lanes** from the Step 4 ranking, which already excludes both label gates: the immediately-workable candidates minus the decision-gated flags, grouped by cluster (chain heads count once; independent standalones count individually). Recommend `min(lanes, 8, quota)` parallel sessions — beyond ~8, pick races and merge-queue serialization eat the gains; below 4 lanes, recommend the lane count and note when chains will release more work (each blocker's ship unblocks its dependent automatically).
 
-**`quota` is the third term because it is usually the binding one, and lanes cannot see it.** Lane math answers "how much independent work is there", which is the wrong question whenever the account runs out of allowance before the backlog does — and the fleet then stops mid-issue rather than at a clean boundary, leaving in-flight work to be finished by hand. Measured on the 2026-08-06 BF fleet: **3 sessions exhausted a weekly allowance in 11.5 hours**, all three stalling within 30 seconds of each other, 9 minutes short of their own deadline, with 63 certified candidates still in the pool and a lane-derived recommendation of 8. So derive a session-hours ceiling from the allowance remaining and the planned duration — as a rule of thumb this codebase costs **~1.8 session-hours and ~130k output tokens per shipped issue** — and cap the recommendation there. `~/.claude/scripts/fleet-metrics.py --all` gives the per-issue rates for the last fleet, which is a better estimate than the rule of thumb once you have one.
+**`quota` is the third term because it is usually the binding one, and lanes cannot see it.** Lane math answers "how much independent work is there", which is the wrong question whenever the account runs out of allowance before the backlog does — and the fleet then stops mid-issue rather than at a clean boundary, leaving in-flight work to be finished by hand. Measured on the 2026-08-06 BF fleet: **3 sessions exhausted a weekly allowance in 11.5 hours**, all three stalling within 30 seconds of each other, 9 minutes short of their own deadline, with 63 certified candidates still in the pool and a lane-derived recommendation of 8.
 
-State the binding term in the report. "8 lanes available, capped to 3 by quota" tells the user their lever is the allowance (or a shorter `/fleet-launch` duration, which winds down cleanly at a boundary instead of dying mid-issue); a bare "3 sessions" reads as a thin backlog and invites the wrong fix.
+### Quota is TWO windows with TWO different levers — size against both
+
+The account meters a **5h burst window** and a **weekly window**, and they do not respond to the same knob. Collapsing them into one "quota" number is what produces a recommendation that saturates the burst window while nominally fitting the week:
+
+- **The 5h window constrains CONCURRENCY.** Burn per window is `n x 5 x rate`. Duration does not appear — only `n` moves it. Saturating it throttles every session at once, which is *worse* than a smaller fleet: same wall-clock, less shipped, worktrees still held open.
+- **The weekly constrains TOTAL SESSION-HOURS.** Burn is `n x duration x rate`. Either lever moves it.
+
+So when the weekly permits more than the burst window does, **extend duration rather than adding sessions**. Worked case: 5 x 20h and 9 x 12h spend nearly the same fraction of a week (54% vs 59%), but the first sits at 2.5M per 5h window against the second's 4.5M.
+
+```text
+n_window = floor(peak_5h_observed x 0.8 / (5 x rate))   # never exceed proven burst burn
+n_weekly = floor(weekly_available / (duration x rate))
+n        = min(lanes, 8, n_window, n_weekly)
+```
+
+**Get `rate` and `peak_5h_observed` from the `windows` block, never from a mean.** `~/.claude/scripts/fleet-metrics.py --json | jq .windows` reports `peak_5h_output_tokens`, `peak_5h_concurrency`, and `output_tokens_per_session_hour_at_peak`. Use the **at_peak** rate: `output_tokens_per_session_hour_all_sessions` pools idle and interactive sessions with fleet ones and lands roughly half the truth (measured 55.9k vs 84.9k on the same BF data), which under-sizes every projection built on it. Scaling by proportion is equivalent and easier to sanity-check — at concurrency `n`, expect about `peak_5h x n / peak_5h_concurrency` per window.
+
+**Both peaks are floors, not ceilings.** They record what was *survived*; no observation to date comes from a run throttled hard enough to notice. Never size up to them as if they were the limit — the `x 0.8` above exists because the real ceiling is unknown and the failure is expensive.
+
+**Ask the user for their current readings and record them.** Neither the scripts nor the transcripts can see remaining allowance — only the user can (`/usage`). Ask for **weekly % remaining** and **5h % remaining**, and convert with the measured peak-weekly total (`peak_168h_output_tokens`) as the 100% basis. Two traps, both hit on 2026-08-06:
+
+1. **A run ending at zero measures nothing about the allowance's size.** It consumed whatever was *left*. Inferring "34.5 session-hours = one weekly allowance" from an exhausted fleet was wrong by ~5x — that fleet was only ~19% of its week's spend; 46 other sessions had already taken the rest. This is `planning.md`'s *measured, not reasoned* rule landing on the sizing math: derive the basis from `peak_168h_output_tokens`, or from bracketing readings, never from the fact that something ran out.
+2. **Output tokens may not be what the limit meters.** Cache reads run ~400x output volume in this workload. Bracketing readings sidestep the question entirely: they calibrate against whatever the limit actually counts, with no need to know the formula.
+
+State the binding term in the report — name which of the four it was. "8 lanes available, capped to 5 by the 5h burst window" tells the user their lever is `n`; "capped to 5 by weekly" tells them it is `duration`; a bare "5 sessions" reads as a thin backlog and invites the wrong fix.
 
 **Persist the recommendation** so `/fleet-launch` can pick it up without re-deriving the lane math (a count-less `/fleet-launch` reads exactly this file):
 
 ```bash
 jq -n --argjson sessions <N> --arg team <KEY> --argjson e "$(date +%s)" \
-  '{sessions: $sessions, team: $team, generated_epoch: $e, generated: (now | todate)}' \
+      --arg bound_by '<lanes|cap|window|weekly>' --argjson duration_h <D> \
+      --argjson rate <TOK_PER_SESSION_HOUR> --argjson peak5h <PEAK_5H_OBSERVED> \
+      --argjson weekly_pct <PCT> --argjson burst_pct <PCT> \
+  '{sessions: $sessions, team: $team, generated_epoch: $e, generated: (now | todate),
+    bound_by: $bound_by, duration_h: $duration_h,
+    sizing: {rate_tok_per_session_hour: $rate, peak_5h_observed: $peak5h,
+             weekly_pct_at_prep: $weekly_pct, burst_pct_at_prep: $burst_pct}}' \
   > tmp/fleet-recommendation.json
 ```
 
-Written in the project's main checkout (where the fleet sessions will run), not `~/.claude`. `fleet-launch.sh` warns when the file is older than 24h — a re-run of this skill refreshes it.
+Written in the project's main checkout (where the fleet sessions will run), not `~/.claude`. `fleet-launch.sh` warns when the file is older than 24h — a re-run of this skill refreshes it. The `sizing` block is what makes the recommendation auditable after the fact: `/fleet-retro` compares realized burn against the `rate` assumed here, so a projection that missed by 2x is visible rather than silently repeated next run.
 
 Launch checklist for the report:
 
@@ -119,7 +149,7 @@ Launch checklist for the report:
 
 ## Report
 
-Lead with the recommended session count and how to launch it (`/fleet-launch [count] [duration]` — count defaults to this run's persisted recommendation; an explicit count is the user's quota throttle). Then: changes made (consolidations as absorbed→canonical with the class named, edges as blocker→blocked with one-line rationale, label ops, priority bumps), the flag lists by disposition (needs-decision / decision-gated / solo), and the validated top of the ranked pool. Render the `solo` list in two groups, each in running order — it is a work plan for the quiet window, not a warning: **workable now** (bare `next-candidates.sh --label solo` — no open blockers; what the keeper can knock out before launching the fleet) and **blocked** (the `--include-blocked` remainder, each annotated with the blocker it waits on and whether that blocker is itself in the workable-now group). Every write is reversible — say so once.
+Lead with the recommended session count **and the duration**, how to launch it (`/fleet-launch [count] [duration]` — count defaults to this run's persisted recommendation; an explicit count is the user's quota throttle), and **which of the four terms bound it** (lanes / the 8 cap / the 5h burst window / weekly). Show the projected burn per 5h window beside the observed peak, so the user can see the margin they are running on rather than taking the count on faith. Then: changes made (consolidations as absorbed→canonical with the class named, edges as blocker→blocked with one-line rationale, label ops, priority bumps), the flag lists by disposition (needs-decision / decision-gated / solo), and the validated top of the ranked pool. Render the `solo` list in two groups, each in running order — it is a work plan for the quiet window, not a warning: **workable now** (bare `next-candidates.sh --label solo` — no open blockers; what the keeper can knock out before launching the fleet) and **blocked** (the `--include-blocked` remainder, each annotated with the blocker it waits on and whether that blocker is itself in the workable-now group). Every write is reversible — say so once.
 
 ## Error Handling
 
