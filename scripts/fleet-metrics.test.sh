@@ -242,6 +242,51 @@ ck "total-loss flagged"  "True"     "$(q2 "d['sessions'][0]['ledger_missing']")"
 ck "total-loss ships"    "['TT-5']" "$(q2 "d['sessions'][0]['observed_shipped']")"
 ck "total-loss per-ship" "120"      "$(q2 "d['per_shipped']['output_tokens']")"
 
+# ---- windowed-out ledger fixture: the file EXISTS, it just predates the cutoff ----
+# The 2026-08-06 fault. The two discovery passes filter on different mtimes — pass 1 on the state
+# file's, pass 2 on the transcript's — so a session that worked inside the window while its ledger
+# last changed before the cutoff reached pass 2 with the file still on disk and was flagged "ran
+# without a surviving ledger". That flag means /auto Step 4 never ran, which the retro chases as a
+# real fault; it fired 6 times on that fleet, more than every genuine fault combined. The ledger must
+# be adopted, not guessed at, so recorded-vs-observed still catches a genuine unrecorded ship.
+CK3="$WORK/checkout3"
+mkdir -p "$CK3/tmp"
+git -C "$CK3" init -q 2>/dev/null
+git -C "$CK3" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "TT-6: land it"
+M3="$(git -C "$CK3" rev-parse --show-toplevel | tr / -)"
+mkdir -p "$WORK/projects/$M3"
+
+cat > "$CK3/tmp/auto-state-bbb22222.json" <<'EOF'
+{"status": "drained", "reason": "deadline", "shipped": ["TT-6"], "canceled": [], "skipped": [], "failed": []}
+EOF
+cat > "$WORK/projects/$M3/bbb22222-0000.jsonl" <<'EOF'
+{"type":"user","timestamp":"2026-08-04T09:00:00Z","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"2026-08-04T09:30:00Z","message":{"role":"assistant","id":"msg_G","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":400},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-6 done"}]}}
+EOF
+# Ledger 10 days stale, transcript touched now: any --hours window straddles the two.
+touch -t 202607250000 "$CK3/tmp/auto-state-bbb22222.json"
+
+J3="$WORK/out3.json"
+MD3="$WORK/out3.md"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK3" --hours 24 --json > "$J3" 2>/dev/null
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK3" --hours 24 > "$MD3" 2>&1
+q3() { python3 -c "import json,sys; d=json.load(open('$J3')); print($1)"; }
+ck "windowed-out found"    "1"        "$(q3 "len(d['sessions'])")"
+ck "windowed-out NOT flagged" "False" "$(q3 "d['sessions'][0]['ledger_missing']")"
+ck "windowed-out reads ledger" "['TT-6']" "$(q3 "d['sessions'][0]['recorded_shipped']")"
+ck_lacks "no false ledger flag" "ran without a surviving ledger" "$MD3"
+
+# A genuinely absent ledger in the same window still flags — the fix must not blanket-suppress.
+cat > "$WORK/projects/$M3/ccc33333-0000.jsonl" <<'EOF'
+{"type":"user","timestamp":"2026-08-04T13:00:00Z","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"2026-08-04T13:30:00Z","message":{"role":"assistant","id":"msg_H","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":60},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-11 done"}]}}
+EOF
+J4="$WORK/out4.json"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK3" --hours 24 --json > "$J4" 2>/dev/null
+q4() { python3 -c "import json,sys; d=json.load(open('$J4')); print($1)"; }
+ck "real gap still flags"  "['ccc33333']" "$(q4 "sorted(s['run_key'] for s in d['sessions'] if s['ledger_missing'])")"
+ck "both sessions present" "2"            "$(q4 "len(d['sessions'])")"
+
 echo
 echo "$PASS passed / $FAIL failed"
 [ "$FAIL" -eq 0 ]

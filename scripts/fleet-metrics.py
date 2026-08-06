@@ -463,6 +463,21 @@ def main():
             if not is_auto_session(tpath):
                 continue
             seen_keys.add(run_key)
+            # A ledger that merely sorted out of the window in pass 1 is NOT a missing ledger. The two
+            # passes filter on different mtimes — pass 1 on the state file's, this one on the transcript's
+            # — so a session that worked in-window while its ledger last changed before the cutoff lands
+            # here with the file still sitting on disk. Flagging it fires "ran without a surviving ledger",
+            # which the retro reads as a real fault (/auto Step 4 never ran) and which costs a chase every
+            # run: on the 2026-08-06 fleet it fired 6 times, more than every genuine fault that run
+            # combined. Adopt the real ledger instead of guessing — recorded-vs-observed then still works,
+            # so a genuine unrecorded ship is still caught.
+            spath = checkout / "tmp" / f"auto-state-{run_key}.json"
+            try:
+                states.append((spath, json.loads(spath.read_text()),
+                               datetime.fromtimestamp(spath.stat().st_mtime, timezone.utc)))
+                continue
+            except (json.JSONDecodeError, OSError):
+                pass
             ledgerless.append((run_key, mtime))
 
     if not states and not ledgerless:
