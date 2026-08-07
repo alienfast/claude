@@ -154,7 +154,7 @@ First, for each `propose` item, show its destination and a ready-to-paste diff �
    - [ ] ...
    ```
 
-   Reference the originating issue as a bare `<ISSUE-ID>` (Linear auto-links it). Do **not** parent-link — a config/process improvement is standalone, not a child of the feature that surfaced it. This body certifies via the trusted-pipeline carve-out documented in [standards/issue-spec.md](../../standards/issue-spec.md) — observation = problem, diff = outcome, checkboxes = criteria — so filing self-certifies without an interview.
+   Reference the originating issue by its plain Linear URL (`linear-cli issues get <ID> -o json | jq -r '.url'`) so it renders as a mention — a bare `<ISSUE-ID>` written through the API stays dead text (linear skill gotcha #20). Do **not** parent-link — a config/process improvement is standalone, not a child of the feature that surfaced it. This body certifies via the trusted-pipeline carve-out documented in [standards/issue-spec.md](../../standards/issue-spec.md) — observation = problem, diff = outcome, checkboxes = criteria — so filing self-certifies without an interview.
 
    **When a proposal's text describes code that landed under an issue — usually the originating one — record it as a checkable precondition, not just a link.** This skill runs as `/quality-review` Step 7, i.e. `/start` Step 9 — *before* `/finish` commits (its Step 7) and merges (its Step 9) — so the code the proposal describes is not on the source branch yet and **there is no merge SHA to cite**. Name the issue instead, as its own line in the body:
 
