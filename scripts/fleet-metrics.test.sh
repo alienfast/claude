@@ -287,6 +287,99 @@ q4() { python3 -c "import json,sys; d=json.load(open('$J4')); print($1)"; }
 ck "real gap still flags"  "['ccc33333']" "$(q4 "sorted(s['run_key'] for s in d['sessions'] if s['ledger_missing'])")"
 ck "both sessions present" "2"            "$(q4 "len(d['sessions'])")"
 
+# ---- quota-stall fixture: the RECOVERED shape, from the 2026-08-06 basefund fleet ----
+# Three sessions stop within 3 minutes of each other (04:44/04:45/04:47), stay dark 10.7h, resume
+# within 60s of each other (15:28) and drain NORMALLY with terminal tags. The pre-2026-08-07
+# detector keyed on last-activity + absence of a terminal tag and so reported no stall at all,
+# while 47% of that fleet's capacity had been lost. A fourth session runs straight through and must
+# stay OUT of the group.
+CK5="$WORK/checkout5"
+mkdir -p "$CK5/tmp"
+git -C "$CK5" init -q 2>/dev/null
+M5="$(git -C "$CK5" rev-parse --show-toplevel | tr / -)"
+mkdir -p "$WORK/projects/$M5"
+
+for run in aa111111 bb222222 cc333333; do
+  cat > "$CK5/tmp/auto-state-$run.json" <<EOF
+{"status": "drained", "reason": "fleet deadline reached", "shipped": [], "canceled": [], "skipped": [], "failed": []}
+EOF
+done
+cat > "$CK5/tmp/auto-state-dd444444.json" <<'EOF'
+{"status": "drained", "reason": "fleet deadline reached", "shipped": [], "canceled": [], "skipped": [], "failed": []}
+EOF
+
+mk_stalled() { # mk_stalled <run> <quiet-at> ; resumes at a common 15:28, ends tagged
+  cat > "$WORK/projects/$M5/$1-0000.jsonl" <<EOF
+{"type":"user","timestamp":"2026-08-07T00:00:00Z","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"2026-08-07T02:00:00Z","message":{"role":"assistant","id":"msg_$1a","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":500},"content":[{"type":"text","text":"working"}]}}
+{"type":"assistant","timestamp":"$2","message":{"role":"assistant","id":"msg_$1b","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":500},"content":[{"type":"text","text":"mid-issue"}]}}
+{"type":"assistant","timestamp":"2026-08-07T15:28:38Z","message":{"role":"assistant","id":"msg_$1c","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":40},"content":[{"type":"text","text":"deadline passed"}]}}
+{"type":"assistant","timestamp":"2026-08-07T15:30:00Z","message":{"role":"assistant","id":"msg_$1d","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":40},"content":[{"type":"text","text":"AUTO-HALTED: fleet deadline"}]}}
+EOF
+}
+mk_stalled aa111111 "2026-08-07T04:44:01Z"
+mk_stalled bb222222 "2026-08-07T04:45:30Z"
+mk_stalled cc333333 "2026-08-07T04:47:00Z"
+
+# The survivor: continuous activity across the same window, ending tagged. Never in a stall group.
+cat > "$WORK/projects/$M5/dd444444-0000.jsonl" <<'EOF'
+{"type":"user","timestamp":"2026-08-07T00:00:00Z","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"2026-08-07T04:44:10Z","message":{"role":"assistant","id":"msg_dda","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":500},"content":[{"type":"text","text":"still going"}]}}
+{"type":"assistant","timestamp":"2026-08-07T09:00:00Z","message":{"role":"assistant","id":"msg_ddb","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":500},"content":[{"type":"text","text":"still going"}]}}
+{"type":"assistant","timestamp":"2026-08-07T13:00:00Z","message":{"role":"assistant","id":"msg_ddc","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":500},"content":[{"type":"text","text":"still going"}]}}
+{"type":"assistant","timestamp":"2026-08-07T15:30:00Z","message":{"role":"assistant","id":"msg_ddd","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":40},"content":[{"type":"text","text":"AUTO-HALTED: fleet deadline"}]}}
+EOF
+
+J5="$WORK/out5.json"
+MD5="$WORK/out5.md"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK5" --since 2026-08-06 --json > "$J5" 2>/dev/null
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK5" --since 2026-08-06 > "$MD5" 2>&1
+q5() { python3 -c "import json,sys; d=json.load(open('$J5')); print($1)"; }
+ck "recovered stall detected"  "1" "$(q5 "len(d['windows']['quota_stall_groups'])")"
+ck "stall names the 3 stalled" "['aa111111', 'bb222222', 'cc333333']" \
+   "$(q5 "sorted(d['windows']['quota_stall_groups'][0]['runs'])")"
+ck "survivor excluded"         "False" \
+   "$(q5 "'dd444444' in d['windows']['quota_stall_groups'][0]['runs']")"
+ck "stall kind recovered"      "recovered" "$(q5 "d['windows']['quota_stall_groups'][0]['kind']")"
+ck "stall quiet_at earliest"   "2026-08-07T04:44:01Z" "$(q5 "d['windows']['quota_stall_groups'][0]['quiet_at']")"
+ck "stall resumed_at"          "2026-08-07T15:28:38Z" "$(q5 "d['windows']['quota_stall_groups'][0]['resumed_at']")"
+ck "lost session-hours summed" "32.2" "$(q5 "d['windows']['quota_stall_groups'][0]['lost_session_hours']")"
+ck_has "stall reported in md"  "quota-stall fingerprint" "$MD5"
+ck_has "md says drained clean" "drained normally" "$MD5"
+
+# The UNRECOVERED shape must still fire — the fix widens the detector, it does not replace it.
+CK6="$WORK/checkout6"
+mkdir -p "$CK6/tmp"
+git -C "$CK6" init -q 2>/dev/null
+M6="$(git -C "$CK6" rev-parse --show-toplevel | tr / -)"
+mkdir -p "$WORK/projects/$M6"
+for run in ee555555 ff666666; do
+  cat > "$CK6/tmp/auto-state-$run.json" <<EOF
+{"status": "running", "reason": "", "shipped": [], "canceled": [], "skipped": [], "failed": []}
+EOF
+done
+# Activity must stay DENSE right up to the death: an unrecovered stall is trailing silence, which
+# leaves no internal gap to find. A sparse fixture would fake one and misclassify as recovered.
+mk_dead() { # mk_dead <run> <final-row-time>
+  cat > "$WORK/projects/$M6/$1-0000.jsonl" <<EOF
+{"type":"user","timestamp":"2026-08-07T04:00:00Z","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"2026-08-07T04:15:00Z","message":{"role":"assistant","id":"msg_$1a","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":500},"content":[{"type":"text","text":"working"}]}}
+{"type":"assistant","timestamp":"2026-08-07T04:30:00Z","message":{"role":"assistant","id":"msg_$1b","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":500},"content":[{"type":"text","text":"working"}]}}
+{"type":"assistant","timestamp":"$2","message":{"role":"assistant","id":"msg_$1c","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":500},"content":[{"type":"text","text":"mid-issue"}]}}
+EOF
+}
+mk_dead ee555555 "2026-08-07T04:44:00Z"
+mk_dead ff666666 "2026-08-07T04:45:00Z"
+J6="$WORK/out6.json"
+MD6="$WORK/out6.md"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK6" --since 2026-08-06 --json > "$J6" 2>/dev/null
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK6" --since 2026-08-06 > "$MD6" 2>&1
+q6() { python3 -c "import json,sys; d=json.load(open('$J6')); print($1)"; }
+ck "unrecovered stall detected" "1" "$(q6 "len(d['windows']['quota_stall_groups'])")"
+ck "unrecovered kind"           "unrecovered" "$(q6 "d['windows']['quota_stall_groups'][0]['kind']")"
+ck "unrecovered no resume"      "None" "$(q6 "d['windows']['quota_stall_groups'][0]['resumed_at']")"
+ck_has "md says never recovered" "never recovered" "$MD6"
+
 echo
 echo "$PASS passed / $FAIL failed"
 [ "$FAIL" -eq 0 ]

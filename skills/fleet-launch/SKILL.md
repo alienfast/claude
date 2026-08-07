@@ -37,9 +37,26 @@ Ask the user for their current **weekly %** and **5h burst %** remaining (`/usag
 
 ```bash
 jq -n --argjson weekly <PCT> --argjson burst <PCT> --argjson n <COUNT> --argjson e "$(date +%s)" \
-  '{at_launch: {weekly_pct: $weekly, burst_pct: $burst, sessions: $n, epoch: $e}}' \
+  '{at_launch: {weekly_pct: $weekly, burst_pct: $burst, sessions: $n, epoch: $e, source: "read at dispatch"}}' \
   > tmp/fleet-quota-launch.json
 ```
+
+**Read it at dispatch — never carry `/auto-prep`'s.** The prep reading is minutes to hours stale, and the burst window is 5 hours wide, so a reading taken before it is describing a different window than the one the fleet will launch into. The 2026-08-06 run carried a reading taken 53 minutes earlier (its own `source` field recorded the fact) and was cut off 4.9h into a 12h deadline. If the user cannot re-read, say the launch is uncalibrated rather than silently reusing the old number.
+
+### Size the count against remaining burst headroom, not the historical peak
+
+`/auto-prep`'s `sizing.peak_5h_observed` is a **survived floor** — what some earlier fleet got away with. It is not a budget, and two corrections have to be applied before it becomes one:
+
+1. **Prefer a measured cutoff over a survived peak.** Once a run has actually been throttled, `/fleet-retro` reports the output volume it was cut at, and that number is a **ceiling** — the first kind of observation this system produces that bounds from above. Use the lowest observed cutoff as the basis whenever one exists; fall back to the survived floor only until then.
+2. **Discount by the burst percentage remaining.** The fleet enters a window someone else has partly spent.
+
+```text
+n ≤ basis × (burst_pct_remaining / 100) ÷ (rate_tok_per_session_hour × 5)
+```
+
+Worked on the 2026-08-06 run, whose numbers are the reason this section exists: basis 2,122,634 (survived floor), rate 84,905, burst 85% remaining → `1,804,239 ÷ 424,525` = 4.2, so 4 sessions — which is what launched, and it was cut off. Re-running the same arithmetic with that run's measured cutoff as the basis (1,575,182) and its realized rate (78,759) gives `1,338,905 ÷ 393,795` = **3.4 → 3 sessions**, which would have fit. The floor was 35% too generous; the discount alone would not have caught it, and the basis correction is what does.
+
+**The 5h window caps concurrency, not duration.** It is a rate limit, so it constrains `n` — stretching the same `n` over a longer deadline does not help, and shortening the deadline does not let you add sessions. Total session-hours are capped by the *weekly* allowance instead, which on that run was never the binding constraint (it ended at 49% remaining, 32 points consumed). When the arithmetic above forces `n` below what the user asked for, say so with the numbers and let them decide — an explicit count is the user's throttle and overrides this.
 
 **Why this one file matters more than it looks.** Without a launch reading, the allowance can only ever be *inferred* from a run ending at zero — and that inference is unsound, because a run consumes whatever was left, not the whole budget. On 2026-08-06 that reasoning put a weekly allowance at ~5x under its real size and produced a recommendation the user correctly rejected. With a launch reading, `/fleet-retro`'s closing reading brackets the run and the allowance falls out by subtraction: `consumed% -> tokens` calibrates the absolute basis against whatever the limit actually meters, so nobody has to know whether it counts output, cache reads, or a weighted blend.
 
