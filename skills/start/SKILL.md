@@ -292,6 +292,17 @@ git checkout -b <username>/pl-13-short-kebab-title
 - Issue key in lowercase (e.g., `pl-13`)
 - Kebab-case title, truncated to keep the branch name reasonable
 
+**Fetch before baselining — a baseline taken on a stale branch is worthless, and so is the plan built on it.** On a long-lived shared branch the tree can be far behind origin, and every artifact from here on is anchored to it: the `pnpm check` result, the out-of-band suite baseline's example count, the files Step 6's exploration reads, and the plan composed from them. Nothing on this path fetches — not Step 0, not here — so nothing reports it:
+
+```bash
+git fetch origin
+git rev-list --left-right --count HEAD...origin/<current-branch>   # output: "<ahead>\t<behind>"
+```
+
+Substitute the literal branch name from `git branch --show-current` above rather than a `$(…)` substitution — the worktree-isolation guard refuses command substitution, and this step is reachable with `IS_WT` armed. A branch with no origin counterpart makes that command error; compare against `origin/main` instead, which is what catches a branch just cut from a stale local `main`.
+
+Behind by anything non-trivial: **STOP and ask before pulling.** The in-place checkout is shared — a pull advances its HEAD and rewrites files under a concurrent session's uncommitted edits, the same hazard the "do NOT create a new branch" bullet above and `standards/git.md` § *Branch operations mutate the SHARED working tree* guard. On approval, `git pull` (merge; never rebase a shared branch), then baseline. Skipping this cost a full redo on BF-917: the tree was 50 commits behind, and the pull brought a rewrite of one of the two files the approved plan targeted plus migrations that had already made the first suite baseline fail at load with `PendingMigrationError`. **`/start wt` does not cover this for free** — nothing in its path fetches either, its fresh create forks off the main checkout's unfetched HEAD, and `start-wt-create.sh`'s behind/ahead NOTE fires only on the reuse path and only against the *local* source ref.
+
 **Baseline check — THIS ESTABLISHES THE CONTRACT.** Run `pnpm check` to prove the application works before we touch anything:
 
 ```bash
