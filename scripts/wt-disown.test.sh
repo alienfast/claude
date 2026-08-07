@@ -886,6 +886,92 @@ git -C "$REPO" config extensions.worktreeConfig true
 git -C "$REPO" worktree add -q "$WT" -b issue-branch
 ck "0" "$("$DIR/wt-owner.sh" "$WT" 2>/dev/null | sed -n 's/^OWNER_CONTEST=//p')" "a never-stamped worktree has no claim to contest"
 
+# --- Part 12: --reclaim — the owner withdraws its own release in place (BF-994) ---
+# The shape: /auto disowns on a halt, a human attributes it, and the SAME session resumes. Without a
+# reclaim that worktree stays advertised as up for grabs (/auto adjudicates `released` ahead of
+# OWNER_IS_ME; reap-worktrees.sh treats released + zero-commit as reap-eligible). The gate is
+# session-id equality with the KEPT attribution; identity — branch, source, baseline, anchor era —
+# is inherited verbatim, so only ownership and the claim epoch change.
+#
+# CLAUDE_HARNESS_PID is pinned wherever the reclaim STAMPS: unset, wtid_harness_pid walks ancestry,
+# so the recorded pid (and every post-reclaim liveness assertion) would depend on whether the suite
+# itself runs under a live `claude` process.
+drun_h() { # session harness_pid args... -> OUT/ERR/RC
+  local sess="$1" hpid="$2" errf="$TMP/stderr.txt"; shift 2
+  OUT=$(env "CLAUDE_SESSION_ID=$sess" "CLAUDE_HARNESS_PID=$hpid" "$DISOWN" "$@" 2>"$errf"); RC=$?
+  ERR=$(cat "$errf")
+}
+
+spawn_sleeper
+setup reclaimown sess-A
+drun sess-A "$WT"
+ck "0" "$RC" "release before reclaim ok"
+head_before=$(cfg start.head-sha); era_before=$(cfg start.stamped-at)
+base_before=$(cfg start.baseline-sha); claim_before=$(cfg start.owner-claimed-at)
+drun_h sess-A "$SLEEPER" --reclaim "$WT"
+ck "0" "$RC" "owner reclaim exits 0"
+ck "RECLAIM=ok" "$(echo "$OUT" | head -1)" "reclaim reports ok"
+ck "" "$(cfg start.owner-released-at)" "config release marker revoked"
+ck "sess-A" "$(cfg start.owner-session)" "ownership re-stamped to the reclaiming owner"
+ck "$head_before" "$(cfg start.head-sha)" "anchor unchanged across reclaim"
+ck "$era_before" "$(cfg start.stamped-at)" "era unchanged across reclaim"
+ck "$base_before" "$(cfg start.baseline-sha)" "baseline inherited verbatim"
+ck "1" "$([ -n "$(cfg start.owner-claimed-at)" ] && [ "$(cfg start.owner-claimed-at)" -ge "$claim_before" ] && echo 1 || echo 0)" "claim epoch re-asserted, never rolled back"
+ck "" "$(sed -n 's/^WT_IDENTITY_OWNER_RELEASED_AT=//p' "$SIDE" | head -1)" "sidecar release key dropped by the reclaim stamp"
+# The pinned sleeper's comm is outside the harness allowlist, so the re-claimed worktree reads
+# `dead`, not `released` — and a second reclaim refuses: only `released` (or live-mine) passes.
+drun_h sess-A "$SLEEPER" --reclaim "$WT"
+ck "3" "$RC" "second reclaim refuses on a non-released state"
+
+setup reclaimforeign sess-A
+drun sess-A "$WT"
+drun sess-B --reclaim "$WT"
+ck "3" "$RC" "foreign session's reclaim refused (exit 3)"
+ck_has "released by session 'sess-A'" "$ERR" "refusal names the recorded owner"
+ck "released" "$(owner_field OWNER_ALIVE)" "the worktree stays released for the real resumption paths"
+
+setup reclaimseized sess-A
+drun sess-A "$WT"
+real_start sess-B
+ck "0" "$RC" "takeover of the released worktree succeeds"
+drun sess-A --reclaim "$WT"
+ck "3" "$RC" "original owner's reclaim refused after a takeover"
+ck "sess-B" "$(cfg start.owner-session)" "the takeover's ownership stands"
+
+drun sess-A --reclaim --force "$WT"
+ck "2" "$RC" "--reclaim with --force is a usage error"
+ck_has "seizure" "$ERR" "the refusal names why and where to go instead"
+
+w="$TMP/reclaimnostamp"; REPO="$w/repo"; WT="$w/test-1"
+mkdir -p "$w"
+git init -q -b main "$REPO"
+git -C "$REPO" config extensions.worktreeConfig true
+( cd "$REPO" && echo base > base.txt && $G add base.txt && $G commit -qm "R: root" ) >/dev/null
+git -C "$REPO" worktree add -q "$WT" -b issue-branch
+drun sess-A --reclaim "$WT"
+ck "3" "$RC" "never-stamped reclaim refused — unlike disown, there is nothing to withdraw"
+
+if [ "$HAVE_NODE" = yes ]; then
+  spawn_live
+  setup reclaimnoop sess-A "$LIVE"
+  drun sess-A --reclaim "$WT"
+  ck "0" "$RC" "live self-owned reclaim is a noop (exit 0)"
+  ck "RECLAIM=noop" "$(echo "$OUT" | head -1)" "noop reported"
+  ck "sess-A" "$(cfg start.owner-session)" "ownership untouched by the noop"
+else
+  skip "reclaim noop-on-live-self case needs node"
+fi
+
+if [ "$HAVE_NODE" = yes ]; then
+  spawn_live
+  setup reclaimalien sess-A "$LIVE"
+  drun sess-B --reclaim "$WT"
+  ck "3" "$RC" "reclaim of another session's LIVE worktree refused"
+  ck "sess-A" "$(cfg start.owner-session)" "the live owner keeps the claim"
+else
+  skip "reclaim live-foreign case needs node"
+fi
+
 
 echo
 echo "wt-disown: $pass passed, $fail failed, $skipped skipped"
