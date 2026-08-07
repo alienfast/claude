@@ -53,10 +53,13 @@ jq -s '.[0].at_launch as $a | {launch: $a, end: {weekly_pct: <PCT>, burst_pct: <
 
 Then divide the run's output tokens by `consumed_weekly_pct/100` to get the 100% basis, and report it
 against `windows.peak_168h_output_tokens` — they should agree within noise, and a large gap means the
-limit is metering something other than output tokens (cache reads run ~400x output volume here), which
-is worth knowing explicitly rather than rediscovering.
+limit is metering something other than output tokens, which is worth knowing explicitly rather than
+rediscovering. `windows.peak_5h_cache_read_tokens` and `peak_5h_total_billable_tokens` are emitted for
+the same window so the comparison is arithmetic rather than a guess; cache reads run roughly three
+orders of magnitude above output volume, so the two candidate meters are nowhere near each other and a
+single run that gets cut off narrows it a lot. Note which column the cutoff is consistent with.
 
-**Report three numbers back to `/auto-prep`'s next run**, all in the `windows` block already emitted:
+**Report four numbers back to `/auto-prep`'s next run**, all in the `windows` block already emitted:
 
 1. `peak_5h_output_tokens` with `peak_5h_concurrency` — the burst-window floor, and the basis for the
    concurrency cap. It rises only when a fleet survives a denser window, so it is worth noting when a
@@ -64,9 +67,17 @@ is worth knowing explicitly rather than rediscovering.
 2. `output_tokens_per_session_hour_at_peak` paired with that concurrency — one point on the burn-rate
    curve. Recorded across runs at different `n`, these replace the flat-rate assumption that makes
    large-`n` projections optimistic.
-3. Any `quota_stall_groups` — sessions that died together untagged. **This is the fingerprint that
+3. Any `quota_stall_groups` — sessions that stopped together. **This is the fingerprint that
    distinguishes a clean deadline wind-down from an allowance cutoff**, and only the second leaves
-   in-flight worktrees needing a human. Check those worktrees before reaping anything.
+   in-flight worktrees needing a human. Check those worktrees before reaping anything. A group whose
+   `kind` is `recovered` looks *entirely* clean in every other column — the sessions woke hours later
+   and drained with proper terminal tags — so this field is the only thing that will tell you.
+4. **When a stall group exists, `peak_5h_output_tokens` is a CEILING, not a floor** — the run was cut
+   off at that volume, so it bounds the limit from above where every un-throttled observation bounds
+   it from below. This is the one measurement that can *lower* a future recommendation, and
+   `/fleet-launch`'s sizing arithmetic prefers it over the survived floor for exactly that reason.
+   Say plainly which kind of observation the run produced; a ceiling reported as a floor raises the
+   next fleet's size on evidence that argues for shrinking it.
 
 Compare realized burn against the `sizing.rate_tok_per_session_hour` that
 `tmp/fleet-recommendation.json` assumed. A projection that missed by 2x is the finding — silently
@@ -88,6 +99,9 @@ The script finds *shapes*; it does not explain them. Each flag is a lead:
 | shipped with no persisted verdict | `/quality-review` never persisted its Output block, or the issue shipped outside the review pipeline | that issue's `/full` run in the session transcript |
 | plan-heavy origin mix | the posted plans leak requirements/scope — planning is the stage to tune (model, effort, or a dedicated plan/plan-review step) | the tagged findings' issues; diff each posted plan against what the review had to fix |
 | impl-heavy origin mix | plans were right, code diverged — developer model/effort or delegation prompts are the lever, not more planning | the fix-dispatch prompts and the findings they addressed |
+| test-heavy origin mix | plan and code were sound — review is repairing coverage the implementation never wrote (`test` = behavior correct but unpinned), so the lever is the test bar in `/start` Step 8's `developer` implementation dispatch, which today asks for no coverage on the change beyond a green `pnpm check`; not planning, and not developer model/effort. Some share of this bucket is the *intended yield* of `quality-reviewer`'s test-review modality rather than churn to design away | the tagged findings' issues; for each, check whether the fix touched spec files or app files — an app-file fix means the finding was mis-tagged `test` and belongs to `impl` |
+| spec-heavy origin mix | the certified spec itself is what review keeps correcting — the lever is `/spec` rigor at certification time, not planning or implementation effort | the tagged findings' issues; diff each issue's Problem/Success Criteria against what the review had to restate |
+| latent-heavy origin mix | pre-existing defects the change merely surfaced — NOT a signal about this fleet's plan, code or specs, and not a lever at all. Expect it to decay across runs as the pool drains; a share that stays flat or rises means the reviewer is finding genuinely new latent surface, which is worth its own investigation | Step 3's Linear census: are these being filed, and is the filed-per-shipped rate falling run over run? |
 | high filed-per-shipped rate | each shipped issue spawns near or above one new issue — at that rate the backlog cannot drain | Step 3's Linear census: severity + certification mix of what was filed |
 
 **Correlate across sessions before concluding.** The 2026-08-01 run's biggest finding existed only in the

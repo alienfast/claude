@@ -31,6 +31,12 @@ ck_file() { # ck_file <desc> <path> <expected-first-line>
   ck "$1" "$3" "$got"
 }
 
+# The schema guard exits 3 on any body missing one of the Output block's seven field lines, so
+# every fixture asserting exit 0 must be fully conformant — mode tests included.
+body_ok() { # body_ok <first-line>
+  printf '%s\n\nVerdict: passed-after-fixes\nCycles: 2 (initial + 1 re-review)\nFindings resolved: 1 (HIGH/impl: example finding)\nDeferred fixed in-session: none\nDeferred filed as issues: none\nDeferred dropped: none\nOpen items: none\n' "$1"
+}
+
 root=$(mktemp -d "${TMPDIR:-/tmp}/qrv-test-XXXXXX")
 trap 'rm -rf "$root"' EXIT
 
@@ -44,7 +50,7 @@ wt="$root/wt-bf-999"
 git -C "$main" worktree add -q -b test-bf-999 "$wt" >/dev/null 2>&1
 
 echo "== 1. stdin mode (-) publishes to BOTH locations from a worktree"
-printf '# Verdict — BF-999\n\nVerdict: passed-after-fixes\n' | (cd "$wt" && "$SCRIPT" BF-999 -) >/dev/null 2>&1
+body_ok '# Verdict — BF-999' | (cd "$wt" && "$SCRIPT" BF-999 -) >/dev/null 2>&1
 ck "  exit 0" 0 $?
 ck_file "  worktree copy written"     "$wt/tmp/quality-review-verdict-bf-999.md"   "# Verdict — BF-999"
 ck_file "  main-checkout copy written" "$main/tmp/quality-review-verdict-bf-999.md" "# Verdict — BF-999"
@@ -61,25 +67,25 @@ ck "  no uppercase entry"        "0" \
 
 echo "== 3. omitted body arg defaults to the worktree staging path"
 mkdir -p "$wt/tmp"
-printf '# Staged BF-888\n\nVerdict: passed-clean\n' > "$wt/tmp/quality-review-verdict-bf-888.md"
+body_ok '# Staged BF-888' > "$wt/tmp/quality-review-verdict-bf-888.md"
 (cd "$wt" && "$SCRIPT" BF-888) >/dev/null 2>&1
 ck "  exit 0" 0 $?
 ck_file "  main-checkout copy published from staging" "$main/tmp/quality-review-verdict-bf-888.md" "# Staged BF-888"
 ck_file "  staging file survives in place"            "$wt/tmp/quality-review-verdict-bf-888.md"   "# Staged BF-888"
 
 echo "== 4. explicit body file (the pre-existing two-arg form) still works"
-printf '# Explicit BF-777\n' > "$root/body.md"
+body_ok '# Explicit BF-777' > "$root/body.md"
 (cd "$wt" && "$SCRIPT" BF-777 "$root/body.md") >/dev/null 2>&1
 ck "  exit 0" 0 $?
 ck_file "  published" "$main/tmp/quality-review-verdict-bf-777.md" "# Explicit BF-777"
 
 echo "== 5. run from the main checkout writes once, does not error"
-printf '# Main BF-666\n' | (cd "$main" && "$SCRIPT" BF-666 -) >/dev/null 2>&1
+body_ok '# Main BF-666' | (cd "$main" && "$SCRIPT" BF-666 -) >/dev/null 2>&1
 ck "  exit 0" 0 $?
 ck_file "  written" "$main/tmp/quality-review-verdict-bf-666.md" "# Main BF-666"
 
 echo "== 6. markdown bodies with code fences and backticks survive stdin verbatim"
-printf '# Fenced BF-555\n\nVerdict: passed-clean\n\n```ruby\nputs `date`\n```\n' \
+{ body_ok '# Fenced BF-555'; printf '\n```ruby\nputs `date`\n```\n'; } \
   | (cd "$wt" && "$SCRIPT" BF-555 -) >/dev/null 2>&1
 ck "  exit 0" 0 $?
 ck "  fence preserved"   "yes" "$(grep -qF '```ruby'      "$main/tmp/quality-review-verdict-bf-555.md" && echo yes || echo no)"
@@ -100,8 +106,8 @@ echo "== 9. argument validation"
 printf 'x\n' | (cd "$root" && "$SCRIPT" BF-222 -) >/dev/null 2>&1; ck "  outside a repo -> exit 1" 1 $?
 
 echo "== 10. republish is idempotent and overwrites"
-printf '# First\n'  | (cd "$wt" && "$SCRIPT" BF-111 -) >/dev/null 2>&1
-printf '# Second\n' | (cd "$wt" && "$SCRIPT" BF-111 -) >/dev/null 2>&1
+body_ok '# First'  | (cd "$wt" && "$SCRIPT" BF-111 -) >/dev/null 2>&1
+body_ok '# Second' | (cd "$wt" && "$SCRIPT" BF-111 -) >/dev/null 2>&1
 ck_file "  main copy carries the newer body" "$main/tmp/quality-review-verdict-bf-111.md" "# Second"
 
 echo "== 11. published file is 0644, not mktemp's 0600"
@@ -109,7 +115,42 @@ perms=$(stat -f '%Lp' "$main/tmp/quality-review-verdict-bf-111.md" 2>/dev/null \
      || stat -c '%a'  "$main/tmp/quality-review-verdict-bf-111.md" 2>/dev/null)
 ck "  mode 644" "644" "$perms"
 
-echo "== 12. no stdin temp files leak into TMPDIR"
+echo "== 12. off-schema bodies still publish but exit 3 (the 2026-08-06 fleet shapes)"
+# bf-699/bf-958 shape: rich prose carrying no field line but Verdict:/Cycles:
+err=$(printf '# Review of BF-699\n\nLong prose about what was reviewed and fixed.\n\nVerdict: passed-after-fixes\nCycles: 3 (initial + 2 re-reviews)\n\nMore narrative.\n' \
+  | (cd "$wt" && "$SCRIPT" BF-699 -) 2>&1 >/dev/null); rc=$?
+ck "  prose body -> exit 3" 3 $rc
+ck_file "  still published to main"     "$main/tmp/quality-review-verdict-bf-699.md" "# Review of BF-699"
+ck_file "  still published to worktree" "$wt/tmp/quality-review-verdict-bf-699.md"   "# Review of BF-699"
+ck "  stderr names the five missing lines" "yes" \
+  "$(printf '%s' "$err" | grep -q 'missing/unparseable lines: Findings resolved, Deferred fixed in-session, Deferred filed as issues, Deferred dropped, Open items' && echo yes || echo no)"
+
+# bf-973 shape: "## Findings resolved" as a HEADING with the count on the next line
+err=$(printf '# Review of BF-973\n\nVerdict: passed-after-fixes\nCycles: 2 (initial + 1 re-review)\n\n## Findings resolved\n\n4\n\nDeferred fixed in-session: none\nDeferred filed as issues: none\nDeferred dropped: none\nOpen items: none\n' \
+  | (cd "$wt" && "$SCRIPT" BF-973 -) 2>&1 >/dev/null); rc=$?
+ck "  heading form -> exit 3" 3 $rc
+ck "  names exactly Findings resolved" "yes" \
+  "$(printf '%s' "$err" | grep -q 'missing/unparseable lines: Findings resolved$' && echo yes || echo no)"
+
+# unsubstituted schema: a literal "Cycles: N"
+err=$(printf '# BF-433\n\nVerdict: passed-clean\nCycles: N (initial + N-1 re-reviews)\nFindings resolved: none\nDeferred fixed in-session: none\nDeferred filed as issues: none\nDeferred dropped: none\nOpen items: none\n' \
+  | (cd "$wt" && "$SCRIPT" BF-433 -) 2>&1 >/dev/null); rc=$?
+ck "  literal 'Cycles: N' -> exit 3" 3 $rc
+ck "  names exactly Cycles" "yes" \
+  "$(printf '%s' "$err" | grep -q 'missing/unparseable lines: Cycles$' && echo yes || echo no)"
+
+# unsubstituted enum: a pipe-separated Verdict line
+err=$(printf '# BF-422\n\nVerdict: passed-clean | passed-after-fixes\nCycles: 1 (initial)\nFindings resolved: none\nDeferred fixed in-session: none\nDeferred filed as issues: none\nDeferred dropped: none\nOpen items: none\n' \
+  | (cd "$wt" && "$SCRIPT" BF-422 -) 2>&1 >/dev/null); rc=$?
+ck "  pipe-separated Verdict -> exit 3" 3 $rc
+ck "  names exactly Verdict" "yes" \
+  "$(printf '%s' "$err" | grep -q 'missing/unparseable lines: Verdict$' && echo yes || echo no)"
+
+# a fully-conformant seven-field block passes untouched
+body_ok '# Conformant BF-599' | (cd "$wt" && "$SCRIPT" BF-599 -) >/dev/null 2>&1
+ck "  conformant block -> exit 0" 0 $?
+
+echo "== 13. no stdin temp files leak into TMPDIR"
 ck "  qr-verdict-stdin-* cleaned up" "0" "$(find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'qr-verdict-stdin-*' 2>/dev/null | wc -l | tr -d ' ')"
 
 echo

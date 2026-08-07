@@ -30,6 +30,11 @@
 #   0 = both writes succeeded (or only #1 if main checkout == current worktree)
 #   1 = not in a git repo
 #   2 = missing or unreadable inputs, or an empty body
+#   3 = published, but the body is off-schema — one or more of the Output block's seven
+#       field lines is missing or unparseable (stderr names which). The copies WERE
+#       written: /finish Step 1.5 needs the file to exist, and in auto mode an absent
+#       file aborts the ship, so refusing the write would turn a lost audit record into
+#       a blocked ship. Fix the block and re-run; the overwrite is idempotent.
 
 set -eo pipefail
 
@@ -110,4 +115,30 @@ write_atomic "$worktree_root/tmp"
 
 if [ -n "$main_checkout" ] && [ "$main_checkout" != "$worktree_root" ]; then
   write_atomic "$main_checkout/tmp"
+fi
+
+# Schema guard — publish-then-warn, never refuse. Runs AFTER the writes because an off-schema body
+# is still a real audit record where an empty one is not (the exit-2 guard above), and /finish
+# needs the file to exist. Anchored exactly like fleet-metrics.py's V_VERDICT/V_CYCLES/V_RESOLVED/
+# V_FILED_LINE regexes, so "parseable" here cannot drift from what the retro's consumer reads: the
+# 2026-08-06 fleet published 3 of 15 verdicts this check would have caught, and their findings data
+# was unrecoverable by the time fleet-metrics.py flagged the breach. Value forms matter, not mere
+# presence — a literal "Cycles: N" or a pipe-carrying unsubstituted "Verdict: <one of: a | b>" is
+# exactly what slipped through, and "## Findings resolved" as a heading fails the line-start colon.
+schema_missing=""
+miss() { schema_missing="${schema_missing:+$schema_missing, }$1"; }
+has() { grep -Eq "$1" "$body_file"; }
+
+has '^Verdict:[[:space:]]*(passed-clean|passed-after-fixes|terminated-with-open-items|escalated-to-architect)([[:space:]][^|]*)?$' || miss "Verdict"
+has '^Cycles:[[:space:]]*[0-9]+' || miss "Cycles"
+has '^Findings resolved:[[:space:]]*([0-9]+|none)' || miss "Findings resolved"
+has '^Deferred fixed in-session:' || miss "Deferred fixed in-session"
+has '^Deferred filed as issues:[[:space:]]*[^[:space:]]' || miss "Deferred filed as issues"
+has '^Deferred dropped:' || miss "Deferred dropped"
+has '^Open items:' || miss "Open items"
+
+if [ -n "$schema_missing" ]; then
+  echo "ERROR: verdict published but off-schema: missing/unparseable lines: $schema_missing" >&2
+  echo "ERROR: the copies above were still written; re-run with the corrected block (see quality-review/SKILL.md Output)." >&2
+  exit 3
 fi

@@ -664,7 +664,7 @@ When delegated from `/start`, this block becomes the "Adversarial review" sectio
 VERDICT_EOF
 ```
 
-Quote the heredoc delimiter (`<<'VERDICT_EOF'`, not `<<VERDICT_EOF`) so backticks and `$` inside the verdict body are not expanded by the shell. The script rejects an empty body with exit 2, which is what an unquoted-and-mangled heredoc usually degrades to.
+Quote the heredoc delimiter (`<<'VERDICT_EOF'`, not `<<VERDICT_EOF`) so backticks and `$` inside the verdict body are not expanded by the shell. The script rejects an empty body with exit 2, which is what an unquoted-and-mangled heredoc usually degrades to. It also validates the block's seven field lines against the same anchored regexes `fleet-metrics.py` parses with and exits **3** when any is missing or unparseable (an unsubstituted `Cycles: N`, a pipe-carrying `Verdict:` schema line, a field rendered as a heading instead of `Field: value`): the copies WERE still written, so do not treat 3 as a persistence failure — fix the block and re-run the same call, which overwrites idempotently.
 
 **Never stage the body with `Write` and leave it there.** A staged file that is never published is invisible: it lives in the worktree, and `/finish merge` deletes the worktree with it. On the 2026-08-03 fleet this lost 4 of 12 shipped issues' verdicts — every one had staged the file correctly and simply never made the second call. The reviews had all run; only the audit trail died. If you have already staged a file, publish it with the one-argument form, which defaults to that path:
 
@@ -746,7 +746,7 @@ Rules for this step:
   Open items: review could not complete; quality-verifier agent unavailable on the cycle-3 re-review (see chat above for failure details)
   ```
 
-- **`quality-review-write-verdict.sh` itself fails** (disk full, perms, mktemp/mv error, missing `tmp/` parent unreachable): the persistence layer cannot record the verdict, so `/finish` Step 1.5 would see `VERDICT=none-found` and proceed with only a warning — defeating the gate that the fallthrough verdict was meant to establish. On detection (script exit code non-zero):
+- **`quality-review-write-verdict.sh` itself fails** (disk full, perms, mktemp/mv error, missing `tmp/` parent unreachable): the persistence layer cannot record the verdict, so `/finish` Step 1.5 would see `VERDICT=none-found` and proceed with only a warning — defeating the gate that the fallthrough verdict was meant to establish. **Exit 3 is not this case**: the verdict IS persisted, just off-schema — correct the block per the stderr's named fields and re-run the same call instead of entering the recovery below. On detection (script exit code non-zero and not 3):
   1. Surface the script's stderr to the user immediately.
   2. Do NOT silently proceed. Print an explicit warning: `WARNING: /quality-review verdict could not be persisted (see above). /finish for this issue will not be gated by this verdict. Either resolve the persistence failure and re-run /quality-review, or run /finish with explicit awareness that Step 8's gate cannot read the verdict you just produced.`
   3. Continue with the in-memory verdict (still surface the verdict block to the user / caller) so `/start` Step 10 has something to render, but understand that `/finish` cannot enforce it. The user must decide whether to re-run or proceed manually.
