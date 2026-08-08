@@ -27,6 +27,17 @@ difference, a version-specific quirk — is the kind a reader trusts without
 re-checking, and the kind this file most invites you to write. Run it on the
 machine first. If you can't, write the narrower claim you did confirm.
 
+**Measure the value production actually produces, not a plausible stand-in.**
+Running *something* is not the bar — the input has to be the one the system
+builds. Where a library or framework constructs the value, construct it the
+same way (call the context builder, apply the scope, run the serializer)
+instead of hand-typing a literal that looks right. A stand-in routinely omits
+the property that made the real value interesting — a hand-written
+`version: '25.5.0'` for an OS context whose real `version` is the whole kernel
+banner — so the measurement confirms the claim you already believed. When that
+same stand-in becomes the test fixture, the arm covering the claim passes
+whether or not the code works.
+
 Never cite a number that moves with ambient machine state (a file count, a
 timing, a line count). It reads as evidence but reproduces nowhere else — state
 the qualitative claim the reader can re-test instead.

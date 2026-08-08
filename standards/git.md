@@ -186,6 +186,14 @@ git -C /path/to/repo status
 
 **This is not a git-specific rule — it applies to every pre-approved command.** A `cd <dir> && <allowlisted-cmd>` compound matches `cd`, so the allow rule for the real command never fires and the call falls through to a prompt (or, in auto mode, to the classifier). Prefer the tool's own directory flag whenever one exists — `git -C`, `pnpm --dir`, `make -C`, `rspec` run via a project wrapper script. When a runner genuinely requires its own working directory (Rails/rspec needs `apps/api`), the `cd` prefix is unavoidable and correct: the fix is a permission or `autoMode.allow` entry covering that shape, **not** a blanket `Bash(cd:*)` rule — that would greenlight anything beginning with `cd`, and a trailing-wildcard variant like `Bash(cd apps/api && rspec:*)` still admits an appended `; rm -rf ~`.
 
+### A path-filtered git command resolves its pathspec against the cwd, and three of them fail silently
+
+`git diff -- <path>`, `git log -- <path>`, and `git show <ref> -- <path>` resolve a bare pathspec relative to the shell's cwd, not the repo root. Issued after a `cd` into a subdirectory — which the rule above notes is sometimes unavoidable, and whose effect persists across every later tool call in the session — a repo-root-relative pathspec silently doubles: `git diff -- apps/api/spec/foo_spec.rb` run from inside `apps/api` resolves to `apps/api/apps/api/spec/foo_spec.rb`, matches nothing, prints **nothing at all**, and exits **0**. That is indistinguishable from "this file has no changes" — a conclusion worth acting on.
+
+`git status -- <path>` is the exception, and only partly: it also exits 0, but prints `warning: could not open directory '<doubled-path>'` to stderr, so it self-diagnoses where the other three do not. Measured on all four.
+
+The tell is an unfiltered form contradicting a filtered one — `git diff --stat` listing a file that `git diff -- <that file>` calls unchanged. Anchor the call instead of trusting the prompt: `git -C <repo-root> …`, per the rule above.
+
 ### Worktree-isolated sessions: no loops, no `$(…)`, no `git -C` at the shared checkout
 
 A session registered on a worktree via `EnterWorktree` — every `/start wt`, and so every `/auto` and every fleet session — runs its Bash commands through a static containment check (measured on harness 2.1.222, in foreground and background sessions alike), and subagents inherit the restriction. It refuses four shapes, each with its own message:

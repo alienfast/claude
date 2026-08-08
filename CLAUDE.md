@@ -22,6 +22,8 @@ Rules in `~/.claude/rules/` are automatically applied based on file type:
 
 These are generic, file-type-scoped, and shared across all projects via `alienfast/claude.git`. Projects layer their own domain rules in `<project>/.claude/rules/` — committed to the project repo and shared with the team (e.g. basefund's `descope.md`, `nextjs.md`, `apollo.md`, `mui-*.md`, `storybook.md`).
 
+- **Moving code to a new file drops it out of every rule whose `paths:` frontmatter named the old file.** Injection matches file paths, not symbols, so an extraction keeps the code's behavior, tests, and docblocks while silently un-governing it — and a character-identical, behavior-preserving extraction is exactly the evidence that makes it look safe. Nothing catches this: no check lane validates `paths:` coverage. When you create, rename, or move a file, grep every rules directory for the old file's basename (`grep -rl '<old-basename>' .claude/rules/ ~/.claude/rules/`) and add the new path everywhere the old one was named. Updating a rule's *prose* to mention the new module is not the same edit — the frontmatter is what decides injection.
+
 ## Available Skills
 
 Skills activate automatically based on context, and the harness lists the full available set each session — so this file does not enumerate them (the list drifts otherwise). See [Skills README](skills/README.md) for the catalog, grouping (Linear workflow vs development workflow), and creation guide. External skills are installed via `update.sh`.

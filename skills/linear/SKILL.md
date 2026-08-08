@@ -119,6 +119,12 @@ Auth: `linear-cli auth oauth` (browser) or `LINEAR_API_KEY`; check with `linear-
 
 20. **An issue identifier written through the API stays literal text — auto-linking is a client-side editor input rule, and the API-side equivalent is a plain URL, not the identifier.** Linear stores rich text as a ProseMirror document in which a mention is its own `issueMention` node (`id`/`label`/`href`/`title`); typing `BF-932` in Linear's editor converts it via an input rule, but nothing converts it on the way in through `issues create -d`, `issues update --data`, `issues comment --body`, or `linear-post.sh`. **The fix is to emit the plain issue URL**, which Linear's markdown ingest does convert into a real mention chip (docs: "mentions can be created in Markdown by using the plain URL of the resource", e.g. `https://linear.app/yourworkspaceurl/issue/LIN-123/some-issue` → `@LIN-123`). Read the canonical slug-carrying URL rather than hand-building it: `linear-cli issues get <ID> -o json | jq -r '.url'`. A `[BF-932](<url>)`-wrapped link is what a mention serializes back **out** to, but only the bare URL is documented as converting on the way **in**. **For a durable reference prefer a relation** — `linear-cli relations add <A> <B> -r related` (see gotchas #10 and #15 for direction and the `duplicate` state side effect) — which renders with live status and survives renames; a stored mention `href` goes stale on retitle (BF-931's mention still carries BF-932's superseded slug).
 
+21. **`issues create` rejects `--title` and `--label` — and clap's "tip" for the first is actively wrong.** The command map below already shows the two flags that DO exist (title is POSITIONAL, description is `-d`/`--description`, `-` for stdin) but not the trap: guessing `--title` gets `tip: a similar argument exists: '--filter'` plus a `Usage:` line reading as though `--filter` were required for `create` — it is not, and `--filter` has nothing to do with `create`. The label flag is `--labels` (plural, short `-l`); `--label` errors the same way. There is no `--description-file` at all — pass the body inline or via stdin.
+
+    ```bash
+    linear-cli issues create --team BF "<TITLE>" --description - --state Planned --labels specified < body.md
+    ```
+
 ## Command map
 
 ```bash
