@@ -51,18 +51,42 @@ decide() {
           then ([$c[] | select((type == "object") and (.type == "text")) | (.text // "")] | join(" "))
         else "" end;
 
-    # ITERATION ANCHOR — the last self-paced `/loop /auto` delivery. The initial invocation and
-    # every wakeup firing re-deliver the identical command block, so the LAST one is the start of
+    # ITERATION ANCHOR — the last self-paced loop delivery. The initial invocation and every
+    # compliant wakeup firing re-deliver the identical command block, so the LAST one is the start of
     # the iteration now ending, and the question this hook asks is only ever about that window.
+    #
+    # A BARE /auto delivery counts too, and must. ScheduleWakeup is supposed to carry the /loop input
+    # verbatim, but a run that arms prompt "/auto" instead of "/loop /auto" gets a firing that
+    # delivers <command-name>/auto</command-name> with NO /loop block — so the anchor stops advancing
+    # while wakeups keep accumulating inside the frozen window, $wakeups is forever > 0, and this hook
+    # silently disarms for the rest of the session. That is the worst failure available to a guard
+    # whose whole job is catching silence, and it is not hypothetical: measured on basefund session
+    # 7ac57ff0 (2026-08-08), 20 of 91 wakeups used the bare prompt, the anchor froze at 05:12 UTC, and
+    # the session ended 14.3h later un-armed with the hook allowing it — the exact BF-695 shape.
+    # Anchoring on either delivery makes the window advance regardless of which prompt was armed.
+    #
+    # Human-typed bare /auto is EXCLUDED: that is a one-shot targeted run, which never arms a wakeup
+    # by design (skills/auto/SKILL.md, targeted mode). Leaving it out of the anchor keeps it inside
+    # the $humans window below, which clears the hook instead of firing on correct behaviour. The
+    # /loop arm stays unfiltered so a human-typed `/loop /auto` still anchors its first iteration.
     ([ $E[]
          | select(.value.type == "user")
          | select(.value.isSidechain != true)
          | (utext(.value.message.content // "")) as $t
-         | select($t | test("<command-name>/loop</command-name>"))
-         | select($t | test("<command-args>[^<]*/auto"))
-         # Self-paced only. A leading interval (5m / 30s / 2h) makes this a cron-driven loop whose
-         # re-fire does not depend on a wakeup, so an un-armed turn end there is correct behaviour.
-         | select(($t | test("<command-args>\\s*[0-9]+\\s*[smhSMH]")) | not)
+         | select(
+             (
+               ($t | test("<command-name>/loop</command-name>"))
+               and ($t | test("<command-args>[^<]*/auto"))
+               # Self-paced only. A leading interval (5m / 30s / 2h) makes this a cron-driven loop
+               # whose re-fire does not depend on a wakeup, so an un-armed turn end there is correct.
+               and (($t | test("<command-args>\\s*[0-9]+\\s*[smhSMH]")) | not)
+             )
+             or
+             (
+               ($t | test("<command-name>/auto</command-name>"))
+               and (.value.origin.kind != "human")
+             )
+           )
          | .key ] | last) as $loopidx
 
     | if $loopidx == null then {fire: false, pending: false, reason_kind: "not-auto-loop"}

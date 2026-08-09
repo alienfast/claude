@@ -35,6 +35,11 @@ HUMAN='{"type":"user","isSidechain":false,"origin":{"kind":"human"},"message":{"
 NUDGE='{"type":"user","isSidechain":false,"isMeta":true,"message":{"role":"user","content":[{"type":"text","text":"You are ending a turn inside a self-paced /loop /auto iteration without arming the next ScheduleWakeup."}]}}'
 # A sidechain (subagent) wakeup must not clear the parent loop.
 WAKE_SIDECHAIN='{"type":"assistant","isSidechain":true,"message":{"role":"assistant","content":[{"type":"tool_use","id":"t4","name":"ScheduleWakeup","input":{"delaySeconds":600}}]}}'
+# What a wakeup armed with prompt "/auto" (rather than "/loop /auto") actually delivers — verbatim
+# shape from basefund session 7ac57ff0, 2026-08-08T09:18:01Z. No /loop block, and no origin.kind.
+AUTO_BARE='{"type":"user","isSidechain":false,"message":{"role":"user","content":"<command-message>auto</command-message>\n<command-name>/auto</command-name>"}}'
+# The same block typed by a human: a one-shot targeted run, which correctly arms nothing.
+AUTO_HUMAN='{"type":"user","isSidechain":false,"origin":{"kind":"human"},"message":{"role":"user","content":"<command-message>auto</command-message>\n<command-name>/auto</command-name>\n<command-args>BF-123</command-args>"}}'
 
 check() { # name expected_field expected_value records...
   local name="$1" field="$2" want="$3"; shift 3
@@ -88,6 +93,26 @@ check "11 human before anchor is stale" fire true "$LOOP" "$HUMAN" "$LOOP" "$WOR
 
 # 12. pending drives the flush-race poll: true only while no wakeup is visible.
 check "12 pending false once armed" pending false "$LOOP" "$WORK" "$WAKE"
+
+# 13. THE 7ac57ff0 MODE (2026-08-08): a wakeup armed with prompt "/auto" instead of "/loop /auto"
+# fires a BARE /auto delivery carrying no /loop block. With the anchor keyed on /loop alone it stopped
+# advancing, the earlier iteration's wakeup stayed inside the frozen window, and the hook was disarmed
+# for the session's remaining 14.3h — it ended un-armed and the hook allowed it. Measured: 20 of that
+# session's 91 wakeups used the bare prompt, and its last /loop anchor was 05:12 UTC against a 19:28
+# UTC death. This is case #9's defect wearing a different delivery shape, so it fires for the same
+# reason: a previous iteration's arming must never vouch for the one now ending.
+check "13 bare /auto firing re-anchors (7ac57ff0)" fire true "$LOOP" "$WORK" "$WAKE" "$AUTO_BARE" "$WORK"
+
+# 14. ...and the bare-/auto window clears normally when that iteration DOES arm.
+check "14 bare /auto anchor clears when armed" fire false "$LOOP" "$WORK" "$AUTO_BARE" "$WORK" "$WAKE"
+
+# 15. A HUMAN-typed bare /auto is a one-shot targeted run, which never arms a wakeup by design. It
+# must not become an anchor — left in the $humans window it clears the hook, so correct targeted
+# behaviour is not punished with a block.
+check "15 human /auto one-shot does not fire" fire false "$LOOP" "$WORK" "$WAKE" "$AUTO_HUMAN" "$WORK"
+
+# 16. Nudge accounting must survive the new anchor: counted from the bare-/auto anchor, not the /loop.
+check "16 attempts counted from bare anchor" attempts 1 "$LOOP" "$NUDGE" "$WORK" "$AUTO_BARE" "$NUDGE" "$WORK"
 
 echo
 echo "passed: $PASS   failed: $FAIL"

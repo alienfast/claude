@@ -19,6 +19,34 @@ Interactive by design. Report the findings, get approval, then apply. Never run 
 
 ## Step 1 — Measure
 
+### Confirm the fleet has finished before reporting — a live session mimics a fault
+
+Every signal that rests on bookkeeping *not yet written* reads identically for a session mid-run and one
+that died: its state file still says `status: "active"` with an empty `reason` (Step 4 writes `reason`
+only alongside a terminal status), its transcript carries no terminal tag and no
+`ScheduleWakeup(stop: true)`, its latest ship stays out of `shipped[]` until its own Step 4 runs, and its
+in-flight tool call has no result yet. So **never armed a ScheduleWakeup**, **shipped without recording
+it**, and **dangling tool calls** are artifacts against a live session — and because a live session
+carries no terminal tag, `quota_stalls()` marks it `unrecovered` at its last activity, so two live
+sessions cluster into one group (zero lost hours, `limit_kind: null`) and fire the "run was CUT OFF, both
+peaks are CEILINGS" banner that `/fleet-launch` sizes the next fleet against. Measured on the 2026-08-08
+basefund run, begun ~10 minutes before the last session closed out: the missing-terminal-status and
+un-armed-loop findings were both artifacts, and that session wrote a correct `halted` status with an
+accurate `reason` while the report was still being drafted.
+
+The event-based flags are real either way — classifier blocks, contamination halts, ran without a
+surviving ledger, shipped with no persisted verdict, off-schema verdict body. Only the bookkeeping ones
+need this gate.
+
+**`ps -p <the state file's pid>` does not settle it.** Under `claude agents` every session in a fleet
+embeds the *fleet root* pid (`skills/auto/SKILL.md` Step 0 and Step 4), so it answers identically for all
+of them and can go empty mid-run; `/fleet-status`'s ALIVE/dead column reads the same `pid`/`pidStart`
+pair and inherits the limitation. Compare the newest transcript `mtime` against now instead — and stale
+is not finished either: a quota-stalled session resumes hours later on a pending wakeup, so cross-check
+`tmp/fleet-deadline.json` (passed, or `stopped`) and the sessions' harness limit messages. When a session
+may still be writing, either wait for it or mark its row provisional — never file a bookkeeping finding
+against it. `/fleet-status` is the read-only skill for a fleet still in flight.
+
 ```bash
 ~/.claude/scripts/fleet-metrics.py --checkout <repo> --since YYYY-MM-DD   # or --hours N, --all
 ```
@@ -72,12 +100,36 @@ single run that gets cut off narrows it a lot. Note which column the cutoff is c
    in-flight worktrees needing a human. Check those worktrees before reaping anything. A group whose
    `kind` is `recovered` looks *entirely* clean in every other column — the sessions woke hours later
    and drained with proper terminal tags — so this field is the only thing that will tell you.
+
+   **Read `limit_kind` and route the whole retro on it; never infer the limit from the stall's shape.**
+   The three limits produce an identical synchronized-silence fingerprint and carry opposite levers:
+   `weekly` caps total session-hours (lever: **duration**), `5-hour` caps concurrency (lever: **n**),
+   and `session` is per-session and bounds neither. The field is read from the harness message
+   (`You have hit your <kind> limit`), so it is evidence rather than deduction. Both basefund fleet
+   cutoffs to date were `weekly`, which means `n` was never the thing to shrink. When the field is
+   absent no limit message was found at all — treat the cause as unestablished (machine sleep, daemon
+   restart, network) rather than assuming quota.
+
+   **Cross-run token comparisons are valid only within one `limit_kind`.** The 2026-08-08 retro nearly
+   shipped a confident, wrong conclusion here: trailing-5h total-billable at three cutoffs agreed to
+   **0.08%** while output diverged **23%**, which reads unmistakably as having identified the meter —
+   and two of those cutoffs were `weekly` while the third was a `session` limit. Unrelated ceilings can
+   coincide closely; a 5h window is also simply the wrong instrument for a weekly cutoff.
 4. **When a stall group exists, `peak_5h_output_tokens` is a CEILING, not a floor** — the run was cut
    off at that volume, so it bounds the limit from above where every un-throttled observation bounds
    it from below. This is the one measurement that can *lower* a future recommendation, and
    `/fleet-launch`'s sizing arithmetic prefers it over the survived floor for exactly that reason.
    Say plainly which kind of observation the run produced; a ceiling reported as a floor raises the
-   next fleet's size on evidence that argues for shrinking it.
+   next fleet's size on evidence that argues for shrinking it. It is a ceiling on the limit named in
+   `limit_kind` only — a weekly cutoff leaves the 5h burst ceiling still unobserved.
+
+**A session that wound down deliberately is not a stalled one, however long it then sits quiet.** The
+detector already excludes a silence beginning at a `ScheduleWakeup(stop: true)` with no limit message,
+because an ended loop has no wakeup pending and going quiet is its contract. Do not undo that by hand
+when reading the report: on 2026-08-08 one session read the deadline with 18 minutes left, judged that
+too little for an issue averaging 1.5–2.5h, and halted — and counting its 9.3h of correct silence as
+lost capacity would have turned exemplary judgement into the run's largest apparent fault (26.1 vs the
+real 16.8 session-hours).
 
 Compare realized burn against the `sizing.rate_tok_per_session_hour` that
 `tmp/fleet-recommendation.json` assumed. A projection that missed by 2x is the finding — silently

@@ -81,6 +81,12 @@ An invalidation — a cache clear, a memo reset, a connection flush — is cheap
 
 The A/B also survives being wrong about *why*. Attribution to the single changed variable is what the measurement establishes; the mechanism behind it is a separate claim, and pinning the number does not license asserting the mechanism.
 
+### Two measurements agree only if they measured the same kind of thing
+
+A close numeric agreement between two observations is evidence of nothing until you have established that both are instances of the same *kind* of event. Agreement is seductive in proportion to its tightness: the closer it is, the more it reads as having found the mechanism, and the less likely anyone is to re-check what was actually compared. Internal consistency checks do not catch this — they test the arithmetic, not the identity of the things being compared. So before drawing a conclusion from a match, name what each observation *is*, and confirm the two names are the same. Where the system reports that kind — an error class, a limit name, a status code, a build variant — read it rather than inferring it from the observation's shape.
+
+Worked case: two rate-limit cutoffs whose trailing-5h billable volumes agreed to **0.08%** while diverging 23% on output tokens, which read unmistakably as having identified the quantity the limit meters. The harness messages named two *different* limits — a weekly allowance and a per-session one — so unrelated ceilings had merely coincided. Three consistency checks passed, none of them testing what each event was, and the conclusion reached two shared config files before the premise was checked.
+
 ### Complexity Response Pattern
 
 When two or more attempts have failed, stop and hand the decision over with everything needed to make
