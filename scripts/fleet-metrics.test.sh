@@ -347,6 +347,90 @@ ck "lost session-hours summed" "32.2" "$(q5 "d['windows']['quota_stall_groups'][
 ck_has "stall reported in md"  "quota-stall fingerprint" "$MD5"
 ck_has "md says drained clean" "drained normally" "$MD5"
 
+# ---- quota-stall fixture: RECOVERED with SPREAD ONSET, from the 2026-08-08 basefund fleet ----
+# Same recovered shape as above, but the sessions go quiet 56.2 minutes apart (09:23:48 / 10:14:01 /
+# 10:20:00 — consecutive deltas 3013s and 359s) because each kept emitting until its own last
+# in-flight delegate drained. They resume 2.1 minutes apart (18:42:04 / 18:40:17 / 18:39:58 — deltas
+# 19s and 107s), since the allowance frees at one wall-clock moment account-wide. Onset-only
+# clustering at 120s grouped NOTHING here and the retro reported a clean run while 26.1 session-hours
+# were dead — and, worse, reported the output peak as a floor when the cutoff makes it a ceiling.
+CK7="$WORK/checkout7"
+mkdir -p "$CK7/tmp"
+git -C "$CK7" init -q 2>/dev/null
+M7="$(git -C "$CK7" rev-parse --show-toplevel | tr / -)"
+mkdir -p "$WORK/projects/$M7"
+
+mk_spread() { # mk_spread <run> <quiet-at> <resume-at> <throttled|selfended>
+  cat > "$CK7/tmp/auto-state-$1.json" <<EOF
+{"status": "drained", "reason": "fleet deadline reached", "shipped": [], "canceled": [], "skipped": [], "failed": []}
+EOF
+  # The quiet row is what makes the session go dark: for a THROTTLED session it carries the harness
+  # limit message, for a SELF-ENDED one a terminal tag plus ScheduleWakeup(stop:true). Both then sit
+  # silent for hours and resume together, so the silence alone cannot tell them apart.
+  if [ "$4" = "throttled" ]; then
+    QUIET_TEXT="You have hit your weekly limit - resets Aug 11 at 5pm (America/Chicago)"
+    QUIET_EXTRA=""
+  else
+    QUIET_TEXT="AUTO-HALTED: fleet deadline 04:40 CDT reached with 18 minutes left - too little to ship an issue."
+    QUIET_EXTRA=$'\n'"{\"type\":\"assistant\",\"timestamp\":\"$2\",\"message\":{\"role\":\"assistant\",\"id\":\"msg_$1s\",\"model\":\"claude-opus-5\",\"usage\":{\"input_tokens\":10,\"output_tokens\":5},\"content\":[{\"type\":\"tool_use\",\"id\":\"tu_$1\",\"name\":\"ScheduleWakeup\",\"input\":{\"stop\":true}}]}}"
+  fi
+  # The 06:00 row lands inside the 5h window ENDING at the earliest THROTTLED quiet (05:14-10:14); the
+  # 02:00 row predates it. Both are needed to prove cutoff_trailing_5h windows rather than totals.
+  cat > "$WORK/projects/$M7/$1-0000.jsonl" <<EOF
+{"type":"user","timestamp":"2026-08-08T00:00:00Z","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"2026-08-08T02:00:00Z","message":{"role":"assistant","id":"msg_$1a","model":"claude-opus-5","usage":{"input_tokens":10,"cache_read_input_tokens":1000,"output_tokens":500},"content":[{"type":"text","text":"early"}]}}
+{"type":"assistant","timestamp":"2026-08-08T06:00:00Z","message":{"role":"assistant","id":"msg_$1b","model":"claude-opus-5","usage":{"input_tokens":10,"cache_read_input_tokens":1000,"output_tokens":1000},"content":[{"type":"text","text":"in cutoff window"}]}}
+{"type":"assistant","timestamp":"$2","message":{"role":"assistant","id":"msg_$1c","model":"claude-opus-5","usage":{"input_tokens":10,"cache_read_input_tokens":1000,"output_tokens":700},"content":[{"type":"text","text":"$QUIET_TEXT"}]}}$QUIET_EXTRA
+{"type":"assistant","timestamp":"$3","message":{"role":"assistant","id":"msg_$1d","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":40},"content":[{"type":"text","text":"resumed"}]}}
+{"type":"assistant","timestamp":"2026-08-08T19:00:00Z","message":{"role":"assistant","id":"msg_$1e","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":40},"content":[{"type":"text","text":"AUTO-HALTED: fleet deadline"}]}}
+EOF
+}
+# r1111111 is ed644317: it read the deadline with 18 minutes left, judged that too little to ship, and
+# wound down properly. Its 9.3h of correct silence must NOT be billed as lost capacity.
+mk_spread r1111111 "2026-08-08T09:23:48Z" "2026-08-08T18:42:04Z" selfended
+mk_spread r2222222 "2026-08-08T10:14:01Z" "2026-08-08T18:40:17Z" throttled
+mk_spread r3333333 "2026-08-08T10:20:00Z" "2026-08-08T18:39:58Z" throttled
+
+J7="$WORK/out7.json"
+MD7="$WORK/out7.md"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK7" --since 2026-08-07 --json > "$J7" 2>/dev/null
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK7" --since 2026-08-07 > "$MD7" 2>&1
+q7() { python3 -c "import json,sys; d=json.load(open('$J7')); print($1)"; }
+ck "spread-onset stall detected" "1" "$(q7 "len(d['windows']['quota_stall_groups'])")"
+# The self-ended session is excluded; only the two the harness actually refused are in the group.
+ck "spread names the 2 throttled" "['r2222222', 'r3333333']" \
+   "$(q7 "sorted(d['windows']['quota_stall_groups'][0]['runs'])")"
+ck "self-ended loop excluded"    "False" \
+   "$(q7 "'r1111111' in d['windows']['quota_stall_groups'][0]['runs']")"
+ck "spread kind recovered"       "recovered" "$(q7 "d['windows']['quota_stall_groups'][0]['kind']")"
+ck "spread quiet_at earliest"    "2026-08-08T10:14:01Z" "$(q7 "d['windows']['quota_stall_groups'][0]['quiet_at']")"
+ck "spread resumed_at latest"    "2026-08-08T18:40:17Z" "$(q7 "d['windows']['quota_stall_groups'][0]['resumed_at']")"
+ck "lost hours exclude self-end" "16.8" "$(q7 "d['windows']['quota_stall_groups'][0]['lost_session_hours']")"
+# The limit is READ from the harness message, never inferred from the silence — weekly and 5-hour
+# produce the same fingerprint and carry opposite levers (duration vs concurrency).
+ck "limit kind read from msg"    "['weekly']" "$(q7 "d['windows']['quota_stall_groups'][0]['limit_kind']")"
+ck_has "md names the limit"      "Limit named by the harness: **weekly**" "$MD7"
+ck_has "md names weekly lever"   "duration / total session-hours" "$MD7"
+# Cutoff meters read the 5h ENDING at the earliest THROTTLED quiet (05:14-10:14): three 06:00 rows
+# (1000 output each), r1111111's 09:23:48 row (700), r2222222's own 10:14:01 boundary row (700), and
+# NOT the 02:00 rows nor r3333333's 10:20:00 row, which falls after the window closes. r1111111's
+# stop-call record sits at 09:23:48 too and carries 5 output / 15 billable of its own, so the totals
+# are 4405 / 5000 / 9465 rather than 4400 / 5000 / 9450 — the meters count every credited message in
+# the window, including a session the STALL logic excluded. That is correct: the allowance was spent
+# by the whole account, so a session that wound down voluntarily still consumed part of the window.
+ck "cutoff meters emitted"       "1" "$(q7 "len(d['windows']['cutoff_trailing_5h'])")"
+ck "cutoff at earliest quiet"    "2026-08-08T10:14:01Z" "$(q7 "d['windows']['cutoff_trailing_5h'][0]['at']")"
+ck "cutoff output windowed"      "4405" "$(q7 "d['windows']['cutoff_trailing_5h'][0]['output_tokens']")"
+ck "cutoff cache-read windowed"  "5000" "$(q7 "d['windows']['cutoff_trailing_5h'][0]['cache_read_tokens']")"
+ck "cutoff billable windowed"    "9465" "$(q7 "d['windows']['cutoff_trailing_5h'][0]['total_billable_tokens']")"
+ck_has "md flips to CEILINGS"    "CEILINGS, not floors" "$MD7"
+ck_has "md prints cutoff meters" "cutoff-window meters" "$MD7"
+ck_lacks "md drops floor claim"  "Both peaks are FLOORS" "$MD7"
+
+# A run that was NOT cut off keeps the floor framing and emits no cutoff meters.
+ck_lacks "clean run has no cutoff meters" "cutoff-window meters" "$MD"
+ck_has  "clean run keeps floor framing"   "Both peaks are FLOORS" "$MD"
+
 # The UNRECOVERED shape must still fire — the fix widens the detector, it does not replace it.
 CK6="$WORK/checkout6"
 mkdir -p "$CK6/tmp"
@@ -379,6 +463,43 @@ ck "unrecovered stall detected" "1" "$(q6 "len(d['windows']['quota_stall_groups'
 ck "unrecovered kind"           "unrecovered" "$(q6 "d['windows']['quota_stall_groups'][0]['kind']")"
 ck "unrecovered no resume"      "None" "$(q6 "d['windows']['quota_stall_groups'][0]['resumed_at']")"
 ck_has "md says never recovered" "never recovered" "$MD6"
+
+# ---- LIVE-SESSION fixture (BF-1029): a retro run against a fleet that has not finished ----
+# A session mid-run has no long silence and no terminal tag, so before the min_silence_s gate it fell
+# through to the `unrecovered` arm marked at its last activity — which is ~now. Two live sessions are
+# therefore always within cluster_s of each other and always formed a bogus group (0 lost hours, no
+# limit_kind), which flipped the sizing banner to CEILINGS and pointed /fleet-launch at cutoff-window
+# meters describing no cutoff. These timestamps MUST derive from the current clock: hardcoded, the
+# fixture decays into a stale-session fixture the next day and silently stops testing this path.
+CK8="$WORK/checkout8"
+mkdir -p "$CK8/tmp"
+git -C "$CK8" init -q 2>/dev/null
+M8="$(git -C "$CK8" rev-parse --show-toplevel | tr / -)"
+mkdir -p "$WORK/projects/$M8"
+ts_ago() { python3 -c "from datetime import datetime,timezone,timedelta; print((datetime.now(timezone.utc)-timedelta(seconds=$1)).strftime('%Y-%m-%dT%H:%M:%SZ'))"; }
+TS_A="$(ts_ago 2400)"   # 40 min ago
+TS_B="$(ts_ago 1500)"   # 25 min ago — every internal gap stays under min_silence_s (30 min)
+TS_C="$(ts_ago 10)"     # seconds ago: what a LIVE session's last activity looks like
+for run in aa777777 bb888888; do
+  cat > "$CK8/tmp/auto-state-$run.json" <<EOF
+{"status": "active", "reason": "", "shipped": [], "canceled": [], "skipped": [], "failed": []}
+EOF
+  cat > "$WORK/projects/$M8/$run-0000.jsonl" <<EOF
+{"type":"user","timestamp":"$TS_A","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"$TS_B","message":{"role":"assistant","id":"msg_${run}a","model":"claude-opus-5","usage":{"input_tokens":10,"cache_read_input_tokens":1000,"output_tokens":500},"content":[{"type":"text","text":"working"}]}}
+{"type":"assistant","timestamp":"$TS_C","message":{"role":"assistant","id":"msg_${run}b","model":"claude-opus-5","usage":{"input_tokens":10,"cache_read_input_tokens":1000,"output_tokens":500},"content":[{"type":"text","text":"mid-issue"}]}}
+EOF
+done
+J8="$WORK/out8.json"
+MD8="$WORK/out8.md"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK8" --hours 2 --json > "$J8" 2>/dev/null
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK8" --hours 2 > "$MD8" 2>&1
+q8() { python3 -c "import json,sys; d=json.load(open('$J8')); print($1)"; }
+ck "live sessions form no group"  "0" "$(q8 "len(d['windows']['quota_stall_groups'])")"
+ck "live run emits no cutoff meters" "0" "$(q8 "len(d['windows']['cutoff_trailing_5h'])")"
+ck_has  "live run keeps floor framing" "Both peaks are FLOORS" "$MD8"
+ck_lacks "live run does not flip banner" "CEILINGS, not floors" "$MD8"
+ck_lacks "live run prints no meters"     "cutoff-window meters" "$MD8"
 
 echo
 echo "$PASS passed / $FAIL failed"

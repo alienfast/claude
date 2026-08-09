@@ -71,6 +71,15 @@ TERMINAL_TAG = re.compile(r"^\s*(NO-CANDIDATES|AUTO-HALTED):", re.M)
 # count once. Counts HALTS only — the benign-continue branch posts a Linear note instead and is
 # invisible here; /fleet-retro adjudicates each halt true/false-positive against those notes.
 CONTAM_HALT = re.compile(r"^\s*BLOCKED-ON-REVIEW:\s*([A-Z][A-Z0-9]*-\d+)\b[^\n]*MAIN-CHECKOUT-CONTAMINATION", re.M)
+# WHICH allowance actually cut a run off, read from the harness message rather than inferred from the
+# stall's shape. There are three distinct limits and they carry different sizing levers, so guessing
+# routes the whole retro at the wrong one: `weekly` caps total session-hours (lever: duration), the 5h
+# burst caps concurrency (lever: n), and `session` is per-session and caps neither. Measured on the
+# 2026-08-08 basefund fleet, whose sessions all printed "You have hit your weekly limit - resets Aug 11
+# at 5pm": a retro that assumed the 5h burst compared that cutoff against 2026-08-07's *session*-limit
+# event and found their trailing-5h total-billable volumes agreed to 0.08% — a coincidence between two
+# different limits that read exactly like the meter had been identified.
+LIMIT_HIT = re.compile(r"hit your (weekly|session|5-hour|usage) limit", re.I)
 LOOP_CMD = re.compile(r"<command-name>/loop</command-name>")
 LOOP_AUTO_ARGS = re.compile(r"<command-args>[^<]*/auto")
 GAP_MIN = 240  # seconds; a tool call slower than this is worth naming, not necessarily a fault
@@ -266,6 +275,10 @@ def scan_transcript(path, agg, agent_type="main"):
                     agg["contam_halts"].add(issue)
                 if TERMINAL_TAG.search(body):
                     agg["terminal_tags"] += 1
+                for kind in LIMIT_HIT.findall(body):
+                    agg["limit_hits"][kind.lower()] += 1
+                    if t and (agg["first_limit_hit"] is None or t < agg["first_limit_hit"][0]):
+                        agg["first_limit_hit"] = (t, kind.lower())
             elif b.get("type") == "tool_use":
                 name = b.get("name", "")
                 inp = b.get("input") or {}
@@ -280,6 +293,8 @@ def scan_transcript(path, agg, agent_type="main"):
                     agg["wakeups"] += 1
                     if inp.get("stop") is True:
                         agg["wakeup_stops"] += 1
+                        if t:
+                            agg["stop_times"].append(t)
             elif b.get("type") == "tool_result":
                 use = pending.pop(b.get("tool_use_id"), None)
                 if not use:
@@ -311,6 +326,7 @@ def new_agg():
         "dispatch": Counter(), "classifier_blocks": [], "gaps": [], "activity_times": [],
         "sleep_blind_s": 0.0, "sleep_blind_n": 0, "sleep_marker_s": 0.0, "sleep_marker_n": 0,
         "ship_tags": set(), "cancel_tags": set(), "contam_halts": set(), "subagents": 0,
+        "limit_hits": Counter(), "first_limit_hit": None, "stop_times": [],
         "tokens": Counter(), "seen_msg_ids": set(),
         # (epoch_seconds, output_tokens) per credited message — the time dimension the
         # (agent, model) Counter above throws away. Rolling-window burn needs it: the
@@ -370,6 +386,53 @@ def longest_silence(agg, min_s=1800):
     return (best[1], best[2], best[0]) if best[0] >= min_s else None
 
 
+def trailing_at(token_events, cache_events, at, window_h=5):
+    """Output / cache-read / total-billable credited in the `window_h` hours ENDING at `at` (datetime).
+
+    The peak window and the CUTOFF window are different windows, and only the second bounds the
+    allowance. Measured on the 2026-08-08 basefund fleet: the output peak sat in 03:20-08:20 UTC while
+    the cutoff landed at 09:23, so the peak reported a burn the limit had already tolerated an hour
+    earlier.
+
+    COMPARE ONLY CUTOFFS OF THE SAME `limit_kind`, and check that field before reading anything into
+    these numbers. A 5h window is the wrong instrument for a weekly cutoff, and the resulting
+    coincidences are convincing: this function was first written after observing that trailing-5h
+    total-billable agreed to 0.08% across the 2026-08-06 and 2026-08-08 basefund cutoffs (1,548,673,552
+    against 1,547,413,211) where output differed 23% (1,597,508 against 1,301,178) — which looked like
+    the meter had finally been identified. It was not. The transcripts name two DIFFERENT limits:
+    2026-08-08 was `weekly`, and the 2026-08-07 04:47 UTC event compared against it was a per-`session`
+    limit. Two unrelated ceilings agreeing to 0.08% is noise that survived three consistency checks.
+    The 5h columns stay here because they are the right instrument once a genuine 5h-burst cutoff is
+    observed; until then they are recorded, not interpreted.
+    """
+    lo = at.timestamp() - window_h * 3600
+    hi = at.timestamp()
+    return {
+        "output_tokens": sum(n for t, n in token_events if lo <= t <= hi),
+        "cache_read_tokens": sum(e[1] for e in cache_events if lo <= e[0] <= hi),
+        "total_billable_tokens": sum(e[2] for e in cache_events if lo <= e[0] <= hi),
+    }
+
+
+def _ended_loop_by(agg, when, grace_s=120):
+    """Did this session deliberately end its loop at or just before `when`?
+
+    The grace window absorbs the tail a clean wind-down emits after its stop call — the final summary
+    message lands a few seconds later, so the silence starts slightly after the stop rather than on it.
+    """
+    return any((when - st).total_seconds() >= -grace_s for st in agg["stop_times"])
+
+
+def _hit_limit_by(agg, when):
+    """Had the harness already refused this session on an allowance by `when`?
+
+    A limit hit outranks a stop call: a session can be throttled mid-turn and then wind down, and that
+    is a stall with a tidy ending, not a voluntary exit.
+    """
+    fl = agg["first_limit_hit"]
+    return bool(fl) and fl[0] <= when
+
+
 def quota_stalls(sessions, cluster_s=120, min_silence_s=1800):
     """Sessions that stopped together — the allowance-exhaustion fingerprint, recovered or not.
 
@@ -387,32 +450,74 @@ def quota_stalls(sessions, cluster_s=120, min_silence_s=1800):
     which point a stall has usually resolved itself. Measured on the 2026-08-06 basefund fleet: three
     of four sessions stopped within 3 minutes of each other, resumed within 60 seconds of each other
     10.7h later, and drained cleanly; the unrecovered-only detector reported no stall at all while
-    47% of the fleet's capacity had been lost. So cluster on where each session went QUIET — the
-    start of its longest silence for a recovered stall, its last activity for an unrecovered one.
+    47% of the fleet's capacity had been lost.
+
+    Cluster on BOTH timestamps a stall exposes, because which one is tight varies by run and the
+    loose one alone finds nothing. Going quiet is not synchronized: a session keeps emitting rows
+    until its own last in-flight delegate drains, so onset records when that session ran out of work
+    to finish, not when the allowance bound. Resuming IS synchronized — the allowance frees at one
+    wall-clock moment for the whole account. Measured on the 2026-08-08 basefund fleet, where all
+    three sessions stalled: onset spread 56.2 min (consecutive deltas 3013s and 359s, so a
+    120s onset-only rule grouped nothing and the run reported no stall while 26.1 session-hours were
+    dead), against a resume spread of 2.1 min (deltas 19s and 107s, which groups cleanly). The
+    2026-08-06 fleet was the reverse — tight on both — which is why onset-only survived that run.
+    Single-linkage over the union of the two dimensions catches either shape and can only ever add
+    to what onset-only found.
     """
+    # An `unrecovered` mark means "stopped and never came back", which cannot be asserted about a
+    # session whose last activity is minutes old — that is what a LIVE session looks like, and two of
+    # them are always within cluster_s of each other, so they always form a group. The group is
+    # visibly empty (0 lost hours, no limit_kind, no resume) but nothing keys on that, so it still
+    # fires the CEILINGS banner that /fleet-launch sizes the next fleet against. Require the silence
+    # to have lasted at least min_silence_s before calling it a stall, exactly as the recovered arm
+    # already does via longest_silence().
+    now = datetime.now(timezone.utc)
     marks = []
     for s in sessions:
         if not s["agg"]["last"]:
             continue
         sil = longest_silence(s["agg"], min_silence_s)
+        # A silence that STARTS at a deliberate loop end is not a stall — an ended loop has no wakeup
+        # pending, so going quiet is the contract, not a fault. Without this, such a session joins the
+        # group on its resume time and its whole quiet stretch is billed as lost capacity. Measured on
+        # the 2026-08-08 basefund fleet: ed644317 read the deadline with 18 minutes left, judged it too
+        # little to ship an issue averaging 1.5-2.5h, emitted AUTO-HALTED and called
+        # ScheduleWakeup(stop: true) — textbook wind-down — and its 9.3h of correct silence inflated the
+        # group's lost total from 16.8 to 26.1 session-hours, making exemplary judgement look like a
+        # 9.3h fault. The two genuinely-stalled siblings printed a harness limit message instead.
+        if sil and not _hit_limit_by(s["agg"], sil[0]) and _ended_loop_by(s["agg"], sil[0]):
+            sil = None
         if sil:
             marks.append((sil[0], s, {"kind": "recovered", "resumed": sil[1], "seconds": sil[2]}))
-        elif not s["agg"]["terminal_tags"]:
+        elif (not s["agg"]["terminal_tags"]
+              and (now - s["agg"]["last"]).total_seconds() >= min_silence_s):
             marks.append((s["agg"]["last"], s, {"kind": "unrecovered", "resumed": None, "seconds": None}))
     if len(marks) < 2:
         return []
     marks.sort(key=lambda m: m[0])
-    out, group = [], [marks[0]]
-    for m in marks[1:]:
-        if (m[0] - group[-1][0]).total_seconds() <= cluster_s:
-            group.append(m)
-        else:
-            if len(group) >= 2:
-                out.append(group)
-            group = [m]
-    if len(group) >= 2:
-        out.append(group)
-    return out
+    parent = list(range(len(marks)))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(i, j):
+        ri, rj = find(i), find(j)
+        if ri != rj:
+            parent[max(ri, rj)] = min(ri, rj)
+
+    for key in (lambda m: m[0], lambda m: m[2]["resumed"]):
+        pts = sorted((key(m), i) for i, m in enumerate(marks) if key(m) is not None)
+        for (t0, i0), (t1, i1) in zip(pts, pts[1:]):
+            if (t1 - t0).total_seconds() <= cluster_s:
+                union(i0, i1)
+    groups = {}
+    for i, m in enumerate(marks):
+        groups.setdefault(find(i), []).append(m)
+    return sorted((sorted(g, key=lambda m: m[0]) for g in groups.values() if len(g) >= 2),
+                  key=lambda g: g[0][0])
 
 
 def price_of(model):
@@ -661,6 +766,16 @@ def main():
             peak_5h_rate = round(peak_5h / (peak_5h_concurrency * 5))
     burn_rate_all = round(sum(fleet_tokens.values()) / session_hours) if session_hours else None
     stall_groups = quota_stalls(sessions)
+    # Only a group the harness actually refused (a limit message in some member's transcript) rewrites
+    # the sizing basis — an unattributed stall may be a machine sleep or daemon restart, and a ceiling
+    # taken from one would under-size the next fleet against a limit that never bound.
+    cutoff_groups = [g for g in stall_groups if any(m[1]["agg"]["first_limit_hit"] for m in g)]
+    # Read the meters where the allowance actually bound: the EARLIEST quiet time in the group, since
+    # every later one is already draining as siblings sit idle.
+    all_cache_events = [e for s in sessions for e in s["agg"]["cache_events"]]
+    cutoff_meters = [dict(runs=[m[1]["run_key"] for m in g], at=g[0][0],
+                          **trailing_at(all_events, all_cache_events, g[0][0]))
+                     for g in cutoff_groups]
 
     if args.json:
         print(json.dumps({
@@ -726,7 +841,15 @@ def main():
                     "resumed_at": (f"{max(m[2]['resumed'] for m in g if m[2]['resumed']):%Y-%m-%dT%H:%M:%SZ}"
                                    if any(m[2]["resumed"] for m in g) else None),
                     "lost_session_hours": round(sum(m[2]["seconds"] or 0 for m in g) / 3600, 1),
+                    # Which allowance refused the run, straight from the harness message. Decides the
+                    # sizing lever: weekly -> duration, 5-hour -> concurrency, session -> neither.
+                    "limit_kind": sorted({m[1]["agg"]["first_limit_hit"][1] for m in g
+                                          if m[1]["agg"]["first_limit_hit"]}) or None,
                 } for g in stall_groups],
+                # Present ONLY when the run was cut off, and then the peaks above are ceilings rather
+                # than floors. This is the column to size the next fleet against.
+                "cutoff_trailing_5h": [{**{k: v for k, v in c.items() if k != "at"},
+                                        "at": f"{c['at']:%Y-%m-%dT%H:%M:%SZ}"} for c in cutoff_meters],
             },
             "merge_reconciliation": merged,
         }, indent=2))
@@ -830,32 +953,71 @@ def main():
                   f"({peak_5h_cache_read / peak_5h:,.0f}x the output volume). Output tokens are the "
                   f"sizing unit by convention, not by evidence — on 2026-08-06 a fleet was cut off at "
                   f"an output peak BELOW one a previous run had survived, which is what a limit "
-                  f"metering some other quantity looks like. Record both every run; two runs whose cutoffs "
-                  f"agree on one column and not the other settle it.")
+                  f"metering some other quantity looks like. Record every column every run, and compare "
+                  f"across runs ONLY within one `limit_kind`: three cutoffs once agreed on total "
+                  f"billable to 0.08% while diverging 23% on output, and two of them were weekly limits "
+                  f"against one per-session limit — unrelated ceilings coinciding.")
         print(f"\nAt the 5h peak: **{peak_5h_concurrency} concurrent sessions**, "
               f"**{peak_5h_rate:,} output tokens per session-hour**.  "
               f"Across all {len(sessions)} sessions ({session_hours:,.0f} session-hours) the mean is "
               f"{burn_rate_all:,} — lower because it pools idle and interactive sessions with fleet "
               f"ones. **Size with the peak rate, not the mean.**\n")
-        print("Both peaks are FLOORS on the real ceilings — they record what was survived, and every "
-              "observation comes from a run that was never throttled hard enough to notice. Size a "
-              "fleet so its projected burn stays under the observed peak, never up to a limit these "
-              "numbers do not establish. Scale by proportion — at concurrency `n` expect roughly "
-              f"`{peak_5h:,} x n/{peak_5h_concurrency}` per 5h window — and treat that as an "
-              "over-estimate: the rate sags as sessions are added, because merge-queue "
-              "serialization buys idle time.\n")
+        if cutoff_groups:
+            print("**This run was CUT OFF, so both peaks above are CEILINGS, not floors** — they bound "
+                  "the allowance from above where an un-throttled run bounds it from below. This is the "
+                  "one observation that can LOWER the next fleet's size; reporting it as a floor raises "
+                  "the next fleet on evidence that argues for shrinking it. Size against the "
+                  "cutoff-window meters below, not against the peak.\n")
+        elif stall_groups:
+            print("A stall group exists but no member's transcript carries a harness limit message, so "
+                  "whether this run was cut off is NOT established — a machine sleep or daemon restart "
+                  "leaves the same fingerprint. Treat the peaks as floors only after ruling out a quota "
+                  "cutoff (see the stall fingerprint below); size nothing on this run until the cause "
+                  "is known.\n")
+        else:
+            print("Both peaks are FLOORS on the real ceilings — they record what was survived, and every "
+                  "observation comes from a run that was never throttled hard enough to notice. Size a "
+                  "fleet so its projected burn stays under the observed peak, never up to a limit these "
+                  "numbers do not establish. Scale by proportion — at concurrency `n` expect roughly "
+                  f"`{peak_5h:,} x n/{peak_5h_concurrency}` per 5h window — and treat that as an "
+                  "over-estimate: the rate sags as sessions are added, because merge-queue "
+                  "serialization buys idle time.\n")
     else:
         print("- no timestamped usage found; rolling-window burn not computable\n")
+    for c in cutoff_meters:
+        print(f"- **cutoff-window meters** — in the 5h ENDING at {c['at']:%Y-%m-%d %H:%M UTC}, when the "
+              f"allowance bound: **{c['output_tokens']:,} output**, "
+              f"**{c['cache_read_tokens']:,} cache-read**, "
+              f"**{c['total_billable_tokens']:,} total billable**. Carry all three to the next retro, "
+              f"but compare them ONLY against a cutoff with the same `limit_kind` — a 5h window is the "
+              f"wrong instrument for a weekly cutoff, and two different limits agreeing closely on one "
+              f"column is a coincidence that reads exactly like a discovery (it happened: see "
+              f"`trailing_at`).\n")
     if stall_groups:
         for g in stall_groups:
             keys = ", ".join(f"`{m[1]['run_key']}`" for m in g)
             when = g[-1][0]
             lost = sum(m[2]["seconds"] or 0 for m in g) / 3600
             resumed = [m[2]["resumed"] for m in g if m[2]["resumed"]]
+            kinds = sorted({m[1]["agg"]["first_limit_hit"][1] for m in g
+                            if m[1]["agg"]["first_limit_hit"]})
             print(f"- **quota-stall fingerprint** — {len(g)} sessions ({keys}) went quiet within "
                   f"120s of each other at {when:%Y-%m-%d %H:%M UTC}. "
                   f"A deadline wind-down ends sessions one at a time, each tagged; an account-level "
                   f"cutoff stops them together, mid-issue.")
+            if kinds:
+                lever = {"weekly": "**duration / total session-hours**, NOT concurrency",
+                         "5-hour": "**concurrency (`n`)**",
+                         "session": "neither — it is per-session and says nothing about fleet size",
+                         "usage": "unknown — read the message text"}
+                print(f"  Limit named by the harness: **{'/'.join(kinds)}**. "
+                      + " ".join(f"The lever for `{k}` is {lever.get(k, 'unknown')}." for k in kinds)
+                      + " Do not infer this from the stall's shape — the three limits produce the same "
+                        "synchronized-silence fingerprint and carry different levers.")
+            else:
+                print("  No harness limit message found in these transcripts, so the cause is NOT "
+                      "established as an allowance cutoff — check for a machine sleep, a daemon "
+                      "restart, or a network outage before sizing anything on this.")
             if resumed:
                 print(f"  They resumed by {max(resumed):%Y-%m-%d %H:%M UTC} and drained normally, so "
                       f"their terminal tags and end-of-run bookkeeping look clean — **{lost:.1f} "
