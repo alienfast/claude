@@ -67,13 +67,14 @@ These commands are **BLOCKED** by the git-permissions hook (`~/.claude/hooks/git
 | `git restore <files>` | **PERMANENT LOSS** of working tree changes for specified files | No recovery possible - changes gone forever |
 | `git checkout <files>` | **PERMANENT LOSS** of working tree changes (old syntax) | Same as `git restore`, use that instead |
 | `git clean -f/-fd` | **PERMANENT LOSS** of all untracked files | May delete files created by other sessions |
+| `git stash` (any mutating form: bare, `push`, `pop`, `apply`, `drop`, `clear`) | Applies or drops entries on the repo's ONE worktree-shared stash stack | A concurrent push between your push and pop makes `pop` apply their diff and delete their entry; `stash list`/`show` stay allowed |
 | Any `--force` flag | Overrides safety checks, can cause data loss or destructive remote changes | Bypass of git's protective mechanisms |
 
 ### The hook only sees the Bash tool's command string
 
 `git-permissions.sh` matches the string the Bash tool was given, and only when `git` is its leading word. A destructive git command run from **inside a script file** (`python3 sweep.py`, `bash revert.sh`) is invisible to it and executes unguarded — and the script runners are themselves pre-approved, so no permission prompt fires either. Any other form that displaces `git` from command position bypasses it the same way: `bash -c "git restore f"`, `cd x && git restore f`, `env git restore f`. The hook is a backstop for direct top-level invocation, not a guarantee.
 
-**To undo a temporary edit — a mutation test, a spike, a bisect probe — copy the file aside and copy it back. Never revert with git.** A `/start wt` worktree's change is typically uncommitted and partly untracked, so `git checkout -- <file>` / `git restore <file>` destroys it with no recovery.
+**To undo a temporary edit — a mutation test, a spike, a bisect probe — copy the file aside and copy it back. Never revert with git, and never park it with `git stash` either.** A `/start wt` worktree's change is typically uncommitted and partly untracked, so `git checkout -- <file>` / `git restore <file>` destroys it with no recovery. `stash` *preserves* the edit, so it reads as compliant with "never revert" — but the stash stack is shared across every worktree of the repo, and a concurrent session's push can make your `pop` apply their work and drop their entry (mechanism under Safe Commands below).
 
 ### Multi-Session Awareness
 
@@ -166,9 +167,11 @@ git log                 # View history
 git add <specific>      # Stage specific files
 git commit              # Commit staged changes
 git restore --staged    # Unstage (does not discard changes)
-git stash               # Save work temporarily
+git stash list          # View the stash stack (read-only)
 git reflog              # View reference log
 ```
+
+**`git stash push`/`pop` are NOT on that list.** The stash stack lives in the **common** git dir (`<repo>/.git/refs/stash`), not per-worktree — every worktree of a repo pushes onto and pops off one shared stack, and `git stash list` from any worktree shows every other session's entries. `pop` takes `stash@{0}` and **drops** it, so a concurrent session pushing between your push and your pop makes your `pop` apply their diff into your tree *and* delete their entry. `git-permissions.sh` blocks every mutating form (bare `stash`, `push`, `pop`, `apply`, `drop`, `clear`), allowing only `stash list`/`stash show` — but the hook sees only top-level `git` commands (see above), so a stash run from inside a script executes unguarded. To undo a temporary edit, use the file-copy rule above.
 
 ### Running Git Outside the Current Directory
 
@@ -206,6 +209,8 @@ A session registered on a worktree via `EnterWorktree` — every `/start wt`, an
 These still run: a plain top-level `git` command (`git rev-parse --show-toplevel`), a plain git command with a pipe or an `&&` tail (`git status --porcelain && echo DONE`), a plain `;` sequence of simple commands, `git -C <path inside this worktree>` (literal, or a variable that resolves there), and **any script** — only the Bash tool's own command string is analyzed, so `~/.claude/scripts/wt-baseline.sh` keeps working exactly as written even though it runs `git -C "$MAIN_CHECKOUT"` internally.
 
 **A heredoc body is part of the analyzed command string, so prose can trip the first bullet's shape check.** A token sequence *inside the body* that parses as a redirection is refused with that bullet's message — *"too complex to verify that it stays inside the worktree"* — even though the command itself is a plain `cmd <<'EOF'`. This is deterministic and content-dependent, never flaky: measured here, bodies containing `` ` ``, `<JsxTag />`, the prose word `for`, `<`, `<>`, `<-`, or `->` all run, while a body containing `<->` is refused every time. It bites where a command pipes *generated prose* into a script — `quality-review-write-verdict.sh <ID> - <<'VERDICT_EOF'`, `/finish`'s commit-message heredoc, `/pr-update`'s `gh pr edit` body — because the text is composed long before anyone reads it as shell, and the same command shape succeeding on the previous issue makes the refusal look random. Do not conclude the guard is unpredictable and do not abandon the one-call form on the strength of one refusal: reword the offending token in the body (`<->` → `to/from`), or, when the body cannot change, `Write` it to the worktree's `tmp/` and pass that path as an argument instead.
+
+The same refusal fires on a command whose **own** redirect uses zsh's `>>|`: `echo x >>| tmp/f` is refused while the identical call with `>>` or with `>|` runs. `>>|` is zsh-only and a hard bash syntax error, so a bash-grammar check cannot read it as a redirect at all; `>|` parses in both shells and is unaffected. CLAUDE.md's clobber bullet prescribes `>>|` by reflex, so this collides routinely — use one `>|` write, or a script.
 
 So the `git -C /path/to/repo` form recommended above is right everywhere except at a shared checkout from inside a worktree, where it is hard-refused and there is no flag to override it. Derive paths with plain probes instead — from a worktree, `git rev-parse --show-toplevel` gives the worktree root and `git rev-parse --path-format=absolute --git-common-dir` gives `<main-checkout>/.git`, whose parent is the main checkout — then substitute the resulting **literal absolute paths** into subsequent commands. Shell variables cannot carry them between calls anyway: shell state does not survive across Bash tool calls.
 
@@ -304,4 +309,4 @@ git -C <repo> diff HEAD > tmp/wt.diff && git -C <wt> apply tmp/wt.diff   # all t
 cp <repo>/<new-file> <wt>/<new-file>                                     # untracked additions
 ```
 
-Undo it before `git worktree remove`: removal refuses on **modified or untracked** files (`fatal: … contains modified or untracked files, use --force to delete it`), and `--force` is blocked by the git-permissions hook, so the flag git suggests is not available. Restore tracked files with `git show HEAD:<path> > <wt>/<path>` — not `git restore`/`git checkout`, also hook-blocked — and delete any file you added.
+Undo it before `git worktree remove`: removal refuses on **modified or untracked** files (`fatal: … contains modified or untracked files, use --force to delete it`), and `--force` is blocked by the git-permissions hook, so the flag git suggests is not available. Restore tracked files with `git show HEAD:<path> > <wt>/<path>` — not `git restore`/`git checkout` (hook-blocked), and not `git stash` (also hook-blocked; the stack is worktree-shared — Safe Commands above) — and delete any file you added.

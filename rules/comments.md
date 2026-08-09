@@ -53,7 +53,8 @@ its members, and let a grep produce the current membership.
 The sharpest case is a comment calling code redundant, defensive, or kept for a
 future refactor — it does not describe the line, it licenses deleting it. Prove
 it first: remove the line, run the tests covering it, restore by file copy (never
-`git restore`). Anything red means the claim is false; nothing red means check
+`git restore`, and never `git stash` — the stash stack is shared across every
+worktree of the repo; see `standards/git.md` § Safe Commands). Anything red means the claim is false; nothing red means check
 the tests reach that line at all before you claim it.
 
 ## Proportion: size to the reader, not the effort

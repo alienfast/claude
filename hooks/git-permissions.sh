@@ -20,13 +20,39 @@ if [[ ! "$COMMAND" =~ ^git[[:space:]] ]]; then
 fi
 
 # Allow safe read-only and staging commands
-if [[ "$COMMAND" =~ ^git[[:space:]]+(status|log|diff|show|branch|add|commit|stash|reflog) ]]; then
+if [[ "$COMMAND" =~ ^git[[:space:]]+(status|log|diff|show|branch|add|commit|reflog) ]]; then
   exit 0
 fi
 
 # Allow git restore --staged (only unstaging, not discarding changes)
 if [[ "$COMMAND" =~ ^git[[:space:]]+restore[[:space:]]+--staged ]]; then
   exit 0
+fi
+
+# Allow read-only stash inspection
+if [[ "$COMMAND" =~ ^git[[:space:]]+stash[[:space:]]+(list|show) ]]; then
+  exit 0
+fi
+
+# BLOCK: any other git stash form (bare stash, push, save, pop, apply, drop, clear, branch)
+# The stash stack lives in the COMMON git dir, so every worktree of a repo shares ONE stack.
+if [[ "$COMMAND" =~ ^git[[:space:]]+stash([[:space:]]|$) ]]; then
+  cat >&2 <<EOF
+🛑 BLOCKED: git stash mutates a stack shared across every worktree of this repo
+
+Command: $COMMAND
+
+The stash stack lives in the common git dir — every worktree pushes onto and
+pops off ONE shared stack. A concurrent session's push between your push and
+your pop makes 'pop' apply THEIR diff into your tree and delete their entry.
+
+To undo a temporary edit, copy the file aside and copy it back (file copy),
+per standards/git.md "Working Tree Protection". 'git stash list' and
+'git stash show' remain allowed.
+
+To proceed: Explicitly tell Claude "yes, run this git stash command"
+EOF
+  exit 2
 fi
 
 # BLOCK: git reset --hard (destroys all working tree and staged changes)

@@ -122,7 +122,7 @@ Edit the target files directly in the working tree (these are small markdown edi
 
 **Project-scoped edits inside a `/start wt` worktree — check, then commit (the Invariant's single exception).** After applying them (user-level `~/.claude` edits are never committed by this skill, in any mode):
 
-1. Run `pnpm check`. On failure, reverse each just-applied project edit with the Edit tool (swap the edit's new/old strings back — this skill knows exactly what it changed; never `git restore`, which is hook-blocked and could clobber others' work), reclassify the candidate as `propose` with the check failure as the reason, and move on — a config edit that reddens the check must not ride the issue merge, and left uncommitted it would block that merge (`finish-merge.sh` precondition 5).
+1. Run `pnpm check`. On failure, reverse each just-applied project edit with the Edit tool (swap the edit's new/old strings back — this skill knows exactly what it changed; never `git restore`, which is hook-blocked and could clobber others' work, and never `git stash` — the stash stack is shared across every worktree of the repo: `standards/git.md` § Safe Commands), reclassify the candidate as `propose` with the check failure as the reason, and move on — a config edit that reddens the check must not ride the issue merge, and left uncommitted it would block that merge (`finish-merge.sh` precondition 5).
 2. On a green check, stage ONLY those files by name and commit them as a dedicated commit — never amended into, or mixed with, issue commits:
 
    ```bash
