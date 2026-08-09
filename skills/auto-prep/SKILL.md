@@ -20,11 +20,33 @@ After the fleet finishes, [`/fleet-retro`](../fleet-retro/SKILL.md) is the booke
 
 Team scope: a `team:KEY` (or bare key) argument, else `$LINEAR_TEAM`, else error — fleet prep is a deliberate per-team act, never workspace-guessed. Multi-team fleets: run once per team.
 
-One GraphQL call for everything (descriptions, labels, parents, relations both directions) across the team's unstarted workable states (Backlog/Planned/Todo — match `/next`'s `WORKABLE_STATES`):
+One paginated GraphQL fetch for everything (descriptions, labels, parents, relations both directions) across the team's unstarted workable states (Backlog/Planned/Todo — match `/next`'s `WORKABLE_STATES`).
+
+**Page it — `first:` is a hard cap and overflow is silent.** A one-shot query returns its cap and stops: no error, exit 0, `hasNextPage` simply unread, so a pool that has outgrown one page is indistinguishable from a complete one. 250 is the API maximum, so raising the number is not the fix. Measured on BF (2026-08-08): 266 workable-state issues, so a one-shot `first: 250` hid 16 — and the cut lands on whichever issues sort last (the query sets no `orderBy`), not on a random sample, so a whole tail of the backlog goes unaudited in Step 2, unwired in Step 3, and uncounted in Step 5's lane math. **Step 4 will not catch it**: `next-candidates.sh` paginates, so the ranking it prints is complete and reads as confirmation of a pool that was not.
 
 ```bash
-linear-cli api query 'query { issues(filter: {team: {key: {eq: "<KEY>"}}, state: {name: {in: ["Backlog","Planned","Todo"]}}}, first: 250) { nodes { identifier title description priority labels { nodes { name } } parent { identifier state { name } } relations { nodes { type relatedIssue { identifier state { name } } } } inverseRelations { nodes { type issue { identifier state { name } } } } } } }' -o json
+q='query($team:String!,$after:String){issues(filter:{team:{key:{eq:$team}}, state:{name:{in:["Backlog","Planned","Todo"]}}}, first:250, after:$after){nodes{identifier title description priority labels{nodes{name}} state{name} parent{identifier state{name}} relations{nodes{type relatedIssue{identifier state{name}}}} inverseRelations{nodes{type issue{identifier state{name}}}}} pageInfo{hasNextPage endCursor}}}'
+pages=tmp/pool.pages; : >| "$pages"; after=''
+while :; do
+  if [ -z "$after" ]; then page=$(linear-cli api query -q -o json -v team=<KEY> "$q")
+  else page=$(linear-cli api query -q -o json -v team=<KEY> -v after="$after" "$q"); fi
+  [ -n "$page" ] || { echo "ERROR: issue fetch failed (auth? network?)" >&2; break; }
+  [ "$(printf '%s' "$page" | jq 'has("errors")')" = "true" ] && { printf '%s' "$page" | jq -c '.errors' >&2; break; }
+  printf '%s\n' "$(printf '%s' "$page" | jq -c '.data.issues.nodes // []')" >> "$pages"
+  has=$(printf '%s' "$page" | jq -r '.data.issues.pageInfo.hasNextPage // false')
+  after=$(printf '%s' "$page" | jq -r '.data.issues.pageInfo.endCursor // empty')
+  { [ "$has" = "true" ] && [ -n "$after" ]; } || break
+done
+jq -s 'add | {nodes: .}' "$pages" >| tmp/pool.json
+jq '.nodes | length' tmp/pool.json    # state the pool size in the report — a short fetch has no other tell
 ```
+
+Two traps this shape exists to avoid, both of which silently reproduce the bug:
+
+- **Read `hasNextPage` through the `data` envelope** — `.data.issues.pageInfo.hasNextPage` ([linear gotcha #6](../linear/SKILL.md)). The path copied straight out of the query text, `.issues.pageInfo.hasNextPage`, returns `null` at exit 0, and both `// false` and any shell truthiness test read that as "last page": the loop exits after page 1.
+- **Accumulate pages on disk, not in a shell variable.** Threading the growing array through `jq -n --argjson` each iteration hits `ARG_MAX` (~1MB on macOS), and a team's descriptions alone run several hundred KB — `next-candidates.sh` carries this same caveat at `fetch_team_issues`.
+
+This is the paginated idiom `next-candidates.sh`, `fleet-blockers.sh`, and `linear-deps-graph.sh` already run against this connection — copy one of them rather than re-deriving it.
 
 Split into the certified set (`specified` label) and the rest. Read every certified issue's description in full — the audit and the collision analysis both depend on body content, not titles.
 
@@ -81,7 +103,11 @@ Fleet safety rails that already exist and need no wiring: Linear is the claim re
 ~/.claude/scripts/next-candidates.sh --team <KEY> --label specified --limit 30
 ```
 
-Confirm: tier-0 reflection filings lead; every Step 3 dependent is absent (blocked); de-labeled issues are gone; every issue marked `solo` is absent and accounted for by the trailing hidden-count note; delegated epics annotated. To reconcile that count against what Step 2 marked, re-list with **`--label solo --include-blocked`**. Two independent causes make the numbers disagree, neither a bug. The blocker filter is one: a bare `--label solo` ranking still hides an issue behind an open blocker, which `--include-blocked` restores. The larger one is usually **state span** — the fetch excludes only the `completed` and `canceled` state *types*, and the hidden-count notes run over that unfiltered list, so a labeled issue in any other state the fetch admits is counted as hidden even though it was never workable and the `--label solo` listing correctly omits it. That is not just the `started` states (`In Progress`, `In Review`) — `triage` and `duplicate` survive too, and Step 3's own `duplicate` wiring moves absorbed issues into one of them. The `needs decision`, `human`, and keeper notes span the same states. **Reconcile against the listing, not the note** — and read a note that exceeds the listing as parked, in-flight, or blocked siblings before suspecting a wiring fault. If a blocker already in the team's ship state still reads as unresolved, suspect a state-name mismatch against the script's `TERMINAL_STATES` before suspecting the wiring.
+Confirm: tier-0 reflection filings lead; every Step 3 dependent is absent (blocked); de-labeled issues are gone; every issue marked `solo` is absent and accounted for by the trailing hidden-count note; delegated epics annotated. To reconcile that count against what Step 2 marked, re-list with **`--label solo --include-blocked --limit 50`**.
+
+**Pass `--limit` on every listing you reconcile or work from — the script's default is 3.** `next-candidates.sh` defaults `limit=3`, so a bare `--label 'needs decision' --include-blocked` prints three rows whatever the real count. It is not silent about it — a trailing `_N more workable candidate(s) available; pass --limit to see more._` carries the remainder — but that makes the reconciliation `3 + N` against the hidden-count note rather than the row count against it, and counting rows is the natural reading (a `grep -c` over the listing discards the remainder line outright). A label whose real count is at or under 3 matches by luck and never exposes the difference. Measured on BF: the bare needs-decision listing returned 3 rows plus "15 more" against a 19-issue note — i.e. 18 in workable states, the residual 1 being the state-span effect below. Note that "bare" here, in Step 5's launch checklist, and in the Report's `solo` running order all mean *without `--include-blocked`* — never without `--limit`.
+
+Two independent causes make the numbers disagree, neither a bug. The blocker filter is one: a bare `--label solo` ranking still hides an issue behind an open blocker, which `--include-blocked` restores. The larger one is usually **state span** — the fetch excludes only the `completed` and `canceled` state *types*, and the hidden-count notes run over that unfiltered list, so a labeled issue in any other state the fetch admits is counted as hidden even though it was never workable and the `--label solo` listing correctly omits it. That is not just the `started` states (`In Progress`, `In Review`) — `triage` and `duplicate` survive too, and Step 3's own `duplicate` wiring moves absorbed issues into one of them. The `needs decision`, `human`, and keeper notes span the same states. **Reconcile against the listing, not the note** — and read a note that exceeds the listing as parked, in-flight, or blocked siblings before suspecting a wiring fault. If a blocker already in the team's ship state still reads as unresolved, suspect a state-name mismatch against the script's `TERMINAL_STATES` before suspecting the wiring.
 
 **Fleet-drain blocker audit — every certified candidate whose blocker nothing in the fleet will ship.** Step 3's wiring rules keep *new* chains from running through flagged issues, but the pool arrives pre-wired, and an inherited edge can strand a certified candidate for the whole run behind a blocker the fleet can never pick: one labeled `needs decision`, `human`, `solo`, or `stalled`; one sitting in Triage or Backlog (stage-first ranking sorts it below the entire Planned stage); or one that is simply **uncertified** — `/next specified` never offers it, so a Planned-but-unspecified blocker strands its dependent exactly as hard as a parked one. Run the tested implementation — do not re-derive the filter inline (a mistranscribed filter prints nothing at exit 0, which reads as "nothing blocks the fleet"). The first line is the verdict, `FLEET-BLOCKED: <n>`; branch on it, never on empty output. Each row names the reason(s) with the remedy:
 
