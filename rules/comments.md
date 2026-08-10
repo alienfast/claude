@@ -57,6 +57,14 @@ it first: remove the line, run the tests covering it, restore by file copy (neve
 worktree of the repo; see `standards/git.md` § Safe Commands). Anything red means the claim is false; nothing red means check
 the tests reach that line at all before you claim it.
 
+**A claim about a family is falsified by the member the change skipped.** When a
+change fixes some members of a set and a scope boundary leaves the rest alone,
+the prose it writes routinely states the new property universally ("every reader
+fails closed on this"). The excluded member was excluded for behaving
+differently, which is what makes it the counterexample. Scope the claim to what
+you changed, or name the exception — in a rule or doc sentence the change adds
+as much as in a comment at the call site.
+
 ## Proportion: size to the reader, not the effort
 
 Size a comment to what a reader needs **at that line**, not to the effort it

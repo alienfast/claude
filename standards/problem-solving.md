@@ -87,6 +87,14 @@ A close numeric agreement between two observations is evidence of nothing until 
 
 Worked case: two rate-limit cutoffs whose trailing-5h billable volumes agreed to **0.08%** while diverging 23% on output tokens, which read unmistakably as having identified the quantity the limit meters. The harness messages named two *different* limits — a weekly allowance and a per-session one — so unrelated ceilings had merely coincided. Three consistency checks passed, none of them testing what each event was, and the conclusion reached two shared config files before the premise was checked.
 
+### A guard keyed on someone else's signal inherits their coverage decisions
+
+When a condition your code cares about — "more than one file was dropped on a single-file target", "the request was throttled", "the record was superseded" — is detected by reading a signal a **dependency** emits (an error code, a status enum, a flag) rather than by deriving it from inputs you already hold, the dependency decides which cases raise that signal. Confirming it fires in the obvious case measures nothing about the cases it stays silent in, and a guard that acts only when the signal arrives does nothing in exactly those — failing open, for the common suppress-on-signal shape. The measurement is true and the inference from it is false, so re-reading the measurement never surfaces the error.
+
+Before keying on such a signal, enumerate the ways your condition can hold and check the signal fires for each. Where the condition is derivable from what you already have, derive it — the guard then no longer turns on the dependency's judgement about which cases are worth signalling.
+
+Worked case: `react-dropzone` v20 emits `too-many-files` only when the count of *accepted* files exceeds the limit, and a file already rejected for its type (or its size, or a custom validator) never becomes accepted. A single-file dropzone given one valid file plus one wrong-type file therefore saw no `too-many-files` at all, and a suppression guard keyed on that code uploaded the valid file. The callback already received both arrays; `accepted.length + rejections.length > 1` is the condition, and it rests on no coverage decision of the library's.
+
 ### Complexity Response Pattern
 
 When two or more attempts have failed, stop and hand the decision over with everything needed to make
