@@ -95,7 +95,7 @@ if [ -z "$count" ]; then
   fi
 fi
 { [ "$count" -ge 1 ] && [ "$count" -le 12 ]; } 2>/dev/null || { echo "ERROR: count must be 1-12 (got '$count')" >&2; exit 1; }
-[ "$count" -gt 8 ] && echo "WARN: >8 sessions — beyond ~8, pick races and merge-queue serialization eat the gains (auto-prep caps its own recommendation there)" >&2
+[ "$count" -gt 3 ] && echo "WARN: >3 sessions reliably exhausts a 5h burst window at any duration (n=4 measured cut off 4.9h into a 12h deadline; auto-prep caps its recommendation at 3) — an explicit count is your override" >&2
 
 deadline_epoch=""
 deadline_human=""

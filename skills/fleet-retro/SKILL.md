@@ -68,30 +68,16 @@ tokens actually went (orchestration vs. exploration vs. review vs. fixes), by ag
 The schema is fixed so two retros are comparable — that cross-run diff is the main long-term value. Add
 columns freely; never quietly redefine an existing one.
 
-### Close the quota bracket — the one measurement only the user can supply
+**Do not ask for `/usage` readings** (keeper-settled 2026-08-10): the launch/close quota-bracket
+calibration is retired — the weekly allowance stopped being a constraint when the keeper moved to
+multiple accounts, and concurrency is fixed at 3 by the measured 5h-burst bracket (`/auto-prep`
+Step 5). No `tmp/fleet-quota-launch.json` is written at dispatch anymore, so there is nothing to
+close here.
 
-Ask for the current **weekly %** and **5h burst %** (`/usage`) and pair them with what `/fleet-launch`
-recorded at dispatch. Two readings plus the run's measured tokens calibrate the allowance's absolute
-size, which nothing else can:
+**Report four numbers**, all in the `windows` block already emitted:
 
-```bash
-jq -s '.[0].at_launch as $a | {launch: $a, end: {weekly_pct: <PCT>, burst_pct: <PCT>},
-        consumed_weekly_pct: ($a.weekly_pct - <PCT>)}' tmp/fleet-quota-launch.json
-```
-
-Then divide the run's output tokens by `consumed_weekly_pct/100` to get the 100% basis, and report it
-against `windows.peak_168h_output_tokens` — they should agree within noise, and a large gap means the
-limit is metering something other than output tokens, which is worth knowing explicitly rather than
-rediscovering. `windows.peak_5h_cache_read_tokens` and `peak_5h_total_billable_tokens` are emitted for
-the same window so the comparison is arithmetic rather than a guess; cache reads run roughly three
-orders of magnitude above output volume, so the two candidate meters are nowhere near each other and a
-single run that gets cut off narrows it a lot. Note which column the cutoff is consistent with.
-
-**Report four numbers back to `/auto-prep`'s next run**, all in the `windows` block already emitted:
-
-1. `peak_5h_output_tokens` with `peak_5h_concurrency` — the burst-window floor, and the basis for the
-   concurrency cap. It rises only when a fleet survives a denser window, so it is worth noting when a
-   run sets a new one.
+1. `peak_5h_output_tokens` with `peak_5h_concurrency` — the burst-window floor. It rises only when a
+   fleet survives a denser window, so it is worth noting when a run sets a new one.
 2. `output_tokens_per_session_hour_at_peak` paired with that concurrency — one point on the burn-rate
    curve. Recorded across runs at different `n`, these replace the flat-rate assumption that makes
    large-`n` projections optimistic.
@@ -103,12 +89,13 @@ single run that gets cut off narrows it a lot. Note which column the cutoff is c
 
    **Read `limit_kind` and route the whole retro on it; never infer the limit from the stall's shape.**
    The three limits produce an identical synchronized-silence fingerprint and carry opposite levers:
-   `weekly` caps total session-hours (lever: **duration**), `5-hour` caps concurrency (lever: **n**),
-   and `session` is per-session and bounds neither. The field is read from the harness message
-   (`You have hit your <kind> limit`), so it is evidence rather than deduction. Both basefund fleet
-   cutoffs to date were `weekly`, which means `n` was never the thing to shrink. When the field is
-   absent no limit message was found at all — treat the cause as unestablished (machine sleep, daemon
-   restart, network) rather than assuming quota.
+   `weekly` caps total session-hours (lever: **account rotation** since 2026-08-10 — the keeper runs
+   multiple accounts, so a weekly cutoff says nothing about fleet shape), `5-hour` caps concurrency
+   (lever: **n**), and `session` is per-session and bounds neither. The field is read from the harness
+   message (`You have hit your <kind> limit`), so it is evidence rather than deduction. Both basefund
+   fleet cutoffs to date were `weekly`, which means `n` was never the thing to shrink. When the field
+   is absent no limit message was found at all — treat the cause as unestablished (machine sleep,
+   daemon restart, network) rather than assuming quota.
 
    **Cross-run token comparisons are valid only within one `limit_kind`.** The 2026-08-08 retro nearly
    shipped a confident, wrong conclusion here: trailing-5h total-billable at three cutoffs agreed to
@@ -117,11 +104,10 @@ single run that gets cut off narrows it a lot. Note which column the cutoff is c
    coincide closely; a 5h window is also simply the wrong instrument for a weekly cutoff.
 4. **When a stall group exists, `peak_5h_output_tokens` is a CEILING, not a floor** — the run was cut
    off at that volume, so it bounds the limit from above where every un-throttled observation bounds
-   it from below. This is the one measurement that can *lower* a future recommendation, and
-   `/fleet-launch`'s sizing arithmetic prefers it over the survived floor for exactly that reason.
-   Say plainly which kind of observation the run produced; a ceiling reported as a floor raises the
-   next fleet's size on evidence that argues for shrinking it. It is a ceiling on the limit named in
-   `limit_kind` only — a weekly cutoff leaves the 5h burst ceiling still unobserved.
+   it from below. Say plainly which kind of observation the run produced. It is a ceiling on the limit
+   named in `limit_kind` only — and a **`5-hour`** cutoff at n≤3 is the one observation that re-opens
+   the settled n=3 concurrency cap (`/auto-prep` Step 5); a weekly cutoff leaves the 5h burst ceiling
+   still unobserved.
 
 **A session that wound down deliberately is not a stalled one, however long it then sits quiet.** The
 detector already excludes a silence beginning at a `ScheduleWakeup(stop: true)` with no limit message,
