@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# Regression suite for fleet-blockers.sh. Fixture-pins every classification: the four gate labels
-# (human / needs decision / solo / stalled), the two deferred stages (Triage by TYPE — a renamed
-# "Inbox" still classifies — and Backlog), uncertified blockers, combined reasons on one blocker,
-# clean and in-flight blockers NOT flagged, non-candidate blocked sides (uncertified or label-
-# hidden) skipped, non-blocks edges ignored, and the FLEET-BLOCKED verdict line that makes an
-# empty result distinguishable from a broken run. linear-cli is a PATH shim; HOME is an empty dir
-# so the script's cargo-bin PATH prepend cannot resurrect the real CLI.
+# Regression suite for fleet-blockers.sh. Fixture-pins both sections: FOCUS (the release-scope
+# audit — gated/uncertified unstarted issues as keeper actions, transitive root-cause tracing
+# with fan-out-first ordering, the clean-Backlog pull-forward suggestion, cycle termination, and
+# clean planned/in-flight roots NOT flagged) and FLEET-BLOCKED (the four gate labels — human /
+# needs decision / solo / stalled — Triage by TYPE so a renamed "Inbox" still classifies,
+# uncertified blockers, clean and in-flight blockers NOT flagged, non-candidate blocked sides
+# skipped in edges but surfaced in FOCUS, and NO bulk in-Backlog promotion advice). The
+# summary/verdict lines make an empty result distinguishable from a broken run. linear-cli is a
+# PATH shim; HOME is an empty dir so the script's cargo-bin PATH prepend cannot resurrect the
+# real CLI.
 set -uo pipefail
 
 SCRIPT="$(cd "$(dirname "$0")" && pwd)/fleet-blockers.sh"
@@ -51,7 +54,17 @@ cat > "$FIX/issues-page.json" <<'EOF'
  {"identifier":"TT-38","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[]},"relations":{"nodes":[]}},
  {"identifier":"TT-39","state":{"name":"Backlog","type":"backlog"},"labels":{"nodes":[]},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-38"}}]}},
  {"identifier":"TT-40","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"},{"name":"needs decision"}]},"relations":{"nodes":[]}},
- {"identifier":"TT-41","state":{"name":"Backlog","type":"backlog"},"labels":{"nodes":[]},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-40"}}]}}
+ {"identifier":"TT-41","state":{"name":"Backlog","type":"backlog"},"labels":{"nodes":[]},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-40"}}]}},
+ {"identifier":"TT-50","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"}]},"relations":{"nodes":[]}},
+ {"identifier":"TT-51","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"}]},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-50"}}]}},
+ {"identifier":"TT-52","state":{"name":"Backlog","type":"backlog"},"labels":{"nodes":[{"name":"specified"},{"name":"needs decision"}]},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-51"}}]}},
+ {"identifier":"TT-54","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"}]},"relations":{"nodes":[]}},
+ {"identifier":"TT-56","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"}]},"relations":{"nodes":[]}},
+ {"identifier":"TT-57","state":{"name":"Backlog","type":"backlog"},"labels":{"nodes":[{"name":"specified"},{"name":"needs decision"}]},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-56"}}]}},
+ {"identifier":"TT-58","state":{"name":"Backlog","type":"backlog"},"labels":{"nodes":[{"name":"specified"}]},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-57"}}]}},
+ {"identifier":"TT-55","state":{"name":"Backlog","type":"backlog"},"labels":{"nodes":[{"name":"specified"}]},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-54"}}]}},
+ {"identifier":"TT-60","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"}]},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-61"}}]}},
+ {"identifier":"TT-61","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"}]},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-60"}}]}}
 ],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
 EOF
 
@@ -71,23 +84,49 @@ OUT="$WORK/out.txt"
 HOME="$WORK/home" PATH="$WORK/bin:$PATH" "$SCRIPT" --team TT > "$OUT" 2>"$OUT.err" \
   || { echo "FAIL: run exited $?"; cat "$OUT.err"; exit 1; }
 
-ck "verdict line" "FLEET-BLOCKED: 7" "$(head -1 "$OUT")"
+# ---- FOCUS section: the release-scope audit is the primary output and leads ----
+# TT-54 (blocked only by the clean-Backlog pull-forward TT-55) counts as draining, not attention:
+# an optional pull-forward is a lever, never a must-do.
+ck "focus summary leads" "FOCUS: 22 unstarted — 1 fleet-workable · 16 need keeper action · 5 draining on their own" "$(head -1 "$OUT")"
+ck_has "gated planned is a keeper action"      "FOCUS-ACTION: TT-21 [Planned] — needs decision (decide and clear the label)" "$OUT"
+ck_has "uncertified planned is a keeper action" "FOCUS-ACTION: TT-31 [Planned] — uncertified (/spec to certify)" "$OUT"
+ck_has "hidden dependent surfaces in focus"    "FOCUS-ACTION: TT-40 [Planned] — needs decision (decide and clear the label)" "$OUT"
+ck_has "transitive root with fan-out"          "FOCUS-ROOT: TT-52 [Backlog] — needs decision (decide and clear the label) — unblocks TT-50, TT-51" "$OUT"
+ck_has "direct gated root"                     "FOCUS-ROOT: TT-21 [Planned] — needs decision (decide and clear the label) — unblocks TT-20" "$OUT"
+ck_has "triage root under a Todo dependent"    "FOCUS-ROOT: TT-27 [Inbox] — in Triage (groom via /spec) — unblocks TT-26" "$OUT"
+ck_has "stalled in-flight root"                "FOCUS-ROOT: TT-33 [In Progress] — stalled (resume or release it) — unblocks TT-32" "$OUT"
+ck_has "clean backlog root offers pull-forward" "FOCUS-ROOT: TT-55 [Backlog] — ships in-fleet from Backlog (promote to pull it forward) — unblocks TT-54" "$OUT"
+# The BF-553 shape: a mandatory gate MID-chain (TT-57 is itself blocked by clean TT-58) must
+# still surface — the walk collects the full ancestry, not just chain leaves.
+ck_has "mid-chain mandatory gate surfaces"     "FOCUS-ROOT: TT-57 [Backlog] — needs decision (decide and clear the label) — unblocks TT-56" "$OUT"
+ck_has "clean ancestor above the gate is a pull-forward" "FOCUS-ROOT: TT-58 [Backlog] — ships in-fleet from Backlog (promote to pull it forward) — unblocks TT-56" "$OUT"
+# Widest fan-out first: TT-52 (2 dependents) must sort above every 1-dependent root.
+ck "fan-out ordering" "TT-52" "$(grep '^FOCUS-ROOT' "$OUT" | head -1 | grep -oE 'TT-[0-9]+' | head -1)"
+ck_lacks "clean planned root not flagged"      "FOCUS-ROOT: TT-35" "$OUT"
+ck_lacks "clean in-flight root not flagged"    "FOCUS-ROOT: TT-37" "$OUT"
+ck_lacks "cycle yields no root row"            "FOCUS-ROOT: TT-60" "$OUT"
+ck_lacks "cycle yields no root row (mirror)"   "FOCUS-ROOT: TT-61" "$OUT"
+
+# ---- FLEET-BLOCKED section: pool-drain edges, bulk Backlog promotion advice gone ----
+ck "verdict line" "FLEET-BLOCKED: 9" "$(grep -m1 '^FLEET-BLOCKED' "$OUT")"
 ck_has "needs-decision blocker" "TT-20 [Planned] blocked by TT-21 [Planned] — needs decision (decide and clear the label)" "$OUT"
 ck_has "human blocker"          "TT-22 [Planned] blocked by TT-23 [Planned] — human-labeled (human-performed; the fleet never ships it)" "$OUT"
 ck_has "solo blocker"           "TT-24 [Planned] blocked by TT-25 [Planned] — solo (targeted /auto in the quiet window)" "$OUT"
 ck_has "renamed-triage blocker" "TT-26 [Todo] blocked by TT-27 [Inbox] — in Triage (groom via /spec)" "$OUT"
-ck_has "backlog+uncertified combined" "TT-28 [Planned] blocked by TT-29 [Backlog] — in Backlog (promote to Planned); uncertified (/spec to certify)" "$OUT"
+ck_has "backlog blocker flags only real reasons" "TT-28 [Planned] blocked by TT-29 [Backlog] — uncertified (/spec to certify)" "$OUT"
 ck_has "uncertified planned blocker"  "TT-30 [Planned] blocked by TT-31 [Planned] — uncertified (/spec to certify)" "$OUT"
 ck_has "stalled in-flight blocker"    "TT-32 [Planned] blocked by TT-33 [In Progress] — stalled (resume or release it)" "$OUT"
+ck_lacks "bulk promote advice removed" "in Backlog (promote to Planned)" "$OUT"
+ck_lacks "clean backlog blocker is not an edge" "TT-54 [Planned] blocked by" "$OUT"
 ck_lacks "clean blocker drains"        "TT-34" "$OUT"
 ck_lacks "in-flight blocker resolves"  "TT-36" "$OUT"
-ck_lacks "uncertified dependent skipped" "TT-38" "$OUT"
-ck_lacks "hidden dependent skipped"      "TT-40" "$OUT"
+ck_lacks "uncertified dependent skipped in edges" "TT-38 [Planned] blocked by" "$OUT"
+ck_lacks "hidden dependent skipped in edges"      "TT-40 [Planned] blocked by" "$OUT"
 
 # Verdict counts EDGES, so recount expectations: 7 flagged rows above vs verdict 6 would fail —
 # assert consistency directly instead of trusting the hand count.
 rows=$(grep -c 'blocked by' "$OUT")
-verdict=$(head -1 "$OUT" | grep -oE '[0-9]+')
+verdict=$(grep -m1 '^FLEET-BLOCKED' "$OUT" | grep -oE '[0-9]+')
 ck "verdict matches rows" "$rows" "$verdict"
 
 # Fetch failure: exit non-zero, no verdict line (fail loud, never empty-as-clean).
