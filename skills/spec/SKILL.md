@@ -1,6 +1,6 @@
 ---
 name: spec
-description: Groom a Linear issue into a certified spec — research the issue and codebase context, interview the user for problem/outcomes/success criteria, rewrite the description in the canonical spec shape, and graduate it with the `specified` label that gates autonomous /auto pickup. With no args, surfaces the top-ranked uncertified issues (including the Triage inbox) to pick from. Interactive-only — never runs unattended. Use when the user says 'spec', 'spec next', 'groom this issue', 'certify PL-XX', 'spec the backlog', or invokes /spec.
+description: Groom a Linear issue into a certified spec — research the issue and codebase context, interview the user for problem/outcomes/success criteria, rewrite the description in the canonical spec shape, and graduate it with the `specified` label that gates autonomous /auto pickup. Decision-shaped issues ("Decide X") take the decision-grade path instead — architect-backed research, a debate brief with recommendations, a recorded decision, and filed follow-ups rather than certification. With no args, surfaces the top-ranked uncertified issues (including the Triage inbox) to pick from. Interactive-only — never runs unattended. Use when the user says 'spec', 'spec next', 'groom this issue', 'certify PL-XX', 'spec the backlog', 'debate this decision issue', or invokes /spec.
 argument-hint: "[ISSUE-ID]"
 ---
 
@@ -63,7 +63,8 @@ Present any hits as a separate **awaiting a decision** group alongside the uncer
 
    The digest is for reading (anchored reviewer comments are invisible to plain `issues get` — linear skill gotcha #1); the raw `.description` is what gets preserved verbatim in Step 4.
 2. **Related work:** `linear-cli search issues "<keywords>"` (workspace-wide — no `--team` flag) for duplicates/overlap; `~/.claude/scripts/linear-deps-graph.sh <ID>` for blockers and parent context.
-3. **Codebase context** — delegate one read-only exploration to ground the interview in current behavior:
+3. **Classify before dispatching research.** The issue is **decision-grade** when its deliverable is a decision rather than a buildable spec: the title or a "Decision needed" section asks a question ("Decide …"), two-plus candidate designs are named, an authorization/policy surface is in play, or other issues block on the answer. Decision-grade grooming runs the deltas in [Decision-grade issues](#decision-grade-issues) over Steps 2–6 — starting with the deeper `architect` dispatch replacing item 4 below. Everything else proceeds unchanged.
+4. **Codebase context** — delegate one read-only exploration to ground the interview in current behavior:
 
    ```text
    Task for Explore agent: Given this issue summary <title + description>,
@@ -81,6 +82,7 @@ Present any hits as a separate **awaiting a decision** group alongside the uncer
 Then elicit what the quality bar needs: problem + who's affected, desired outcome, success criteria, scope boundaries (at least one explicit exclusion), priority, estimate.
 
 - Use AskUserQuestion with batched questions and **pre-filled drafts as options** — the user corrects rather than authors.
+- **Recommend, don't menu.** Every question with a defensible default leads with a "(Recommended)" option stating the reason it fits this codebase and product — the user corrects a stance rather than adjudicating an unweighted list. An option set you cannot rank is the signal to research more, not to ask anyway.
 - Each dialog stands alone: a later batch may arrive long after the brief scrolled by, so restate in the question text the sliver of context that decision needs (what the trade-off is, what the draft currently says) rather than assuming the brief is still on screen.
 - Skip what the issue + research already answer confidently — confirm, don't re-ask.
 - Iterate until every quality-bar item can be checked honestly.
@@ -124,7 +126,7 @@ Cheapest way to stay on the first branch: when drafting surfaces something new, 
 
    Each child is certified too (item 5 applies to every created issue).
 3. **Metadata** from the interview, only what changed: `linear-cli issues update <ID> -p <priority> -e <estimate>`.
-4. **State:** if — and only if — the issue is in `Triage`, move it: `linear-cli issues update <ID> -s Planned` (grooming is triage acceptance). Never touch any other state; assignment and In Progress belong to `/start`.
+4. **State:** if — and only if — the issue is in `Triage`, move it: `linear-cli issues update <ID> -s Planned` (grooming is triage acceptance). Never touch any other state — assignment and In Progress belong to `/start`, and the one exception is the decision-grade close-to-Done defined in [Decision-grade issues](#decision-grade-issues).
 5. **Certify:**
 
    ```bash
@@ -148,6 +150,27 @@ Cheapest way to stay on the first branch: when drafting surfaces something new, 
 ### Step 7: Report and continue
 
 Compact summary: what was rewritten, Triage → Planned (if moved), label applied, collision edges wired (if any), sub-issues created — and the handoff line: *eligible for `/next specified` and `/auto` pickup*. In pick mode, offer the next uncertified candidate; stop when the user is done.
+
+## Decision-grade issues
+
+The deliverable is a **recorded decision plus filed follow-ups**, not a certified description — running the standard path instead certifies criteria that ask the implementer to decide, which the quality bar forbids. The standard steps still run, with these deltas (worked case: BF-1002, "Decide the backing set for counterparty selection"):
+
+**Research — dispatch `architect` (Fable/max by definition), and interrogate, don't survey.** The generic Explore prompt returns a map too shallow to debate from. Build a structured interrogation from the issue's own claims: quote the gate/predicate bodies verbatim, enumerate every write site of the state in question, schema shapes, the linkage (or its absence) between the tables involved, and who-mints-what. Add `git log --grep <ID>` / `git log -S<symbol>` probes — commit messages are where deferred decisions get recorded (BF-878's commit read "BF-1002 carries that decision"), and prior-decision provenance reframes the debate. Architect unavailable → Explore with the same prompt, and say so.
+
+**Verify the option space before debating it.** The issue's A-vs-B framing is a filing-time reading, not a constraint: check whether an option structurally collapses (BF-1002's "pure global" collapsed into a hybrid because per-tenant relationship data hung off the table it would have replaced) or a third shape dominates both. Reframing the forks is the highest-value move in this path and must happen before the first question.
+
+**Interview — position first, then forks.** Before the first AskUserQuestion, present a debate brief: the reframing facts from research, your position, and the strongest counterargument against it. Then interview only the genuine forks, staged — product intent first, the design consequences of those answers second, residuals third. Step 3's recommend-don't-menu rule is mandatory here: every fork's recommended option cites the code fact it rests on.
+
+**Output — record, file, propagate, close.**
+
+- Record the decision **on the issue**: who decided, when, each question's answer with its rationale — including any invariant the decision *refines*, stated in its refined form (otherwise the next reviewer reads the change as a regression against the old invariant).
+- Check off the criteria the record satisfies; a criterion the follow-ups will discharge stays unchecked, with the comment naming which issue carries it.
+- File follow-ups in canonical shape; certify only those meeting the bar. One whose requirements cannot yet prescribe behavior (criteria would read "decide X") files **uncertified + `needs decision`** (`standards/issue-spec.md`), never certified around the gap. Wire collision edges per Step 6 item 6 — including against open issues touching the units the follow-ups will extend.
+- Close the decision issue `Done` — a decision with no code change rides no release, so `Ready for Release` is wrong for it. This is the one place `/spec` touches state beyond Triage → Planned.
+
+**Propagate to dependents before clearing their gates.** Write the decision into each dependent's *description*, never only a comment (`standards/issue-spec.md`). Before removing `needs decision` from any dependent, re-read its spec for judgment calls the recorded decision does not answer — clearing the label makes a certified issue fleet-pickable, so an unstated scope ships as an unattended agent's invention. The human is present: interview the residual now (BF-879's affiliation read-scope was caught exactly here; one question closed it).
+
+**Session model.** The judgment that pays in this path — catching a residual gate, noticing the option-space collapse — lives in the main loop, which no dispatch upgrades. Suggest `/model claude-fable-5` before a decision-grade grooming when the session is on a lower tier.
 
 ## What /spec must NOT do
 
