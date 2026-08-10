@@ -282,7 +282,7 @@ Commits and pushes are **separate, explicit grants**. Neither is implied by impl
 
 ### Named exceptions: skill-scoped grants
 
-Invoking `/finish` is an explicit grant to commit and push that one issue's change set — the documented contract of the skill IS the grant. Invoking `/auto` (or `/loop /auto`) is the single **run-scoped standing grant**: it authorizes the `/finish auto` commit+push of every issue that run ships, because unattended shipping is `/auto`'s entire documented purpose. The grant is bounded — no force-pushes, no history rewrites, no committing work unattributable to a Linear issue — and every shipped change is audited via the issue's plan and completion comments. No other skill or phrasing creates a standing grant.
+Invoking `/finish` is an explicit grant to commit and push that one issue's change set — the documented contract of the skill IS the grant. Invoking `/auto` (or `/loop /auto`) is the single **run-scoped standing grant**: it authorizes the `/finish auto` commit+push of every issue that run ships, because unattended shipping is `/auto`'s entire documented purpose. The grant is bounded — no force-pushes, no history rewrites, no committing work unattributable to a Linear issue — and every shipped change is audited via the issue's plan and completion comments. Invoking `/keeper` is an explicit grant to commit and push, in the `~/.claude` repo only, the config changes that run adjudicates and accepts — bounded to files the skill edited or accepted (staged by name), no force-pushes, no history rewrites, and never files the adjudication rejected or deferred (concurrent-session WIP stays in the tree). No other skill or phrasing creates a standing grant.
 
 ### Default Behavior
 

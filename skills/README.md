@@ -273,6 +273,31 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 - Delegates verification (session) and config-vs-codebase audit (sweep) to agents
 - Routes per `~/.claude/CLAUDE.md` "Where Knowledge Goes"; references `~/.claude/standards/problem-solving.md`
 
+### keeper
+
+**Description**: The keeper's interactive pickup for config work autonomous runs cannot ship — adjudicates both `/reflect` review queues in one pass: the uncommitted local `~/.claude` edits left for review, and every `keeper`-labeled Linear issue workspace-wide. Applies the fixes that hold up, returns recommendations for the rest, and commits and pushes the accepted set (the invocation is the skill-scoped grant — `standards/git.md` § Named exceptions).
+
+**When Invoked**:
+
+- User says "keeper", "process the keeper queue", "review the keeper batches", "what's waiting on me"
+- User invokes `/keeper`
+- Interactive-only — never from `/auto`, a fleet, or any unattended flow
+
+**Key Features**:
+
+- One adjudication standard for both queues: evidence scoped to what was measured, correct placement per the "Where Knowledge Goes" routing, no contradiction/duplication, house-style proportion, and a higher bar for anything that changes unattended `/auto` behavior
+- Three verdicts per item: apply / reject (with the recommendation that would make it acceptable) / needs-you (genuine trade-offs surface as questions, never guesses)
+- Partial batches apply immediately — accepted items ship now; an issue stays open only while items wait on the user, otherwise Done with a per-item verdict comment
+- Never reverts or stashes rejected local edits (multi-session safety); defers files whose shape reads as another session's mid-edit WIP
+- Project-repo targets are flagged for issue/PR routing, never edited cross-repo
+- Gates each item on its sibling regression suite and markdownlint before commit; one commit per keeper issue, one for accepted local edits
+
+**Structure**:
+
+- Self-contained workflow in `SKILL.md`
+- Uses the linear skill's raw-hatch label query (workspace-wide), `linear-context.sh` digests, and `linear-post.sh` for verdict comments
+- The bookend to `/reflect`: reflect files the queues, keeper drains them
+
 ### standardize-tooling
 
 **Description**: Converge a TypeScript project's dev tooling onto the house conventions — pnpm 11 (supply-chain cooldown, allow-builds, `@alienfast` registry), Biome (no ESLint/Prettier), markdownlint-cli2, madge, the standardized parallel `check` suite, tsdown for libraries, and OIDC token-less `auto` releases for published packages — then gate on `pnpm check`. Adaptive and idempotent: detects current state and applies only the gaps.
