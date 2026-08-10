@@ -119,7 +119,8 @@ otherwise touch — that one is genuinely unrelated.
 
 - WHAT the code does — well-named identifiers already do that
 - **Provenance decoration** — `"used by X"`, `"added for the Y flow"`, `"fixes #123"`,
-  `"part of the Z refactor"`. Backward-looking, adds nothing a reader needs, and
+  `"part of the Z refactor"`, `"# Review Finding 3: …"`, `"# BF-123 review finding 2 — …"`.
+  Backward-looking, adds nothing a reader needs, and
   rots as the code moves. It belongs in the PR description or commit body.
 - References to `tmp/` paths (investigations, screenshots, scratch notes) —
   `tmp/` is transient and regularly cleaned, so the link will dangle. If the
