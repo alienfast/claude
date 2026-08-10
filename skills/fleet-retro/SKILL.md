@@ -208,6 +208,15 @@ Filed issues are output too, and they fail in ways the metrics cannot see. Check
   from a retro defeats the thing that keeps `/auto` safe.
 - **Correct cancellations.** An issue absorbed by another's fix should be canceled *with its evidence
   carried onto the survivor first* — the losing issue often holds a verified vector the winner lacks.
+  **Re-verify each carried claim against current code before writing it onto the survivor; never transcribe.**
+  The losing issue is stale by construction — that is why it is being canceled — and its cited evidence is the
+  oldest part of it. Measured while canceling BF-1052: of three cited consumers, two (`Organization::EditTeam`,
+  `Tenant::TransferClient`) had since been rewritten pair-wide and locked, and `Accessable#access_for` was
+  described as a bare `.last` when it is a three-tier precedence chain. Carried verbatim, all three would have
+  become a durable and wrong record on the survivor, arguing from consumers that are no longer vulnerable.
+  Re-checking replaced them with the one claim that still holds — `Types::Tenant`'s unordered `find_by`
+  disagreeing with `access_for`'s precedence, so a duplicate pair renders the sharing toggle off while sharing
+  is on. Carry what survives the re-check, and state in the comment which claims were dropped and why.
 
 ## Step 5 — Report
 
