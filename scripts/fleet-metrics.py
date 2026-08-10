@@ -16,7 +16,8 @@ WHAT IT READS
   ~/.claude/projects/<mangled-cwd>/*.jsonl  session transcripts, main + worktree dirs
   ~/.claude/projects/.../subagents/*.jsonl  delegated work — where classifier blocks actually land,
                                             invisible to the parent except as a slow Agent call
-  .../subagents/agent-<id>.meta.json        the dispatch's agentType, for exact token attribution
+  .../subagents/agent-<id>.meta.json        the dispatch's agentType + description, for exact token
+                                            and lane (implementation vs fix-batch) attribution
 
 Sessions are discovered from state files, then matched to transcripts by runKey (a state file's key
 is the leading segment of its session UUID). A session whose state file says nothing shipped may
@@ -42,6 +43,7 @@ import sys
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from statistics import median
 
 # Overridable so the regression suite can point at a fixture tree instead of the live transcripts.
 PROJ = Path(os.environ.get("CLAUDE_PROJECTS_DIR", str(Path.home() / ".claude" / "projects")))
@@ -197,21 +199,22 @@ def is_auto_session(path, probe_lines=60):
     return False
 
 
-def subagent_type_of(path):
+def subagent_meta(path):
     """agent-<id>.jsonl sits next to agent-<id>.meta.json, which records the Agent dispatch's
-    agentType — exact attribution, vs. guessing the type from prompt text."""
+    agentType and description — exact attribution, vs. guessing the type from prompt text."""
     try:
         meta = json.loads(path.with_name(path.stem + ".meta.json").read_text())
-        return meta.get("agentType") or "unknown"
+        return meta.get("agentType") or "unknown", meta.get("description") or ""
     except (OSError, json.JSONDecodeError):
-        return "unknown"
+        return "unknown", ""
 
 
-def scan_transcript(path, agg, agent_type="main"):
+def scan_transcript(path, agg, agent_type="main", description=""):
     """Fold one transcript (session or subagent) into agg. Subagents share the parent's totals on
     purpose: a classifier block inside a delegated reviewer is the parent's lost time."""
     rows = load(path)
     pending, times = {}, []
+    d_model, d_out, d_first_user = None, 0, None
     for r in rows:
         t = ts(r.get("timestamp"))
         if t:
@@ -245,6 +248,15 @@ def scan_transcript(path, agg, agent_type="main"):
                 u["cache_write"] += usage.get("cache_creation_input_tokens") or 0
                 u["cache_read"] += usage.get("cache_read_input_tokens") or 0
                 u["output"] += usage["output_tokens"]
+                if agent_type != "main":
+                    d_out += usage["output_tokens"]
+                    if d_model is None:
+                        d_model = model
+
+        if agent_type != "main" and d_first_user is None and r.get("type") == "user":
+            body = text_of(content)
+            if body:
+                d_first_user = body
 
         if r.get("type") == "user" and not r.get("isSidechain"):
             body = text_of(content)
@@ -317,6 +329,18 @@ def scan_transcript(path, agg, agent_type="main"):
     if times:
         agg["first"] = min([agg["first"], min(times)]) if agg["first"] else min(times)
         agg["last"] = max([agg["last"], max(times)]) if agg["last"] else max(times)
+    if agent_type != "main":
+        # The issue id comes from the meta description when it names one, else the modal id in the
+        # dispatch prompt (Counter ties keep the first-mentioned, which is the task's own issue in
+        # every observed prompt shape — context sections cite other issues, but later and less often).
+        m = V_ISSUE_ID.search(description)
+        ids = [m.group(0)] if m else V_ISSUE_ID.findall(d_first_user or "")
+        agg["dispatches"].append({
+            "agent_type": agent_type, "description": description,
+            "issue": Counter(ids).most_common(1)[0][0] if ids else None,
+            "first": min(times) if times else None,
+            "model": d_model, "output_tokens": d_out,
+        })
 
 
 def new_agg():
@@ -340,6 +364,10 @@ def new_agg():
         # which quantity the limit actually tracks — reasoning about it settles nothing.
         "cache_events": [],
         "usage": {}, "visible_chars": Counter(),
+        # One record per subagent transcript (agentType, issue, start, model, output) — the
+        # per-dispatch dimension the (agent, model) Counter throws away. The developer-lanes split
+        # needs it: WHICH dispatches were implementation is invisible in aggregate.
+        "dispatches": [],
     }
 
 
@@ -547,6 +575,59 @@ def thinking_share(aggs, agent_type="main"):
     return max(0.0, round(1 - visible / out, 2))
 
 
+def developer_lanes(sessions):
+    """Split developer output by lane — pre-review implementation vs post-review fix batches — and
+    name the tier that implemented each issue.
+
+    The by-model token table cannot answer "what tier implements": /quality-review pins fix batches
+    to sonnet-tier developer agents, so developer/sonnet dominates that table no matter what wrote
+    the initial implementation. Measured on the 2026-08-09 basefund fleet, whose retro read that
+    table as "72% of developer output ran on sonnet": 86% of the developer/sonnet row was fix
+    batches, and 14 of 23 issues were implemented at the opus agent default — the impl-heavy origin
+    mix sat on issues already implemented at the top tier, and the flag table routed it at developer
+    model anyway. A dispatch lands in `impl` when it starts before the issue's first
+    quality-reviewer dispatch anywhere in the fleet, in `fix` at or after.
+
+    Returns (lanes, impl_models, runs_with_records): {lane: Counter(model -> output tokens)},
+    {issue: sorted models that ran its implementation dispatches}, and the run keys with surviving
+    subagent transcripts. An issue shipped by a run in that last set with no impl dispatch was
+    implemented by the main loop directly; without surviving records that claim would be a guess, so
+    callers report unknown instead.
+    """
+    review_start = {}
+    for s in sessions:
+        for d in s["agg"]["dispatches"]:
+            if d["agent_type"] == "quality-reviewer" and d["issue"] and d["first"]:
+                cur = review_start.get(d["issue"])
+                review_start[d["issue"]] = min(cur, d["first"]) if cur else d["first"]
+    lanes = {"impl": Counter(), "fix": Counter(), "unattributed": Counter()}
+    impl_models = {}
+    runs_with_records = set()
+    for s in sessions:
+        if s["agg"]["dispatches"]:
+            runs_with_records.add(s["run_key"])
+        for d in s["agg"]["dispatches"]:
+            if d["agent_type"] != "developer":
+                continue
+            model = d["model"] or "?"
+            if not d["issue"]:
+                lanes["unattributed"][model] += d["output_tokens"]
+                continue
+            rs = review_start.get(d["issue"])
+            lane = "impl" if not rs or (d["first"] and d["first"] < rs) else "fix"
+            lanes[lane][model] += d["output_tokens"]
+            if lane == "impl":
+                impl_models.setdefault(d["issue"], set()).add(model)
+    return lanes, {k: sorted(v) for k, v in impl_models.items()}, runs_with_records
+
+
+def tier_short(model):
+    for t in ("opus", "sonnet", "haiku", "fable"):
+        if t in model:
+            return t
+    return model
+
+
 def parse_verdicts(checkout, cutoff):
     """One row per quality-review verdict file in the window: the review-churn half of the retro.
     Counts are self-reported by the review pipeline — the audit record, not independent ground truth."""
@@ -653,7 +734,7 @@ def main():
         for tpath in transcripts:
             if "/subagents/" in str(tpath):
                 agg["subagents"] += 1
-                scan_transcript(tpath, agg, subagent_type_of(tpath))
+                scan_transcript(tpath, agg, *subagent_meta(tpath))
             else:
                 scan_transcript(tpath, agg)
         return {"run_key": run_key, "state": state, "state_mtime": mtime,
@@ -727,6 +808,23 @@ def main():
     # alone names the issue, and a review persisted just before the cutoff is not a missing verdict.
     verdict_issues_all = {p.stem.replace("quality-review-verdict-", "").upper()
                           for p in (checkout / "tmp").glob("quality-review-verdict-*.md")}
+
+    lanes, impl_models, runs_with_records = developer_lanes(sessions)
+    for v in verdicts:
+        if v["issue"] in impl_models:
+            v["implemented_by"] = impl_models[v["issue"]]
+        elif issue_run.get(v["issue"]) in runs_with_records:
+            v["implemented_by"] = ["main-loop"]
+        else:
+            v["implemented_by"] = None
+    # Impl-origin findings per issue grouped by implementing tier — the join that adjudicates the
+    # flag table's impl-heavy row. Zero-impl issues count (a tier's clean record IS the signal);
+    # verdicts with findings but no origin tags stay out, since their impl count is unknown, not 0.
+    tier_join = {}
+    for v in verdicts:
+        if v["implemented_by"] and (v["origin"] or v["resolved"] == 0):
+            label = "+".join(dict.fromkeys(tier_short(m) for m in v["implemented_by"]))
+            tier_join.setdefault(label, []).append(v["origin"].get("impl", 0))
     fleet_tokens = Counter()
     fleet_usage = {}
     for s in sessions:
@@ -813,9 +911,15 @@ def main():
                 "issue": v["issue"], "run": issue_run.get(v["issue"]),
                 "verdict": v["verdict"], "cycles": v["cycles"], "findings_resolved": v["resolved"],
                 "severity": dict(v["sev"]), "origin": dict(v["origin"]), "filed": v["filed"],
-                "missing_fields": v["missing_fields"],
+                "missing_fields": v["missing_fields"], "implemented_by": v["implemented_by"],
             } for v in verdicts],
             "filed_per_shipped": filed_per_shipped,
+            "developer_lanes": {lane: {m: n for m, n in c.most_common()}
+                                for lane, c in lanes.items()},
+            "impl_origin_by_tier": {label: {
+                "n": len(vals), "mean": round(sum(vals) / len(vals), 2),
+                "median": median(vals), "values": sorted(vals),
+            } for label, vals in sorted(tier_join.items())},
             "output_tokens": {f"{t}/{m}": n for (t, m), n in fleet_tokens.most_common()},
             "usage": {f"{t}/{m}": dict(u) for (t, m), u in
                       sorted(fleet_usage.items(), key=lambda kv: -kv[1]["output"])},
@@ -894,15 +998,17 @@ def main():
 
     print("## Review churn\n")
     if verdicts:
-        print("| issue | run | verdict | cycles | findings | C/H/M | origins | filed |")
-        print("|---|---|---|---|---|---|---|---|")
+        print("| issue | run | verdict | cycles | findings | C/H/M | origins | filed | impl by |")
+        print("|---|---|---|---|---|---|---|---|---|")
         for v in verdicts:
             origins = " ".join(f"{k}:{n}" for k, n in v["origin"].most_common()) or "-"
             findings = "?" if "Findings resolved" in v["missing_fields"] else v["resolved"]
+            impl_by = "+".join(dict.fromkeys(tier_short(m) for m in v["implemented_by"])) \
+                if v["implemented_by"] else "-"
             print(f"| {v['issue']} | `{issue_run.get(v['issue'], '-')}` | {v['verdict']} | "
                   f"{v['cycles'] if v['cycles'] is not None else '?'} | {findings} | "
                   f"{v['sev']['CRIT']}/{v['sev']['HIGH']}/{v['sev']['MED']} | {origins} | "
-                  f"{len(v['filed'])} |")
+                  f"{len(v['filed'])} | {impl_by} |")
         cyc = [v["cycles"] for v in verdicts if v["cycles"] is not None]
         resolved_total = sum(v["resolved"] for v in verdicts)
         tagged = sum(sum(v["origin"].values()) for v in verdicts)
@@ -919,6 +1025,16 @@ def main():
               f"origin-tagged {tagged}/{resolved_total} ({origins}) · "
               f"{filed_total} deferred filings in window → {ratio}. Review-pipeline filings only — "
               f"the Linear window query (retro Step 3) is the full filing census.\n")
+        if tier_join:
+            parts = " | ".join(
+                f"{label} n={len(vals)} · mean {sum(vals) / len(vals):.1f} · median {median(vals):.1f}"
+                for label, vals in sorted(tier_join.items()))
+            print(f"**Implementing-tier join** — impl-origin findings per issue, grouped by the tier "
+                  f"that ran that issue's implementation dispatch: {parts}. This is the precondition "
+                  f"for the flag table's impl-heavy row: fix batches are pinned to sonnet-tier by "
+                  f"/quality-review, so the by-agent token table cannot answer what tier implements — "
+                  f"route an impl-heavy mix at developer model/effort only when the impl findings sit "
+                  f"on the lower tier HERE.\n")
     else:
         print("- no verdict files in the window\n")
 
@@ -938,6 +1054,15 @@ def main():
         unpriced_note = f" · excluded from $ (no price row): {', '.join(sorted(unpriced))}" if unpriced else ""
         print(f"\n**Cost estimate** — ${fleet_cost:,.2f} at list prices (input + cache + output; cache "
               f"writes at the 1h-TTL rate) · {per_ship} · {think}{unpriced_note}\n")
+        if any(lanes.values()):
+            def lane_cell(c):
+                return ", ".join(f"{m} {n:,}" for m, n in c.most_common()) or "none"
+            unattr = (f" · unattributed {sum(lanes['unattributed'].values()):,}"
+                      if lanes["unattributed"] else "")
+            print(f"**Developer lanes** — implementation {sum(lanes['impl'].values()):,} "
+                  f"({lane_cell(lanes['impl'])}) · post-review fix {sum(lanes['fix'].values()):,} "
+                  f"({lane_cell(lanes['fix'])}){unattr}. The developer rows above sum both lanes; "
+                  f"tier questions about /start Step 8 read the implementation lane only.\n")
     else:
         print("- no usage data found in transcripts\n")
 

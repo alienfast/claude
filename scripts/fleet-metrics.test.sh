@@ -501,6 +501,108 @@ ck_has  "live run keeps floor framing" "Both peaks are FLOORS" "$MD8"
 ck_lacks "live run does not flip banner" "CEILINGS, not floors" "$MD8"
 ck_lacks "live run prints no meters"     "cutoff-window meters" "$MD8"
 
+# ---- developer-lanes fixture: implementation vs fix-batch attribution, and the tier join ----
+# The 2026-08-09 basefund retro read the by-model token table as "72% of developer output ran on
+# sonnet" and routed its impl-heavy origin mix at developer model — but 86% of that row was
+# /quality-review fix batches (pinned to sonnet by design) and 14 of 23 issues were implemented at
+# the opus default. Lane membership is decided by dispatch start vs the issue's first
+# quality-reviewer dispatch; the issue id comes from the meta description, else the modal id in the
+# dispatch prompt; an issue shipped with dispatch records but no impl dispatch is main-loop work.
+CK9="$WORK/checkout9"
+mkdir -p "$CK9/tmp"
+git -C "$CK9" init -q 2>/dev/null
+git -C "$CK9" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "init"
+M9="$(git -C "$CK9" rev-parse --show-toplevel | tr / -)"
+SUB9="$WORK/projects/$M9/gg999999-0000/subagents"
+mkdir -p "$SUB9"
+
+cat > "$CK9/tmp/auto-state-gg999999.json" <<'EOF'
+{"status": "drained", "reason": "deadline", "shipped": ["TT-20", "TT-21"], "canceled": [], "skipped": [], "failed": []}
+EOF
+cat > "$CK9/tmp/quality-review-verdict-tt-20.md" <<'EOF'
+Verdict: passed-after-fixes
+Cycles: 2 (initial + 1 re-review)
+Findings resolved: 3 (HIGH/impl: guard missing; MED/impl: stale cache path; MED/test: unpinned branch)
+Deferred filed as issues: none
+EOF
+cat > "$CK9/tmp/quality-review-verdict-tt-21.md" <<'EOF'
+Verdict: passed
+Cycles: 1
+Findings resolved: 1 (MED/impl: off-by-one in pager)
+Deferred filed as issues: none
+EOF
+
+cat > "$WORK/projects/$M9/gg999999-0000.jsonl" <<'EOF'
+{"type":"user","timestamp":"2026-08-04T10:00:00Z","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"2026-08-04T10:30:00Z","message":{"role":"assistant","id":"msg_gga","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":80},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-20 done"}]}}
+{"type":"assistant","timestamp":"2026-08-04T11:00:00Z","message":{"role":"assistant","id":"msg_ggb","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":70},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-21 done"}]}}
+EOF
+
+# TT-20's implementation (opus, before its review start), the review that sets the lane boundary,
+# and the post-review fix batch (sonnet). Descriptions carry the issue id.
+cat > "$SUB9/agent-i1.jsonl" <<'EOF'
+{"type":"assistant","timestamp":"2026-08-04T10:05:00Z","agentId":"i1","isSidechain":true,"message":{"role":"assistant","id":"msg_i1","model":"claude-opus-5","usage":{"input_tokens":5,"output_tokens":100},"content":[{"type":"text","text":"built"}]}}
+EOF
+cat > "$SUB9/agent-i1.meta.json" <<'EOF'
+{"agentType":"developer","description":"Implement TT-20 widget","toolUseId":"tu_i1","spawnDepth":1}
+EOF
+cat > "$SUB9/agent-r1.jsonl" <<'EOF'
+{"type":"assistant","timestamp":"2026-08-04T10:10:00Z","agentId":"r1","isSidechain":true,"message":{"role":"assistant","id":"msg_r1","model":"claude-opus-5","usage":{"input_tokens":5,"output_tokens":50},"content":[{"type":"text","text":"reviewed"}]}}
+EOF
+cat > "$SUB9/agent-r1.meta.json" <<'EOF'
+{"agentType":"quality-reviewer","description":"Adversarial review TT-20","toolUseId":"tu_r1","spawnDepth":1}
+EOF
+cat > "$SUB9/agent-f1.jsonl" <<'EOF'
+{"type":"assistant","timestamp":"2026-08-04T10:15:00Z","agentId":"f1","isSidechain":true,"message":{"role":"assistant","id":"msg_f1","model":"claude-sonnet-5","usage":{"input_tokens":5,"output_tokens":200},"content":[{"type":"text","text":"fixed"}]}}
+EOF
+cat > "$SUB9/agent-f1.meta.json" <<'EOF'
+{"agentType":"developer","description":"Fix TT-20 review findings","toolUseId":"tu_f1","spawnDepth":1}
+EOF
+# Issue-less developer dispatch (no id in description, no user row): must land in `unattributed`,
+# never guessed into a lane.
+cat > "$SUB9/agent-u1.jsonl" <<'EOF'
+{"type":"assistant","timestamp":"2026-08-04T10:12:00Z","agentId":"u1","isSidechain":true,"message":{"role":"assistant","id":"msg_u1","model":"claude-opus-5","usage":{"input_tokens":5,"output_tokens":30},"content":[{"type":"text","text":"measured"}]}}
+EOF
+cat > "$SUB9/agent-u1.meta.json" <<'EOF'
+{"agentType":"developer","description":"probe reachability","toolUseId":"tu_u1","spawnDepth":1}
+EOF
+# Description names no issue but the dispatch prompt does (modal id wins; TT-9 is a context
+# mention) — the fallback path. TT-22 has no reviewer dispatch, so this is impl by definition.
+cat > "$SUB9/agent-p1.jsonl" <<'EOF'
+{"type":"user","timestamp":"2026-08-04T10:07:00Z","agentId":"p1","isSidechain":true,"message":{"role":"user","content":"Task for developer: TT-22 needs the resolver converged. TT-22's plan is the latest comment; context in TT-9."}}
+{"type":"assistant","timestamp":"2026-08-04T10:08:00Z","agentId":"p1","isSidechain":true,"message":{"role":"assistant","id":"msg_p1","model":"claude-sonnet-5","usage":{"input_tokens":5,"output_tokens":40},"content":[{"type":"text","text":"converged"}]}}
+EOF
+cat > "$SUB9/agent-p1.meta.json" <<'EOF'
+{"agentType":"developer","description":"Converge the resolver","toolUseId":"tu_p1","spawnDepth":1}
+EOF
+
+J9="$WORK/out9.json"
+MD9="$WORK/out9.md"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK9" --all --json > "$J9" 2>/dev/null
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK9" --all > "$MD9" 2>&1
+q9() { python3 -c "import json,sys; d=json.load(open('$J9')); print($1)"; }
+ck "impl lane by model"   "{'claude-opus-5': 100, 'claude-sonnet-5': 40}" "$(q9 "d['developer_lanes']['impl']")"
+ck "fix lane by model"    "{'claude-sonnet-5': 200}" "$(q9 "d['developer_lanes']['fix']")"
+ck "unattributed lane"    "{'claude-opus-5': 30}"    "$(q9 "d['developer_lanes']['unattributed']")"
+ck "tt20 implemented_by"  "['claude-opus-5']" "$(q9 "[v for v in d['review_churn'] if v['issue']=='TT-20'][0]['implemented_by']")"
+ck "tt21 main-loop"       "['main-loop']"     "$(q9 "[v for v in d['review_churn'] if v['issue']=='TT-21'][0]['implemented_by']")"
+ck "tier join opus"       "{'n': 1, 'mean': 2.0, 'median': 2, 'values': [2]}" "$(q9 "d['impl_origin_by_tier']['opus']")"
+ck "tier join main-loop"  "{'n': 1, 'mean': 1.0, 'median': 1, 'values': [1]}" "$(q9 "d['impl_origin_by_tier']['main-loop']")"
+ck_has "churn impl-by header" "| filed | impl by |" "$MD9"
+ck_has "tt20 row impl by"     "| TT-20 | \`gg999999\` | passed-after-fixes | 2 | 3 | 0/1/2 | impl:2 test:1 | 0 | opus |" "$MD9"
+ck_has "tt21 row main-loop"   "| TT-21 | \`gg999999\` | passed | 1 | 1 | 0/0/1 | impl:1 | 0 | main-loop |" "$MD9"
+ck_has "join line groups"     "opus n=1 · mean 2.0 · median 2.0" "$MD9"
+ck_has "lanes line split"     "implementation 140 (claude-opus-5 100, claude-sonnet-5 40) · post-review fix 200 (claude-sonnet-5 200) · unattributed 30" "$MD9"
+
+# First fixture's new fields: agent-t1 ("fix batch", no issue id, no prompt row) stays unattributed;
+# TT-1 shipped by a session WITH dispatch records but no impl dispatch -> main-loop; TT-3's session
+# is unknown -> attribution honestly absent, and its old-format verdict (origin-untagged, 2 findings)
+# must stay OUT of the tier join rather than counting as zero impl findings.
+ck "t1 stays unattributed" "{'claude-sonnet-5': 700}" "$(q "d['developer_lanes']['unattributed']")"
+ck "tt1 main-loop fallback" "['main-loop']" "$(q "[v for v in d['review_churn'] if v['issue']=='TT-1'][0]['implemented_by']")"
+ck "tt3 attribution unknown" "None" "$(q "[v for v in d['review_churn'] if v['issue']=='TT-3'][0]['implemented_by']")"
+ck "untagged verdict out of join" "{'main-loop': [1]}" "$(q "{k: v['values'] for k, v in d['impl_origin_by_tier'].items()}")"
+
 echo
 echo "$PASS passed / $FAIL failed"
 [ "$FAIL" -eq 0 ]
