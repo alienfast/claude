@@ -16,10 +16,10 @@
 # sibling-under-completed-parent → priority-fallback), then walks parent chains for
 # the top-K candidates to apply parent-status weighting (In Progress epic > Planned >
 # Backlog > Triage).
-# Within a tier: workflow stage first (Planned/Todo before Backlog — the only planning
-# signal in the pool a human sets by hand; Urgent does NOT pierce stage — keeper
-# decision 2026-08-05), then Urgent priority (a deliberate human escalation outranks
-# any label within its stage) > security/bug
+# Within a tier: workflow stage first, as a STRICT three-way order — Planned/Todo, then
+# Backlog, then (under --include-triage) the Triage inbox; Urgent does NOT pierce stage
+# (keeper decisions 2026-08-05 and 2026-08-13) — then Urgent priority (a deliberate
+# human escalation outranks any label within its stage) > security/bug
 # label class > remaining priority > spread (a sibling under the same parent In
 # Progress/In Review soft de-ranks the candidate — parallel /auto sessions collide in
 # sibling files) > parent weight > estimate. A candidate
@@ -469,15 +469,22 @@ candidates_json=$(jq \
           # state_rank, which sorts ahead of it (keeper decision 2026-08-05, narrowing the
           # BF-583 pierce-everything rule: an Urgent Backlog issue is still deferred work).
           urgent_first: (if $i.priority == 1 then 0 else 1 end),
-          # Backlog is a deliberate human deferral, and the only planning signal in the pool
-          # a person sets by hand — so it outranks the class ordering AND priority, Urgent
-          # included: Planned/Todo drains fully before any Backlog issue is offered (keeper
-          # decision 2026-08-05 — bouncing work to Backlog has to actually defer it). Keyed on
-          # state TYPE so a renamed workable state still sorts right; the name check covers a
-          # team that renamed a state without changing its type. Triage is deliberately left
-          # at 0 — the only mode that admits it is --include-triage grooming discovery (used
-          # by /spec), where an unreviewed inbox item is the most worth surfacing.
-          state_rank: (if ($i.state_type == "backlog") or (($i.state // "") | ascii_downcase) == "backlog" then 1 else 0 end),
+          # Stage is the senior signal, and it is a STRICT three-way order (keeper decision
+          # 2026-08-13, superseding the 2026-08-05 decision that deliberately left Triage at
+          # 0): Planned/Todo drains fully, then Backlog, and the Triage inbox ranks last —
+          # measured cost of the old tie: under --include-triage a prioritized inbox report
+          # (BF-34, Urgent) outranked every unprioritized Planned issue and /spec recommended
+          # certifying Triage over the Planned queue the keeper is draining. Stage outranks
+          # class AND priority, Urgent included (bouncing work to Backlog has to actually
+          # defer it; an unreviewed inbox item has not even been accepted for work). Backlog
+          # is keyed on state TYPE with a name fallback for a team that renamed the state
+          # without changing its type; Triage needs no name fallback — its only admission
+          # path (--include-triage) is already type-keyed. NO apostrophes in this comment
+          # block: it lives inside the single-quoted jq program, and one ends the shell
+          # string mid-script.
+          state_rank: (if ($i.state_type == "triage") then 2
+            elif ($i.state_type == "backlog") or (($i.state // "") | ascii_downcase) == "backlog" then 1
+            else 0 end),
           # Unstarted stage is never hidden by the --limit render cut (keeper policy
           # 2026-08-12 — below-cut Planned/Todo candidates emit in a trailing section);
           # matched like state_rank — by type, with a name fallback for a renamed state.

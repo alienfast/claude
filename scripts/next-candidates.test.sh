@@ -45,6 +45,8 @@ mkdir -p "$FIX" "$WORK/bin" "$WORK/home"
 #   TT-6 Backlog Normal security   -> 7th (urgent still pierces within the Backlog stage)
 #   TT-8 RFR / TT-10 In Progress   -> blockers only, never candidates
 #   TT-11/12/13                    -> hidden by label (needs decision / solo / human) + notes
+#   TT-14 Triage Urgent            -> absent by default; LAST STAGE under --include-triage —
+#   TT-15 Triage Normal security      even Urgent never outranks Planned/Backlog (BF-34's shape)
 cat > "$FIX/issues-page.json" <<'EOF'
 {"data":{"issues":{"nodes":[
  {"identifier":"TT-1","title":"urgent backlog","estimate":null,"priority":1,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[]},"parent":null},
@@ -59,7 +61,9 @@ cat > "$FIX/issues-page.json" <<'EOF'
  {"identifier":"TT-10","title":"open blocker","estimate":null,"priority":0,"state":{"name":"In Progress","type":"started"},"assignee":null,"labels":{"nodes":[]},"parent":null},
  {"identifier":"TT-11","title":"parked decision","estimate":null,"priority":3,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[{"name":"needs decision"}]},"parent":null},
  {"identifier":"TT-12","title":"solo work","estimate":null,"priority":3,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[{"name":"solo"}]},"parent":null},
- {"identifier":"TT-13","title":"human work","estimate":null,"priority":3,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[{"name":"human"}]},"parent":null}
+ {"identifier":"TT-13","title":"human work","estimate":null,"priority":3,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[{"name":"human"}]},"parent":null},
+ {"identifier":"TT-14","title":"triage urgent inbox","estimate":null,"priority":1,"state":{"name":"Triage","type":"triage"},"assignee":null,"labels":{"nodes":[]},"parent":null},
+ {"identifier":"TT-15","title":"triage security inbox","estimate":null,"priority":3,"state":{"name":"Triage","type":"triage"},"assignee":null,"labels":{"nodes":[{"name":"security"}]},"parent":null}
 ],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
 EOF
 
@@ -119,6 +123,14 @@ ck "blocked order" "TT-3 TT-2 TT-4 TT-5 TT-9 TT-7 TT-1 TT-6" "$(order_of "$OUT2"
 OUT3="$WORK/out3.md"
 run "$OUT3" --limit 20 --label security || { echo "FAIL: label run exited $?"; cat "$OUT3.err"; exit 1; }
 ck "label filter order" "TT-2 TT-6" "$(order_of "$OUT3")"
+
+# ---- stage is a strict three-way order: Triage is absent by default, and under
+# ---- --include-triage the whole inbox — Urgent included — ranks below every Planned AND
+# ---- every Backlog issue (within Triage, urgent still pierces class: TT-14 before TT-15) ----
+ck_lacks "triage absent by default" "TT-14" "$OUT"
+OUT5="$WORK/out5.md"
+run "$OUT5" --limit 20 --include-triage || { echo "FAIL: include-triage run exited $?"; cat "$OUT5.err"; exit 1; }
+ck "triage ranks last" "TT-3 TT-2 TT-4 TT-5 TT-7 TT-1 TT-6 TT-14 TT-15" "$(order_of "$OUT5")"
 
 # ---- the limit cut never hides Planned/Todo: --limit 1 keeps a one-item top list but
 # ---- surfaces every below-cut Planned issue (true rank numbers) in the trailing section,
