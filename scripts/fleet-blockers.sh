@@ -6,11 +6,13 @@
 #   needing keeper action on the issue itself (gate labels, uncertified — FOCUS-ACTION rows), or
 #   blocked — each blocked issue's chain is walked TRANSITIVELY to its root causes, grouped by
 #   root with every dependent it unblocks (FOCUS-ROOT rows, widest fan-out first), so the
-#   highest-value keeper hour is the first row. A clean certified Backlog root gets the one
-#   promotion suggestion this script still makes (pull it forward into the release scope); bulk
-#   "in Backlog (promote to Planned)" advice is gone — Planned is a curated release-scoping
-#   signal, not a fleet-priority knob, and on BF that advice mislabeled 68 ordinary
-#   Backlog-behind-Backlog chain edges as fleet blockers (keeper, 2026-08-10).
+#   highest-value keeper hour is the first row. Every Backlog member of a blocking chain —
+#   roots, intermediates, gated and uncertified members alike — is required release scope
+#   (keeper ruling 2026-08-13): promotion is the default remedy for the FULL membership, gate
+#   labels notwithstanding (labels decide who acts after the promotion, not scope), batch-ready
+#   on the PROMOTE-SET line. Bulk "in Backlog (promote to Planned)" advice stays gone — FOCUS
+#   dependents are unstarted-stage only, so the 68 ordinary Backlog-behind-Backlog chain edges
+#   that advice mislabeled as fleet blockers never emit (keeper, 2026-08-10).
 #
 #   FLEET-BLOCKED — pool-drain hygiene, second-order: every `blocks` edge whose blocked side is
 #   a certified fleet candidate (workable state + `specified`, not label-hidden) but whose
@@ -30,7 +32,11 @@
 # Usage:  fleet-blockers.sh --team <KEY>
 # Output: `FOCUS: <n> unstarted — <w> fleet-workable · <a> need keeper action · <d> draining on their own`
 #         `FOCUS-ACTION: <ID> [<state>] — <reason(; reason)>`               (the issue itself needs the keeper)
-#         `FOCUS-ROOT: <ROOT> [<state>] — <remedy> — unblocks <ID>, <ID>`   (root causes, widest fan-out first)
+#         `FOCUS-ROOT: <ROOT> [<state>] (via <ID>) — <remedy> — unblocks <ID>, <ID> (<n> alone; co-gated with <ID>)`
+#           (root causes, widest fan-out first; `via` = chain members this root reaches its
+#           dependents through; the co-gate annotation stops a fan-out reading as frees-alone)
+#         `PROMOTE-SET: <ID>[<gate>], <ID>, …`   (the deduped Backlog chain membership in full —
+#           the required promotion batch; gates annotated inline, never filtered)
 #         `FLEET-BLOCKED: <n>`, then one sorted line per stranded edge:
 #         `<BLOCKED> [<state>] blocked by <BLOCKER> [<state>] — <reason(; reason)>`
 # Exit:   0 when fetched and classified (counts may be 0); non-zero on fetch/parse failure.
@@ -75,6 +81,14 @@ printf '%s' "$all" | jq -r '
       (if $v.stype == "triage" then "in Triage (groom via /spec)" else empty end),
       (if (($v.stype | IN("unstarted","backlog")) and (($v.labels | index("specified")) | not))
          then "uncertified (/spec to certify)" else empty end) ];
+  # Short gate tags for PROMOTE-SET annotations — the label a keeper acts on, not the remedy
+  # prose. Gates ANNOTATE, never filter: filtering is the carve-out that buried BF-553.
+  def gate_tags($v):
+    [ (if ($v.labels | index("needs decision")) then "needs decision" else empty end),
+      (if ($v.labels | index("human")) then "human" else empty end),
+      (if ($v.labels | index("solo")) then "solo" else empty end),
+      (if ($v.labels | index("stalled")) then "stalled" else empty end),
+      (if (($v.labels | index("specified")) | not) then "uncertified" else empty end) ];
   # Every transitive blocker above $id — the full ancestry, NOT just chain leaves. A
   # mandatory-gated blocker sitting mid-chain strands its dependents exactly as hard as a leaf
   # (measured on BF: decision-gated BF-553 blocks two Planned issues while itself blocked by
@@ -105,31 +119,57 @@ printf '%s' "$all" | jq -r '
        | "FOCUS-ACTION: \($f) [\($fv.sname)] — \($selfr | join("; "))" ]) as $action_lines
   | ([ $focus[] | . as $f
        | select((($up[$f] // []) | length) > 0)
-       | (ancestors($up; $f; [$f]) | unique)[] as $r
+       | (ancestors($up; $f; [$f]) | unique) as $anc
+       | $anc[] as $r
        | select($r != $f)
        | $m[$r] as $rv
        | gate_reasons($rv) as $rr
        | (if ($rr | length) > 0 then $rr
-          elif $rv.stype == "backlog" then ["ships in-fleet from Backlog (promote to pull it forward)"]
+          elif $rv.stype == "backlog" then ["required release scope (gates the unstarted stage) — promote in the batch"]
           else null end) as $reasons
        | select($reasons != null)
-       | {root: $r, dep: $f, reasons: $reasons, mandatory: (($rr | length) > 0)} ]) as $pairs
-  # Mandatory roots (gate/uncertified/triage/stalled — the fleet can NEVER resolve them) sort
-  # above the optional pull-forwards (a clean Backlog blocker ships in-fleet anyway, just after
-  # the unstarted stage): the keeper reads top-down, and only mandatory rows are must-do.
+       # via = chain members between this root and the dep (ancestors of the dep that the root
+       # itself transitively blocks) — so a deep root is not read as directly gating the dep.
+       | {root: $r, dep: $f, reasons: $reasons, mandatory: (($rr | length) > 0),
+          via: [ $anc[] | select(. != $r) | select((ancestors($up; .; [.]) | unique) | index($r)) ]} ]) as $pairs
+  # Gated roots (gate/uncertified/triage/stalled — the fleet can NEVER resolve them; they need
+  # keeper action beyond promotion) sort above the clean-Backlog promotions: the keeper reads
+  # top-down, decisions first. Every row is must-do — a clean Backlog root is required release
+  # scope like the rest (keeper ruling 2026-08-13); its remedy is just the batch promotion.
+  | ($pairs | group_by(.dep)
+     | map({key: .[0].dep, value: ([.[].root] | unique)}) | from_entries) as $deproots
   | ($pairs | group_by(.root)
      | map({root: .[0].root, reasons: .[0].reasons, mandatory: .[0].mandatory,
-            deps: ([.[].dep] | unique | sort)})
+            deps: ([.[].dep] | unique | sort),
+            via: ([.[].via[]] | unique | sort)})
+     | map(. as $row
+       | $row + {alone: ([ $row.deps[] | select(((($deproots[.] // []) - [$row.root]) | length) == 0) ] | length),
+                 cogates: ([ $row.deps[] | (($deproots[.] // []) - [$row.root])[] ] | unique | sort)})
      | sort_by([(if .mandatory then 0 else 1 end), -(.deps | length), .root])) as $rootrows
   | ([ $rootrows[]
-       | "FOCUS-ROOT: \(.root) [\($m[.root].sname)] — \(.reasons | join("; ")) — unblocks \(.deps | join(", "))" ]) as $root_lines
+       | "FOCUS-ROOT: \(.root) [\($m[.root].sname)]"
+         + (if (.via | length) > 0 then " (via \(.via | join(", ")))" else "" end)
+         + " — \(.reasons | join("; ")) — unblocks \(.deps | join(", "))"
+         + (if (.cogates | length) > 0 then " (\(.alone) alone; co-gated with \(.cogates | join(", ")))" else "" end) ]) as $root_lines
+  # The full Backlog chain membership, deduped, ready for the batch state update
+  # (linear-set-state.sh Planned <IDs>). Gated and uncertified members stay IN with the gate
+  # annotated inline — hand-derived "roots-only" / "ungated-only" subsets are the two misreads
+  # this line exists to remove (keeper ruling 2026-08-13).
+  | ([ $rootrows[] | select($m[.root].stype == "backlog") | .root ] | unique | sort) as $promote
+  | (if ($promote | length) > 0
+     then "PROMOTE-SET: " + ([ $promote[] | . as $p
+            | gate_tags($m[$p]) as $t
+            | $p + (if ($t | length) > 0 then "[\($t | join("; "))]" else "" end) ] | join(", "))
+     else "PROMOTE-SET: (none)" end) as $promote_line
   | ([ $focus[] | . as $f | $m[$f] as $fv
        | select((($up[$f] // []) | length) == 0)
        | select((gate_reasons($fv) | length) == 0)
        | $f ]) as $workable
-  # Attention = issues that cannot drain without the keeper: self-gated, or blocked behind a
-  # MANDATORY root. A dep whose only roots are pull-forwards drains on its own — slower, not stuck.
-  | ([ ($pairs[] | select(.mandatory) | .dep),
+  # Attention = issues that cannot reach the fleet without the keeper: self-gated, or blocked
+  # behind ANY flagged root — a clean-Backlog blocker needs the batch promotion too (required
+  # release scope, keeper ruling 2026-08-13), so its dependents count. Draining = blocked only
+  # by clean in-scope or in-flight work the fleet resolves on its own.
+  | ([ ($pairs[] | .dep),
        ($focus[] | . as $f | select((gate_reasons($m[$f]) | length) > 0) | $f) ] | unique) as $attention
   | "FOCUS: \($focus | length) unstarted — \($workable | length) fleet-workable · \($attention | length) need keeper action · \(($focus | length) - ($workable | length) - ($attention | length)) draining on their own" as $summary
   # ---- FLEET-BLOCKED: certified-candidate edges whose blocker the fleet can never pick ----
@@ -145,6 +185,6 @@ printf '%s' "$all" | jq -r '
        | select($reasons | length > 0)
        | "\(.blocked) [\($t.sname)] blocked by \(.blocker) [\($b.sname)] — \($reasons | join("; "))"
      ] | sort) as $edge_rows
-  | ([$summary] + $action_lines + $root_lines + ["FLEET-BLOCKED: \($edge_rows | length)"] + $edge_rows)
+  | ([$summary] + $action_lines + $root_lines + [$promote_line] + ["FLEET-BLOCKED: \($edge_rows | length)"] + $edge_rows)
   | .[]
 '

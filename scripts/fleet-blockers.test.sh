@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Regression suite for fleet-blockers.sh. Fixture-pins both sections: FOCUS (the release-scope
 # audit — gated/uncertified unstarted issues as keeper actions, transitive root-cause tracing
-# with fan-out-first ordering, the clean-Backlog pull-forward suggestion, cycle termination, and
+# with fan-out-first ordering, required-promotion framing with via/co-gate annotations and the
+# full-membership PROMOTE-SET batch line, cycle termination, and
 # clean planned/in-flight roots NOT flagged) and FLEET-BLOCKED (the four gate labels — human /
 # needs decision / solo / stalled — Triage by TYPE so a renamed "Inbox" still classifies,
 # uncertified blockers, clean and in-flight blockers NOT flagged, non-candidate blocked sides
@@ -85,27 +86,31 @@ HOME="$WORK/home" PATH="$WORK/bin:$PATH" "$SCRIPT" --team TT > "$OUT" 2>"$OUT.er
   || { echo "FAIL: run exited $?"; cat "$OUT.err"; exit 1; }
 
 # ---- FOCUS section: the release-scope audit is the primary output and leads ----
-# TT-54 (blocked only by the clean-Backlog pull-forward TT-55) counts as draining, not attention:
-# an optional pull-forward is a lever, never a must-do.
-ck "focus summary leads" "FOCUS: 22 unstarted — 1 fleet-workable · 16 need keeper action · 5 draining on their own" "$(head -1 "$OUT")"
+# TT-54 (blocked only by clean-Backlog TT-55) counts as attention, not draining: the promotion
+# is required release scope (keeper ruling 2026-08-13), so its dependent waits on the batch.
+ck "focus summary leads" "FOCUS: 22 unstarted — 1 fleet-workable · 17 need keeper action · 4 draining on their own" "$(head -1 "$OUT")"
 ck_has "gated planned is a keeper action"      "FOCUS-ACTION: TT-21 [Planned] — needs decision (decide and clear the label)" "$OUT"
 ck_has "uncertified planned is a keeper action" "FOCUS-ACTION: TT-31 [Planned] — uncertified (/spec to certify)" "$OUT"
 ck_has "hidden dependent surfaces in focus"    "FOCUS-ACTION: TT-40 [Planned] — needs decision (decide and clear the label)" "$OUT"
-ck_has "transitive root with fan-out"          "FOCUS-ROOT: TT-52 [Backlog] — needs decision (decide and clear the label) — unblocks TT-50, TT-51" "$OUT"
+ck_has "transitive root with fan-out"          "FOCUS-ROOT: TT-52 [Backlog] (via TT-51) — needs decision (decide and clear the label) — unblocks TT-50, TT-51" "$OUT"
 ck_has "direct gated root"                     "FOCUS-ROOT: TT-21 [Planned] — needs decision (decide and clear the label) — unblocks TT-20" "$OUT"
 ck_has "triage root under a Todo dependent"    "FOCUS-ROOT: TT-27 [Inbox] — in Triage (groom via /spec) — unblocks TT-26" "$OUT"
 ck_has "stalled in-flight root"                "FOCUS-ROOT: TT-33 [In Progress] — stalled (resume or release it) — unblocks TT-32" "$OUT"
-ck_has "clean backlog root offers pull-forward" "FOCUS-ROOT: TT-55 [Backlog] — ships in-fleet from Backlog (promote to pull it forward) — unblocks TT-54" "$OUT"
+ck_has "clean backlog root is required promotion" "FOCUS-ROOT: TT-55 [Backlog] — required release scope (gates the unstarted stage) — promote in the batch — unblocks TT-54" "$OUT"
 # The BF-553 shape: a mandatory gate MID-chain (TT-57 is itself blocked by clean TT-58) must
-# still surface — the walk collects the full ancestry, not just chain leaves.
-ck_has "mid-chain mandatory gate surfaces"     "FOCUS-ROOT: TT-57 [Backlog] — needs decision (decide and clear the label) — unblocks TT-56" "$OUT"
-ck_has "clean ancestor above the gate is a pull-forward" "FOCUS-ROOT: TT-58 [Backlog] — ships in-fleet from Backlog (promote to pull it forward) — unblocks TT-56" "$OUT"
+# still surface — the walk collects the full ancestry, not just chain leaves. Both chain
+# members carry the co-gate annotation so neither fan-out reads as frees-alone.
+ck_has "mid-chain mandatory gate surfaces"     "FOCUS-ROOT: TT-57 [Backlog] — needs decision (decide and clear the label) — unblocks TT-56 (0 alone; co-gated with TT-58)" "$OUT"
+ck_has "clean ancestor above the gate is required too" "FOCUS-ROOT: TT-58 [Backlog] (via TT-57) — required release scope (gates the unstarted stage) — promote in the batch — unblocks TT-56 (0 alone; co-gated with TT-57)" "$OUT"
 # Widest fan-out first: TT-52 (2 dependents) must sort above every 1-dependent root.
 ck "fan-out ordering" "TT-52" "$(grep '^FOCUS-ROOT' "$OUT" | head -1 | grep -oE 'TT-[0-9]+' | head -1)"
 ck_lacks "clean planned root not flagged"      "FOCUS-ROOT: TT-35" "$OUT"
 ck_lacks "clean in-flight root not flagged"    "FOCUS-ROOT: TT-37" "$OUT"
 ck_lacks "cycle yields no root row"            "FOCUS-ROOT: TT-60" "$OUT"
 ck_lacks "cycle yields no root row (mirror)"   "FOCUS-ROOT: TT-61" "$OUT"
+# PROMOTE-SET: the deduped Backlog chain membership in FULL — intermediates and gate-labeled
+# members included with inline annotations, never filtered (the carve-out that buried BF-553).
+ck_has "promote-set carries the full membership" "PROMOTE-SET: TT-29[uncertified], TT-39[uncertified], TT-41[uncertified], TT-52[needs decision], TT-55, TT-57[needs decision], TT-58" "$OUT"
 
 # ---- FLEET-BLOCKED section: pool-drain edges, bulk Backlog promotion advice gone ----
 ck "verdict line" "FLEET-BLOCKED: 9" "$(grep -m1 '^FLEET-BLOCKED' "$OUT")"
@@ -138,6 +143,7 @@ else
   PASS=$((PASS+1))
 fi
 ck_lacks "no verdict on failure" "FLEET-BLOCKED" "$OUT2"
+ck_lacks "no promote-set on failure" "PROMOTE-SET" "$OUT2"
 
 if "$SCRIPT" 2>/dev/null; then FAIL=$((FAIL+1)); echo "FAIL: no-args exited 0"; else PASS=$((PASS+1)); fi
 
