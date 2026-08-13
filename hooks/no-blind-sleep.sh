@@ -133,8 +133,9 @@ finishes. Measured on a real fleet run: 7.5 hours lost to exactly this shape in 
 (scripts/fleet-metrics.py reproduces it).
 
 Use whichever of these fits:
-  - Need a subagent's result before you can continue? Dispatch it with run_in_background: false. The call
-    blocks and returns the result — no waiting to write at all. This is the usual answer.
+  - Need a subagent's result before you can continue? If your Agent tool exposes run_in_background, dispatch
+    with false — the call blocks and returns the result, no waiting to write at all. If it does not, the
+    dispatch backgrounds regardless and the next bullet is your answer, not this one.
   - Dispatched work in the BACKGROUND? End your turn. The harness re-invokes you when it completes;
     sleeping to stay alive is what this hook exists to stop.
   - Genuinely polling something the harness cannot see (a detached test run, CI, a remote queue)? Poll a

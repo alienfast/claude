@@ -300,7 +300,17 @@ def scan_transcript(path, agg, agent_type="main", description=""):
                 agg["tool_calls"] += 1
                 if name == "Agent":
                     bg = inp.get("run_in_background")
-                    agg["dispatch"]["background" if bg is None or bg is True else "sync"] += 1
+                    # Only a real boolean False is evidence of a synchronous dispatch. The parameter is
+                    # feature-flagged on Agent; where the schema omits it the model may still emit it
+                    # (silently accepted, no effect), and a non-boolean value would otherwise be censused
+                    # as sync. A non-zero "ignored" count is itself the signal that the fleet ran on a
+                    # harness without the parameter — where every dispatch backgrounds regardless.
+                    if bg is False:
+                        agg["dispatch"]["sync"] += 1
+                    elif bg is None or bg is True:
+                        agg["dispatch"]["background"] += 1
+                    else:
+                        agg["dispatch"]["ignored"] += 1
                 elif name == "ScheduleWakeup":
                     agg["wakeups"] += 1
                     if inp.get("stop") is True:
@@ -964,7 +974,7 @@ def main():
           f"  ·  window: {'all' if not cutoff else cutoff.strftime('%Y-%m-%d %H:%M UTC')}\n")
 
     print("## Per session\n")
-    print("| run | span | shipped (rec/obs) | canceled (rec/obs) | wakeups | dispatch bg/sync | blind sleep | marker | cls | contam | dangling |")
+    print("| run | span | shipped (rec/obs) | canceled (rec/obs) | wakeups | dispatch bg/sync/ign | blind sleep | marker | cls | contam | dangling |")
     print("|---|---|---|---|---|---|---|---|---|---|---|")
     tot = Counter()
     for s in sessions:
@@ -979,7 +989,7 @@ def main():
         flag = "  ⚠" if (a["wakeups"] == 0 and a["loop_firings"]) or unrecorded or s["ledger_missing"] else ""
         print(f"| `{s['run_key']}`{flag} | {span:.1f}h | {rec}/{obs} | {crec}/{cobs} | "
               f"{a['wakeups']} ({a['wakeup_stops']} stop) | "
-              f"{a['dispatch']['background']}/{a['dispatch']['sync']} | {blind_pct} | "
+              f"{a['dispatch']['background']}/{a['dispatch']['sync']}/{a['dispatch']['ignored']} | {blind_pct} | "
               f"{a['sleep_marker_s'] / 3600:.1f}h | {len(a['classifier_blocks'])} | "
               f"{len(a['contam_halts'])} | {a['dangling']} |")
         tot["span"] += span
@@ -989,10 +999,12 @@ def main():
         tot["contam"] += len(a["contam_halts"])
         tot["bg"] += a["dispatch"]["background"]
         tot["sync"] += a["dispatch"]["sync"]
+        tot["ign"] += a["dispatch"]["ignored"]
     blind_share = f"({100 * tot['blind'] / tot['span'] / 3600:.0f}% of fleet wall-clock)" if tot["span"] else "(no transcript window)"
+    ign_note = f" / {tot['ign']} ignored (run_in_background absent on harness)" if tot["ign"] else ""
     print(f"\n**Totals** — {tot['span']:.1f} session-hours · blind sleep {tot['blind'] / 3600:.1f}h "
           f"{blind_share} · marker polls "
-          f"{tot['marker'] / 3600:.1f}h · dispatch {tot['bg']} background / {tot['sync']} sync · "
+          f"{tot['marker'] / 3600:.1f}h · dispatch {tot['bg']} background / {tot['sync']} sync{ign_note} · "
           f"{tot['cls']} classifier blocks · {tot['contam']} contamination halt(s) · "
           f"{sum(fleet_tokens.values()):,} output tokens\n")
 
