@@ -134,6 +134,10 @@ teams_raw="$team_arg"
 if [ -z "$teams_raw" ] && [ -n "${LINEAR_TEAM:-}" ]; then
   teams_raw="$LINEAR_TEAM"
 fi
+# Explicitly-requested teams (flag or env) fail hard when their fetch fails; discovered
+# teams degrade to a warning so one flaky team cannot zero the whole workspace run.
+teams_explicit=1
+[ -z "$teams_raw" ] && teams_explicit=0
 if [ -z "$teams_raw" ]; then
   # No team pinned anywhere → search the whole workspace. Sorted for deterministic output.
   teams_raw=$(linear-cli teams list -o json -q 2>/dev/null \
@@ -184,17 +188,31 @@ deps_file="$tmpdir/deps.json"
 # a shell variable passed through --argjson each iteration — that hits ARG_MAX (~1MB on
 # macOS) on a large team's issue list.
 fetch_team_issues() {
-  local team="$1" out="$2" after='' page nodes has pages_file="$out.pages"
+  # pages_file is assigned on its own line deliberately: within a single `local` declaration
+  # bash expands every word before assigning, so pages_file="$out.pages" sees an EMPTY $out
+  # and becomes the literal `.pages` — one shared CWD file that parallel team fetches then
+  # race (truncate/append/rm), corrupting each other's pages.
+  local team="$1" out="$2" after='' page nodes has attempt pages_file
+  pages_file="$out.pages"
   local q='query($team:String!,$after:String){issues(filter:{team:{key:{eq:$team}}, state:{type:{nin:["completed","canceled"]}}}, first:250, after:$after){nodes{identifier title estimate priority state{name type} assignee{email} labels{nodes{name}} parent{identifier}} pageInfo{hasNextPage endCursor}}}'
   : > "$pages_file"
   while :; do
-    if [ -z "$after" ]; then
-      page=$(linear-cli api query -q -o json -v team="$team" "$q" 2>/dev/null)
-    else
-      page=$(linear-cli api query -q -o json -v team="$team" -v after="$after" "$q" 2>/dev/null)
-    fi
+    # The 2×N-team parallel fan-out can trip Linear's rate limiting, which surfaces as an
+    # empty/error response on an otherwise-healthy team — retry each page before failing.
+    page=''
+    for attempt in 1 2 3; do
+      if [ -z "$after" ]; then
+        page=$(linear-cli api query -q -o json -v team="$team" "$q" 2>/dev/null)
+      else
+        page=$(linear-cli api query -q -o json -v team="$team" -v after="$after" "$q" 2>/dev/null)
+      fi
+      if [ -n "$page" ] && [ "$(printf '%s' "$page" | jq 'has("errors")')" != "true" ]; then
+        break
+      fi
+      page=''
+      [ "$attempt" -lt 3 ] && sleep 2
+    done
     [ -n "$page" ] || return 1
-    [ "$(printf '%s' "$page" | jq 'has("errors")')" = "true" ] && return 1
     nodes=$(printf '%s' "$page" | jq -c '.data.issues.nodes // []')
     printf '%s\n' "$nodes" >> "$pages_file"
     has=$(printf '%s' "$page" | jq -r '.data.issues.pageInfo.hasNextPage // false')
@@ -220,21 +238,34 @@ for i in "${!teams[@]}"; do
   deps_pids[$i]=$!
 done
 
-# On a fatal per-team failure, reap the sibling background fetches first — they would
-# otherwise keep hitting the Linear API and spray write errors into the already-removed
-# tmpdir (the EXIT trap deletes it) after the primary error line.
-kill_fetches() {
-  local p
-  for p in "${list_pids[@]}" "${deps_pids[@]}"; do
-    kill "$p" 2>/dev/null || true
-  done
-}
-
+# Wait for every team's pair of fetches, tolerating per-team failure: a team whose issue
+# fetch or deps fetch fails (after fetch_team_issues' own retries) is excluded from the
+# merge with a warning. Failure is fatal only when the team was explicitly requested, or
+# when every team failed — a discovered team's transient rate-limit must not zero the run.
+ok_teams=()
+failed_teams=()
 for i in "${!teams[@]}"; do
   t="${teams[$i]}"
-  wait "${list_pids[$i]}" || { kill_fetches; echo "ERROR: team-issue fetch (team $t) failed (auth? network?)" >&2; exit 2; }
-  wait "${deps_pids[$i]}" || { kill_fetches; echo "ERROR: linear-deps-graph.sh (team $t) failed:" >&2; cat "$tmpdir/deps.err.$t" >&2; exit 2; }
+  team_ok=1
+  wait "${list_pids[$i]}" || { team_ok=0; echo "WARNING: team-issue fetch (team $t) failed after retries" >&2; }
+  if ! wait "${deps_pids[$i]}"; then
+    team_ok=0
+    echo "WARNING: linear-deps-graph.sh (team $t) failed:" >&2
+    cat "$tmpdir/deps.err.$t" >&2
+  fi
+  if [ "$team_ok" = 1 ]; then
+    ok_teams+=("$t")
+  else
+    failed_teams+=("$t")
+  fi
 done
+if [ "${#failed_teams[@]}" -gt 0 ]; then
+  if [ "$teams_explicit" = 1 ] || [ "${#ok_teams[@]}" -eq 0 ]; then
+    echo "ERROR: team fetch failed for: ${failed_teams[*]} (auth? network? rate limit?)" >&2
+    exit 2
+  fi
+  echo "WARNING: results exclude team(s): ${failed_teams[*]} — partial workspace ranking" >&2
+fi
 
 # Merge per-team results and normalize into the pipeline shapes (team order = ranking-input
 # order; the tier sort downstream is what actually orders candidates).
@@ -242,7 +273,7 @@ done
 #   deps  → {nodes:[{identifier, state:<name>}], edges:[{from,to,type}]}
 list_parts=()
 deps_parts=()
-for t in "${teams[@]}"; do
+for t in "${ok_teams[@]}"; do
   list_parts+=("$tmpdir/list.$t.json")
   deps_parts+=("$tmpdir/deps.raw.$t.json")
 done
@@ -462,13 +493,20 @@ keeper_note() {
   return 0
 }
 
-# Same visibility contract for the needs-decision gate.
+# Same visibility contract for the needs-decision gate. The footer names the top hidden
+# IDs (priority-ordered) — a bare count buries identity, and the /spec pick-mode roster
+# reads this output, so the parked issues must be identifiable without a second invocation.
 nd_hidden=0
+nd_top=""
 if [ "$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')" != "needs decision" ]; then
   nd_hidden=$(jq '[.[] | select(any((.labels // [])[]; ascii_downcase == "needs decision"))] | length' "$list_file" 2>/dev/null || echo 0)
+  nd_top=$(jq -r '[.[] | select(any((.labels // [])[]; ascii_downcase == "needs decision"))]
+    | sort_by(if .priority == 0 then 5 else .priority end) | .[0:4] | map(.identifier) | join(", ")' "$list_file" 2>/dev/null || true)
 fi
 nd_note() {
-  [ "$nd_hidden" -gt 0 ] && printf '\n_%s issue(s) hidden awaiting a human decision (`needs decision` label) — list with --label "needs decision", resolve via /spec <ID> or by deciding and removing the label._\n' "$nd_hidden"
+  if [ "$nd_hidden" -gt 0 ]; then
+    printf '\n_%s issue(s) hidden awaiting a human decision (`needs decision` label; top: %s) — list with --label "needs decision", resolve via /spec <ID> or by deciding and removing the label._\n' "$nd_hidden" "$nd_top"
+  fi
   return 0
 }
 
