@@ -17,7 +17,10 @@
 #       could not be read/parsed
 #   2 = the attach failed, or it succeeded but verification could not confirm it
 #       (concurrent label change, or a transient re-read failure) — stderr names
-#       the case and, for a missing label: linear-cli labels create "<label>" -t issue
+#       the case and, for a missing label: linear-cli labels create "<label>" -t issue.
+#       Also 2 when the requested name matches SEVERAL existing labels after
+#       normalization (ambiguous near-miss) — a unique near-miss heals to the existing
+#       label instead (NOTE on stderr), never minting a spacing/case twin.
 
 set -eo pipefail
 
@@ -92,8 +95,41 @@ fi
 # casing first, or a case-differing label (e.g. "Specified" vs "specified") fails the
 # attach persistently and points the caller toward creating a duplicate. --no-cache avoids
 # a stale miss if the label was just created (e.g. right after an earlier exit-2 pointer).
-canonical=$(linear-cli labels list -t issue --all --no-cache -o json 2>/dev/null | workspace_label_names 2>/dev/null | grep -Fxi -- "$label" | head -1 || true)
+all_labels=$(linear-cli labels list -t issue --all --no-cache -o json 2>/dev/null | workspace_label_names 2>/dev/null || true)
+canonical=$(grep -Fxi -- "$label" <<< "$all_labels" | head -1 || true)
+if [ -z "$canonical" ] && [ -n "$all_labels" ]; then
+  # Near-miss healing (observed on BF-1109): a label typed without its spacing ("needsdecision")
+  # sails past the case-only match above, and the exit-2 create-pointer below then MINTS a
+  # permanent twin every later attach reuses silently — while consumers gate on the exact
+  # canonical string (next-candidates.sh hides `needs decision` by name), so an issue carrying
+  # only the twin leaks past its park gate. Resolve by normalized identity (case + space/-/_
+  # stripped): a unique match is used and announced; several matches refuse rather than guess.
+  norm() { tr '[:upper:]' '[:lower:]' | tr -d ' _-'; }
+  want=$(printf '%s' "$label" | norm)
+  # The trailing `|| true` is load-bearing under set -eo pipefail: a last label that does NOT
+  # match leaves the loop body's final status 1, pipefail carries it through sort, and the
+  # assignment would silently kill the script at exit 1.
+  matches=$(while IFS= read -r n; do
+    [ -n "$n" ] || continue
+    [ "$(printf '%s' "$n" | norm)" = "$want" ] && printf '%s\n' "$n"
+  done <<< "$all_labels" | sort -u) || true
+  match_count=$(printf '%s' "$matches" | grep -c . || true)
+  if [ "$match_count" = "1" ]; then
+    canonical="$matches"
+    echo "NOTE: requested label '$label' does not exist; using existing label '$canonical' (normalized match) instead of minting a near-miss twin." >&2
+  elif [ "$match_count" != "0" ]; then
+    echo "ERROR: requested label '$label' does not exist and several existing labels normalize to it: $(printf '%s' "$matches" | tr '\n' ' ')— name one exactly." >&2
+    exit 2
+  fi
+fi
 [ -n "$canonical" ] && label="$canonical"
+
+# The canonical label may already be on the issue when the REQUESTED spelling differed (the
+# no-op probe above matched the raw request only) — re-sending it would duplicate a -l flag
+# and fail the update. Same no-op contract as above: present means exit 0.
+if grep -Fxqi -- "$label" <<< "$current"; then
+  exit 0
+fi
 
 current_names=()
 while IFS= read -r name; do
