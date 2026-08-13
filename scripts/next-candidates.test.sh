@@ -120,6 +120,15 @@ OUT3="$WORK/out3.md"
 run "$OUT3" --limit 20 --label security || { echo "FAIL: label run exited $?"; cat "$OUT3.err"; exit 1; }
 ck "label filter order" "TT-2 TT-6" "$(order_of "$OUT3")"
 
+# ---- the limit cut never hides Planned/Todo: --limit 1 keeps a one-item top list but
+# ---- surfaces every below-cut Planned issue (true rank numbers) in the trailing section,
+# ---- while the Backlog tail stays cut ----
+OUT4="$WORK/out4.md"
+run "$OUT4" --limit 1 || { echo "FAIL: limit-floor run exited $?"; cat "$OUT4.err"; exit 1; }
+ck "planned never hidden"   "TT-3 TT-2 TT-4 TT-5 TT-7" "$(order_of "$OUT4")"
+ck_has  "planned-below section" "### Planned/Todo below the cut — always surfaced" "$OUT4"
+ck_has  "remaining note"        "6 more workable candidate(s) available" "$OUT4"
+
 echo
 echo "$PASS passed / $FAIL failed"
 [ "$FAIL" -eq 0 ]

@@ -16,9 +16,10 @@
 # sibling-under-completed-parent → priority-fallback), then walks parent chains for
 # the top-K candidates to apply parent-status weighting (In Progress epic > Planned >
 # Backlog > Triage).
-# Within a tier: Urgent priority first (it pierces everything below — a deliberate
-# human escalation outranks any label), then workflow stage (Planned/Todo before
-# Backlog — the only planning signal in the pool a human sets by hand) > security/bug
+# Within a tier: workflow stage first (Planned/Todo before Backlog — the only planning
+# signal in the pool a human sets by hand; Urgent does NOT pierce stage — keeper
+# decision 2026-08-05), then Urgent priority (a deliberate human escalation outranks
+# any label within its stage) > security/bug
 # label class > remaining priority > spread (a sibling under the same parent In
 # Progress/In Review soft de-ranks the candidate — parallel /auto sessions collide in
 # sibling files) > parent weight > estimate. A candidate
@@ -32,7 +33,11 @@
 # (BF-183, filed April, rolled forward for months while outranking the whole Planned
 # column). Stage carries the planning signal instead.
 #
-# Emits a ranked markdown list to stdout.
+# Emits a ranked markdown list to stdout. The --limit cut never hides unstarted-stage
+# work: every Planned/Todo candidate below the cut is appended in a trailing
+# "Planned/Todo below the cut" section carrying its true rank number (keeper policy
+# 2026-08-12 — clearing the Planned queue is the standing priority, and truncation must
+# never hide it). The limit governs top-list size, not Planned/Todo visibility.
 #
 # --label/--exclude-label filter candidates client-side by ASCII-case-insensitive label
 # name (team-scoped duplicate labels share a name, not an id). --include-triage
@@ -473,6 +478,10 @@ candidates_json=$(jq \
           # at 0 — the only mode that admits it is --include-triage grooming discovery (used
           # by /spec), where an unreviewed inbox item is the most worth surfacing.
           state_rank: (if ($i.state_type == "backlog") or (($i.state // "") | ascii_downcase) == "backlog" then 1 else 0 end),
+          # Unstarted stage is never hidden by the --limit render cut (keeper policy
+          # 2026-08-12 — below-cut Planned/Todo candidates emit in a trailing section);
+          # matched like state_rank — by type, with a name fallback for a renamed state.
+          is_unstarted: (($i.state_type == "unstarted") or ((($i.state // "") | ascii_downcase) | IN("planned", "todo"))),
           class_rank: ((($i.labels // []) | map(ascii_downcase)) as $ls
             | if ($ls | index("security")) != null then 0
               elif ($ls | index("bug")) != null then 1
@@ -757,6 +766,22 @@ remaining=$(printf '%s' "$ranked_json" | jq --argjson lim "$limit" 'length - $li
 if [ "$remaining" -gt 0 ]; then
   printf '\n_%s more workable candidate(s) available; pass --limit to see more._\n' "$remaining"
 fi
+
+# Keeper policy 2026-08-12: the Planned/Todo queue is never hidden by the render cut.
+# Below-cut unstarted-stage candidates surface here with their true rank numbers, in a
+# compact form (entries beyond K carry no parent-walk data, and raising the cut itself
+# was measured dragging the entire 171-item pool along whenever a delegated-penalized
+# Planned epic sat at the bottom). The top list and its limit stay untouched, so /next's
+# small default limit keeps fleet pick steps cheap.
+printf '%s' "$ranked_json" | jq -r --argjson lim "$limit" '
+  [to_entries | .[$lim:] | .[] | select(.value.is_unstarted)] | if length == 0 then empty else
+    "\n### Planned/Todo below the cut — always surfaced\n",
+    (.[] |
+      "\(.key + 1). **\(.value.id)** — \"\(.value.title)\"" +
+      "\n   - State: \(.value.state) | Priority: \(.value.priority_label)" +
+      (if .value.class_rank == 0 then " | security" elif .value.class_rank == 1 then " | bug" else "" end) +
+      (if .value.unresolved_count > 0 then " | Blocked: \(.value.unresolved_count) unresolved blocker(s)" else "" end))
+  end'
 keeper_note
 nd_note
 solo_note
