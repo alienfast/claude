@@ -47,6 +47,10 @@ mkdir -p "$FIX" "$WORK/bin" "$WORK/home"
 #   TT-11/12/13                    -> hidden by label (needs decision / solo / human) + notes
 #   TT-14 Triage Urgent            -> absent by default; LAST STAGE under --include-triage —
 #   TT-15 Triage Normal security      even Urgent never outranks Planned/Backlog (BF-34's shape)
+#   TT-16 Planned Low, FOREIGN assignee -> hidden (assignment is a claim) + note; restored by
+#                                     --include-claimed
+#   TT-17 Backlog Low, assigned to VIEWER (t@t.test) -> tier 1, FIRST in every default list —
+#                                     pins that the claim gate never hides your own issues
 cat > "$FIX/issues-page.json" <<'EOF'
 {"data":{"issues":{"nodes":[
  {"identifier":"TT-1","title":"urgent backlog","estimate":null,"priority":1,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[]},"parent":null},
@@ -63,7 +67,9 @@ cat > "$FIX/issues-page.json" <<'EOF'
  {"identifier":"TT-12","title":"solo work","estimate":null,"priority":3,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[{"name":"solo"}]},"parent":null},
  {"identifier":"TT-13","title":"human work","estimate":null,"priority":3,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[{"name":"human"}]},"parent":null},
  {"identifier":"TT-14","title":"triage urgent inbox","estimate":null,"priority":1,"state":{"name":"Triage","type":"triage"},"assignee":null,"labels":{"nodes":[]},"parent":null},
- {"identifier":"TT-15","title":"triage security inbox","estimate":null,"priority":3,"state":{"name":"Triage","type":"triage"},"assignee":null,"labels":{"nodes":[{"name":"security"}]},"parent":null}
+ {"identifier":"TT-15","title":"triage security inbox","estimate":null,"priority":3,"state":{"name":"Triage","type":"triage"},"assignee":null,"labels":{"nodes":[{"name":"security"}]},"parent":null},
+ {"identifier":"TT-16","title":"claimed by another person","estimate":null,"priority":4,"state":{"name":"Planned","type":"unstarted"},"assignee":{"email":"blake@t.test"},"labels":{"nodes":[]},"parent":null},
+ {"identifier":"TT-17","title":"mine already","estimate":null,"priority":4,"state":{"name":"Backlog","type":"backlog"},"assignee":{"email":"t@t.test"},"labels":{"nodes":[]},"parent":null}
 ],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
 EOF
 
@@ -102,7 +108,7 @@ order_of() { grep -E '^[0-9]+\. ' "$1" | grep -oE 'TT-[0-9]+' | tr '\n' ' ' | se
 OUT="$WORK/out.md"
 run "$OUT" --limit 20 || { echo "FAIL: default run exited $?"; cat "$OUT.err"; exit 1; }
 
-ck "stage-first order" "TT-3 TT-2 TT-4 TT-5 TT-7 TT-1 TT-6" "$(order_of "$OUT")"
+ck "stage-first order" "TT-17 TT-3 TT-2 TT-4 TT-5 TT-7 TT-1 TT-6" "$(order_of "$OUT")"
 ck_has  "rfr blocker resolved"  "TT-7" "$OUT"
 ck_lacks "open blocker hidden"  "TT-9" "$OUT"
 ck_lacks "blocker not candidate" "TT-8" "$OUT"
@@ -117,7 +123,7 @@ ck_lacks "human hidden"         "TT-13" "$OUT"
 # ---- --include-blocked: TT-9 restored (Low outranks TT-7's None), everything else unchanged ----
 OUT2="$WORK/out2.md"
 run "$OUT2" --limit 20 --include-blocked || { echo "FAIL: include-blocked run exited $?"; cat "$OUT2.err"; exit 1; }
-ck "blocked order" "TT-3 TT-2 TT-4 TT-5 TT-9 TT-7 TT-1 TT-6" "$(order_of "$OUT2")"
+ck "blocked order" "TT-17 TT-3 TT-2 TT-4 TT-5 TT-9 TT-7 TT-1 TT-6" "$(order_of "$OUT2")"
 
 # ---- label filter: only the security-labeled issues, stage-first within the filter ----
 OUT3="$WORK/out3.md"
@@ -130,16 +136,25 @@ ck "label filter order" "TT-2 TT-6" "$(order_of "$OUT3")"
 ck_lacks "triage absent by default" "TT-14" "$OUT"
 OUT5="$WORK/out5.md"
 run "$OUT5" --limit 20 --include-triage || { echo "FAIL: include-triage run exited $?"; cat "$OUT5.err"; exit 1; }
-ck "triage ranks last" "TT-3 TT-2 TT-4 TT-5 TT-7 TT-1 TT-6 TT-14 TT-15" "$(order_of "$OUT5")"
+ck "triage ranks last" "TT-17 TT-3 TT-2 TT-4 TT-5 TT-7 TT-1 TT-6 TT-14 TT-15" "$(order_of "$OUT5")"
+
+# ---- assignment is a claim: a foreign assignee hides the issue from every ranking (with the
+# ---- note), --include-claimed restores it, and the viewer's own claim is never hidden ----
+ck_lacks "foreign-claimed hidden" "TT-16" "$OUT"
+ck_has  "claimed note"  "1 issue(s) hidden as claimed by a person" "$OUT"
+OUT6="$WORK/out6.md"
+run "$OUT6" --limit 20 --include-claimed || { echo "FAIL: include-claimed run exited $?"; cat "$OUT6.err"; exit 1; }
+ck "claimed restored in place" "TT-17 TT-3 TT-2 TT-4 TT-5 TT-16 TT-7 TT-1 TT-6" "$(order_of "$OUT6")"
+ck_lacks "no claimed note when included" "hidden as claimed" "$OUT6"
 
 # ---- the limit cut never hides Planned/Todo: --limit 1 keeps a one-item top list but
 # ---- surfaces every below-cut Planned issue (true rank numbers) in the trailing section,
 # ---- while the Backlog tail stays cut ----
 OUT4="$WORK/out4.md"
 run "$OUT4" --limit 1 || { echo "FAIL: limit-floor run exited $?"; cat "$OUT4.err"; exit 1; }
-ck "planned never hidden"   "TT-3 TT-2 TT-4 TT-5 TT-7" "$(order_of "$OUT4")"
+ck "planned never hidden"   "TT-17 TT-3 TT-2 TT-4 TT-5 TT-7" "$(order_of "$OUT4")"
 ck_has  "planned-below section" "### Planned/Todo below the cut — always surfaced" "$OUT4"
-ck_has  "remaining note"        "6 more workable candidate(s) available" "$OUT4"
+ck_has  "remaining note"        "7 more workable candidate(s) available" "$OUT4"
 
 echo
 echo "$PASS passed / $FAIL failed"

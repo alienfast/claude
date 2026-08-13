@@ -4,7 +4,11 @@
 # Usage:
 #   next-candidates.sh [--team KEY[,KEY...]] [--completed PL-XX] [--limit N]
 #                      [--no-parent-walk] [--label NAME] [--exclude-label NAME]
-#                      [--include-triage] [--include-blocked]
+#                      [--include-triage] [--include-blocked] [--include-claimed]
+#
+# Assignment is a claim (standards/linear-workflow.md): an issue assigned to anyone other
+# than the viewer is hidden from every ranking — certifying and working alike — with a
+# trailing hidden-count note; --include-claimed restores them. Assigned-to-me is tier 1.
 #
 # Teams: --team is repeatable and accepts comma lists; $LINEAR_TEAM may also be a
 # comma list. With neither, EVERY team in the workspace is searched (discovered
@@ -83,6 +87,7 @@ label=""
 exclude_label=""
 include_triage=0
 include_blocked=0
+include_claimed=0
 
 # Value-taking flags must fail loudly, not silently: a missing value makes the `shift 2`
 # below fail under set -e with no stderr, and an empty value (e.g. --label "") must not
@@ -105,6 +110,7 @@ while [ $# -gt 0 ]; do
     --exclude-label) require_value --exclude-label "$#" "${2:-}"; exclude_label="$2"; shift 2 ;;
     --include-triage) include_triage=1; shift ;;
     --include-blocked) include_blocked=1; shift ;;
+    --include-claimed) include_claimed=1; shift ;;
     -h|--help)
       sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
@@ -396,6 +402,7 @@ candidates_json=$(jq \
   --arg xlabel "$exclude_label" \
   --arg triage "$include_triage" \
   --arg blocked "$include_blocked" \
+  --arg claimed "$include_claimed" \
   --arg iskeeper "$is_keeper" '
     ($sm_doc[0]) as $sm
     | ($bm_doc[0]) as $bm
@@ -422,6 +429,12 @@ candidates_json=$(jq \
       | ($bm[$id] // []) as $blockers
       | ($blockers | map(select(($sm[.] // "Unknown") as $s | (($terminal | map(ascii_downcase)) | index($s | ascii_downcase)) == null))) as $unresolved
       | select((($workable | index($i.state)) != null) or (($triage == "1") and ($i.state_type == "triage")))
+      # Assignment is a claim (standards/linear-workflow.md): an assignee means a person has
+      # claimed the work or is investigating it, so an issue assigned to anyone ELSE is never
+      # a candidate — for certifying or for working. Assigned-to-me stays (that is tier 1),
+      # and with the viewer unresolvable every assigned issue reads as claimed by a person
+      # and hides, which fails toward respecting the claim.
+      | select(($claimed == "1") or (($i.assignee // "") == "") or (($me != "") and ($i.assignee == $me)))
       | select(($blocked == "1") or ($unresolved | length == 0))
       # any() over an empty label array is false and all() is true, so unlabeled issues
       # correctly fail a --label requirement and pass an --exclude-label one.
@@ -526,6 +539,21 @@ nd_note() {
   return 0
 }
 
+# Same visibility contract for the claimed gate. Counted over workable-stage issues only
+# (plus Triage when included) — unlike the label notes, which span every fetched state:
+# nearly every In Progress issue is assigned, so an all-states count would drown the signal.
+claimed_hidden=0
+if [ "$include_claimed" != "1" ]; then
+  claimed_hidden=$(jq --arg me "${me_email:-}" --arg triage "$include_triage" '
+    [.[] | . as $i
+     | select(((["Backlog","Planned","Todo"] | index($i.state)) != null) or (($triage == "1") and ($i.state_type == "triage")))
+     | select((($i.assignee // "") != "") and ($i.assignee != $me))] | length' "$list_file" 2>/dev/null || echo 0)
+fi
+claimed_note() {
+  [ "$claimed_hidden" -gt 0 ] && printf '\n_%s issue(s) hidden as claimed by a person (assignee set — claimed or under investigation, standards/linear-workflow.md); pass --include-claimed to list them._\n' "$claimed_hidden"
+  return 0
+}
+
 # Same visibility contract for the solo gate.
 solo_hidden=0
 if [ "$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')" != "solo" ]; then
@@ -556,6 +584,7 @@ if [ "$candidate_count" -eq 0 ]; then
   printf '## Suggested next\n\n_No workable issues%s in %s %s._\n' "$filter_desc" "$team_word" "$teams_label"
   keeper_note
   nd_note
+  claimed_note
   solo_note
   human_note
   exit 0
@@ -791,5 +820,6 @@ printf '%s' "$ranked_json" | jq -r --argjson lim "$limit" '
   end'
 keeper_note
 nd_note
+claimed_note
 solo_note
 human_note

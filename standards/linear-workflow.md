@@ -47,6 +47,10 @@ When evaluating whether an issue's blockers are resolved (for triage, dependency
 
 Any skill that checks whether blockers are resolved (triage, next) should treat "Ready For Release" identically to "Done" when determining if an issue is workable.
 
+## Assignment Is a Claim
+
+An assignee on an issue means a person has claimed that work or is investigating it to provide more context. An issue assigned to anyone other than you is therefore **never a candidate** — not for certifying (`/spec`), not for working (`/next`, `/auto`) — until they unassign it. Enforced in [scripts/next-candidates.sh](../scripts/next-candidates.sh): foreign-assigned issues are hidden from every ranking with a trailing hidden-count note (`--include-claimed` restores them for inspection); issues assigned to the viewer rank tier 1. Measured cost of the gap this closes: `/spec` recommended four issues claimed by other people as the top grooming picks (BF-183/182/178 → Blake, BF-71 → Robert, 2026-08-13).
+
 ## Stage Priorities: Planned → Backlog → Triage
 
 Certifying and working share one strict stage order (keeper decision 2026-08-13): drain **Planned/Todo** completely, then **Backlog**, and touch the **Triage** inbox only when both are empty. Stage outranks priority and label class — an Urgent Backlog or Triage issue never outranks any Planned issue (the measured failure this codifies: `/spec` recommended BF-34, an Urgent Triage report, over the entire uncertified Planned queue).
