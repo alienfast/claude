@@ -88,7 +88,7 @@ The named review gates are the deliberate exception. `/quality-review`'s reviewe
 
 ### Waiting on delegated work
 
-**Need the result before you can continue? Dispatch with `run_in_background: false`.** The call blocks and hands back the result, so there is nothing to wait for and nothing to write. This is the right default for a review, a fix batch, or an implementation whose output the next step consumes — which is nearly every in-flight dispatch.
+**Need the result before you can continue? Dispatch with `run_in_background: false` — where your `Agent` tool exposes it.** Then the call blocks and hands back the result, so there is nothing to wait for and nothing to write. This is the right default for a review, a fix batch, or an implementation whose output the next step consumes — which is nearly every in-flight dispatch. **The parameter is feature-flagged, and where it is absent the dispatch backgrounds regardless** — passing it anyway is silently accepted, changes nothing, and skews `scripts/fleet-metrics.py`'s dispatch census. Judge by the tool result (an `Async agent launched successfully …` line in place of the report), not by the schema, which is ambiguous: one harness context omits the parameter precisely because only synchronous subagents are supported. Where it is absent, the next bullet is the normal path, not the fallback.
 
 **Don't need it yet? Leave it in the background and end the turn.** The harness re-invokes you when it finishes. Ending the turn is not abandoning the work.
 

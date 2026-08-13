@@ -67,6 +67,9 @@ Implement tests according to CLAUDE.md requirements:
 - **Prove each regression test fails without its fix.** Revert the fix, confirm exactly that test fails, restore. A test still green against the reverted fix pins nothing.
   - Revert **each independently-revertable part alone** (two code paths, a guard plus a transaction wrapper) — a whole-fix revert hides a half-fix regression.
   - If the asserted outcome is already correct pre-fix, assert the **mechanism** instead — write/version counts, the specific error raised — not the end state.
+  - **Not only regression tests — any assertion that the code chose A over B owes the same proof.** A new test for new behavior has no fix to revert, so mutate the implementation line the assertion exists to pin (swap the chosen value for the rejected one; delete the restamp) and confirm that arm — and only that arm — reddens.
+  - **An A-over-B assertion pins nothing unless the fixture makes A and B distinguishable.** The usual cause is a helper default or shared `let` that makes the two the same record, so both branches produce the same observable and the mutation stays green. Reading the spec cannot reveal this — every line is correct, and no linter is semantic enough to see it. Seed the rejected value as a genuinely different record (a second organization, a different classifier) and say why at the fixture.
+  - **For a UI state transition, enumerate every view the component could be showing, not just the one it came from.** Asserting a control the destination shares with the origin proves nothing, and asserting the absence of the origin's control is not enough when a third reachable view also lacks it. Assert a control unique to the destination; where the destination has none, assert the absence of each other reachable view's distinguishing control.
 
 ## NEVER Do These
 
