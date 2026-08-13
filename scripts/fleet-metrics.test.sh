@@ -20,6 +20,7 @@ ck_has() { # ck_has <label> <needle> <haystack-file>
 ck_lacks() { # ck_lacks <label> <needle> <haystack-file>
   if grep -qF "$2" "$3"; then FAIL=$((FAIL+1)); echo "FAIL: $1 — unexpected [$2]"; else PASS=$((PASS+1)); fi
 }
+ts_ago() { python3 -c "from datetime import datetime,timezone,timedelta; print((datetime.now(timezone.utc)-timedelta(seconds=$1)).strftime('%Y-%m-%dT%H:%M:%SZ'))"; }
 
 # ---- fixture: a checkout with state + verdict files, and a projects dir with transcripts ----
 CHECKOUT="$WORK/checkout"
@@ -81,8 +82,8 @@ mkdir -p "$SUBDIR"
 cat > "$TDIR/abc12345-0000.jsonl" <<'EOF'
 {"type":"user","timestamp":"2026-08-04T10:00:00Z","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
 {"type":"assistant","timestamp":"2026-08-04T10:00:10Z","message":{"role":"assistant","id":"msg_A","model":"claude-opus-5","usage":{"input_tokens":10,"cache_creation_input_tokens":2000,"cache_read_input_tokens":100000,"output_tokens":1000},"content":[{"type":"text","text":"working"},{"type":"tool_use","id":"toolu_1","name":"Agent","input":{"description":"bg dispatch","prompt":"x"}}]}}
-{"type":"assistant","timestamp":"2026-08-04T10:00:11Z","message":{"role":"assistant","id":"msg_A","model":"claude-opus-5","usage":{"input_tokens":10,"cache_creation_input_tokens":2000,"cache_read_input_tokens":100000,"output_tokens":1000},"content":[{"type":"tool_use","id":"toolu_2","name":"Agent","input":{"description":"sync dispatch","prompt":"x","run_in_background":false}}]}}
-{"type":"user","timestamp":"2026-08-04T10:01:00Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"done"},{"type":"tool_result","tool_use_id":"toolu_2","content":"done"}]}}
+{"type":"assistant","timestamp":"2026-08-04T10:00:11Z","message":{"role":"assistant","id":"msg_A","model":"claude-opus-5","usage":{"input_tokens":10,"cache_creation_input_tokens":2000,"cache_read_input_tokens":100000,"output_tokens":1000},"content":[{"type":"tool_use","id":"toolu_2","name":"Agent","input":{"description":"sync dispatch","prompt":"x","run_in_background":false}},{"type":"tool_use","id":"toolu_6","name":"Agent","input":{"description":"ignored dispatch","prompt":"x","run_in_background":false}},{"type":"tool_use","id":"toolu_7","name":"Agent","input":{"description":"dangling bg dispatch","prompt":"x"}}]}}
+{"type":"user","timestamp":"2026-08-04T10:01:00Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"Async agent launched successfully (agentId: t1)"},{"type":"tool_result","tool_use_id":"toolu_2","content":"done"},{"type":"tool_result","tool_use_id":"toolu_6","content":"Async agent launched successfully (agentId: t9)"}]}}
 {"type":"assistant","timestamp":"2026-08-04T10:02:00Z","message":{"role":"assistant","id":"msg_B","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":500},"content":[{"type":"tool_use","id":"toolu_3","name":"Bash","input":{"command":"sleep 300"}},{"type":"tool_use","id":"toolu_4","name":"Bash","input":{"command":"until [ -f tmp/run.done ]; do sleep 10; done"}}]}}
 {"type":"user","timestamp":"2026-08-04T10:07:00Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_3","content":"ok"}]}}
 {"type":"user","timestamp":"2026-08-04T10:08:00Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_4","content":"ok"}]}}
@@ -127,8 +128,13 @@ q() { python3 -c "import json,sys; d=json.load(open('$JSON')); print($1)"; }
 ck "two sessions"       "2"        "$(q "len(d['sessions'])")"
 ck "loop firing"        "1"        "$(q "d['sessions'][0]['loop_firings']")"
 ck "wakeups"            "1"        "$(q "d['sessions'][0]['wakeups']")"
-ck "dispatch bg"        "1"        "$(q "d['sessions'][0]['dispatch'].get('background',0)")"
+# Ground-truth census: mode comes from the tool RESULT (async-launch line vs inline report), never
+# from the typed value — toolu_1 (async result) and dangling toolu_7 (typed-intent fallback) are the
+# 2 background; toolu_2's inline report is the 1 sync DESPITE also typing false; toolu_6 typed false
+# and got the async line anyway — the ignored bucket, the per-dispatch parameter-less-harness signal.
+ck "dispatch bg"        "2"        "$(q "d['sessions'][0]['dispatch'].get('background',0)")"
 ck "dispatch sync"      "1"        "$(q "d['sessions'][0]['dispatch'].get('sync',0)")"
+ck "dispatch ignored"   "1"        "$(q "d['sessions'][0]['dispatch'].get('ignored',0)")"
 ck "blind sleep hours"  "0.08"     "$(q "d['sessions'][0]['sleep_blind_h']")"
 ck "marker sleep hours" "0.1"      "$(q "d['sessions'][0]['sleep_marker_h']")"
 ck "observed ship tag"  "['TT-1']" "$(q "d['sessions'][0]['observed_shipped']")"
@@ -154,7 +160,7 @@ ck "per-shipped cost"   "0.04"     "$(q "d['per_shipped']['est_cost_usd']")"
 
 # thinking share: the residual after visible output (text + tool_use input chars at 4 chars/token).
 # abc12345 main emits 274 visible chars against 1750 output tokens -> 1 - 68.5/1750 = 0.96.
-ck "thinking share"     "0.96"     "$(q "d['sessions'][0]['main_thinking_share_est']")"
+ck "thinking share"     "0.94"     "$(q "d['sessions'][0]['main_thinking_share_est']")"
 
 # ledger-less discovery: def45678 has no state file and must still be measured and flagged; the
 # non-/auto session 99900001 must not appear at all (its SHIPPED tag is not a fleet ship).
@@ -205,7 +211,7 @@ ck_has "cost footer"         "\$0.13 at list prices" "$MD"
 ck_has "per-shipped footer"  "\$0.04 / 933 output tokens per shipped issue (3 shipped)" "$MD"
 # Fleet-level share (all sessions' main tiers), so def45678's contamination-halt text dilutes it;
 # the per-session 0.96 assertion above still pins abc12345's math.
-ck_has "thinking footer"     "thinking ≈ 91% of its output tokens" "$MD"
+ck_has "thinking footer"     "thinking ≈ 90% of its output tokens" "$MD"
 ck_has "unpriced footer"     "excluded from \$ (no price row): claude-nova-2" "$MD"
 ck_has "no-verdict flag"     "Shipped with no persisted review verdict**: TT-2" "$MD"
 ck_has "off-schema flag"     "Off-schema verdict body**: TT-4 (no Findings resolved line)" "$MD"
@@ -259,9 +265,12 @@ mkdir -p "$WORK/projects/$M3"
 cat > "$CK3/tmp/auto-state-bbb22222.json" <<'EOF'
 {"status": "drained", "reason": "deadline", "shipped": ["TT-6"], "canceled": [], "skipped": [], "failed": []}
 EOF
-cat > "$WORK/projects/$M3/bbb22222-0000.jsonl" <<'EOF'
-{"type":"user","timestamp":"2026-08-04T09:00:00Z","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
-{"type":"assistant","timestamp":"2026-08-04T09:30:00Z","message":{"role":"assistant","id":"msg_G","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":400},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-6 done"}]}}
+# Activity must be genuinely IN-window (dynamic timestamps): the scenario is "the session worked
+# inside the window, only its ledger file predates the cutoff" — hardcoded old row timestamps would
+# turn it into the stale-session shape below and the activity gate would rightly drop it.
+cat > "$WORK/projects/$M3/bbb22222-0000.jsonl" <<EOF
+{"type":"user","timestamp":"$(ts_ago 7200)","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"$(ts_ago 5400)","message":{"role":"assistant","id":"msg_G","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":400},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-6 done"}]}}
 EOF
 # Ledger 10 days stale, transcript touched now: any --hours window straddles the two.
 touch -t 202607250000 "$CK3/tmp/auto-state-bbb22222.json"
@@ -277,9 +286,9 @@ ck "windowed-out reads ledger" "['TT-6']" "$(q3 "d['sessions'][0]['recorded_ship
 ck_lacks "no false ledger flag" "ran without a surviving ledger" "$MD3"
 
 # A genuinely absent ledger in the same window still flags — the fix must not blanket-suppress.
-cat > "$WORK/projects/$M3/ccc33333-0000.jsonl" <<'EOF'
-{"type":"user","timestamp":"2026-08-04T13:00:00Z","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
-{"type":"assistant","timestamp":"2026-08-04T13:30:00Z","message":{"role":"assistant","id":"msg_H","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":60},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-11 done"}]}}
+cat > "$WORK/projects/$M3/ccc33333-0000.jsonl" <<EOF
+{"type":"user","timestamp":"$(ts_ago 3600)","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"$(ts_ago 1800)","message":{"role":"assistant","id":"msg_H","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":60},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-11 done"}]}}
 EOF
 J4="$WORK/out4.json"
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK3" --hours 24 --json > "$J4" 2>/dev/null
@@ -476,7 +485,6 @@ mkdir -p "$CK8/tmp"
 git -C "$CK8" init -q 2>/dev/null
 M8="$(git -C "$CK8" rev-parse --show-toplevel | tr / -)"
 mkdir -p "$WORK/projects/$M8"
-ts_ago() { python3 -c "from datetime import datetime,timezone,timedelta; print((datetime.now(timezone.utc)-timedelta(seconds=$1)).strftime('%Y-%m-%dT%H:%M:%SZ'))"; }
 TS_A="$(ts_ago 2400)"   # 40 min ago
 TS_B="$(ts_ago 1500)"   # 25 min ago — every internal gap stays under min_silence_s (30 min)
 TS_C="$(ts_ago 10)"     # seconds ago: what a LIVE session's last activity looks like
@@ -601,7 +609,70 @@ ck_has "lanes line split"     "implementation 140 (claude-opus-5 100, claude-son
 ck "t1 stays unattributed" "{'claude-sonnet-5': 700}" "$(q "d['developer_lanes']['unattributed']")"
 ck "tt1 main-loop fallback" "['main-loop']" "$(q "[v for v in d['review_churn'] if v['issue']=='TT-1'][0]['implemented_by']")"
 ck "tt3 attribution unknown" "None" "$(q "[v for v in d['review_churn'] if v['issue']=='TT-3'][0]['implemented_by']")"
-ck "untagged verdict out of join" "{'main-loop': [1]}" "$(q "{k: v['values'] for k, v in d['impl_origin_by_tier'].items()}")"
+# A {…,…} literal at the $(q …) call site is brace-expanded: bash's textual brace pass cannot see
+# that the braces sit inside a nested quoted string, so the word splits at the comma and q runs twice
+# on the halves, each a python error → empty $3. A variable passes through intact — parameter
+# expansion runs after brace expansion.
+TIER_JOIN_EXPR="{k: v['values'] for k, v in d['impl_origin_by_tier'].items()}"
+ck "untagged verdict out of join" "{'main-loop': [1]}" "$(q "$TIER_JOIN_EXPR")"
+
+# ---- stale-session fixture: file touched in-window, last ACTIVITY long before it ----
+# The 2026-08-13 fault. Transcript trailing metadata (ai-title/agent-name rows) touched a session
+# whose last real message was Aug 10 05:56 UTC, and the adoption pass's transcript-mtime filter
+# pooled it into an Aug 13 retro: 25 shipped reported for a fleet that shipped 19, 49.8
+# session-hours for 36.9, and a 12.9h/1.05M-token session inside every fleet total and both peak
+# windows. mtime is not activity — the window gates on the measured last message timestamp and
+# reports the exclusion. Fixture files are created NOW (fresh mtimes) with hardcoded old row
+# timestamps, which is exactly the bug's shape and stays stale for any future clock.
+CK10="$WORK/checkout10"
+mkdir -p "$CK10/tmp"
+git -C "$CK10" init -q 2>/dev/null
+git -C "$CK10" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "TT-30: current work"
+M10="$(git -C "$CK10" rev-parse --show-toplevel | tr / -)"
+mkdir -p "$WORK/projects/$M10"
+
+cat > "$CK10/tmp/auto-state-stale0001.json" <<'EOF'
+{"status": "stopped", "reason": "an earlier fleet's deadline", "shipped": ["TT-90"], "canceled": [], "skipped": [], "failed": []}
+EOF
+cat > "$WORK/projects/$M10/stale0001-0000.jsonl" <<'EOF'
+{"type":"user","timestamp":"2026-08-01T09:00:00Z","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"2026-08-01T21:00:00Z","message":{"role":"assistant","id":"msg_ST","model":"claude-opus-5","usage":{"input_tokens":10,"cache_read_input_tokens":1000,"output_tokens":5000},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-90 done"}]}}
+EOF
+
+# With ONLY the stale session matched, the run must refuse with a diagnosis naming it — an empty
+# report or a zero-division would read as "no fleet ran" against a tree that plainly has one.
+if CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK10" --hours 24 --json > "$WORK/out10a.json" 2>"$WORK/err10a"; then
+  FAIL=$((FAIL+1)); echo "FAIL: all-stale run must exit non-zero"
+else
+  PASS=$((PASS+1))
+fi
+ck_has "all-stale names the run" "stale0001" "$WORK/err10a"
+
+# A live session alongside it: the stale one is excluded and REPORTED; every total is live-only.
+cat > "$CK10/tmp/auto-state-live0001.json" <<'EOF'
+{"status": "halted", "reason": "deadline", "shipped": ["TT-30"], "canceled": [], "skipped": [], "failed": []}
+EOF
+cat > "$WORK/projects/$M10/live0001-0000.jsonl" <<EOF
+{"type":"user","timestamp":"$(ts_ago 7000)","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"$(ts_ago 3000)","message":{"role":"assistant","id":"msg_LV","model":"claude-opus-5","usage":{"input_tokens":10,"cache_read_input_tokens":1000,"output_tokens":800},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-30 done"}]}}
+EOF
+J10="$WORK/out10.json"
+MD10="$WORK/out10.md"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK10" --hours 24 --json > "$J10" 2>/dev/null
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK10" --hours 24 > "$MD10" 2>&1
+q10() { python3 -c "import json,sys; d=json.load(open('$J10')); print($1)"; }
+ck "stale session excluded"      "['live0001']" "$(q10 "sorted(s['run_key'] for s in d['sessions'])")"
+ck "exclusion reported"          "stale0001"    "$(q10 "d['excluded_stale'][0]['run_key']")"
+ck "exclusion carries end time"  "2026-08-01T21:00:00Z" "$(q10 "d['excluded_stale'][0]['ended']")"
+ck "fleet tokens live-only"      "800"          "$(q10 "sum(d['output_tokens'].values())")"
+ck "per-shipped live-only"       "800"          "$(q10 "d['per_shipped']['output_tokens']")"
+ck "peak window live-only"       "800"          "$(q10 "d['windows']['peak_5h_output_tokens']")"
+ck_has "md notes the exclusion"  "Excluded as stale" "$MD10"
+ck_has "md names the stale run"  "\`stale0001\` (ended 2026-08-01T21:00:00Z)" "$MD10"
+ck_lacks "stale row absent from table" "| \`stale0001\`" "$MD10"
+# An --all run has no cutoff and must keep the stale session — the gate is the window's, not global.
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK10" --all --json > "$WORK/out10b.json" 2>/dev/null
+ck "--all keeps both" "2" "$(python3 -c "import json; print(len(json.load(open('$WORK/out10b.json'))['sessions']))")"
 
 echo
 echo "$PASS passed / $FAIL failed"

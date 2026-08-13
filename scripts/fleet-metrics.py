@@ -143,6 +143,16 @@ def result_text(block):
     return c if isinstance(c, str) else json.dumps(c)
 
 
+def _census_dispatch_typed(agg, bg):
+    """Typed-intent fallback for dispatches whose result cannot testify (errored or dangling)."""
+    if bg is False:
+        agg["dispatch"]["sync"] += 1
+    elif bg is None or bg is True:
+        agg["dispatch"]["background"] += 1
+    else:
+        agg["dispatch"]["ignored"] += 1
+
+
 def is_blind_sleep(cmd):
     """True when the command sleeps but nothing in it can cut the wait short."""
     if not SLEEP_RE.search(cmd):
@@ -298,20 +308,13 @@ def scan_transcript(path, agg, agent_type="main", description=""):
                     agg["visible_chars"][agent_type] += len(json.dumps(inp))
                 pending[b.get("id")] = (t, name, inp)
                 agg["tool_calls"] += 1
-                if name == "Agent":
-                    bg = inp.get("run_in_background")
-                    # Only a real boolean False is evidence of a synchronous dispatch. The parameter is
-                    # feature-flagged on Agent; where the schema omits it the model may still emit it
-                    # (silently accepted, no effect), and a non-boolean value would otherwise be censused
-                    # as sync. A non-zero "ignored" count is itself the signal that the fleet ran on a
-                    # harness without the parameter — where every dispatch backgrounds regardless.
-                    if bg is False:
-                        agg["dispatch"]["sync"] += 1
-                    elif bg is None or bg is True:
-                        agg["dispatch"]["background"] += 1
-                    else:
-                        agg["dispatch"]["ignored"] += 1
-                elif name == "ScheduleWakeup":
+                # Agent dispatches are censused at RESULT time, not here: the typed run_in_background
+                # value records intent, and the parameter is feature-flagged — on a harness without it
+                # a typed False is silently accepted and the dispatch backgrounds anyway. Only the tool
+                # result discriminates what actually happened (an "Async agent launched successfully"
+                # line vs the agent's report inline). Dispatches whose result never arrives fall back
+                # to the typed value at end-of-transcript, below.
+                if name == "ScheduleWakeup":
                     agg["wakeups"] += 1
                     if inp.get("stop") is True:
                         agg["wakeup_stops"] += 1
@@ -323,6 +326,18 @@ def scan_transcript(path, agg, agent_type="main", description=""):
                     continue
                 t0, name, inp = use
                 body = result_text(b)
+                if name == "Agent":
+                    bg = inp.get("run_in_background")
+                    if b.get("is_error"):
+                        _census_dispatch_typed(agg, bg)   # an errored dispatch never ran either way
+                    elif "Async agent launched successfully" in body:
+                        # Backgrounded in fact. A typed boolean False here means the harness ignored
+                        # the parameter — the "ignored" bucket is the per-dispatch signal that this
+                        # session ran on a harness without run_in_background.
+                        agg["dispatch"]["ignored" if bg is False else "background"] += 1
+                    else:
+                        # The report came back inline: the dispatch genuinely blocked.
+                        agg["dispatch"]["sync"] += 1
                 if CLASSIFIER.search(body):
                     agg["classifier_blocks"].append(str(inp.get("command", ""))[:160])
                 if t and t0:
@@ -335,6 +350,11 @@ def scan_transcript(path, agg, agent_type="main", description=""):
                             agg[f"sleep_{key}_n"] += 1
                     if secs >= GAP_MIN:
                         agg["gaps"].append((secs, name, str(inp.get("description") or inp.get("command") or "")[:90]))
+    # Dispatches with no surviving result (session died, transcript truncated) census by typed
+    # intent — the only evidence left.
+    for (_t0, p_name, p_inp) in pending.values():
+        if p_name == "Agent":
+            _census_dispatch_typed(agg, p_inp.get("run_in_background"))
     agg["dangling"] += len(pending)
     if times:
         agg["first"] = min([agg["first"], min(times)]) if agg["first"] else min(times)
@@ -798,6 +818,31 @@ def main():
         sessions.append(measure(run_key, {}, mtime, ledger_missing=True))
     sessions.sort(key=lambda s: s["agg"]["first"] or datetime.max.replace(tzinfo=timezone.utc))
 
+    # A file mtime is not activity: transcript trailing metadata (ai-title/agent-name rows) can touch
+    # a long-finished session's file days later, and the adoption pass above then pools that session
+    # into this fleet's totals (2026-08-13: a run whose last message was Aug 10 05:56 UTC entered an
+    # Aug 13 retro through an Aug 13 00:58 metadata touch — 25 shipped reported for a fleet that
+    # shipped 19, 49.8 session-hours for 36.9). The window means activity, so gate on the measured
+    # last message timestamp — and report who was dropped rather than shrinking the fleet silently.
+    # Sessions with no measurable activity (agg.last is None) are kept: absence of transcripts is a
+    # fault to surface, not staleness.
+    excluded_stale = []
+    if cutoff:
+        kept = []
+        for s in sessions:
+            if s["agg"]["last"] is not None and s["agg"]["last"] < cutoff:
+                excluded_stale.append({"run_key": s["run_key"],
+                                       "end_epoch": s["agg"]["last"].timestamp(),
+                                       "ended": f"{s['agg']['last']:%Y-%m-%dT%H:%M:%SZ}"})
+            else:
+                kept.append(s)
+        sessions = kept
+    if not sessions:
+        print(f"All matched sessions ended before the window cutoff "
+              f"({', '.join(e['run_key'] for e in excluded_stale)}). Try --hours/--since/--all.",
+              file=sys.stderr)
+        return 1
+
     all_shipped = set()
     issue_run = {}
     for s in sessions:
@@ -966,12 +1011,16 @@ def main():
                                         "at": f"{c['at']:%Y-%m-%dT%H:%M:%SZ}"} for c in cutoff_meters],
             },
             "merge_reconciliation": merged,
+            "excluded_stale": excluded_stale,
         }, indent=2))
         return 0
 
     print(f"# Fleet metrics — {checkout.name}\n")
     print(f"Checkout: `{checkout}`  ·  sessions: {len(sessions)}"
           f"  ·  window: {'all' if not cutoff else cutoff.strftime('%Y-%m-%d %H:%M UTC')}\n")
+    if excluded_stale:
+        print("Excluded as stale (file touched in-window, last activity before it): "
+              + ", ".join(f"`{e['run_key']}` (ended {e['ended']})" for e in excluded_stale) + "\n")
 
     print("## Per session\n")
     print("| run | span | shipped (rec/obs) | canceled (rec/obs) | wakeups | dispatch bg/sync/ign | blind sleep | marker | cls | contam | dangling |")
