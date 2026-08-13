@@ -602,11 +602,13 @@ Steps:
    CANCELED: <ISSUE-ID> — <one-line reason>. Run git worktree remove .claude/worktrees/<issue-id-lowercased> && git branch -D <worktree-branch-name>.
    ```
 
-**ABANDONED — "user is halting the session before completion."** Fires when:
+**ABANDONED — "user is halting the session before completion."** Every trigger is user-initiated — a session never self-invokes this path. Fires when:
 
 - The user explicitly asks to pause and return the issue to the backlog ("move PL-322 back to Planned").
 - A blocker emerges that the user wants to defer (waiting on external decision, dependency not ready).
-- The session is being intentionally parked for resumption later (different context, different person).
+- The user is intentionally parking the session for resumption later (different context, different person).
+
+The fleet deadline is NEVER a trigger. It gates picking new work only (`/auto`'s deadline gate; `/fleet-stop`'s whole contract is that in-flight issues run to completion), and a mid-issue estimate that the remaining gates overrun it is neither a blocker nor a park: finish the full pipeline, gates uncut, and let the overrun happen — it is budgeted by design. Measured 2026-08-13 (BF-1108): a fleet session estimated 13–18 min of remaining gates against ~10, self-invoked this path on a shipping-ready change, and traded ~8 minutes of overrun for a full re-entry cycle plus a human intervention.
 
 Steps:
 
