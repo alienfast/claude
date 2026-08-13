@@ -157,6 +157,9 @@
       "/private/tmp"
     ]
   },
+  "worktree": {
+    "baseRef": "head"
+  },
   "hooks": {
     "PreToolUse": [
       {

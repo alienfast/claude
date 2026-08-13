@@ -298,6 +298,26 @@ Ask: "Want me to commit this, or leave it staged for review?" or "Want me to pus
 
 Review IS the workflow. Each commit is a recorded artifact the user wants to inspect before it's written to history. Each push is visible to others and triggers CI — both gates exist for the same reason: nothing leaves the user's control without explicit say-so.
 
+## A worktree forks from where you are working — verify the base, and correct without `--force`
+
+`EnterWorktree` takes no source ref: its base comes from the `worktree.baseRef` setting, and the `fresh`
+default forks from `origin/<default-branch>` — NOT from the branch the checkout is on. On a long-running
+branch that silently hands you the default branch's tree (measured 2026-08-13: a debug worktree requested
+while the checkout sat on `nextjs-descope-user` was cut from origin/main, and its tooling findings described
+the wrong tree). This machine sets `worktree.baseRef: "head"` (settings.json), so `EnterWorktree`,
+`--worktree`, and agent isolation all fork from the current local HEAD — keep it that way. On a machine
+without the setting, VERIFY the fork point on entry before trusting anything in the tree:
+`git log --oneline -1` against the intended source, or `git merge-base --is-ancestor <source> HEAD`.
+
+A mis-sourced `EnterWorktree` worktree is corrected with the tool that made it: `ExitWorktree(action:
+"remove")`, which refuses to delete uncommitted files or unmerged commits unless `discard_changes: true` is
+passed after confirming with the user. Never `git worktree remove --force` — hook-blocked, it destroys the
+worktree's contents unexamined, and run from inside the worktree it deletes this session's own cwd (measured
+2026-08-13: the session that did was left with no worktree, no cwd, and no replacement). Rebuilding by hand:
+verify the source ref exists first (`git rev-parse --verify <ref>`) — a long-running branch often has no
+`origin/` twin — and remember the checkout's own branch cannot be checked out twice: fork a NEW branch
+(`git worktree add -b <work-branch> <path> <source-branch>`), then re-enter with `EnterWorktree({path})`.
+
 ## A throwaway worktree tests HEAD, not your working tree
 
 `git worktree add --detach <path> HEAD` checks out **committed** content — exactly right for capturing a HEAD baseline, and exactly wrong for exercising a change that is still uncommitted (the normal case mid-issue). The worktree runs the *pre-change* code and nothing says so. The failure is biased toward a false PASS: pre-change code exercised against a newly-added guard reproduces the old permissive behavior, which reads as "the command ran fine" rather than as an error, so a guard that never executed gets reported as verified. Run it before and after carrying the change in — the first run is the [negative control](problem-solving.md#a-verification-you-never-watched-fail-is-not-a-verification), and only the difference between the two is evidence.
