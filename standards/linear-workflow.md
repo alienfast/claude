@@ -47,6 +47,12 @@ When evaluating whether an issue's blockers are resolved (for triage, dependency
 
 Any skill that checks whether blockers are resolved (triage, next) should treat "Ready For Release" identically to "Done" when determining if an issue is workable.
 
+## Stage Priorities: Planned → Backlog → Triage
+
+Certifying and working share one strict stage order (keeper decision 2026-08-13): drain **Planned/Todo** completely, then **Backlog**, and touch the **Triage** inbox only when both are empty. Stage outranks priority and label class — an Urgent Backlog or Triage issue never outranks any Planned issue (the measured failure this codifies: `/spec` recommended BF-34, an Urgent Triage report, over the entire uncertified Planned queue).
+
+Enforced by [scripts/next-candidates.sh](../scripts/next-candidates.sh) (`state_rank`: unstarted 0, backlog 1, triage 2; Planned/Todo is additionally exempt from `--limit` truncation via the trailing "below the cut" section) and presented by `/spec` pick mode as three separate stage buckets — options and the recommendation come from the first non-empty bucket only, with one exception: a Backlog issue blocking a Planned candidate belongs to the Planned bucket and is promoted on certification. Any skill or report presenting backlog work follows the same order and never recommends across a stage boundary while an earlier stage still has work.
+
 ## Certified Specs (the `specified` label)
 
 The `specified` issue label marks a certified spec — problem, desired outcome, and testable success criteria, human-reviewed or produced by a trusted pipeline — and gates autonomous pickup: `/auto` dispatches `/next specified`, so only certified issues ship unattended. The canonical template, quality bar, and read-merge-set label mechanics live in [issue-spec.md](issue-spec.md); `/prd` certifies on create for single-issue runs (batches certify after collision edges are wired), `/spec` grooms existing issues into shape.
