@@ -1071,6 +1071,56 @@ else
   skip "node not available — the live-pid-beats-released fixture needs it"
 fi
 
+# --- Session-scoped liveness (BF-1103): the owner's job dir answers at session granularity, and it
+# outranks the pid walk in BOTH directions. A fleet's pid tier is root-shared — a live root strands a
+# done session's worktree, and a root exit (or a pool chain reparented to pid 1, which stamps a BLANK
+# pid) false-orphans live ones — so the daemon's per-session state.json/timeline.jsonl is the ground
+# truth wherever it exists. CLAUDE_JOB_DIR pins the jobs root inside $TMP for these cases:
+# _wtid_jobs_root reads the owner's dir as a SIBLING of the probing session's own.
+JOBSROOT="$TMP/jobs"
+mkdir -p "$JOBSROOT/self"
+mkjob() { # session state — (re)writes $JOBSROOT/<session>/state.json with a fresh mtime
+  mkdir -p "$JOBSROOT/$1"
+  printf '{"state": "%s", "tempo": "idle"}\n' "$2" > "$JOBSROOT/$1/state.json"
+}
+
+# Terminal session state is positive death evidence and must beat a pid the walk calls alive — the
+# shared fleet root outliving a done session is the stranding direction.
+if [ "$HAVE_NODE" = yes ]; then
+  mkrepo sessdone
+  spawn_live
+  stamp_env "CLAUDE_SESSION_ID=sess-A CLAUDE_HARNESS_PID=$LIVE" "$WT"
+  mkjob sess-A done
+  ck "1:dead" "$(alive "$WT" "CLAUDE_JOB_DIR=$JOBSROOT/self")" "a terminal session state adjudicates dead even while the stamped pid is a live harness"
+else
+  skip "node not available — the terminal-state-beats-live-pid fixture needs a live allowlisted process"
+fi
+
+# Fresh activity on a non-terminal session is positive life evidence and must beat a dead pid — the
+# false-orphaning direction, which the create gate would otherwise turn into a takeover of live work.
+mkrepo sessalive
+spawn_dead
+stamp_env "CLAUDE_SESSION_ID=sess-A CLAUDE_HARNESS_PID=$DEAD" "$WT"
+mkjob sess-A running
+ck "yes" "$(pid_gone "$DEAD")" "sanity: the stamped pid is unallocated, so the verdict below comes from the session probe"
+ck "0:alive" "$(alive "$WT" "CLAUDE_JOB_DIR=$JOBSROOT/self")" "fresh non-terminal session activity adjudicates alive over a dead stamped pid"
+
+# A stale non-terminal job dir answers nothing: fall through to the pid tier, and with nothing there
+# either, the verdict is unknown — which start-wt-create.sh now REFUSES for a foreign claim (fail closed).
+mkrepo sessstale
+stamp_env "TEST_SHIM=$PSSHIM CLAUDE_SESSION_ID=sess-A" "$WT"
+mkjob sess-A running
+touch -t 202001010000 "$JOBSROOT/sess-A/state.json"
+ck "2:unknown" "$(alive "$WT" "CLAUDE_JOB_DIR=$JOBSROOT/self")" "a stale non-terminal job dir proves nothing — unknown, never alive or dead"
+
+# released is adjudicated before the session probe: a releaser that is still alive (it deliberately
+# walked away and moved on to other work) must not resurrect its own handoff to 'alive'.
+mkrepo sessreleased
+stamp_env "CLAUDE_SESSION_ID=sess-A CLAUDE_HARNESS_PID=999999" "$WT"
+bash -c ". '$IDLIB'; wt_identity_disown '$WT' test-1" >/dev/null 2>&1
+mkjob sess-A running
+ck "3:released" "$(alive "$WT" "CLAUDE_JOB_DIR=$JOBSROOT/self")" "a deliberate release stays released while the releasing session is demonstrably alive"
+
 # Per-worktree git config is authoritative for ownership because every stamp rewrites it latest-wins: a
 # stale same-issue sidecar sitting in OUR job dir must not shadow another session's takeover.
 #

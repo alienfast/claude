@@ -91,9 +91,16 @@ if [ -d "$wt_dir" ]; then
     exit 1
   fi
   # Parallel-session guard: reusing a worktree that a LIVE other session owns would put two sessions in one worktree — the clobbering this lock exists to
-  # prevent, reachable via a /next pick race or a preflight "orphan" resume of live work. Refuse only on positive proof of a live foreign owner; a dead,
-  # released (deliberate wt-disown.sh relinquish — the stall/abandon path), or undeterminable owner falls through to reuse (manual resumption of
-  # legacy/unstamped worktrees keeps working) and the stamp below re-records ownership and revokes any release marker.
+  # prevent, reachable via a /next pick race or a preflight "orphan" resume of live work. The decision per liveness verdict (BF-1103, the fail-closed
+  # choice recorded explicitly):
+  #   alive + me              → reuse  (this session's own resumption)
+  #   alive + foreign         → REFUSE (exit 4) — two sessions in one worktree is the disaster this gate exists for
+  #   released                → reuse  (deliberate wt-disown.sh relinquish — the stall/abandon handoff path)
+  #   dead                    → reuse  (positive evidence: terminal session state in the owner's job dir, or pid gone/recycled)
+  #   unknown + foreign claim → REFUSE (exit 4, FAIL CLOSED) — a live owner cannot be ruled out; admitting here is how two /auto
+  #                             sessions worked BF-816's worktree concurrently
+  #   unknown + no claim      → reuse  (legacy/unstamped/manual worktrees keep working; there is no owner to protect)
+  # The stamp below re-records ownership and revokes any release marker.
   # Same-session is decided by wt_owner_is_me (session ids first — in a `claude agents` fleet every session shares one root harness pid).
   wt_owner_alive "$wt_dir" || true
   wt_owner_contest "$wt_dir"
@@ -106,6 +113,12 @@ if [ -d "$wt_dir" ]; then
     elif [ -n "$WTID_TIER_DISSENT" ]; then
       echo "  Ownership is read from per-worktree git config alone, so a dissent here means the other tiers record a DIFFERENT identity: verify with ~/.claude/scripts/wt-owner.sh '$wt_dir' before assuming the refusal is correct." >&2
     fi
+    exit 4
+  fi
+  if [ "$WTID_OWNER_ALIVE" = "unknown" ] && { [ -n "$WTID_OWNER_SESSION" ] || [ -n "$WTID_OWNER_PID" ]; } && ! wt_owner_is_me; then
+    echo "ERROR: worktree '$wt_dir' carries a foreign ownership claim (session '${WTID_OWNER_SESSION:-unrecorded}', pid ${WTID_OWNER_PID:-unrecorded}) whose liveness is UNKNOWN; refusing to reuse it — failing closed, since a live owner cannot be ruled out (BF-1103)." >&2
+    echo "  Verify with ~/.claude/scripts/wt-owner.sh '$wt_dir'; if the owning session is genuinely gone, release the stamp — ~/.claude/scripts/wt-disown.sh --force '$wt_dir' — and re-run." >&2
+    echo "  Identity tiers: corroboration $WTID_CORROBORATION${WTID_TIER_DISSENT:+, dissenting: $WTID_TIER_DISSENT}." >&2
     exit 4
   fi
   # The other direction of the same single-tier authority, and the unrecoverable one: admitting this session on a
@@ -182,12 +195,14 @@ fi
 #
 # ACCEPTED RISK — BF-546 holds the threat model, _wtid_resolve_owner the arbitration rule. The constraint this
 # file cannot show: ownership (the reuse guard above) is read from git config ALONE, so a config-only write can
-# seize this worktree, and the guard refuses only on `alive` — a planted release marker or dead pid is ADMITTED,
-# which puts two sessions in one worktree. Nothing here arbitrates that away; the mitigation is that it cannot
-# happen quietly, so the dissent WARNs above are load-bearing and must not be dropped, and the ownership-contest
+# seize this worktree, and the guard refuses only on `alive` and on a foreign `unknown` claim (BF-1103) — a
+# planted release marker or a positively-dead verdict is still ADMITTED, which puts two sessions in one
+# worktree. Nothing here arbitrates that away; the mitigation is that it cannot happen quietly, so the dissent
+# WARNs above are load-bearing and must not be dropped, and the ownership-contest
 # lines (wt_owner_contest, BF-575) name the seizure shape specifically — messaging only, never the decision.
 # The blind spots, stated because silence from them is not safety: a torn config naming a session no surviving
-# sidecar names still resolves `unknown` and is admitted (it does now dissent, so the WARN fires); a single
+# sidecar names resolves `unknown` — since BF-1103 that is REFUSED as a foreign claim rather than admitted, so
+# this shape now strands (recoverable via wt-disown.sh --force) instead of double-admitting; a single
 # readable tier has nothing that could contest it at all; and a seizure that also forges a NEWER claim epoch
 # reads as supersession to the contest signal (it still dissents structurally).
 prior_baseline=""

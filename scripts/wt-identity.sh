@@ -589,17 +589,25 @@ $tip"
 }
 
 # --- Owner liveness (parallel-session coordination) ---
-# A worktree's "owner" is the harness (claude) process of the session that last stamped it. A session id alone (start.owner-session) cannot be tested for
-# liveness, so the stamp also records the harness PID + its start time — PID recycling makes a bare PID ambiguous; PID + start time is unique in practice.
+# A worktree's "owner" is the SESSION that last stamped it. The session id (start.owner-session) is the primary identity; the stamp also records the harness
+# PID + its start time as a fallback liveness anchor — PID recycling makes a bare PID ambiguous; PID + start time is unique in practice.
 # A session that deliberately walks away (stall, abandon) releases the stamp via wt_identity_disown: owner-pid is cleared and owner-released-at set, while
 # owner-session persists as LAST-OWNER attribution, not a live claim. Pid liveness alone can't express "gave up" — the shared fleet-root/daemon pid stays
 # alive for days after a session stops working a worktree, which is exactly the state a release marks.
+#
+# THE PID IS THE WRONG GRANULARITY IN A FLEET, IN BOTH DIRECTIONS (BF-1103). Under `claude agents` the walk below resolves either the fleet ROOT — one pid
+# shared by every fleet session, so a live root reads a long-done session `alive` (stranding), and the root's exit reads every still-live sibling `dead` at
+# once (mass false-orphaning, which /auto actively resumes) — or NOTHING at all, when the pool chain is reparented to pid 1 (measured: `zsh → claude bg-spare
+# → claude bg-pty-host → pid 1`), leaving stamps with a blank OWNER_PID that read `unknown` and, before the create gate failed closed, admitted takeovers of
+# LIVE work. wt_owner_alive therefore probes the owner's SESSION first — the daemon's per-session job dir (state.json lifecycle state + activity mtimes) —
+# and consults the pid only when the session probe cannot answer.
 
 # Nearest ancestor process that is the claude harness binary. Honors $CLAUDE_HARNESS_PID when a caller pre-resolved it. Empty/rc-1 when undeterminable
 # (npm-installed CLI runs under `node`; MSYS ps can't see native processes) — callers MUST treat empty as "unknown", never as "dead".
 # In a `claude agents` fleet the shell's nearer claude-lineage ancestors are retitled pool processes (`claude bg-pty-host`, `claude bg-spare`) whose pids are
-# transient pool artifacts; the comm match below skips those (suffixed titles don't match) and lands on the fleet ROOT — shared by every fleet session. That is
-# correct for LIVENESS (root dies = all its sessions die) but means pid equality can NEVER prove same-session: use wt_owner_is_me, which compares session ids first.
+# transient pool artifacts; the comm match below skips those (suffixed titles don't match). When the pool chain still hangs off the fleet root the walk lands
+# THERE — one pid shared by every fleet session — and when the chain is reparented to pid 1 it resolves nothing and returns empty (both measured, BF-1103).
+# Either way pid equality can NEVER prove same-session: use wt_owner_is_me, which compares session ids first.
 wtid_harness_pid() {
   if [ -n "${CLAUDE_HARNESS_PID:-}" ]; then printf '%s' "$CLAUDE_HARNESS_PID"; return 0; fi
   local pid=$$ comm base
@@ -619,6 +627,67 @@ wtid_harness_pid() {
 # would abort the whole stamp with no output.
 wtid_pid_start() {
   ps -o lstart= -p "$1" 2>/dev/null | tail -1 | awk '{$1=$1; print}' || true
+}
+
+# mtime of a file in epoch seconds; empty when no stat dialect answers. GNU first, for
+# _wtid_file_id's measured reason: GNU stat "accepts" -f as --file-system, so BSD-first is
+# caught only by the exit status.
+_wtid_mtime() {
+  local m
+  m=$(stat -L -c '%Y' "$1" 2>/dev/null) || m=""
+  if [ -z "$m" ]; then m=$(stat -L -f '%m' "$1" 2>/dev/null) || m=""; fi
+  printf '%s' "$m"
+}
+
+# The jobs root the owner session's dir would live under. A fleet session's own CLAUDE_JOB_DIR is a
+# sibling of every other session's, so its parent is authoritative when set; otherwise the default
+# harness location.
+_wtid_jobs_root() {
+  if [ -n "${CLAUDE_JOB_DIR:-}" ]; then dirname "$CLAUDE_JOB_DIR"; else printf '%s/.claude/jobs' "$HOME"; fi
+}
+
+# Session-scoped owner liveness (BF-1103). Sets WTID_SESSION_PROBE=alive|dead|"" — empty means the
+# probe cannot answer (no owner id, no job dir, or no fresh evidence) and the caller falls back to
+# the pid walk. The daemon writes each background session's lifecycle to ~/.claude/jobs/<session>/:
+# state.json's `state` records a terminal value when the session finishes (measured: "done"), and
+# state.json/timeline.jsonl mtimes move while it works. This is per-SESSION ground truth, which the
+# fleet-shared pid can never be:
+#   - terminal state        → dead  (positive evidence; the pid tier would read the shared root's
+#                                    liveness instead and strand the worktree until the root exits)
+#   - non-terminal + fresh  → alive (activity within WTID_SESSION_FRESH_SECS, default 2h — /auto
+#                                    sessions heartbeat at most every ~30min, so a live session
+#                                    cannot go quiet that long)
+#   - anything else         → ""    (unanswerable here; NOT evidence of death — an interactive
+#                                    owner has no job dir at all, and a GC'd job dir looks the same)
+# An unrecognized terminal spelling degrades to "" and then to the pid walk / unknown — fail-safe,
+# since the create gate refuses foreign claims on unknown.
+_wtid_session_liveness() {
+  local owner="$1" dir state_file state now window f m newest=0
+  WTID_SESSION_PROBE=""
+  [ -z "$owner" ] && return 0
+  dir="$(_wtid_jobs_root)/$owner"
+  state_file="$dir/state.json"
+  [ -f "$state_file" ] || return 0
+  if command -v jq >/dev/null 2>&1; then
+    state=$(jq -r '.state // empty' "$state_file" 2>/dev/null || true)
+  else
+    state=$(sed -n 's/.*"state"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$state_file" 2>/dev/null | head -1)
+  fi
+  case "$state" in
+    done|failed|killed|canceled|cancelled|error) WTID_SESSION_PROBE="dead"; return 0 ;;
+  esac
+  window="${WTID_SESSION_FRESH_SECS:-7200}"
+  now=$(_wtid_now)
+  case "$now" in ''|*[!0-9]*) return 0 ;; esac
+  for f in "$state_file" "$dir/timeline.jsonl"; do
+    m=$(_wtid_mtime "$f")
+    case "$m" in ''|*[!0-9]*) continue ;; esac
+    [ "$m" -gt "$newest" ] && newest="$m"
+  done
+  if [ "$newest" -gt 0 ] && [ $((now - newest)) -le "$window" ]; then
+    WTID_SESSION_PROBE="alive"
+  fi
+  return 0
 }
 
 # Settle WHO owns <wt_dir>, filling the owner globals wt_identity_load deliberately left empty (structural
@@ -701,11 +770,25 @@ wt_owner_alive() {
   # Within the resolved tuple a pid ALWAYS wins over a released marker, so a re-claimed worktree can never read
   # as up for grabs: every stamp unsets released-at before writing the pid, and a crash between the two leaves
   # neither — unknown, which automation treats as hands-off.
+  if [ -z "$WTID_OWNER_PID" ] && [ -n "$WTID_OWNER_RELEASED_AT" ]; then
+    WTID_OWNER_ALIVE="released"
+    return 3
+  fi
+  # Session-scoped probe first (BF-1103): the daemon's per-session job dir answers for THIS owner where the
+  # pid tier answers only for the fleet root it is shared with — a done session's worktree must read dead
+  # while the root still lives, and a live session's must read alive when its stamp carries a blank or
+  # root-shared pid. The probe checked released above so a deliberate handoff is never resurrected to
+  # "alive" by its still-running releaser.
+  _wtid_session_liveness "$WTID_OWNER_SESSION"
+  if [ "$WTID_SESSION_PROBE" = "alive" ]; then
+    WTID_OWNER_ALIVE="alive"
+    return 0
+  fi
+  if [ "$WTID_SESSION_PROBE" = "dead" ]; then
+    WTID_OWNER_ALIVE="dead"
+    return 1
+  fi
   if [ -z "$WTID_OWNER_PID" ]; then
-    if [ -n "$WTID_OWNER_RELEASED_AT" ]; then
-      WTID_OWNER_ALIVE="released"
-      return 3
-    fi
     return 2
   fi
 
