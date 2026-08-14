@@ -13,7 +13,7 @@ The early-end command of the fleet workflow: `/auto-prep` (before) → `/fleet-l
 
 ## Semantics
 
-- Writes an already-passed deadline (`stopped: true`) to `<main-checkout>/tmp/fleet-deadline.json` — the same marker a timed `/fleet-launch` writes.
+- Writes an already-passed deadline (`stopped: true`) to `<main-checkout>/tmp/fleet-deadline.json` — the same marker a timed `/fleet-launch` writes, merged onto it so the launch's `count` and `launch_epoch` survive (`/fleet-status` scopes its session table by `launch_epoch`, and a wind-down is exactly when that view matters).
 - Each session's `/auto` reads the marker after preflight and before its next pick, **never mid-issue**: in-flight issues run to completion (through `/finish` and the merge), then each session ends its loop with `NO-CANDIDATES: fleet deadline reached`.
 - Nothing is killed, ever. To abort in-flight work too, the user kills sessions in `claude agents` — this skill never does.
 - Sessions never delete the marker (siblings still mid-issue must see it); the next `/fleet-launch` clears it. See the deadline contract in [fleet-launch](../fleet-launch/SKILL.md).

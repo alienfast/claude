@@ -9,7 +9,7 @@ The middle bookend of the fleet workflow: `/auto-prep` (groom + recommend a coun
 
 Each session is a `claude --bg "/loop /auto"` background agent — they land in the user's `claude agents` view, not in new terminals. Dispatches are staggered on a local signal (a new worktree under `.claude/worktrees/` — the stamp `/auto` Step 2's live-owner probe excludes from the next pick) so sessions never race each other for the same first issue, capped at 180s per wait.
 
-This skill does NOT run `/auto-prep` (its solo/decision-gated advice needs human eyes before a launch) and does NOT run `/fleet-retro` (run it after the fleet quiesces). It assumes prep already happened; if `tmp/fleet-recommendation.json` is missing and no count was given, the script says so and stops.
+This skill does NOT run `/auto-prep` (its solo/decision-gated advice needs human eyes before a launch) and does NOT run `/fleet-retro` (run it after the fleet quiesces — and before the next launch: launching is what expires the prior run's ledgers, see below). It assumes prep already happened; if `tmp/fleet-recommendation.json` is missing and no count was given, the script says so and stops.
 
 ## Arguments
 
@@ -42,9 +42,13 @@ If a future run IS cut off, `/fleet-retro`'s `quota_stall_groups[].limit_kind` n
 
 Model/permission defaults follow `/auto`'s unattended-run prerequisites (`--model 'opus[1m]' --effort xhigh --permission-mode auto` — `auto`, not `acceptEdits`, because acceptEdits only auto-accepts file edits and the first gated Bash command would stall a background session at an unanswerable prompt); anything after `--` passes through to `claude --bg` and overrides them. `FLEET_PROMPT` overrides the dispatched prompt — e.g. `FLEET_PROMPT='/loop /auto BF'` to team-scope the run.
 
+### Ledger expiry — prior runs' state files are cleared at launch
+
+Per-session ledgers (`tmp/auto-state-*.json`) deliberately persist after a fleet ends so the operator and `/fleet-retro` can examine them; a new launch is where they expire. The script deletes the **dead** ones (recorded pid gone, or its start time mismatched) before dispatching, and reports what it cleared — so `/fleet-status` shows only the current fleet, and so a run you still want measured must be retro'd **before** relaunching. Ledgers of still-running sessions are kept, and the marker's `launch_epoch` is pulled back to the oldest kept ledger's mtime so a top-up launch never hides a running sibling from `/fleet-status`.
+
 ## The deadline contract (shared with /auto)
 
-- Marker: `<main-checkout>/tmp/fleet-deadline.json` — `{deadline_epoch, deadline, count}` (`stopped: true` when written by [`/fleet-stop`](../fleet-stop/SKILL.md)).
+- Marker: `<main-checkout>/tmp/fleet-deadline.json` — `{deadline_epoch, deadline, count, launch_epoch}` (`launch_epoch` is `/fleet-status`'s session-scoping anchor; `stopped: true` added by [`/fleet-stop`](../fleet-stop/SKILL.md), which preserves the other fields).
 - `/auto` reads it at Step 2 (after preflight, before the pick), so in-flight work always completes and targeted `/auto <ISSUE-ID>` ignores it by construction.
 - Sessions never delete the marker (siblings still mid-issue must see it); `fleet-launch.sh` clears any stale marker on every launch, so a no-duration launch never inherits a dead fleet's deadline — which also means a top-up launch resets or erases a running fleet's deadline: re-pass the remaining duration when adding sessions.
 

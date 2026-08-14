@@ -39,9 +39,12 @@
 # Env: FLEET_PROMPT overrides the dispatched prompt (default "/loop /auto" — e.g.
 # "/loop /auto BF" to team-scope the run); FLEET_STAGGER_TIMEOUT seconds per wait.
 #
-# Read-write: writes/removes tmp/fleet-deadline.json in the main checkout; dispatches
-# background claude sessions. Exit 1 on argument/environment errors (never mid-fleet:
-# a dispatch failure stops further launches but leaves prior sessions running).
+# Read-write: writes/removes tmp/fleet-deadline.json in the main checkout; clears DEAD
+# prior-run tmp/auto-state-*.json ledgers at launch (they deliberately persist from a
+# fleet's end until the next launch so /fleet-retro and the operator can examine them —
+# retro before relaunching); dispatches background claude sessions. Exit 1 on
+# argument/environment errors (never mid-fleet: a dispatch failure stops further
+# launches but leaves prior sessions running).
 
 set -eo pipefail
 
@@ -62,8 +65,11 @@ marker="$main_checkout/tmp/fleet-deadline.json"
 if [ "${1:-}" = "stop" ]; then
   [ $# -eq 1 ] || usage
   now=$(date +%s)
-  jq -n --argjson epoch "$now" --arg human "$(date '+%Y-%m-%d %H:%M %Z')" \
-    '{deadline_epoch: $epoch, deadline: $human, stopped: true}' > "$marker"
+  # Merge onto the existing marker: count and launch_epoch must survive a stop, or
+  # /fleet-status loses its session scoping during the wind-down it most needs it for.
+  existing=$(jq -c '.' "$marker" 2>/dev/null || echo '{}')
+  printf '%s' "$existing" | jq --argjson epoch "$now" --arg human "$(date '+%Y-%m-%d %H:%M %Z')" \
+    '. + {deadline_epoch: $epoch, deadline: $human, stopped: true}' > "$marker"
   echo "Fleet wind-down marker written: $marker"
   echo "Each session ends its loop at its next iteration boundary; in-flight issues run to completion."
   exit 0
@@ -135,12 +141,39 @@ if [ -n "$dirty" ]; then
   fi
 fi
 
+# Prior-run ledgers (tmp/auto-state-*.json) deliberately persist after a fleet ends so the
+# operator and /fleet-retro can examine them; a NEW launch is where they expire. Clear the
+# dead ones now so /fleet-status shows only this fleet's sessions. A file whose recorded pid
+# is a live process with a matching start time belongs to a still-running session (or its
+# fleet root) and is kept — its mtime then pulls launch_epoch back so a top-up launch never
+# hides a running sibling's ledger from /fleet-status.
+launch_epoch=$(date +%s)
+cleared=""
+for sf in "$main_checkout"/tmp/auto-state-*.json; do
+  [ -f "$sf" ] || continue
+  sf_pid=$(jq -r '.pid // empty' "$sf" 2>/dev/null || true)
+  sf_pid_start=$(jq -r '.pidStart // empty' "$sf" 2>/dev/null || true)
+  alive=0
+  if [ -n "$sf_pid" ] && kill -0 "$sf_pid" 2>/dev/null; then
+    actual=$(ps -p "$sf_pid" -o lstart= 2>/dev/null | tr -s ' ' | sed 's/^ //;s/ $//')
+    [ "$actual" = "$(printf '%s' "$sf_pid_start" | tr -s ' ')" ] && alive=1
+  fi
+  if [ "$alive" -eq 1 ]; then
+    mt=$(stat -f %m "$sf" 2>/dev/null || stat -c %m "$sf" 2>/dev/null || echo "")
+    [[ "$mt" =~ ^[0-9]+$ ]] && [ "$mt" -lt "$launch_epoch" ] && launch_epoch="$mt"
+  else
+    rm -f "$sf"
+    cleared="$cleared $(basename "$sf" | sed 's/auto-state-//;s/\.json//')"
+  fi
+done
+[ -n "$cleared" ] && echo "Cleared prior-run ledger(s):$cleared (dead sessions; /fleet-retro can no longer measure those runs)"
+
 # A stale marker from a previous fleet would end every new loop at its first pick —
 # always clear it; write a fresh one only when this launch carries a duration.
 rm -f "$marker"
 if [ -n "$deadline_epoch" ]; then
-  jq -n --argjson epoch "$deadline_epoch" --arg human "$deadline_human" --argjson count "$count" \
-    '{deadline_epoch: $epoch, deadline: $human, count: $count}' > "$marker"
+  jq -n --argjson epoch "$deadline_epoch" --arg human "$deadline_human" --argjson count "$count" --argjson launch "$launch_epoch" \
+    '{deadline_epoch: $epoch, deadline: $human, count: $count, launch_epoch: $launch}' > "$marker"
   echo "Fleet deadline: $deadline_human ($marker)"
 fi
 

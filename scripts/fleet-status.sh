@@ -9,11 +9,19 @@
 #   remaining-candidates count, the one section that costs a Linear ranking call (~10-20s).
 #
 # Sources (all read-only; no Linear writes, no git mutations):
-#   tmp/fleet-deadline.json            deadline + launched count (fleet-launch.sh)
+#   tmp/fleet-deadline.json            deadline + launched count + launch_epoch (fleet-launch.sh)
 #   tmp/auto-state-*.json              per-session ledgers: shipped/canceled/failed, pid liveness
 #   .claude/worktrees/ + worktree-identity/ sidecars   in-flight issues, session ownership
-#   linear-cli (optional)              issue state/title joins, stalled flags, runway
+#   linear-cli (optional)              issue state/title joins, failed/canceled cross-check,
+#                                      stalled flags, runway
 #   .claude/merge-queue/               deferred merges (via merge-queue.sh list)
+#
+# Sessions are scoped to the CURRENT fleet: ledgers whose last write predates the launch are
+# prior-run history (fleet-launch clears the dead ones at the next launch; until then they are
+# hidden here with a count, and /fleet-retro reads them). Failed/canceled entries are further
+# cross-checked against each issue's current Linear state, because a ledger entry is a claim
+# about that run only — a later session or an interactive pickup can ship the issue without
+# any ledger recording it, and without the join a long-resolved failure reads as live.
 #
 # A session is ALIVE when its recorded pid exists AND the process start time matches the
 # recorded one (pid reuse otherwise reads a dead session as running). A state file that says
@@ -66,6 +74,23 @@ else
 fi
 printf '_Wind down early: `/fleet-launch stop` — ends the timer, in-flight issues finish, nothing is killed._\n\n'
 
+# ---------- fleet scoping epoch ----------
+
+# launch_epoch is in the marker since 2026-08; an older launch-written marker falls back to its
+# own mtime (equal to launch time), while a stop-rewritten legacy marker has no usable launch
+# time at all — scoping is skipped rather than guessed.
+scope_epoch=""
+if [ -s "$marker" ]; then
+  scope_epoch=$(jq -r '.launch_epoch // empty' "$marker")
+  if ! [[ "$scope_epoch" =~ ^[0-9]+$ ]]; then
+    if [ "$(jq -r '.stopped // false' "$marker")" = "true" ]; then
+      scope_epoch=""
+    else
+      scope_epoch=$(stat -f %m "$marker" 2>/dev/null || stat -c %m "$marker" 2>/dev/null || echo "")
+    fi
+  fi
+fi
+
 # ---------- sessions (auto-state ledgers) ----------
 
 # Liveness: pid exists AND its start time matches the recorded one (whitespace-normalized —
@@ -79,14 +104,31 @@ session_alive() {
 
 printf '### Sessions\n\n'
 state_files=$(ls -t "$main_checkout"/tmp/auto-state-*.json 2>/dev/null || true)
+shown_files=""
+hidden=0
+for f in $state_files; do
+  if [[ "$scope_epoch" =~ ^[0-9]+$ ]]; then
+    mtime=$(stat -f %m "$f" 2>/dev/null || stat -c %m "$f" 2>/dev/null || echo "")
+    if [[ "$mtime" =~ ^[0-9]+$ ]] && [ "$mtime" -lt "$scope_epoch" ]; then
+      hidden=$((hidden + 1))
+      continue
+    fi
+  fi
+  shown_files="$shown_files $f"
+done
 died_active=""
 all_shipped=""
-if [ -z "$state_files" ]; then
-  printf '_No auto-state files — no /auto session has recorded anything here._\n\n'
+fc_entries=""
+if [ -z "$shown_files" ]; then
+  if [ "$hidden" -gt 0 ]; then
+    printf '_No ledger from this fleet yet — sessions write their state file at the first recorded outcome._\n\n'
+  else
+    printf '_No auto-state files — no /auto session has recorded anything here._\n\n'
+  fi
 else
   printf '| session | liveness | status | shipped | canceled | failed | review blocks |\n'
   printf '|---|---|---|---|---|---|---|\n'
-  for f in $state_files; do
+  for f in $shown_files; do
     key=$(basename "$f" | sed 's/auto-state-//;s/\.json//')
     pid=$(jq -r '.pid // empty' "$f")
     pid_start=$(jq -r '.pidStart // empty' "$f")
@@ -96,6 +138,8 @@ else
     failed=$(jq -r '(.failed // []) | join(", ")' "$f")
     blocks=$(jq -r '.reviewBlocks // 0' "$f")
     all_shipped="$all_shipped $(printf '%s' "$shipped" | tr -d ',')"
+    for id in $(printf '%s' "$failed" | tr -d ','); do fc_entries="$fc_entries$id failed $key"$'\n'; done
+    for id in $(printf '%s' "$canceled" | tr -d ','); do fc_entries="$fc_entries$id canceled $key"$'\n'; done
     if session_alive "$pid" "$pid_start"; then
       live="ALIVE (pid $pid)"
     else
@@ -106,6 +150,7 @@ else
   done
   printf '\n'
 fi
+[ "$hidden" -gt 0 ] && printf '_%d prior-run ledger(s) hidden (written before the current launch); /fleet-retro reads them until the next launch clears the dead ones._\n\n' "$hidden"
 for k in $died_active; do
   printf '⚠️  **Session %s reads `active` but its process is gone** — it died without recording an outcome; check its last issue for a stranded In Progress claim.\n\n' "$k"
 done
@@ -135,7 +180,7 @@ printf '\n'
 
 # ---------- shipped ledger vs git ----------
 
-printf '### Shipped (all recorded sessions), cross-checked against git\n\n'
+printf '### Shipped (this fleet'"'"'s sessions), cross-checked against git\n\n'
 all_shipped=$(printf '%s' "$all_shipped" | tr ' ' '\n' | sed '/^$/d' | sort -u)
 if [ -z "$all_shipped" ]; then
   printf '_No session has recorded a ship here._\n\n'
@@ -157,6 +202,45 @@ else
   printf '\n'
 fi
 
+# ---------- failed/canceled ledger vs Linear ----------
+
+# The counterpart of the shipped-vs-git join above: each failed/canceled entry checked against
+# the issue's CURRENT state, so an entry resolved outside the ledgers reads as history, not as
+# a live problem. Only the ⚠️ rows need action.
+if [ -n "$fc_entries" ]; then
+  printf '### Failed / canceled (recorded), cross-checked against Linear\n\n'
+  if [ "$have_linear" -eq 0 ]; then
+    printf '_linear-cli unavailable — entries not cross-checked._\n\n'
+  else
+    rollup=$(printf '%s' "$fc_entries" | sed '/^ *$/d' | sort -u \
+      | awk '{k=$1" "$2; s[k]=s[k] ? s[k] "," $3 : $3} END {for (e in s) print e, s[e]}' | sort)
+    while read -r id kind keys; do
+      [ -n "$id" ] || continue
+      st=$(linear-cli api query "query { issue(id: \"$id\") { state { name type } } }" 2>/dev/null \
+        | jq -r '.data.issue.state | [.type, .name] | @tsv' 2>/dev/null || true)
+      s_type=$(printf '%s' "$st" | cut -f1)
+      s_name=$(printf '%s' "$st" | cut -f2)
+      if [ -z "$s_type" ] || [ "$s_type" = "null" ]; then
+        printf -- '- %s — recorded %s (session %s); Linear state unavailable\n' "$id" "$kind" "$keys"
+      elif [ "$kind" = "failed" ]; then
+        case "$s_type" in
+          completed) printf -- '- %s — failed (session %s), **since shipped**: now [%s] — resolved by a later session or an interactive pickup ✓\n' "$id" "$keys" "$s_name" ;;
+          canceled)  printf -- '- %s — failed (session %s), since canceled: [%s]\n' "$id" "$keys" "$s_name" ;;
+          started)   printf -- '- %s — failed (session %s), now [%s] — a retry may be in flight\n' "$id" "$keys" "$s_name" ;;
+          *)         printf -- '- %s — ⚠️ failed (session %s), still [%s] — unresolved; look for a `stalled` label and a preserved worktree\n' "$id" "$keys" "$s_name" ;;
+        esac
+      else
+        case "$s_type" in
+          canceled)  printf -- '- %s — canceled (session %s) — Linear agrees: [%s] ✓\n' "$id" "$keys" "$s_name" ;;
+          completed) printf -- '- %s — ⚠️ recorded canceled (session %s) but Linear shows [%s] — reconcile\n' "$id" "$keys" "$s_name" ;;
+          *)         printf -- '- %s — ⚠️ recorded canceled (session %s) but Linear shows [%s] — reopened since?\n' "$id" "$keys" "$s_name" ;;
+        esac
+      fi
+    done <<< "$rollup"
+    printf '\n'
+  fi
+fi
+
 # ---------- merge queue ----------
 
 queue=$( (cd "$main_checkout" && "$SCRIPT_DIR/merge-queue.sh" list 2>/dev/null) || true)
@@ -173,7 +257,8 @@ else
   # Infer from the issue prefixes in play (ledgers + live worktree dirnames); ambiguity leaves it unset.
   wt_issues=$(git -C "$main_checkout" worktree list --porcelain 2>/dev/null | awk '/^worktree /{print substr($0,10)}' \
     | grep "^$main_checkout/.claude/worktrees/" | xargs -n1 basename 2>/dev/null | tr '[:lower:]' '[:upper:]' || true)
-  team=$(printf '%s\n%s\n' "$all_shipped" "$wt_issues" | sed -n 's/^\([A-Z][A-Z0-9]*\)-[0-9]*$/\1/p' | sort -u)
+  fc_ids=$(printf '%s' "$fc_entries" | awk 'NF{print $1}' | sort -u)
+  team=$(printf '%s\n%s\n%s\n' "$all_shipped" "$wt_issues" "$fc_ids" | sed -n 's/^\([A-Z][A-Z0-9]*\)-[0-9]*$/\1/p' | sort -u)
   [ "$(printf '%s\n' "$team" | sed '/^$/d' | wc -l | tr -d ' ')" = "1" ] || team=""
 fi
 if [ "$have_linear" -eq 1 ] && [ -n "$team" ]; then
