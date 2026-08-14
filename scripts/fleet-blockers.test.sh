@@ -56,6 +56,8 @@ cat > "$FIX/issues-page.json" <<'EOF'
  {"identifier":"TT-39","state":{"name":"Backlog","type":"backlog"},"labels":{"nodes":[]},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-38"}}]}},
  {"identifier":"TT-40","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"},{"name":"needs decision"}]},"relations":{"nodes":[]}},
  {"identifier":"TT-41","state":{"name":"Backlog","type":"backlog"},"labels":{"nodes":[]},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-40"}}]}},
+ {"identifier":"TT-70","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"epic"}]},"relations":{"nodes":[]}},
+ {"identifier":"TT-71","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"},{"name":"epic"}]},"relations":{"nodes":[]}},
  {"identifier":"TT-50","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"}]},"relations":{"nodes":[]}},
  {"identifier":"TT-51","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"}]},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-50"}}]}},
  {"identifier":"TT-52","state":{"name":"Backlog","type":"backlog"},"labels":{"nodes":[{"name":"specified"},{"name":"needs decision"}]},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-51"}}]}},
@@ -88,10 +90,16 @@ HOME="$WORK/home" PATH="$WORK/bin:$PATH" "$SCRIPT" --team TT > "$OUT" 2>"$OUT.er
 # ---- FOCUS section: the release-scope audit is the primary output and leads ----
 # TT-54 (blocked only by clean-Backlog TT-55) counts as attention, not draining: the promotion
 # is required release scope (keeper ruling 2026-08-13), so its dependent waits on the batch.
-ck "focus summary leads" "FOCUS: 22 unstarted — 1 fleet-workable · 17 need keeper action · 4 draining on their own" "$(head -1 "$OUT")"
+ck "focus summary leads" "FOCUS: 24 unstarted — 1 fleet-workable · 19 need keeper action · 4 draining on their own" "$(head -1 "$OUT")"
 ck_has "gated planned is a keeper action"      "FOCUS-ACTION: TT-21 [Planned] — needs decision (decide and clear the label)" "$OUT"
 ck_has "uncertified planned is a keeper action" "FOCUS-ACTION: TT-31 [Planned] — uncertified (/spec to certify)" "$OUT"
 ck_has "hidden dependent surfaces in focus"    "FOCUS-ACTION: TT-40 [Planned] — needs decision (decide and clear the label)" "$OUT"
+# Epic-labeled issues are delegated containers (BF-95/BF-504): the remedy is per-child
+# certification + closure on release — never "/spec the epic" — and a CERTIFIED epic still
+# needs keeper action rather than counting fleet-workable.
+ck_has "uncertified epic gets the epic remedy" "FOCUS-ACTION: TT-70 [Planned] — delegated epic (children carry the work — certify per child, close the epic when they release)" "$OUT"
+ck "epic is never flagged uncertified"         "0" "$(grep -F 'TT-70' "$OUT" | grep -c 'uncertified')"
+ck_has "certified epic is keeper action, not fleet-workable" "FOCUS-ACTION: TT-71 [Planned] — delegated epic (children carry the work — certify per child, close the epic when they release)" "$OUT"
 ck_has "transitive root with fan-out"          "FOCUS-ROOT: TT-52 [Backlog] (via TT-51) — needs decision (decide and clear the label) — unblocks TT-50, TT-51" "$OUT"
 ck_has "direct gated root"                     "FOCUS-ROOT: TT-21 [Planned] — needs decision (decide and clear the label) — unblocks TT-20" "$OUT"
 ck_has "triage root under a Todo dependent"    "FOCUS-ROOT: TT-27 [Inbox] — in Triage (groom via /spec) — unblocks TT-26" "$OUT"

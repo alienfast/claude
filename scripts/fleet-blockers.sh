@@ -14,6 +14,12 @@
 #   dependents are unstarted-stage only, so the 68 ordinary Backlog-behind-Backlog chain edges
 #   that advice mislabeled as fleet blockers never emit (keeper, 2026-08-10).
 #
+#   `epic`-labeled issues are delegated containers (BF-95; next-candidates' BF-504 de-rank):
+#   certification is per CHILD, so an epic is never flagged "uncertified (/spec to certify)" —
+#   its remedy row says to certify children and close the epic when they release — and it never
+#   counts fleet-workable, certified or not (an epic carrying `specified` is the BF-504 shape
+#   that burned two /auto worktree cycles on BF-95 before the label was removed).
+#
 #   FLEET-BLOCKED — pool-drain hygiene, second-order: every `blocks` edge whose blocked side is
 #   a certified fleet candidate (workable state + `specified`, not label-hidden) but whose
 #   blocker nothing the fleet can pick will ever ship: labeled `human` / `needs decision` /
@@ -74,21 +80,24 @@ printf '%s' "$all" | jq -r '
   # Every reason the fleet cannot ship an issue, with the remedy. Shared by both sections so the
   # classifications cannot drift apart.
   def gate_reasons($v):
-    [ (if ($v.labels | index("human")) then "human-labeled (human-performed; the fleet never ships it)" else empty end),
+    [ (if ($v.labels | index("epic")) then "delegated epic (children carry the work — certify per child, close the epic when they release)" else empty end),
+      (if ($v.labels | index("human")) then "human-labeled (human-performed; the fleet never ships it)" else empty end),
       (if ($v.labels | index("needs decision")) then "needs decision (decide and clear the label)" else empty end),
       (if ($v.labels | index("solo")) then "solo (targeted /auto in the quiet window)" else empty end),
       (if ($v.labels | index("stalled")) then "stalled (resume or release it)" else empty end),
       (if $v.stype == "triage" then "in Triage (groom via /spec)" else empty end),
-      (if (($v.stype | IN("unstarted","backlog")) and (($v.labels | index("specified")) | not))
+      (if (($v.stype | IN("unstarted","backlog")) and (($v.labels | index("specified")) | not)
+           and (($v.labels | index("epic")) | not))
          then "uncertified (/spec to certify)" else empty end) ];
   # Short gate tags for PROMOTE-SET annotations — the label a keeper acts on, not the remedy
   # prose. Gates ANNOTATE, never filter: filtering is the carve-out that buried BF-553.
   def gate_tags($v):
-    [ (if ($v.labels | index("needs decision")) then "needs decision" else empty end),
+    [ (if ($v.labels | index("epic")) then "epic" else empty end),
+      (if ($v.labels | index("needs decision")) then "needs decision" else empty end),
       (if ($v.labels | index("human")) then "human" else empty end),
       (if ($v.labels | index("solo")) then "solo" else empty end),
       (if ($v.labels | index("stalled")) then "stalled" else empty end),
-      (if (($v.labels | index("specified")) | not) then "uncertified" else empty end) ];
+      (if ((($v.labels | index("specified")) | not) and (($v.labels | index("epic")) | not)) then "uncertified" else empty end) ];
   # Every transitive blocker above $id — the full ancestry, NOT just chain leaves. A
   # mandatory-gated blocker sitting mid-chain strands its dependents exactly as hard as a leaf
   # (measured on BF: decision-gated BF-553 blocks two Planned issues while itself blocked by
