@@ -75,13 +75,22 @@ TERMINAL_TAG = re.compile(r"^\s*(NO-CANDIDATES|AUTO-HALTED):", re.M)
 CONTAM_HALT = re.compile(r"^\s*BLOCKED-ON-REVIEW:\s*([A-Z][A-Z0-9]*-\d+)\b[^\n]*MAIN-CHECKOUT-CONTAMINATION", re.M)
 # WHICH allowance actually cut a run off, read from the harness message rather than inferred from the
 # stall's shape. There are three distinct limits and they carry different sizing levers, so guessing
-# routes the whole retro at the wrong one: `weekly` caps total session-hours (lever: duration), the 5h
-# burst caps concurrency (lever: n), and `session` is per-session and caps neither. Measured on the
-# 2026-08-08 basefund fleet, whose sessions all printed "You have hit your weekly limit - resets Aug 11
-# at 5pm": a retro that assumed the 5h burst compared that cutoff against 2026-08-07's *session*-limit
-# event and found their trailing-5h total-billable volumes agreed to 0.08% — a coincidence between two
-# different limits that read exactly like the meter had been identified.
+# routes the whole retro at the wrong one: `weekly` caps total session-hours (lever: duration), while
+# the 5h burst caps concurrency (lever: n). Measured on the 2026-08-08 basefund fleet, whose sessions
+# all printed "You have hit your weekly limit - resets Aug 11 at 5pm": a retro that assumed the 5h burst
+# compared that cutoff against 2026-08-07's *session*-limit event and found their trailing-5h
+# total-billable volumes agreed to 0.08% — a coincidence between two different limits that read exactly
+# like the meter had been identified.
+#
+# `session` is NOT per-session, whatever the word suggests — measured 2026-08-14. Both that fleet's
+# cutoffs reported `session`, and both were account-level 5h windows: the named resets fell on exact 5h
+# boundaries (12:10am, 5:10am, 10:10am CDT) and every session then making a request was refused within
+# 9s and 32s respectively. The one session that missed both was idle at those instants, so it made no
+# request to be refused — absence from a cutoff measures activity, not scope. Route `session` as `5-hour`.
 LIMIT_HIT = re.compile(r"hit your (weekly|session|5-hour|usage) limit", re.I)
+# The reset the harness names alongside the refusal — the only source for how long the allowance itself
+# was going to bind, which is what separates unavoidable wait from avoidable recovery lag.
+LIMIT_RESET = re.compile(r"resets\s+(\d{1,2}):(\d{2})\s*([ap])m\s*\(([^)]+)\)", re.I)
 LOOP_CMD = re.compile(r"<command-name>/loop</command-name>")
 LOOP_AUTO_ARGS = re.compile(r"<command-args>[^<]*/auto")
 GAP_MIN = 240  # seconds; a tool call slower than this is worth naming, not necessarily a fault
@@ -301,6 +310,12 @@ def scan_transcript(path, agg, agent_type="main", description=""):
                     agg["limit_hits"][kind.lower()] += 1
                     if t and (agg["first_limit_hit"] is None or t < agg["first_limit_hit"][0]):
                         agg["first_limit_hit"] = (t, kind.lower())
+                    if t:
+                        agg["limit_hit_times"].append(t)
+                if t:
+                    for hh, mm, ampm, tzname in LIMIT_RESET.findall(body):
+                        hour = int(hh) % 12 + (12 if ampm.lower() == "p" else 0)
+                        agg["limit_resets"].append((t, tzname.strip(), hour, int(mm)))
             elif b.get("type") == "tool_use":
                 name = b.get("name", "")
                 inp = b.get("input") or {}
@@ -380,7 +395,8 @@ def new_agg():
         "dispatch": Counter(), "classifier_blocks": [], "gaps": [], "activity_times": [],
         "sleep_blind_s": 0.0, "sleep_blind_n": 0, "sleep_marker_s": 0.0, "sleep_marker_n": 0,
         "ship_tags": set(), "cancel_tags": set(), "contam_halts": set(), "subagents": 0,
-        "limit_hits": Counter(), "first_limit_hit": None, "stop_times": [],
+        "limit_hits": Counter(), "first_limit_hit": None, "limit_resets": [],
+        "limit_hit_times": [], "stop_times": [],
         "tokens": Counter(), "seen_msg_ids": set(),
         # (epoch_seconds, output_tokens) per credited message — the time dimension the
         # (agent, model) Counter above throws away. Rolling-window burn needs it: the
@@ -427,21 +443,62 @@ def rolling_peak(events, window_h):
     return best
 
 
-def longest_silence(agg, min_s=1800):
-    """The session's longest stretch emitting nothing at all, as (start, end, seconds).
+def all_silences(agg, min_s=1800):
+    """EVERY stretch this session spent emitting nothing at all, as [(start, end, seconds), ...].
 
     Distinct from agg["gaps"], which times a single tool_use against its tool_result and so only
     ever sees a SLOW CALL. A quota cutoff produces no call to be slow — the session stops emitting
     rows entirely — so it is invisible there and visible only as wall-clock silence. Measured over
     the union of the session's own rows and its subagents': a delegate working for 40 minutes while
     the parent waits is not an idle fleet.
+
+    ALL of them, not the longest: an allowance that refills on a fixed period cuts a long fleet off
+    once per period, and reporting only the worst hides every other cutoff — including the ones whose
+    recovery WORKED, which are precisely the control that says whether the bad one was avoidable.
+    Measured on the 2026-08-14 basefund fleet: cutoffs at 04:48 and 10:05 UTC (5h-spaced resets), and
+    a longest-only detector saw only the second. The first was the informative one — all three sessions
+    had a wakeup pending and resumed 1-8 min after reset, against 2h29m for the two that did not.
     """
     times = sorted(agg["activity_times"])
-    if len(times) < 2:
+    out = []
+    for a, b in zip(times, times[1:]):
+        secs = (b - a).total_seconds()
+        if secs >= min_s:
+            out.append((a, b, secs))
+    return out
+
+
+def longest_silence(agg, min_s=1800):
+    """The single longest silence, or None. Retained for callers wanting one representative stall."""
+    sils = all_silences(agg, min_s)
+    return max(sils, key=lambda s: s[2]) if sils else None
+
+
+def reset_named_at(agg, when, grace_s=900):
+    """The wall-clock reset the harness NAMED in the limit message nearest `when`, as a datetime.
+
+    The limit text carries its own reset ("resets 5:10am (America/Chicago)"), which is the only way to
+    separate the two costs a stall bundles together: the allowance's own duration, which nothing can
+    avoid, and the RECOVERY LAG after it frees up, which is the avoidable part and the whole finding.
+    Without it a 2h29m stall against a 4-minute wait reads the same as one against a 2h25m wait.
+
+    Resolved against the limit hit's own date, taking the next occurrence of that clock time — resets
+    are always ahead of the refusal that reports them, and the harness states no date.
+    """
+    hits = [(t, tz, hh, mm) for (t, tz, hh, mm) in agg.get("limit_resets", [])
+            if abs((t - when).total_seconds()) <= grace_s]
+    if not hits:
         return None
-    best = max(((times[i + 1] - times[i]).total_seconds(), times[i], times[i + 1])
-               for i in range(len(times) - 1))
-    return (best[1], best[2], best[0]) if best[0] >= min_s else None
+    t, tzname, hh, mm = min(hits, key=lambda h: abs((h[0] - when).total_seconds()))
+    try:
+        from zoneinfo import ZoneInfo
+        local = t.astimezone(ZoneInfo(tzname)) if tzname else t
+    except Exception:
+        local = t
+    cand = local.replace(hour=hh, minute=mm, second=0, microsecond=0)
+    if cand <= local:
+        cand += timedelta(days=1)
+    return cand.astimezone(timezone.utc)
 
 
 def trailing_at(token_events, cache_events, at, window_h=5):
@@ -534,7 +591,10 @@ def quota_stalls(sessions, cluster_s=120, min_silence_s=1800):
     for s in sessions:
         if not s["agg"]["last"]:
             continue
-        sil = longest_silence(s["agg"], min_silence_s)
+        sils = all_silences(s["agg"], min_silence_s)
+        # Anchored stalls are found by the limit message, not by duration, so they need the unfiltered
+        # gap list — 60s keeps out the ordinary tick without imposing a duration judgement.
+        sils_any = all_silences(s["agg"], 60)
         # A silence that STARTS at a deliberate loop end is not a stall — an ended loop has no wakeup
         # pending, so going quiet is the contract, not a fault. Without this, such a session joins the
         # group on its resume time and its whole quiet stretch is billed as lost capacity. Measured on
@@ -543,12 +603,36 @@ def quota_stalls(sessions, cluster_s=120, min_silence_s=1800):
         # ScheduleWakeup(stop: true) — textbook wind-down — and its 9.3h of correct silence inflated the
         # group's lost total from 16.8 to 26.1 session-hours, making exemplary judgement look like a
         # 9.3h fault. The two genuinely-stalled siblings printed a harness limit message instead.
+        sil = max(sils, key=lambda x: x[2]) if sils else None
         if sil and not _hit_limit_by(s["agg"], sil[0]) and _ended_loop_by(s["agg"], sil[0]):
             sil = None
-        if sil:
-            marks.append((sil[0], s, {"kind": "recovered", "resumed": sil[1], "seconds": sil[2]}))
-        elif (not s["agg"]["terminal_tags"]
-              and (now - s["agg"]["last"]).total_seconds() >= min_silence_s):
+        # Limit-ANCHORED stalls, in addition to the longest-silence one above. A duration threshold is
+        # the wrong instrument for a cutoff whose allowance resets soon: on 2026-08-14 the 04:48 cutoff
+        # produced 27-30 min silences — under the 30-min floor, and shorter than the same sessions'
+        # ordinary delegate waits — so no duration rule could separate it from normal work. The limit
+        # message can: a session that printed one and then went quiet is stalled by definition, however
+        # briefly. Keeping that cutoff is what makes the expensive one interpretable, since it is the
+        # control showing recovery worked when a wakeup happened to be pending.
+        # Match the gap that STARTS at the refusal, never the one that ends there. An inclusive match on
+        # both ends picks up the preceding gap too, which credits the stall to whatever the session was
+        # last doing before it was refused — off by one whole gap, and in a sparse transcript that can be
+        # hours. The grace absorbs the couple of rows a session emits after the message (a second
+        # refusal, a turn_duration) before it truly goes dark.
+        anchored = []
+        for hit_t in s["agg"]["limit_hit_times"]:
+            nxt = next((x for x in sils_any
+                        if 0 <= (x[0] - hit_t).total_seconds() <= 300), None)
+            if nxt and (sil is None or nxt[0] != sil[0]) and nxt not in anchored:
+                anchored.append(nxt)
+        for x in ([sil] if sil else []) + anchored:
+            # The reset the harness named is what the wait SHOULD have been; anything past it is
+            # recovery lag, and recovery lag is the only part a fix can reach.
+            reset = reset_named_at(s["agg"], x[0])
+            lag = (x[1] - reset).total_seconds() if reset else None
+            marks.append((x[0], s, {"kind": "recovered", "resumed": x[1], "seconds": x[2],
+                                    "reset_at": reset, "recovery_lag_s": lag}))
+        if not sil and not anchored and (not s["agg"]["terminal_tags"]
+                                         and (now - s["agg"]["last"]).total_seconds() >= min_silence_s):
             marks.append((s["agg"]["last"], s, {"kind": "unrecovered", "resumed": None, "seconds": None}))
     if len(marks) < 2:
         return []
@@ -574,7 +658,11 @@ def quota_stalls(sessions, cluster_s=120, min_silence_s=1800):
     groups = {}
     for i, m in enumerate(marks):
         groups.setdefault(find(i), []).append(m)
-    return sorted((sorted(g, key=lambda m: m[0]) for g in groups.values() if len(g) >= 2),
+    # Count DISTINCT SESSIONS, not marks. Now that every qualifying silence is marked, one session can
+    # contribute several to a cluster; the fingerprint this function exists to find is "sessions stopped
+    # TOGETHER", which one session's own two gaps do not evidence.
+    return sorted((sorted(g, key=lambda m: m[0]) for g in groups.values()
+                   if len({id(m[1]) for m in g}) >= 2),
                   key=lambda g: g[0][0])
 
 
@@ -1194,12 +1282,26 @@ def main():
             if kinds:
                 lever = {"weekly": "**duration / total session-hours**, NOT concurrency",
                          "5-hour": "**concurrency (`n`)**",
-                         "session": "neither — it is per-session and says nothing about fleet size",
+                         "session": "**concurrency (`n`)** — despite the name. Measured 2026-08-14: "
+                                    "`session` cutoffs reset on exact 5h boundaries and refuse every "
+                                    "session then making a request, so it is the account-level 5h "
+                                    "window; route it as `5-hour`",
                          "usage": "unknown — read the message text"}
                 print(f"  Limit named by the harness: **{'/'.join(kinds)}**. "
                       + " ".join(f"The lever for `{k}` is {lever.get(k, 'unknown')}." for k in kinds)
-                      + " Do not infer this from the stall's shape — the three limits produce the same "
+                      + " Do not infer this from the stall's shape — the limits produce the same "
                         "synchronized-silence fingerprint and carry different levers.")
+            lags = [m[2].get("recovery_lag_s") for m in g if m[2].get("recovery_lag_s") is not None]
+            if lags:
+                worst = max(lags) / 3600
+                avoidable = sum(l for l in lags if l > 0) / 3600
+                print(f"  **Recovery lag: {avoidable:.2f} session-hours idle AFTER the allowance had "
+                      f"already reset** (worst single session {worst:.2f}h). The allowance's own "
+                      f"duration is unavoidable; this is not. A session cut off mid-iteration has no "
+                      f"ScheduleWakeup pending (it is turn-ending by contract) and fires no Stop hook "
+                      f"(an API-killed turn fires none), so nothing wakes it — check "
+                      f"`~/.claude/logs/auto-stall-watch.log` for whether the watcher flagged it, and "
+                      f"whether anyone acted.")
             else:
                 print("  No harness limit message found in these transcripts, so the cause is NOT "
                       "established as an allowance cutoff — check for a machine sleep, a daemon "

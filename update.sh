@@ -395,14 +395,19 @@ install_launchd_agent() {
 
 echo ""
 echo "Installing launchd agents..."
-# Both are local launchd mechanisms; skip on non-macOS. The drainer lands deferred /finish merges; the
-# reaper reclaims completed/abandoned /start wt worktrees (the PR-merged-later and Canceled-in-Linear
-# cases finish-merge.sh's own cleanup can't reach).
+# All three are local launchd mechanisms; skip on non-macOS. The drainer lands deferred /finish merges;
+# the reaper reclaims completed/abandoned /start wt worktrees (the PR-merged-later and Canceled-in-Linear
+# cases finish-merge.sh's own cleanup can't reach); the stall watcher alerts on a /loop /auto session
+# frozen mid-iteration by an API quota cutoff, which no Stop hook can see (a turn killed by an API error
+# fires none) and no wakeup can recover (ScheduleWakeup is turn-ending, so an iteration in flight has
+# none pending).
 if [[ "$OSTYPE" == "darwin"* ]]; then
   echo "Installing merge-queue drainer (launchd)..."
   install_launchd_agent "com.alienfast.merge-queue-drain" "drains the merge queue every 15 min."
   echo "Installing worktree reaper (launchd)..."
   install_launchd_agent "com.alienfast.worktree-reap" "reaps completed/abandoned worktrees hourly."
+  echo "Installing /auto stall watcher (launchd)..."
+  install_launchd_agent "com.alienfast.auto-stall-watch" "checks for stalled /auto sessions every 10 min."
 else
   echo "  skipped (macOS/launchd-only; this is $OSTYPE)."
 fi

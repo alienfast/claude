@@ -87,27 +87,60 @@ close here.
    `kind` is `recovered` looks *entirely* clean in every other column — the sessions woke hours later
    and drained with proper terminal tags — so this field is the only thing that will tell you.
 
-   **Read `limit_kind` and route the whole retro on it; never infer the limit from the stall's shape.**
-   The three limits produce an identical synchronized-silence fingerprint and carry opposite levers:
-   `weekly` caps total session-hours (lever: **account rotation** since 2026-08-10 — the keeper runs
-   multiple accounts, so a weekly cutoff says nothing about fleet shape), `5-hour` caps concurrency
-   (lever: **n**), and `session` is per-session and bounds neither. The field is read from the harness
-   message (`You have hit your <kind> limit`), so it is evidence rather than deduction. Both basefund
-   fleet cutoffs to date were `weekly`, which means `n` was never the thing to shrink. When the field
-   is absent no limit message was found at all — treat the cause as unestablished (machine sleep,
-   daemon restart, network) rather than assuming quota.
+   **Expect several groups on a long run, and read `recovery_lag_s` rather than the lost-hours total.**
+   An allowance that refills on a fixed period cuts a fleet off once per period, so a 12h run at the
+   sustainable concurrency produces two or three groups. Lost hours bundle two costs: the allowance's
+   own duration, which nothing can avoid, and the lag after it reset, which is the entire actionable
+   finding. Report them separately. The cheap groups are not noise — they are the **control**: on
+   2026-08-14 the 04:48 cutoff cost 0.25 avoidable session-hours and the 10:05 one cost 4.96, same
+   fleet and same limit, and the only difference was whether a `ScheduleWakeup` happened to be pending
+   when the turn died. That comparison is what identifies the mechanism; a report showing only the
+   expensive stall reads as "quota is the problem" and points at `n`.
+
+   **Read `limit_kind`, but treat it as the harness's WORDING, not as the meter's scope — the two
+   disagree.** The field is read from the harness message (`You've hit your <kind> limit · resets
+   <time>`), so it is evidence about what was said, and the limits produce an identical
+   synchronized-silence fingerprint. `weekly` caps total session-hours (lever: **account rotation**
+   since 2026-08-10 — the keeper runs multiple accounts, so a weekly cutoff says nothing about fleet
+   shape). When the field is absent no limit message was found at all — treat the cause as
+   unestablished (machine sleep, daemon restart, network) rather than assuming quota.
+
+   **`session` does NOT mean per-session — measured 2026-08-14, and reading it that way sends the
+   whole retro to "the lever is neither".** Two cutoffs that run reported `session`, and both were the
+   account-level 5-hour window: the stated resets fell on exact 5h boundaries (12:10am → 5:10am →
+   10:10am CDT), and every session that was *actively making a request* hit within 9s at the first
+   cutoff and 32s at the second. A genuinely per-session cap cannot synchronize independently-launched
+   sessions to the second. The one session that missed both was idle at those instants and so made no
+   request to be refused — **absence from a cutoff is evidence about activity, not about scope**, so
+   check each session's entry count in the window before concluding a limit spared it. Route a
+   `session` cutoff exactly as a `5-hour` one: the levers are **n** and stall recovery.
+
+   Derive the ceiling per cutoff rather than trusting one number: sum output tokens in the 5h window
+   ending at each cutoff, deduped by `requestId` across every transcript on the machine (the meter is
+   account-wide, so fleet-scoped sums undercount, and subagent transcripts double-count without the
+   dedup). The 2026-08-14 run measured **1,394,893** and **1,213,190** — two independent ceilings for
+   one `limit_kind`, ~13% apart.
 
    **Cross-run token comparisons are valid only within one `limit_kind`.** The 2026-08-08 retro nearly
    shipped a confident, wrong conclusion here: trailing-5h total-billable at three cutoffs agreed to
    **0.08%** while output diverged **23%**, which reads unmistakably as having identified the meter —
    and two of those cutoffs were `weekly` while the third was a `session` limit. Unrelated ceilings can
-   coincide closely; a 5h window is also simply the wrong instrument for a weekly cutoff.
+   coincide closely; a 5h window is also simply the wrong instrument for a weekly cutoff. (That third
+   one now reads as a 5h cutoff under the correction above, which does not rescue the comparison — a
+   `weekly` and a 5h ceiling agreeing to 0.08% is still coincidence.)
 4. **When a stall group exists, `peak_5h_output_tokens` is a CEILING, not a floor** — the run was cut
    off at that volume, so it bounds the limit from above where every un-throttled observation bounds
    it from below. Say plainly which kind of observation the run produced. It is a ceiling on the limit
-   named in `limit_kind` only — and a **`5-hour`** cutoff at n≤3 is the one observation that re-opens
-   the settled n=3 concurrency cap (`/auto-prep` Step 5); a weekly cutoff leaves the 5h burst ceiling
-   still unobserved.
+   named in `limit_kind` only; a weekly cutoff leaves the 5h burst ceiling still unobserved.
+
+   **A `session`/`5-hour` cutoff at n≤3 re-opens the settled n=3 concurrency cap (`/auto-prep` Step
+   5) — and the 2026-08-14 answer was to KEEP n=3 and fix recovery instead.** Divide the measured
+   ceiling by per-session burn in the same window: that run's three sessions burned 425–510k each
+   against a 1.21–1.39M ceiling, putting sustainable n at ≈2.85. n=3 therefore runs at ~102% of the
+   refill rate and will hit the ceiling roughly **once per 5h window by construction** — which is the
+   right trade at ~5–22min of reset wait per stall, and ruinous only when recovery is not automatic
+   (it cost 4.85 session-hours and ~2 issues that run). Shrinking to n=2 forfeits ~30% of the
+   allowance to fix a stall that costs minutes. Check the recovery mechanism before touching n.
 
 **A session that wound down deliberately is not a stalled one, however long it then sits quiet.** The
 detector already excludes a silence beginning at a `ScheduleWakeup(stop: true)` with no limit message,
@@ -128,6 +161,7 @@ The script finds *shapes*; it does not explain them. Each flag is a lead:
 | Flag | What it usually means | Where to look |
 |---|---|---|
 | never armed a ScheduleWakeup | silent loop death — the run stopped with no `NO-CANDIDATES`/`AUTO-HALTED` | should now be caught by `hooks/auto-heartbeat.sh`; if it recurs, that hook failed |
+| a stall far outlasting its own stated reset | the cutoff killed the turn **mid-iteration**, before any wakeup was armed — so nothing was pending to wake it and the session is dead until a human prompts it. **No hook can catch this**: a turn killed by an API error fires no Stop hook at all (verified — no `stop_hook_summary` follows the limit message), so `auto-heartbeat.sh` is structurally unable to see it | compare each stalled session's resume against the reset named in its limit message. A session with a wakeup pending resumes 1–8 min after reset; one without does not resume at all. On 2026-08-14 that split 1-recovered / 2-dead within one cutoff — 4.85 avoidable session-hours. The mitigation is `scripts/auto-stall-watch.sh` (launchd agent `com.alienfast.auto-stall-watch`, installed by `update.sh`) — detection only, since a live background agent accepts no scripted prompt, so recovery is the operator running `claude attach <id>`. If a stall outlived it silently, read `~/.claude/logs/auto-stall-watch.log` for whether the watcher flagged it and whether anyone acted |
 | shipped without recording it | Step 4 never ran; the run's own tally undercounts | compare against `git log` and Linear state |
 | classifier blocks | a permission-shaped stall; check whether the agent rerouted or silently dropped the step | the subagent transcript — read what it did *next* |
 | contamination halts | the graduated contamination response (`/start` Step 8 item 1) hard-stopped an issue — each is either a real mis-bound delegate or a false positive the graduation failed to absorb | adjudicate every halt **true/false positive** — flagged paths vs the delegation's scope and footprint, via the issue's contamination comment and the transcript — and read the benign-continue note comments on issues alongside; the false-positive rate is the number that decides whether further relaxation is justified |

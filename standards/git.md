@@ -2,32 +2,16 @@
 
 ## Commit Messages and PR Descriptions
 
-### CI Build Prevention
+### `[skip ci]` / `[ci skip]`
 
-**CRITICAL**: Never include the phrase "skip ci" (or variations like `[skip ci]`, `[ci skip]`) in:
+CI providers skip a build when the **HEAD commit of a push** carries the token — CircleCI matches it anywhere in that commit's subject or body; earlier commits in the same push trigger nothing. Two consequences:
 
-- Commit messages
-- PR titles
-- PR descriptions
-- Any text that could be merged into the main branch
+- **Allowed and useful on working branches**: a docs-only or config-only commit that tops a branch push skips a CI run that would verify nothing.
+- **Never let it head a push to the default branch.** Merge commits are the convention (squash+merge is retired), so a branch commit's message never becomes main's HEAD and branch-commit `[skip ci]` cannot suppress main CI. The residual hazards are committing directly to main and fast-forwarding a branch onto main — both put the token-bearing commit at main's HEAD and silently skip its CI.
 
-**Why**: When PRs are merged, commit messages become part of the main branch history. If any commit message contains "skip ci", it will prevent CI builds from running on the main branch.
+Because the token matches in the body too, write it literally only when you mean it — prose like "originally committed with [skip ci]" arms the skip.
 
-### Safe Alternatives
-
-Instead of mentioning CI skipping behavior, use these alternatives:
-
-❌ **Don't write:**
-
-- "Fixed linting issues (skip ci was used during development)"
-- "Updated docs, originally committed with [skip ci]"
-- "Minor changes that previously had ci skip"
-
-✅ **Write instead:**
-
-- "Fixed linting issues"
-- "Updated documentation"
-- "Minor formatting changes"
+(The previous absolute ban here dated from the squash+merge era, when PR titles and descriptions became the main-branch commit message. Squash+merge is retired, so that path is gone.)
 
 ### Commit Message Guidelines
 
@@ -35,13 +19,11 @@ Instead of mentioning CI skipping behavior, use these alternatives:
 - Keep first line under 50 characters
 - Separate subject from body with blank line
 - Focus on what and why, not how
-- Avoid referencing CI behavior in commit messages
 
 ### PR Guidelines
 
 - Summarize the overall change, not individual commit details
 - Focus on the business value and technical impact
-- Avoid mentioning development workflow details like CI skipping
 - Use clear, descriptive titles that explain the change's purpose
 
 ## Branch Protection

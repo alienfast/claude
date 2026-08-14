@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  TEMPLATE for the /auto stall watcher (launchd, macOS only). The __HOME__ tokens are placeholders:
+  launchd requires absolute paths and does NOT expand ~ or $HOME, so this is NOT loaded as-is.
+
+  update.sh installs/refreshes it automatically: it renders __HOME__ -> $HOME into
+  ~/Library/LaunchAgents/com.alienfast.auto-stall-watch.plist and bootstraps it (idempotently).
+  To do it by hand:
+
+    sed "s|__HOME__|$HOME|g" ~/.claude/launchd/com.alienfast.auto-stall-watch.plist \
+      > ~/Library/LaunchAgents/com.alienfast.auto-stall-watch.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.alienfast.auto-stall-watch.plist
+
+  To remove:
+
+    launchctl bootout gui/$(id -u)/com.alienfast.auto-stall-watch
+    rm ~/Library/LaunchAgents/com.alienfast.auto-stall-watch.plist
+
+  CADENCE: 600s against the detector's 25-minute silence threshold, so a stall surfaces 25-35 minutes in.
+  A quota cutoff strands a session for hours, so latency here is the whole cost of the alert; the tick is
+  cheap (one `claude agents --json` plus a tail per /auto session) and notifications are de-duplicated per
+  stall episode by the cron wrapper, so a tighter cadence buys little and a looser one costs real hours.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.alienfast.auto-stall-watch</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__HOME__/.claude/scripts/auto-stall-watch-cron.sh</string>
+  </array>
+
+  <key>StartInterval</key>
+  <integer>600</integer>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/.claude/logs/auto-stall-watch.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/.claude/logs/auto-stall-watch.launchd.log</string>
+</dict>
+</plist>
