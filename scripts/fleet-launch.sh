@@ -17,9 +17,11 @@
 #               loops run until the certified backlog drains.
 #   -- ...      Everything after -- is passed to `claude --bg` verbatim. Defaults are
 #               added only for flags not present there: --model 'opus[1m]'
-#               --effort xhigh --permission-mode auto (skills/auto/SKILL.md's
-#               unattended-run prerequisites; auto — never acceptEdits — because a
-#               background session has nobody to answer a Bash permission prompt).
+#               --effort xhigh --autocompact 150000 --permission-mode auto
+#               (skills/auto/SKILL.md's unattended-run prerequisites; auto — never
+#               acceptEdits — because a background session has nobody to answer a
+#               Bash permission prompt; autocompact capped because a session that
+#               never compacts re-reads its whole accumulated context on every call).
 #
 #   stop        Wind down a running fleet: write an already-passed deadline and exit.
 #               Every session ends its loop at its next iteration boundary; in-flight
@@ -187,6 +189,11 @@ have_flag() {
 }
 have_flag --model "${claude_args[@]}" || claude_args+=(--model 'opus[1m]')
 have_flag --effort "${claude_args[@]}" || claude_args+=(--effort xhigh)
+# 150k, not the model default: on opus[1m] auto-compact's default threshold sits near the 1M
+# window, so a /loop /auto session accumulating across iterations never compacts — measured
+# 2026-08-13/14, 91% of fleet billable volume was context re-read at >200k tokens, and cache
+# reads scale linearly with context size. /auto's real state lives in tmp/ + Linear, not context.
+have_flag --autocompact "${claude_args[@]}" || claude_args+=(--autocompact 150000)
 if ! have_flag --permission-mode "${claude_args[@]}" && ! have_flag --dangerously-skip-permissions "${claude_args[@]}"; then
   # auto, not acceptEdits: acceptEdits only auto-accepts FILE EDITS, so the first gated
   # Bash command (e.g. /start wt's worktree validation) prompts into a background session
