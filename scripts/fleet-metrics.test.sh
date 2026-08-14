@@ -219,9 +219,26 @@ ck_has "off-schema ? render" "| TT-4 | \`-\` | passed-after-fixes | 2 | ? |" "$M
 ck_has "origin coverage"     "origin-tagged 4/6" "$MD"
 ck_has "ledgerless flag"     "\`def45678\` ran without a surviving ledger" "$MD"
 ck_has "ledgerless names it" "no \`tmp/auto-state-def45678.json\`" "$MD"
-ck_has "ledgerless rec dash" "| \`def45678\`  ⚠ | 0.5h | -/1 | -/0 |" "$MD"
+ck_has "ledgerless rec dash" "| \`def45678\`  ⚠ | 0.5h | 0% | -/1 | -/0 |" "$MD"
 # "Step 4 never ran" is the wrong diagnosis for a deleted ledger — Step 4 did run. Not double-flagged.
 ck_lacks "no double flag"    "\`def45678\` shipped without recording it" "$MD"
+
+# context distribution: per-call prompt tokens (input + cache write + cache read) bucketed by size,
+# message-id-deduped like every other usage field — msg_A counts once (102,010 -> 50_150k); the
+# small calls (msg_B 10, msg_C 10, subagent msg_S 5) pool in lt50k.
+ck "ctx buckets"        "{'lt50k': 25, '50_150k': 102010}" "$(q "d['sessions'][0]['context_volume_tokens']")"
+ck "ctx ge200k share"   "0.0"      "$(q "d['sessions'][0]['ctx_share_ge200k']")"
+ck "fleet ctx ge150k"   "0.0"      "$(q "d['context_distribution']['share_ge150k']")"
+ck_has "ctx column"          "| run | span | ctx>=200k |" "$MD"
+ck_has "ctx totals line"     "**Context distribution**" "$MD"
+
+# provenance without a Linear export: every ship classes unknown, and the md names the files to write.
+ck "prov all unknown"   "{'unknown': 3}" "$(q "d['shipped_provenance']['counts']")"
+ck_has "prov pointer"        "no Linear export found" "$MD"
+
+# history: --all sweeps are never recorded (an all-time pool is not a fleet).
+ck "no history on --all" "0"       "$(q "len(d['history'])")"
+ck_has "trend not recorded"  "not recorded for --all sweeps" "$MD"
 
 # ---- total-loss fixture: every ledger GC'd, transcripts intact ----
 # The worst case of the 2026-08-04 fault, taken to its limit. Before the discovery pass this exited
@@ -673,6 +690,71 @@ ck_lacks "stale row absent from table" "| \`stale0001\`" "$MD10"
 # An --all run has no cutoff and must keep the stale session — the gate is the window's, not global.
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK10" --all --json > "$WORK/out10b.json" 2>/dev/null
 ck "--all keeps both" "2" "$(python3 -c "import json; print(len(json.load(open('$WORK/out10b.json'))['sessions']))")"
+
+# ---- trend + provenance fixture: history ledger, ctx buckets at scale, Linear join ----
+# The 2026-08-14 finding this schema extension exists for: cost-per-issue climbed $90 -> $161 across
+# five fleets whose reports nothing diffed, with 91% of billable volume at >200k context and a
+# growing share of ships being issues the pipeline filed for itself. Three assertions pin the three
+# gauges: the history row (recorded, deduped by session set, appended per new set), the >=200k
+# context share, and the shipped-issue provenance classes.
+CK11="$WORK/checkout11"
+mkdir -p "$CK11/tmp"
+git -C "$CK11" init -q 2>/dev/null
+git -C "$CK11" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "TT-70: land it"
+M11="$(git -C "$CK11" rev-parse --show-toplevel | tr / -)"
+mkdir -p "$WORK/projects/$M11"
+
+cat > "$CK11/tmp/auto-state-ee555555.json" <<'EOF'
+{"status": "drained", "reason": "deadline", "shipped": ["TT-70"], "canceled": [], "skipped": [], "failed": []}
+EOF
+# ctx per call: 450,010 (ge400k) + 250,010 (200_400k) + 10 (lt50k) -> ge200k share ~1.0.
+cat > "$WORK/projects/$M11/ee555555-0000.jsonl" <<EOF
+{"type":"user","timestamp":"$(ts_ago 7200)","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"$(ts_ago 7000)","message":{"role":"assistant","id":"msg_P","model":"claude-opus-5","usage":{"input_tokens":10,"cache_read_input_tokens":450000,"output_tokens":100},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-70 done"}]}}
+{"type":"assistant","timestamp":"$(ts_ago 6900)","message":{"role":"assistant","id":"msg_Q","model":"claude-opus-5","usage":{"input_tokens":10,"cache_read_input_tokens":250000,"output_tokens":100},"content":[{"type":"text","text":"working"}]}}
+{"type":"assistant","timestamp":"$(ts_ago 6800)","message":{"role":"assistant","id":"msg_R","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"AUTO-HALTED: deadline"}]}}
+EOF
+# Linear export for the provenance join: TT-70 created 3 days before the fleet started, by the
+# review pipeline's own filing — the week_before class, fresh share 1.0.
+cat > "$CK11/tmp/fleet-shipped-issues.json" <<EOF
+{"data":{"issues":{"nodes":[{"identifier":"TT-70","createdAt":"$(ts_ago 259200)","creator":{"name":"quality-review-bot"}}]}}}
+EOF
+
+J11="$WORK/out11.json"
+MD11="$WORK/out11.md"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK11" --hours 24 --json > "$J11" 2>/dev/null
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK11" --hours 24 > "$MD11" 2>&1
+q11() { python3 -c "import json,sys; d=json.load(open('$J11')); print($1)"; }
+ck "ctx ge400k bucket"     "450010" "$(q11 "d['sessions'][0]['context_volume_tokens']['ge400k']")"
+ck "ctx 200_400k bucket"   "250010" "$(q11 "d['sessions'][0]['context_volume_tokens']['200_400k']")"
+ck "fleet ge200k share"    "1.0"    "$(q11 "d['context_distribution']['share_ge200k']")"
+ck "prov class"            "week_before" "$(q11 "d['shipped_provenance']['issues']['TT-70']['class']")"
+ck "prov creator"          "quality-review-bot" "$(q11 "d['shipped_provenance']['issues']['TT-70']['creator']")"
+ck "prov fresh share"      "1.0"    "$(q11 "d['shipped_provenance']['fresh_shipped_share']")"
+ck_has "md ctx cell 100%"       "| 100% |" "$MD11"
+ck_has "md prov week-before"    "1 in the 7 days before launch" "$MD11"
+ck_has "md prov fresh share"    "Fresh share **100%**" "$MD11"
+ck_has "md prov creator"        "quality-review-bot (1)" "$MD11"
+ck_has "md trend section"       "## Cross-run trend" "$MD11"
+ck_has "md trend current mark"  " ←" "$MD11"
+# History: the json + md runs above measured the SAME session set -> one row, not two (dedupe).
+ck "history dedupes rerun"  "1" "$(wc -l < "$CK11/tmp/fleet-metrics-history.jsonl" | tr -d ' ')"
+ck "history in json"        "1" "$(q11 "len(d['history'])")"
+# (30 input x $5 + 700,000 cache-read x $0.50 + 300 output x $25) / 1e6 = $0.36, over 1 ship.
+ck "history cost/ship"      "0.36" "$(q11 "d['history'][0]['cost_per_shipped_usd']")"
+ck "history ge200k share"   "1.0"  "$(q11 "d['history'][0]['ctx_share_ge200k']")"
+
+# A second session joins the fleet: the set changes, so the next run APPENDS a row (two fleets, two
+# rows) instead of replacing the first — the trend is per-fleet, not last-writer-wins.
+cat > "$CK11/tmp/auto-state-ff666666.json" <<'EOF'
+{"status": "drained", "reason": "deadline", "shipped": [], "canceled": [], "skipped": [], "failed": []}
+EOF
+cat > "$WORK/projects/$M11/ff666666-0000.jsonl" <<EOF
+{"type":"user","timestamp":"$(ts_ago 3600)","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"$(ts_ago 3000)","message":{"role":"assistant","id":"msg_T","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":50},"content":[{"type":"text","text":"AUTO-HALTED: deadline"}]}}
+EOF
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK11" --hours 24 > /dev/null 2>&1
+ck "history appends new set" "2" "$(wc -l < "$CK11/tmp/fleet-metrics-history.jsonl" | tr -d ' ')"
 
 echo
 echo "$PASS passed / $FAIL failed"

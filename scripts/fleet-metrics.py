@@ -18,6 +18,21 @@ WHAT IT READS
                                             invisible to the parent except as a slow Agent call
   .../subagents/agent-<id>.meta.json        the dispatch's agentType + description, for exact token
                                             and lane (implementation vs fix-batch) attribution
+  <checkout>/tmp/fleet-shipped-issues.json  optional Linear export of the SHIPPED issues (identifier,
+                                            createdAt, creator) for the provenance join; see
+                                            --linear-issues
+  <checkout>/tmp/fleet-linear-window.json   retro Step 3's created-in-window census — provenance
+                                            fallback: a shipped issue found HERE was filed by the
+                                            run it shipped in
+
+WHAT IT WRITES
+  <checkout>/tmp/fleet-metrics-history.jsonl  one headline row per measured fleet, keyed by session
+                                            set (re-runs replace, never duplicate; --all sweeps are
+                                            not recorded) — the cross-run trend the report's tail
+                                            renders. THIS is where the fixed schema pays off: the
+                                            2026-08-14 cost-per-issue regression ($90 → $161 over
+                                            five fleets) sat fully measured in per-run reports that
+                                            nothing ever diffed.
 
 Sessions are discovered from state files, then matched to transcripts by runKey (a state file's key
 is the leading segment of its session UUID). A session whose state file says nothing shipped may
@@ -33,6 +48,8 @@ Usage:
   --since D   consider state files touched on/after date D
   --all       every state file present
   --json      machine-readable; default is a markdown report
+  --linear-issues P [P ...]   Linear export(s) for the shipped-issue provenance join; default
+                              tmp/fleet-shipped-issues.json + tmp/fleet-linear-window.json
 """
 import argparse
 import json
@@ -267,6 +284,20 @@ def scan_transcript(path, agg, agent_type="main", description=""):
                 u["cache_write"] += usage.get("cache_creation_input_tokens") or 0
                 u["cache_read"] += usage.get("cache_read_input_tokens") or 0
                 u["output"] += usage["output_tokens"]
+                # Prompt context per call (input + cache write + cache read), bucketed by size — the
+                # autocompact-tuning gauge. Cache reads scale linearly with context, so the share of
+                # volume in the top buckets is what fleet-launch's --autocompact default moves; it is
+                # also the usage screen's "N% of your usage was at >150k context" number, measured
+                # from our own transcripts instead of read off a UI.
+                ctx = ((usage.get("input_tokens") or 0)
+                       + (usage.get("cache_creation_input_tokens") or 0)
+                       + (usage.get("cache_read_input_tokens") or 0))
+                if ctx:
+                    agg["ctx_volume"][
+                        "ge400k" if ctx >= 400_000 else
+                        "200_400k" if ctx >= 200_000 else
+                        "150_200k" if ctx >= 150_000 else
+                        "50_150k" if ctx >= 50_000 else "lt50k"] += ctx
                 if agent_type != "main":
                     d_out += usage["output_tokens"]
                     if d_model is None:
@@ -409,7 +440,7 @@ def new_agg():
         # that volume in cache reads. Recording both in the same window is what lets two runs settle
         # which quantity the limit actually tracks — reasoning about it settles nothing.
         "cache_events": [],
-        "usage": {}, "visible_chars": Counter(),
+        "usage": {}, "visible_chars": Counter(), "ctx_volume": Counter(),
         # One record per subagent transcript (agentType, issue, start, model, output) — the
         # per-dispatch dimension the (agent, model) Counter throws away. The developer-lanes split
         # needs it: WHICH dispatches were implementation is invisible in aggregate.
@@ -746,6 +777,81 @@ def tier_short(model):
     return model
 
 
+CTX_BUCKETS = ("lt50k", "50_150k", "150_200k", "200_400k", "ge400k")
+CTX_LABELS = {"lt50k": "<50k", "50_150k": "50-150k", "150_200k": "150-200k",
+              "200_400k": "200-400k", "ge400k": ">=400k"}
+
+
+def ctx_shares(vol):
+    """(share of prompt volume at >=150k context, at >=200k, total volume) for one ctx_volume Counter."""
+    total = sum(vol.values())
+    if not total:
+        return None, None, 0
+    ge150 = sum(vol[b] for b in ("150_200k", "200_400k", "ge400k"))
+    return ge150 / total, (vol["200_400k"] + vol["ge400k"]) / total, total
+
+
+def linear_issue_index(paths):
+    """({identifier: {created_at, creator}}, files actually read) from Linear issue exports.
+
+    Accepts a raw GraphQL response ({data:{issues:{nodes:[...]}}}) or a bare node list — the shapes
+    retro Step 3's queries produce. Earlier files win on conflicts, so the precise per-issue export
+    (fleet-shipped-issues.json) is passed ahead of the created-in-window census."""
+    idx, read = {}, []
+    for p in paths:
+        p = Path(p)
+        try:
+            data = json.loads(p.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        nodes = data if isinstance(data, list) else \
+            ((((data.get("data") or {}).get("issues") or {}).get("nodes"))
+             or data.get("nodes") or [])
+        if not isinstance(nodes, list):
+            continue
+        read.append(str(p))
+        for n in nodes:
+            if isinstance(n, dict) and n.get("identifier"):
+                creator = n.get("creator") or {}
+                idx.setdefault(n["identifier"], {
+                    "created_at": ts(n.get("createdAt")),
+                    "creator": creator.get("displayName") or creator.get("name"),
+                })
+    return idx, read
+
+
+def record_history(checkout, headline, record):
+    """Append `headline` to tmp/fleet-metrics-history.jsonl and return the full history.
+
+    The whole point of this script's fixed schema is that runs can be diffed — and until this ledger
+    existed the diff step was manual, so it never happened: the 2026-08-14 cost-per-issue regression
+    climbed monotonically across five fleets' saved reports with nothing comparing them. Rows are
+    keyed by the sorted session set, so re-running a retro over the same fleet (different flags,
+    --json vs markdown) replaces its row instead of duplicating it. `record=False` (the --all sweep:
+    an all-time pool is not a fleet, and one row of it would dwarf the trend) still returns the
+    stored history so the trend renders."""
+    path = checkout / "tmp" / "fleet-metrics-history.jsonl"
+    rows = []
+    try:
+        for line in path.read_text().splitlines():
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    except OSError:
+        pass
+    if record:
+        rows = [r for r in rows if r.get("session_set") != headline["session_set"]]
+        rows.append(headline)
+    rows.sort(key=lambda r: r.get("fleet_start") or "")
+    if record:
+        try:
+            path.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in rows))
+        except OSError as e:
+            print(f"WARN: could not write {path}: {e}", file=sys.stderr)
+    return rows
+
+
 def parse_verdicts(checkout, cutoff):
     """One row per quality-review verdict file in the window: the review-churn half of the retro.
     Counts are self-reported by the review pipeline — the audit record, not independent ground truth."""
@@ -813,6 +919,10 @@ def main():
     ap.add_argument("--since")
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--linear-issues", nargs="*", default=None,
+                    help="Linear issue export(s) — a GraphQL response or bare node list with "
+                         "identifier/createdAt/creator — joined against the shipped set for the "
+                         "provenance split")
     args = ap.parse_args()
 
     checkout = Path(args.checkout).resolve()
@@ -940,6 +1050,35 @@ def main():
             issue_run.setdefault(issue, s["run_key"])
     merged = git_merged(checkout, all_shipped)
 
+    # Shipped-issue provenance: how much of the throughput is work the pipeline minted for itself
+    # (review deferrals, /reflect filings) vs pre-existing backlog. Issues/hour looks identical
+    # either way — this join is what tells a draining backlog from a treadmill.
+    fleet_first = min((s["agg"]["first"] for s in sessions if s["agg"]["first"]), default=None)
+    linear_paths = [Path(p) for p in args.linear_issues] if args.linear_issues else \
+        [checkout / "tmp" / "fleet-shipped-issues.json", checkout / "tmp" / "fleet-linear-window.json"]
+    linear_idx, linear_read = linear_issue_index(linear_paths)
+    provenance, prov_counts, prov_creators = {}, Counter(), Counter()
+    for issue in sorted(all_shipped):
+        rec = linear_idx.get(issue)
+        created = rec["created_at"] if rec else None
+        if not created or not fleet_first:
+            klass = "unknown"
+        elif created >= fleet_first:
+            klass = "during_run"
+        elif fleet_first - created <= timedelta(days=7):
+            klass = "week_before"
+        else:
+            klass = "older"
+        provenance[issue] = {"class": klass,
+                             "created_at": created.strftime("%Y-%m-%dT%H:%M:%SZ") if created else None,
+                             "creator": (rec or {}).get("creator")}
+        prov_counts[klass] += 1
+        if rec and rec.get("creator"):
+            prov_creators[rec["creator"]] += 1
+    prov_known = len(all_shipped) - prov_counts["unknown"]
+    fresh_share = round((prov_counts["during_run"] + prov_counts["week_before"]) / prov_known, 3) \
+        if prov_known else None
+
     verdicts = parse_verdicts(checkout, cutoff)
     filed_total = sum(len(v["filed"]) for v in verdicts)
     # The ratio pairs this fleet's filings with this fleet's ships: verdicts for issues no session in
@@ -979,6 +1118,41 @@ def main():
     out_per_shipped = round(sum(fleet_tokens.values()) / len(all_shipped)) if all_shipped else None
     cost_per_shipped = round(fleet_cost / len(all_shipped), 2) if all_shipped else None
 
+    fleet_ctx = Counter()
+    for s in sessions:
+        fleet_ctx.update(s["agg"]["ctx_volume"])
+    ctx_ge150_share, ctx_ge200_share, ctx_total_vol = ctx_shares(fleet_ctx)
+
+    # The headline row this run contributes to the cross-run trend. Cost-per-issue decomposes as
+    # output-tokens-per-issue (work per issue: churn, or harder issues) x $-per-output-token (context
+    # weight per unit of work) — the two move independently, so both are carried.
+    total_out = sum(fleet_tokens.values())
+    cyc_all = [v["cycles"] for v in verdicts if v["cycles"] is not None]
+    resolved_all = sum(v["resolved"] for v in verdicts)
+    tagged_all = sum(sum(v["origin"].values()) for v in verdicts)
+    headline = {
+        "recorded_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "fleet_start": fleet_first.strftime("%Y-%m-%dT%H:%M:%SZ") if fleet_first else None,
+        "session_set": ",".join(sorted(s["run_key"] for s in sessions)),
+        "sessions": len(sessions),
+        "session_hours": None,  # filled below once session_hours exists
+        "shipped": len(all_shipped),
+        "est_cost_usd": round(fleet_cost, 2),
+        "cost_per_shipped_usd": cost_per_shipped,
+        "output_tokens_per_shipped": out_per_shipped,
+        "usd_per_mtok_output": round(fleet_cost / total_out * 1e6, 2) if total_out else None,
+        "avg_cycles": round(sum(cyc_all) / len(cyc_all), 2) if cyc_all else None,
+        "findings_per_review": round(resolved_all / len(verdicts), 1) if verdicts else None,
+        "crit_high_per_review": round(sum(v["sev"]["CRIT"] + v["sev"]["HIGH"] for v in verdicts)
+                                      / len(verdicts), 2) if verdicts else None,
+        "plan_origin_share": round(sum(v["origin"].get("plan", 0) for v in verdicts) / tagged_all, 3)
+                             if tagged_all else None,
+        "ctx_share_ge150k": round(ctx_ge150_share, 3) if ctx_ge150_share is not None else None,
+        "ctx_share_ge200k": round(ctx_ge200_share, 3) if ctx_ge200_share is not None else None,
+        "filed_per_shipped": filed_per_shipped,
+        "fresh_shipped_share": fresh_share,
+    }
+
     # Burn against the moving windows the account actually meters. /auto-prep sizes a fleet from
     # these: the 5h peak caps CONCURRENCY (n x 5 x rate), the weekly caps total session-hours.
     all_events = [e for s in sessions for e in s["agg"]["token_events"]]
@@ -986,6 +1160,8 @@ def main():
     peak_wk, peak_wk_at = rolling_peak(all_events, 168)
     session_hours = sum(((s["agg"]["last"] - s["agg"]["first"]).total_seconds() / 3600)
                         for s in sessions if s["agg"]["first"] and s["agg"]["last"])
+    headline["session_hours"] = round(session_hours, 1)
+    history = record_history(checkout, headline, record=not args.all)
     # A rate averaged over EVERY session in the window is the wrong number to size a fleet with: it
     # pools dense fleet sessions with idle and interactive ones and lands roughly half the truth
     # (measured 55.9k vs 84.9k on the same BF data). Scope it to the peak window instead — that is
@@ -1045,6 +1221,10 @@ def main():
                 "subagent_transcripts": s["agg"]["subagents"],
                 "output_tokens": {f"{t}/{m}": n for (t, m), n in s["agg"]["tokens"].most_common()},
                 "usage": {f"{t}/{m}": dict(u) for (t, m), u in s["agg"]["usage"].items()},
+                "context_volume_tokens": {b: s["agg"]["ctx_volume"][b] for b in CTX_BUCKETS
+                                          if s["agg"]["ctx_volume"][b]},
+                "ctx_share_ge200k": (lambda sh: round(sh[1], 3) if sh[1] is not None else None)(
+                    ctx_shares(s["agg"]["ctx_volume"])),
                 "est_cost_usd": round(est_cost(s["agg"]["usage"])[0], 4),
                 "main_thinking_share_est": thinking_share([s["agg"]]),
                 "long_gaps": [{"minutes": round(g[0] / 60, 1), "tool": g[1], "what": g[2]}
@@ -1070,6 +1250,18 @@ def main():
             "unpriced_models": sorted(unpriced),
             "main_thinking_share_est": fleet_think,
             "per_shipped": {"output_tokens": out_per_shipped, "est_cost_usd": cost_per_shipped},
+            "context_distribution": {
+                "volume_tokens": {b: fleet_ctx[b] for b in CTX_BUCKETS if fleet_ctx[b]},
+                "share_ge150k": headline["ctx_share_ge150k"],
+                "share_ge200k": headline["ctx_share_ge200k"],
+            },
+            "shipped_provenance": {
+                "issues": provenance,
+                "counts": dict(prov_counts),
+                "fresh_shipped_share": fresh_share,
+                "sources_read": linear_read,
+            },
+            "history": history,
             "windows": {
                 "peak_5h_output_tokens": peak_5h,
                 "peak_5h_cache_read_tokens": peak_5h_cache_read,
@@ -1111,8 +1303,8 @@ def main():
               + ", ".join(f"`{e['run_key']}` (ended {e['ended']})" for e in excluded_stale) + "\n")
 
     print("## Per session\n")
-    print("| run | span | shipped (rec/obs) | canceled (rec/obs) | wakeups | dispatch bg/sync/ign | blind sleep | marker | cls | contam | dangling |")
-    print("|---|---|---|---|---|---|---|---|---|---|---|")
+    print("| run | span | ctx>=200k | shipped (rec/obs) | canceled (rec/obs) | wakeups | dispatch bg/sync/ign | blind sleep | marker | cls | contam | dangling |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|")
     tot = Counter()
     for s in sessions:
         a = s["agg"]
@@ -1124,7 +1316,9 @@ def main():
         blind_pct = f"{a['sleep_blind_s'] / 3600:.1f}h ({100 * a['sleep_blind_s'] / (span * 3600):.0f}%)" if span else "-"
         unrecorded = a["ship_tags"] - set(s["state"].get("shipped") or [])
         flag = "  ⚠" if (a["wakeups"] == 0 and a["loop_firings"]) or unrecorded or s["ledger_missing"] else ""
-        print(f"| `{s['run_key']}`{flag} | {span:.1f}h | {rec}/{obs} | {crec}/{cobs} | "
+        _, s_ge200, s_ctx_total = ctx_shares(a["ctx_volume"])
+        ctx_cell = f"{100 * s_ge200:.0f}%" if s_ctx_total else "-"
+        print(f"| `{s['run_key']}`{flag} | {span:.1f}h | {ctx_cell} | {rec}/{obs} | {crec}/{cobs} | "
               f"{a['wakeups']} ({a['wakeup_stops']} stop) | "
               f"{a['dispatch']['background']}/{a['dispatch']['sync']}/{a['dispatch']['ignored']} | {blind_pct} | "
               f"{a['sleep_marker_s'] / 3600:.1f}h | {len(a['classifier_blocks'])} | "
@@ -1144,6 +1338,16 @@ def main():
           f"{tot['marker'] / 3600:.1f}h · dispatch {tot['bg']} background / {tot['sync']} sync{ign_note} · "
           f"{tot['cls']} classifier blocks · {tot['contam']} contamination halt(s) · "
           f"{sum(fleet_tokens.values()):,} output tokens\n")
+    if ctx_total_vol:
+        buckets = " · ".join(f"{CTX_LABELS[b]} {100 * fleet_ctx[b] / ctx_total_vol:.0f}%"
+                             for b in CTX_BUCKETS if fleet_ctx[b])
+        print(f"**Context distribution** — {ctx_total_vol:,} billable prompt tokens, by context size "
+              f"at call time: {buckets} → **{100 * ctx_ge150_share:.0f}% at >=150k, "
+              f"{100 * ctx_ge200_share:.0f}% at >=200k**. The autocompact gauge: fleet-launch pins "
+              f"`--autocompact 150000` (since 2026-08-14), so the >=200k share should collapse on runs "
+              f"after that — if it stays high, compaction did not engage (check the dispatch flags); if "
+              f"it falls while the churn gauges (cycles, findings/review) climb, the threshold is too "
+              f"aggressive — raise it.\n")
 
     print("## Review churn\n")
     if verdicts:
@@ -1186,6 +1390,28 @@ def main():
                   f"on the lower tier HERE.\n")
     else:
         print("- no verdict files in the window\n")
+
+    print("## Shipped-issue provenance\n")
+    if not all_shipped:
+        print("- no shipped issues in the window\n")
+    elif not linear_read:
+        print(f"- no Linear export found ({', '.join(p.name for p in linear_paths)}) — provenance "
+              f"unknown for all {len(all_shipped)} shipped issue(s). Retro Step 3 writes "
+              f"`tmp/fleet-linear-window.json` (created-in-window census); for full coverage also "
+              f"write `tmp/fleet-shipped-issues.json` — the shipped set queried by identifier with "
+              f"`createdAt` and `creator {{ name displayName }}`.\n")
+    else:
+        creators = ", ".join(f"{name} ({n})" for name, n in prov_creators.most_common(4))
+        fresh = (f"Fresh share **{100 * fresh_share:.0f}%** of the {prov_known} known — the treadmill "
+                 f"gauge: work the pipeline minted for itself vs pre-existing backlog. "
+                 if fresh_share is not None else "")
+        by_creator = (f"Top creators: {creators}. " if prov_creators else
+                      "No creator field in the export — include `creator { name displayName }` in the "
+                      "query for the by-creator split. ")
+        print(f"Of {len(all_shipped)} shipped: **{prov_counts['during_run']} created during this run**, "
+              f"{prov_counts['week_before']} in the 7 days before launch, {prov_counts['older']} older, "
+              f"{prov_counts['unknown']} unknown (absent from the export). {fresh}{by_creator}"
+              f"Sources: {', '.join(Path(p).name for p in linear_read)}.\n")
 
     print("## Output tokens by agent type\n")
     if fleet_tokens:
@@ -1314,6 +1540,40 @@ def main():
             else:
                 print("  None emitted a terminal tag, so they never recovered. Check those worktrees "
                       "for unfinished work before reaping anything.\n")
+
+    print("## Cross-run trend\n")
+    if args.all:
+        print("- not recorded for --all sweeps (an all-time pool is not a fleet); each windowed run "
+              "adds one row to `tmp/fleet-metrics-history.jsonl`. Stored history:\n")
+    if history:
+        def cell(v, fmt="{}"):
+            return fmt.format(v) if v is not None else "-"
+
+        def pct(v):
+            return f"{round(100 * v)}%" if v is not None else "-"
+        print("| fleet start | n | hours | shipped | $/issue | ktok/issue | $/Mtok out | cycles | "
+              "find/rev | C+H/rev | plan% | ctx>=200k% | filed/ship | fresh% |")
+        print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+        for r in history[-6:]:
+            mark = " ←" if r.get("session_set") == headline["session_set"] and not args.all else ""
+            fs = (r.get("fleet_start") or "?")[:16].replace("T", " ")
+            ktok = round(r["output_tokens_per_shipped"] / 1000) if r.get("output_tokens_per_shipped") else None
+            print(f"| {fs}{mark} | {cell(r.get('sessions'))} | {cell(r.get('session_hours'))} | "
+                  f"{cell(r.get('shipped'))} | {cell(r.get('cost_per_shipped_usd'), '${}')} | "
+                  f"{cell(ktok)} | {cell(r.get('usd_per_mtok_output'), '${}')} | "
+                  f"{cell(r.get('avg_cycles'))} | {cell(r.get('findings_per_review'))} | "
+                  f"{cell(r.get('crit_high_per_review'))} | {pct(r.get('plan_origin_share'))} | "
+                  f"{pct(r.get('ctx_share_ge200k'))} | {cell(r.get('filed_per_shipped'))} | "
+                  f"{pct(r.get('fresh_shipped_share'))} |")
+        if len(history) > 6:
+            print(f"\n({len(history) - 6} earlier row(s) in the ledger, not shown)")
+        print("\nRead $/issue as its two factors: ktok/issue is work per shipped issue (churn or harder "
+              "issues — cycles, find/rev and plan% say which), $/Mtok out is billable context per unit "
+              "of work (ctx>=200k% names the driver — the autocompact lever). fresh% is the treadmill "
+              "gauge: the share of shipped issues created during or within 7 days before the run.\n")
+    elif not args.all:
+        print("- first recorded fleet — the trend accrues one row per windowed run in "
+              "`tmp/fleet-metrics-history.jsonl`\n")
 
     print("## Flags\n")
     flagged = False

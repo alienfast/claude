@@ -1,6 +1,6 @@
 ---
 name: fleet-retro
-description: Post-mortem on a finished fleet of parallel /loop /auto sessions — measures each session with scripts/fleet-metrics.py (blind-sleep burn, dispatch mode, heartbeat compliance, classifier blocks, state-vs-reality drift, review churn with findings origins and the implementing-tier join, token and estimated-dollar attribution by agent type and model plus the developer-lane split (implementation vs fix batch) — cache-aware, with main-loop thinking share and cost per shipped issue), reconciles the shipped ledger against git and Linear, audits the issues the run FILED for duplicates and stranded states, then reports ranked findings and applies the fixes you approve. The bookend to /auto-prep. Use when the user says 'fleet retro', 'review the fleet run', 'how did the fleet do', 'post-mortem the auto run', or invokes /fleet-retro.
+description: Post-mortem on a finished fleet of parallel /loop /auto sessions — measures each session with scripts/fleet-metrics.py (blind-sleep burn, dispatch mode, heartbeat compliance, classifier blocks, state-vs-reality drift, review churn with findings origins and the implementing-tier join, token and estimated-dollar attribution by agent type and model plus the developer-lane split (implementation vs fix batch) — cache-aware, with main-loop thinking share, cost per shipped issue, the context-size distribution (the autocompact gauge), shipped-issue provenance (the treadmill share), and a cross-run trend ledger diffing the last six fleets' headline gauges), reconciles the shipped ledger against git and Linear, audits the issues the run FILED for duplicates and stranded states, then reports ranked findings and applies the fixes you approve. The bookend to /auto-prep. Use when the user says 'fleet retro', 'review the fleet run', 'how did the fleet do', 'post-mortem the auto run', or invokes /fleet-retro.
 argument-hint: "[--since YYYY-MM-DD | --hours N] [checkout-path]"
 model: opus
 effort: xhigh
@@ -56,6 +56,24 @@ worktree dirs, **including `subagents/`**), and emits fixed per-session, review-
 token-attribution tables plus a Flags section. `--json` for machine use. Subagent transcripts matter
 disproportionately: a delegated reviewer that gets blocked or stalls is invisible to its parent, which
 sees only a slow `Agent` call.
+
+Three gauges ride the same run and the retro reads all three, not just the tables:
+
+- **Context distribution** — share of billable prompt volume by context size at call time. This is the
+  autocompact gauge: fleet-launch pins `--autocompact 150000` (2026-08-14; before that, `opus[1m]`
+  sessions never compacted and the 2026-08-13/14 fleets ran 91-94% of their volume at >=200k context).
+  Expect the >=200k share near zero on post-change runs; a high share means compaction didn't engage
+  (check the dispatch flags), and a falling share with RISING churn gauges means the threshold is too
+  aggressive — raise it rather than reverting.
+- **Shipped-issue provenance** — joins the shipped set against the Step 3 Linear exports; the fresh
+  share (created during or <=7 days before the run) is the treadmill gauge, read alongside R.
+- **Cross-run trend** — every windowed run appends its headline row to
+  `tmp/fleet-metrics-history.jsonl` (keyed by session set, so re-runs replace) and the report's tail
+  diffs the last six fleets. This is where drift lives: the $90 → $161 cost-per-issue climb across the
+  2026-08-05..14 fleets sat in individually-saved reports that nothing compared until it was found by
+  hand. Read $/issue through its two factors — ktok/issue (work per issue) x $/Mtok out (context
+  weight per unit of work) — before proposing levers, since they route differently (churn/specs vs
+  autocompact/model mix).
 
 The review-churn table reads `tmp/quality-review-verdict-*.md`: cycles, findings by severity, the
 SEVERITY/origin split (`plan`/`impl`/`spec`/`test`/`latent` — verdicts written before 2026-08-04
@@ -194,9 +212,21 @@ Independent of the transcripts, establish what the run really produced:
 - **Filed** — issues *created* during the window. This is the half a retro forgets.
 
 ```bash
-linear-cli api query 'query { issues(filter: { team: { key: { eq: "<KEY>" } }, createdAt: { gte: "<ISO>" } }, first: 100) { nodes { identifier title createdAt state { name } labels { nodes { name } } } } }' -o json \
+# One command, two consumers: the census listing below, and tmp/fleet-linear-window.json, which
+# fleet-metrics.py's shipped-issue provenance join reads. Keep `creator` in the field list — the
+# join's by-creator split needs it.
+linear-cli api query 'query { issues(filter: { team: { key: { eq: "<KEY>" } }, createdAt: { gte: "<ISO>" } }, first: 100) { nodes { identifier title createdAt creator { name displayName } state { name } labels { nodes { name } } } } }' -o json \
+  | tee tmp/fleet-linear-window.json \
   | jq -r '.data.issues.nodes | sort_by(.createdAt) | .[] | "\(.identifier) | \(.state.name) | [\(.labels.nodes|map(.name)|join(","))] | \(.title)"'
+
+# Provenance coverage for ships created BEFORE the window (the window census misses them by
+# construction): fetch the shipped set itself and save it where the script looks. <numbers> is the
+# numeric part of each shipped identifier, comma-separated.
+linear-cli api query 'query { issues(filter: { team: { key: { eq: "<KEY>" } }, number: { in: [<numbers>] } }, first: 100) { nodes { identifier createdAt creator { name displayName } } } }' -o json > tmp/fleet-shipped-issues.json
 ```
+
+Re-run `fleet-metrics.py` after writing these — its Shipped-issue provenance section then classifies
+every ship (during-run / week-before / older) instead of reporting them unknown.
 
 - **Net backlog delta** — drained vs. filed, stated as the reproduction ratio **R = issues filed /
   issues shipped** for the window (the script's filed-per-shipped rate covers only review-pipeline
