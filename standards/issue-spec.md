@@ -97,6 +97,7 @@ The checkboxes are load-bearing: `/start` Step 6 treats description checkboxes a
 - [ ] Sized for one focused session (<150k tokens of context); epic-sized work is broken into sub-issues — each certified individually — via `~/.claude/scripts/linear-create-child.sh`
 - [ ] No implementation planning: no technical approach, no file lists, no verification-command blocks
 - [ ] No success criterion asks for a decision ("decide X", "determine whether Y") — open product/design questions are resolved *before* certification, and the criterion prescribes the chosen behavior
+- [ ] No success criterion embeds a literal pattern (regex, glob, SQL predicate, field index) as its pass condition — state the property the data must have and let execution derive the check
 - [ ] Original human text preserved under `## Original request` when regrooming
 
 ## A decision belongs in the description, never in a comment
@@ -106,6 +107,12 @@ A criterion reading "decide X" is not unattended-shippable. `/start` Step 6 take
 Answering it in a comment does not fix this. The digest `/start` reads shows anchored comments in full but truncates standalone comments to their first line (`/start` Step 4), and even a fully-read comment leaves the checkbox still saying "decide X". A comment recording only that a conversation happened — `Confirmed with <name>.` — is worse than none, because it looks like an answer.
 
 When the decision lands, re-groom through `/spec <ISSUE-ID>`: write the answer into the description, quoting whoever decided and keeping any constraint they attached, and rewrite the criterion to prescribe the chosen behavior. Then leave a comment pointing at the description so an earlier `/auto` skip reads as resolved. This is the interactive, pre-run edit; an in-flight implementation run never rewrites the description.
+
+## A success criterion that carries its own pattern IS the gate
+
+A criterion embedding a literal regex, glob, SQL predicate, or field index — `SELECT COUNT(*) … REGEXP '<pattern>'` returning 0 — asserts that the pattern's matches are exactly the population the issue is about. That assertion inherits every blind spot of the pattern, and the blind spot here does not merely understate a survey: **the criterion is the acceptance gate, so whatever the pattern misses is certified as fixed.** A remediation issue closes green with the defect it was filed for still live — and the narrower the pattern looks, the more precise the criterion reads.
+
+The quality bar forbids this twice already — "no verification-command blocks" and "testable and implementation-agnostic" — and both get read past, because a pattern over data feels like the *most* testable thing a criterion could say. State the criterion as the **property** the data must have ("no `versions` row still carries a live sign-up token") and leave the pattern to execution time, where it is derived against the code that produces the values. A criterion only one specific pattern can satisfy is one the filer answered on the implementer's behalf, from outside the code.
 
 ## Producers
 
