@@ -56,7 +56,7 @@ team="$2"
 
 # One paginated query: every non-terminal issue's state, labels, and outgoing relations. A
 # terminal-state blocker is excluded by the filter, so its edges vanish — resolved by construction.
-q='query($team:String!,$after:String){issues(filter:{team:{key:{eq:$team}}, state:{type:{nin:["completed","canceled"]}}}, first:250, after:$after){nodes{identifier state{name type} labels{nodes{name}} relations{nodes{type relatedIssue{identifier}}}} pageInfo{hasNextPage endCursor}}}'
+q='query($team:String!,$after:String){issues(filter:{team:{key:{eq:$team}}, state:{type:{nin:["completed","canceled"]}}}, first:250, after:$after){nodes{identifier state{name type} assignee{email} labels{nodes{name}} relations{nodes{type relatedIssue{identifier}}}} pageInfo{hasNextPage endCursor}}}'
 all='[]'
 after=''
 while :; do
@@ -76,23 +76,34 @@ while :; do
   { [ "$has" = "true" ] && [ -n "$after" ]; } || break
 done
 
-printf '%s' "$all" | jq -r '
+# Assignment is a claim (standards/linear-workflow.md, same rule next-candidates.sh enforces at
+# pick time): an assignee other than the viewer means a person owns the issue — never
+# fleet-releasable, never /spec-recommendation material. Viewer unresolvable → every assigned
+# issue reads claimed, failing toward respecting the claim.
+me_email=$(linear-cli api query -q -o json 'query{viewer{email}}' 2>/dev/null | jq -r '.data.viewer.email // empty' || true)
+
+printf '%s' "$all" | jq -r --arg me "${me_email:-}" '
+  def claimed($v): (($v.assignee // "") != "") and (($me == "") or ($v.assignee != $me));
   # Every reason the fleet cannot ship an issue, with the remedy. Shared by both sections so the
-  # classifications cannot drift apart.
+  # classifications cannot drift apart. Claimed leads and suppresses the /spec remedy: the owner
+  # certifies (or ships) their own claim — auto-prep once recommended four /spec interviews on
+  # teammates'"'"' claimed High issues (2026-08-15).
   def gate_reasons($v):
-    [ (if ($v.labels | index("epic")) then "delegated epic (children carry the work — certify per child, close the epic when they release)" else empty end),
+    [ (if claimed($v) then "claimed by \($v.assignee) (assignment is a claim — their work, not fleet-releasable, no keeper action)" else empty end),
+      (if ($v.labels | index("epic")) then "delegated epic (children carry the work — certify per child, close the epic when they release)" else empty end),
       (if ($v.labels | index("human")) then "human-labeled (human-performed; the fleet never ships it)" else empty end),
       (if ($v.labels | index("needs decision")) then "needs decision (decide and clear the label)" else empty end),
       (if ($v.labels | index("solo")) then "solo (targeted /auto in the quiet window)" else empty end),
       (if ($v.labels | index("stalled")) then "stalled (resume or release it)" else empty end),
       (if $v.stype == "triage" then "in Triage (groom via /spec)" else empty end),
       (if (($v.stype | IN("unstarted","backlog")) and (($v.labels | index("specified")) | not)
-           and (($v.labels | index("epic")) | not))
+           and (($v.labels | index("epic")) | not) and (claimed($v) | not))
          then "uncertified (/spec to certify)" else empty end) ];
   # Short gate tags for PROMOTE-SET annotations — the label a keeper acts on, not the remedy
   # prose. Gates ANNOTATE, never filter: filtering is the carve-out that buried BF-553.
   def gate_tags($v):
-    [ (if ($v.labels | index("epic")) then "epic" else empty end),
+    [ (if claimed($v) then "claimed" else empty end),
+      (if ($v.labels | index("epic")) then "epic" else empty end),
       (if ($v.labels | index("needs decision")) then "needs decision" else empty end),
       (if ($v.labels | index("human")) then "human" else empty end),
       (if ($v.labels | index("solo")) then "solo" else empty end),
@@ -110,6 +121,7 @@ printf '%s' "$all" | jq -r '
   . as $nodes
   | ([ $nodes[] | {key: .identifier,
                    value: {sname: (.state.name // "?"), stype: (.state.type // "?"),
+                           assignee: (.assignee.email // ""),
                            labels: [((.labels.nodes // [])[].name) | ascii_downcase]}} ]
      | from_entries) as $m
   | ([ $nodes[]

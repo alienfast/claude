@@ -67,7 +67,10 @@ cat > "$FIX/issues-page.json" <<'EOF'
  {"identifier":"TT-58","state":{"name":"Backlog","type":"backlog"},"labels":{"nodes":[{"name":"specified"}]},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-57"}}]}},
  {"identifier":"TT-55","state":{"name":"Backlog","type":"backlog"},"labels":{"nodes":[{"name":"specified"}]},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-54"}}]}},
  {"identifier":"TT-60","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"}]},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-61"}}]}},
- {"identifier":"TT-61","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"}]},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-60"}}]}}
+ {"identifier":"TT-61","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"}]},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-60"}}]}},
+ {"identifier":"TT-80","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[]},"assignee":{"email":"other@test"},"relations":{"nodes":[]}},
+ {"identifier":"TT-81","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[]},"assignee":{"email":"keeper@test"},"relations":{"nodes":[]}},
+ {"identifier":"TT-82","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"}]},"assignee":{"email":"other@test"},"relations":{"nodes":[]}}
 ],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
 EOF
 
@@ -77,6 +80,7 @@ FIX="$FIX"
 if [ "\${1:-}" != "api" ]; then exit 0; fi
 q="\${@: -1}"
 case "\$q" in
+  *viewer*) printf '%s' '{"data":{"viewer":{"email":"keeper@test"}}}' ;;
   *labels*) cat "\$FIX/issues-page.json" ;;
   *) printf '%s' '{"errors":[{"message":"unexpected query in test shim"}]}'; exit 1 ;;
 esac
@@ -90,7 +94,7 @@ HOME="$WORK/home" PATH="$WORK/bin:$PATH" "$SCRIPT" --team TT > "$OUT" 2>"$OUT.er
 # ---- FOCUS section: the release-scope audit is the primary output and leads ----
 # TT-54 (blocked only by clean-Backlog TT-55) counts as attention, not draining: the promotion
 # is required release scope (keeper ruling 2026-08-13), so its dependent waits on the batch.
-ck "focus summary leads" "FOCUS: 24 unstarted — 1 fleet-workable · 19 need keeper action · 4 draining on their own" "$(head -1 "$OUT")"
+ck "focus summary leads" "FOCUS: 27 unstarted — 1 fleet-workable · 22 need keeper action · 4 draining on their own" "$(head -1 "$OUT")"
 ck_has "gated planned is a keeper action"      "FOCUS-ACTION: TT-21 [Planned] — needs decision (decide and clear the label)" "$OUT"
 ck_has "uncertified planned is a keeper action" "FOCUS-ACTION: TT-31 [Planned] — uncertified (/spec to certify)" "$OUT"
 ck_has "hidden dependent surfaces in focus"    "FOCUS-ACTION: TT-40 [Planned] — needs decision (decide and clear the label)" "$OUT"
@@ -116,6 +120,15 @@ ck_lacks "clean planned root not flagged"      "FOCUS-ROOT: TT-35" "$OUT"
 ck_lacks "clean in-flight root not flagged"    "FOCUS-ROOT: TT-37" "$OUT"
 ck_lacks "cycle yields no root row"            "FOCUS-ROOT: TT-60" "$OUT"
 ck_lacks "cycle yields no root row (mirror)"   "FOCUS-ROOT: TT-61" "$OUT"
+# Assignment is a claim (standards/linear-workflow.md): an issue assigned to someone other than
+# the viewer is its owner's — surfaced as claimed, never as /spec work, whatever its
+# certification state (auto-prep misdirected four /spec interviews at teammates' claimed High
+# issues, 2026-08-15). Self-assigned keeps the /spec remedy: the viewer owns their own claims.
+ck_has "claimed uncertified leads with the claim"  "FOCUS-ACTION: TT-80 [Planned] — claimed by other@test" "$OUT"
+ck "claimed issue never gets the /spec remedy"     "0" "$(grep -F 'TT-80' "$OUT" | grep -c 'uncertified')"
+ck_has "self-assigned stays /spec-recommendable"   "FOCUS-ACTION: TT-81 [Planned] — uncertified (/spec to certify)" "$OUT"
+ck_has "claimed certified is not fleet-workable"   "FOCUS-ACTION: TT-82 [Planned] — claimed by other@test" "$OUT"
+
 # PROMOTE-SET: the deduped Backlog chain membership in FULL — intermediates and gate-labeled
 # members included with inline annotations, never filtered (the carve-out that buried BF-553).
 ck_has "promote-set carries the full membership" "PROMOTE-SET: TT-29[uncertified], TT-39[uncertified], TT-41[uncertified], TT-52[needs decision], TT-55, TT-57[needs decision], TT-58" "$OUT"
