@@ -88,14 +88,15 @@ create_args=(issues create "$title" --team "$team" -o json -d -)
 # safe fallback: on a triage-enabled team, omitting --state lands the issue in Triage, and
 # next-candidates.sh's WORKABLE_STATES covers only Backlog/Planned/Todo — so a `specified`
 # issue filed that way is invisible to /next and /auto permanently, with no note anywhere
-# (the hidden-count notes cover the label gates only). Verified on BF: --state Planned
-# lands in Planned, omitting it lands in Triage. Same preference order and `ready`
-# exclusion as linear-file-improvement.sh, which already guards this.
+# (the hidden-count notes cover the label gates only). Backlog, not Planned (keeper ruling
+# 2026-08-15): unattended filings never enter the curated release scope — the human plans;
+# Backlog + `specified` stays fleet-eligible via stage-first ranking. Same `ready`
+# exclusion as linear-file-improvement.sh.
 if [ -z "$state" ] || [ "$state" = "-" ]; then
   if states_json=$(linear-cli statuses list -t "$team" -o json 2>/dev/null); then
     state_names=$(printf '%s' "$states_json" | jq -r '.. | objects | select(has("name")) | .name' 2>/dev/null || true)
-    state=$(printf '%s\n' "$state_names" | grep -Fxi 'Planned' | head -1 || true)
-    [ -z "$state" ] && state=$(printf '%s\n' "$state_names" | grep -iE '^(planned|backlog|to.?do)$' | head -1 || true)
+    state=$(printf '%s\n' "$state_names" | grep -Fxi 'Backlog' | head -1 || true)
+    [ -z "$state" ] && state=$(printf '%s\n' "$state_names" | grep -iE '^(backlog|planned|to.?do)$' | head -1 || true)
   fi
 fi
 if [ -n "$state" ] && [ "$state" != "-" ]; then

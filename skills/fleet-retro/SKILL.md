@@ -253,9 +253,14 @@ Filed issues are output too, and they fail in ways the metrics cannot see. Check
   gotcha #14). A phrase-shaped search returns empty with exit 0 and reads exactly like "no duplicate".
 - **Stranded states.** Anything in `Triage` is invisible to `/next` and `/auto` permanently. List it:
   `linear-cli api query` filtered on `state.name == "Triage"`.
-- **Certification.** `specified` present where the issue is meant to be auto-shippable; absent where it
-  needs `/spec` first. Never attach `specified` here — that is `/spec`'s human gate, and auto-certifying
-  from a retro defeats the thing that keeps `/auto` safe.
+- **Certification and placement.** `specified` present where the issue is meant to be auto-shippable;
+  absent where it needs `/spec` first. Pipeline self-certification is sanctioned (keeper ruling
+  2026-08-15): a filing whose body meets `standards/issue-spec.md`'s bar may carry `specified` from
+  birth — the retro audits the *bar*, not the label's provenance. What it must audit is **placement**:
+  certified-at-filing issues belong in `Backlog` (the human curates Planned; a chain-inversion
+  promotion per `/auto-prep`'s FOCUS rules is the one sanctioned exception), and anything in the
+  team's default/Triage state is a stranded filing — a raw `issues create` without `--state` — to
+  move to Backlog and trace to its filing path.
 - **Correct cancellations.** An issue absorbed by another's fix should be canceled *with its evidence
   carried onto the survivor first* — the losing issue often holds a verified vector the winner lacks.
   **Re-verify each carried claim against current code before writing it onto the survivor; never transcribe.**

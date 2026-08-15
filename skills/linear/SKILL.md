@@ -122,8 +122,10 @@ Auth: `linear-cli auth oauth` (browser) or `LINEAR_API_KEY`; check with `linear-
 
 21. **`issues create` rejects `--title` and `--label` — and clap's "tip" for the first is actively wrong.** The command map below already shows the two flags that DO exist (title is POSITIONAL, description is `-d`/`--description`, `-` for stdin) but not the trap: guessing `--title` gets `tip: a similar argument exists: '--filter'` plus a `Usage:` line reading as though `--filter` were required for `create` — it is not, and `--filter` has nothing to do with `create`. The label flag is `--labels` (plural, short `-l`); `--label` errors the same way. There is no `--description-file` at all — pass the body inline or via stdin.
 
+    **Always pass `--state` — an omitted state lands the issue in the team's DEFAULT state, which on a triage-enabled team is Triage, invisible to `/next` and `/auto` permanently with no warning anywhere** (measured 2026-08-15: three fleet follow-up filings stranded this way in one run). Unattended filings use `--state Backlog` (keeper ruling 2026-08-15: the human curates Planned) — or better, file through `~/.claude/scripts/linear-create-child.sh` (parent `-` for a standalone issue), which resolves a Backlog-preferring state itself and verifies everything it writes.
+
     ```bash
-    linear-cli issues create --team BF "<TITLE>" --description - --state Planned --labels specified < body.md
+    linear-cli issues create --team BF "<TITLE>" --description - --state Backlog --labels specified < body.md
     ```
 
 ## Command map

@@ -1,6 +1,6 @@
 #!/bin/bash
 # linear-file-improvement.sh — file a single standalone "continuous-improvement" Linear
-# issue from a /reflect session: status Planned, labelled `specified` + `reflection`
+# issue from a /reflect session: status Backlog, labelled `specified` + `reflection`
 # (`reflection` + `keeper`, UNCERTIFIED, for --keeper batches), description read from a
 # file. `specified` is the /auto-eligibility certification; `reflection` marks it as a
 # config/process improvement so /next ranks it ahead of product work (improvements change
@@ -27,7 +27,7 @@
 # stderr (failure): one-line diagnostic.
 #
 # Why a helper: no single `linear-cli` invocation combines "ensure the label exists",
-# "Planned-state fallback", and "set label" — and inlining that as shell in a SKILL.md
+# "Backlog-state fallback", and "set label" — and inlining that as shell in a SKILL.md
 # would trip permission prompts on every reflection. The issue is deliberately
 # STANDALONE (no parent link): a config/process improvement is not a child of the feature
 # that surfaced it; /reflect references the originating issue inside the body instead. It
@@ -45,9 +45,9 @@
 # invisible to /auto until certified (standards/issue-spec.md).
 #
 # Exit codes (the load-bearing label is `specified` — or `keeper` under --keeper):
-#   0 = issue created (Planned) AND the load-bearing label attached (reflection is
+#   0 = issue created (Backlog) AND the load-bearing label attached (reflection is
 #       best-effort within 0 — a WARN names it when it could not ride along); id on stdout
-#   2 = issue created (Planned) but the load-bearing label could NOT be attached (team has
+#   2 = issue created (Backlog) but the load-bearing label could NOT be attached (team has
 #       no attachable label of that name); id still on stdout, WARN on stderr
 #   1 = usage / missing body file / no suitable state / create failed (no usable id)
 
@@ -118,17 +118,19 @@ if [ "$keeper" = 1 ]; then
   keeper_label="${have_keeper:-keeper}"
 fi
 
-# 2. Resolve the workflow state up front. Prefer Planned; deferred-but-triaged proposals
-#    should not land in Triage. Fall back to the first Backlog/Todo-like state, mirroring
-#    /quality-review Step 6's algorithm — `ready` is intentionally excluded so we never
-#    latch onto "Ready For Release"/"Ready For Review".
+# 2. Resolve the workflow state up front. Prefer Backlog (keeper ruling 2026-08-15:
+#    unattended filings never enter the curated Planned release scope — the human plans, and
+#    Backlog + `specified` stays fleet-eligible via stage-first ranking); never the team
+#    default, which on a triage-enabled team is Triage and invisible to /next and /auto.
+#    `ready` is intentionally excluded so we never latch onto "Ready For Release"/"Ready For
+#    Review".
 if ! states_json=$(linear-cli statuses list -t "$team" -o json 2>/dev/null); then
   echo "ERROR: could not list workflow states for team '$team' (auth? network?)" >&2
   exit 1
 fi
-state=$(printf '%s' "$states_json" | names | grep -Fxi 'Planned' | head -1 || true)
+state=$(printf '%s' "$states_json" | names | grep -Fxi 'Backlog' | head -1 || true)
 if [ -z "$state" ]; then
-  state=$(printf '%s' "$states_json" | names | grep -iE '^(planned|backlog|to.?do)$' | head -1 || true)
+  state=$(printf '%s' "$states_json" | names | grep -iE '^(backlog|planned|to.?do)$' | head -1 || true)
 fi
 if [ -z "$state" ]; then
   avail=$(printf '%s' "$states_json" | names | paste -sd, - 2>/dev/null || true)
