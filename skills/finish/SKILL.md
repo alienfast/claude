@@ -189,6 +189,8 @@ Branch: `<actual branch name>`
 
 Omit sections that have no content (e.g., skip "Notes" if everything was completed). Omit the **Adversarial review** section entirely when `VERDICT=none-found` (no `/quality-review` ran). When the verdict is passing, drop the `Open items` bullet but keep the other two.
 
+**Reconcile the plan's filing promises before posting.** Re-read this issue's plan comment and any checkpoint comments for promised filings — "a follow-up will be filed", an out-of-scope census "recorded, not skipped", work explicitly named for later. Every such promise must resolve to an issue ID named in this comment, or be filed now (via `/quality-review` Step 6 sub-step 6's recipe, search-before-filing included) before the comment posts. A promise without an ID is a silent leak: nothing downstream ever re-reads the plan, so an unfiled promise vanishes with the session (measured on BF-894: the plan's out-of-scope census promised a follow-up covering four surfaces; BF-1171/BF-1172 covered two, and `ApprovalSignerAccessLoader` + `Types::Tenant#incoming`/`#outgoing` were silently dropped, surfacing only at a later keeper audit).
+
 ### Step 5: Post Description Update + Completion Comment
 
 Write both files:
