@@ -157,9 +157,6 @@
       "/private/tmp"
     ]
   },
-  "worktree": {
-    "baseRef": "head"
-  },
   "hooks": {
     "PreToolUse": [
       {
@@ -203,6 +200,9 @@
         ]
       }
     ]
+  },
+  "worktree": {
+    "baseRef": "head"
   },
   "enabledPlugins": {
     "typescript-lsp@claude-plugins-official": true

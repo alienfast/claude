@@ -179,6 +179,16 @@ git -C /path/to/repo status
 
 The tell is an unfiltered form contradicting a filtered one — `git diff --stat` listing a file that `git diff -- <that file>` calls unchanged. Anchor the call instead of trusting the prompt: `git -C <repo-root> …`, per the rule above.
 
+### The commit `git log -S` returns is the one that MADE the change — the before-state is its parent
+
+Checking how code behaved *before* some change is routine: `/quality-review` adjudicating a finding that characterizes a pre-fix state, and the "verify the stated defect still exists" check (basefund's `.claude/rules/planning.md`), whose `git log -S <symbol>` bullet is the usual way in. `git log -S <token>` is the right way to find the commit — it returns the one whose occurrence count changed, i.e. that **introduced or removed** the token — and that same sha is then the wrong ref to read the before-state from. `git show <sha>:<path>` is the file *with* the change applied; the before-state is `git show <sha>^:<path>`.
+
+**In the `<ref>:<path>` content form the mistake is silent, and the answer inverts rather than degrades**: the command succeeds, prints plausible code, and the guard or fix you are checking for is *present* — which reads as proof that the before-state claim is false. An asymmetry hides it: a wrong **path** at a good ref dies with `fatal: path '…' does not exist in '<sha>'` (exit 128), so a typo self-diagnoses while a wrong ref never does. Observed on BF-1158: a verifier adjudicating whether a validation read a column before its column-existence guard landed cited the *guard commit* as "the actual pre-guard code" and reported that the validation never read the column, before or after. The pre-guard body — `git show <guard-commit>^:<path>` — has no guard, and both branches of the method read the column, so no record population could make the read unreachable. The correct sentence was one accepted finding away from being rewritten into a false one.
+
+**The diff forms do not share this failure — prefer them when the question is what changed.** `git show <sha>` and `git show <sha> -- <path>` print the before *and* after states with `-`/`+` markers, so an added guard is visibly an addition (measured on that commit: seven `+` lines, with the surrounding column reads on unprefixed context lines). Reporting a diff's `+` lines as the prior state is a separate mistake, and a non-silent one — the markers are right there.
+
+`^` is the **first** parent, so on a merge commit it is the branch that was merged into, not the branch that carried the change; for the other side use `<sha>^2`. `git rev-list --parents -n 1 <sha>` names both parents on one line and is the probe to reach for when in doubt. `^2` against a non-merge fails loudly (`fatal: ambiguous argument`, exit 128), so that half of the mistake cannot pass silently either.
+
 ### Worktree-isolated sessions: no loops, no `$(…)`, no `git -C` at the shared checkout
 
 A session registered on a worktree via `EnterWorktree` — every `/start wt`, and so every `/auto` and every fleet session — runs its Bash commands through a static containment check (measured on harness 2.1.222, in foreground and background sessions alike), and subagents inherit the restriction. It refuses four shapes, each with its own message:
