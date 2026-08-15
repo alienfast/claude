@@ -51,19 +51,43 @@ fi
 # incident path, a posted comment) legitimately MENTIONS forbidden paths without writing to them. The resulting false
 # negatives (a quoted redirect target) are acceptable — this is a guardrail, and the harness's own dangerous-path
 # check still backstops deletes; a false positive here blocks legitimate work outright.
+#
+# Quote stripping is MULTI-LINE aware: an unterminated quote carries into following lines, matching shell semantics —
+# a line-by-line strip cannot pair a quote that closes on a later line, so a multi-line `git commit -m "..."` whose
+# message mentioned rm and a /tmp path tripped Zone 1 (observed 2026-08-15, on the commit shipping BF-1167 itself).
 SCAN=""
 heredoc_delim=""
+quote_char=""
 while IFS= read -r line; do
   if [ -n "$heredoc_delim" ]; then
     trimmed="${line#"${line%%[![:space:]]*}"}"
     [ "$trimmed" = "$heredoc_delim" ] && heredoc_delim=""
     continue
   fi
+  if [ -n "$quote_char" ]; then
+    case "$line" in
+      *"$quote_char"*) line="${line#*"$quote_char"}"; quote_char="" ;;
+      *) continue ;;
+    esac
+  fi
   if [[ "$line" =~ \<\<-?[[:space:]]*[\'\"]?([A-Za-z_][A-Za-z0-9_]*) ]]; then
     heredoc_delim="${BASH_REMATCH[1]}"
   fi
-  line=$(printf '%s' "$line" | sed -E "s/'[^']*'//g; s/\"[^\"]*\"//g")
-  SCAN+="$line
+  stripped=""
+  rest="$line"
+  while [[ "$rest" == *[\'\"]* ]]; do
+    pre="${rest%%[\'\"]*}"
+    q="${rest:${#pre}:1}"
+    rest="${rest:$(( ${#pre} + 1 ))}"
+    stripped+="$pre"
+    if [[ "$rest" == *"$q"* ]]; then
+      rest="${rest#*"$q"}"
+    else
+      quote_char="$q"
+      rest=""
+    fi
+  done
+  SCAN+="$stripped$rest
 "
 done <<< "$COMMAND"
 

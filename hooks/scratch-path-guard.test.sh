@@ -89,6 +89,11 @@ tb ALLOW "35 cp FROM /tmp after an unrelated rm"           $'rm foo.txt\ncp /tmp
 tb BLOCK "36 cp INTO /tmp on a non-final line"             $'cp a /tmp/b.txt\necho done'
 tb BLOCK "37 mv between two system /tmp paths"             'mv /tmp/a /tmp/b'
 
+echo "  multi-line quoted prose — an unterminated quote continues on later lines:"
+tb ALLOW "38 multi-line commit -m mentioning rm and /tmp"  $'git commit -m "fleet: fix\nrm still blocks on a /tmp path in any\nposition, and cp x /tmp/y too"'
+tb BLOCK "39 real command after the closing quote"         $'git commit -m "msg line one\nline two" && rm /tmp/x.rb'
+tb ALLOW "40 multi-line single-quoted prose"               $'printf \'%s\' \'del /tmp/a\nrm /tmp/b\ndone\' > tmp/out.txt'
+
 echo
 echo "passed: $PASS   failed: $FAIL"
 [[ "$FAIL" -eq 0 ]]
