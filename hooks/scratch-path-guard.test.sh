@@ -82,6 +82,13 @@ tb ALLOW "30 /dev/null redirect (two components, not /tmp)" 'cmd > /dev/null 2>&
 tb ALLOW "31 git rm (different command word)"               'git rm file.txt'
 tb ALLOW "32 no paths at all"                               'ls -la'
 
+echo "  cp/mv position — a /tmp SOURCE is a read, a /tmp DESTINATION is a write:"
+tb ALLOW "33 cp FROM system /tmp into project tmp/"        'cp /tmp/db_dump.sql tmp/db_dump_seeded.sql'
+tb ALLOW "34 mv FROM system /tmp into project tmp/"        'mv /tmp/a.txt tmp/'
+tb ALLOW "35 cp FROM /tmp after an unrelated rm"           $'rm foo.txt\ncp /tmp/db_dump.sql tmp/seeded.sql'
+tb BLOCK "36 cp INTO /tmp on a non-final line"             $'cp a /tmp/b.txt\necho done'
+tb BLOCK "37 mv between two system /tmp paths"             'mv /tmp/a /tmp/b'
+
 echo
 echo "passed: $PASS   failed: $FAIL"
 [[ "$FAIL" -eq 0 ]]

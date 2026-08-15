@@ -10,7 +10,8 @@
 # Triggered: PreToolUse hook for Bash commands AND the file tools (Write|Edit|NotebookEdit — see the matchers in
 #            settings.json). Guarding only Bash left the file-tool surface open: a Write to /tmp/x.rb landed unguarded,
 #            and the rm-block below then stranded it as permanent litter (BF-807).
-# Blocks: Bash — redirections, tee, and rm/mv/cp targeting root-level files (/name) or system temp (/tmp, /private/tmp);
+# Blocks: Bash — redirections, tee, and rm/mv/cp on root-level files (/name); in system temp (/tmp, /private/tmp) an rm
+#         anywhere in the command, but cp/mv only when /tmp is the DESTINATION (a /tmp source is a read);
 #         file tools — file_path/notebook_path in those same zones. The harness session scratchpads
 #         (/tmp/claude-*, /private/tmp/claude-*) stay fully allowed on both surfaces.
 
@@ -104,10 +105,22 @@ fi
 if [[ "$SCAN" =~ (^|[[:space:]\;\&\|])tee[[:space:]]+(-[A-Za-z]+[[:space:]]+)*${SYSTMP} ]] && [[ "${BASH_REMATCH[4]}" != claude-* ]]; then
   block "tee into system /tmp"
 fi
-# The middle group is optional so the bare form (`rm /tmp/x`, no flags) matches too — with it, the
-# path capture lands in BASH_REMATCH[5], not [4].
-if [[ "$SCAN" =~ (^|[[:space:]\;\&\|])(rm|mv|cp)[[:space:]]([^\;\&\|]*[[:space:]])?${SYSTMP} ]] && [[ "${BASH_REMATCH[5]}" != claude-* ]]; then
-  block "rm/mv/cp in system /tmp"
+# The middle group is optional so the bare form (`rm /tmp/x`, no flags) matches too — with it, the path capture lands
+# in BASH_REMATCH[4] here / [5] below. It excludes newlines so an `rm` on one line cannot reach across into a later
+# line's path and misattribute a cp there as an rm — which would re-block the very source-position cp allowed below.
+NL=$'\n'
+if [[ "$SCAN" =~ (^|[[:space:]\;\&\|])rm[[:space:]]([^\;\&\|${NL}]*[[:blank:]])?${SYSTMP} ]] && [[ "${BASH_REMATCH[4]}" != claude-* ]]; then
+  block "rm in system /tmp"
+fi
+# cp/mv fire only on a /tmp DESTINATION — the path must be the LAST argument (blanks, then a statement terminator,
+# a newline, or end of scan). A /tmp SOURCE is a read, and repo conventions legitimately keep shared artifacts there
+# (basefund's apps/api/local defaults its prod dump to /tmp/db_dump.sql), so blocking `cp /tmp/db_dump.sql tmp/x.sql`
+# denied legitimate work with no actionable retry — its write target was already tmp/. The ${NL} in the terminator
+# class is load-bearing: bash compiles the ERE without REG_NEWLINE, so `$` matches only the end of the WHOLE scan and
+# a destination on any non-final line of a multi-line command would slip through. Two accepted false negatives, per
+# the guardrail philosophy in the header: target-first `cp -t /tmp/dir src`, and a trailing redirect `cp x /tmp/y 2>&1`.
+if [[ "$SCAN" =~ (^|[[:space:]\;\&\|])(mv|cp)[[:space:]]([^\;\&\|${NL}]*[[:blank:]])?${SYSTMP}[[:blank:]]*([\;\&\|\)${NL}]|$) ]] && [[ "${BASH_REMATCH[5]}" != claude-* ]]; then
+  block "cp/mv into system /tmp"
 fi
 
 exit 0
