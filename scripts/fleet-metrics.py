@@ -1344,10 +1344,13 @@ def main():
         print(f"**Context distribution** — {ctx_total_vol:,} billable prompt tokens, by context size "
               f"at call time: {buckets} → **{100 * ctx_ge150_share:.0f}% at >=150k, "
               f"{100 * ctx_ge200_share:.0f}% at >=200k**. The autocompact gauge: fleet-launch pins "
-              f"`--autocompact 150000` (since 2026-08-14), so the >=200k share should collapse on runs "
-              f"after that — if it stays high, compaction did not engage (check the dispatch flags); if "
-              f"it falls while the churn gauges (cycles, findings/review) climb, the threshold is too "
-              f"aggressive — raise it.\n")
+              f"`--autocompact 500000` (since 2026-08-15; the session floor is ~115-177k so the "
+              f"sawtooth runs ~135k→~450k and a large >=200k shoulder is EXPECTED — the engagement "
+              f"signal is nothing above ~460k). If volume appears above ~460k, compaction did not "
+              f"engage (check the dispatch flags). Size distribution alone cannot show compaction "
+              f"THRASH — also check cadence: compact_boundary rows per session should be a handful "
+              f"per issue, tens of minutes apart; spacing collapsing to minutes is the orbit "
+              f"signature (band ≈ live working set) and means the threshold is too low.\n")
 
     print("## Review churn\n")
     if verdicts:

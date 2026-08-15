@@ -17,7 +17,7 @@
 #               loops run until the certified backlog drains.
 #   -- ...      Everything after -- is passed to `claude --bg` verbatim. Defaults are
 #               added only for flags not present there: --model 'opus[1m]'
-#               --effort xhigh --autocompact 300000 --permission-mode auto
+#               --effort xhigh --autocompact 500000 --permission-mode auto
 #               (skills/auto/SKILL.md's unattended-run prerequisites; auto — never
 #               acceptEdits — because a background session has nobody to answer a
 #               Bash permission prompt; autocompact capped because a session that
@@ -189,17 +189,18 @@ have_flag() {
 }
 have_flag --model "${claude_args[@]}" || claude_args+=(--model 'opus[1m]')
 have_flag --effort "${claude_args[@]}" || claude_args+=(--effort xhigh)
-# 300k, not the model default: on opus[1m] auto-compact's default threshold sits near the 1M
+# 500k, not the model default: on opus[1m] auto-compact's default threshold sits near the 1M
 # window, so a /loop /auto session accumulating across iterations never compacts — measured
 # 2026-08-13/14, 91% of fleet billable volume was context re-read at >200k tokens, and cache
 # reads scale linearly with context size. /auto's real state lives in tmp/ + Linear, not context.
-# Not lower: compaction triggers at ~90% of this window and resets to a ~115-121k floor of fixed
-# overhead (system prompt + CLAUDE.mds + rules + skill bodies), and real fleet workloads ingest
-# up to ~130k in ONE call (skill-chain loads, big Reads), so the trigger must clear floor + one
-# worst-case ingestion. 150000 left a <20k band and thrash-aborted the whole 2026-08-14 fleet
-# before its first pick; 250k still quick-refilled in replays of six real sessions; 300k was
-# clean in all six. Full replay data: doc/compacting-investigation.md verdict log.
-have_flag --autocompact "${claude_args[@]}" || claude_args+=(--autocompact 300000)
+# Sizing (under-sized twice; measure before touching): compaction triggers at ~90% of the window,
+# and the trigger must clear the DEEP-issue post-compact floor (~152-177k: re-injected overhead
+# plus a summary carrying the issue) + the live working set a review/fix loop re-reads after
+# every compact (>=110k) + one worst-case single ingestion (~130k). 150000 thrash-aborted the
+# 2026-08-14 fleet at launch; 300000 survived launch but fell into a compaction orbit mid-review
+# the same night (9 compacts in 36 min — the band matched the working set, so every compact
+# forced re-reads that refilled it). Details: doc/compacting-investigation.md verdict log.
+have_flag --autocompact "${claude_args[@]}" || claude_args+=(--autocompact 500000)
 if ! have_flag --permission-mode "${claude_args[@]}" && ! have_flag --dangerously-skip-permissions "${claude_args[@]}"; then
   # auto, not acceptEdits: acceptEdits only auto-accepts FILE EDITS, so the first gated
   # Bash command (e.g. /start wt's worktree validation) prompts into a background session

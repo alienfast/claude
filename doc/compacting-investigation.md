@@ -42,8 +42,8 @@ Secondary contributors, distinct levers:
 
 ## The intervention (2026-08-14)
 
-`fleet-launch.sh` adds `--autocompact 300000` as a default dispatch flag (per-launch overridable:
-`fleet-launch 3 10h -- --autocompact 400000`). Rationale in `skills/auto/SKILL.md` and
+`fleet-launch.sh` adds `--autocompact 500000` as a default dispatch flag (per-launch overridable:
+`fleet-launch 3 10h -- --autocompact 700000`). Rationale in `skills/auto/SKILL.md` and
 `skills/fleet-launch/SKILL.md`: `/auto`'s cross-iteration state lives in `tmp/auto-state-*.json`,
 verdict files, and Linear — not in context — so compaction between issues is designed to be
 loss-free. `[1m]` stays, for single-oversized-issue headroom.
@@ -65,8 +65,21 @@ loads and big Reads, i.e. routine `/auto` machinery that recurs post-compact —
 0.9·W ≥ ~120k + ~130k → **W ≥ ~280k**. Replaying those six workloads against the compact cycle
 (compact at 0.9·W, reset to 120k floor, thrash = 3 consecutive quick refills ≤3 calls after
 compact): 150k thrash-aborts or grazes it in all six (validating the sim against the observed
-abort), 200k and 250k still log isolated quick refills in some sessions, **300k is clean in all
-six** (13–21 compacts per heavy session, average per-call context ~195k vs ~450k+ uncapped).
+abort), 200k and 250k still log isolated quick refills in some sessions, 300k is clean in all
+six (13–21 compacts per heavy session, average per-call context ~195k vs ~450k+ uncapped).
+
+**2026-08-15 revision — the two-term rule under-sizes the deep phase.** The 300k fleet survived
+launch but bf-1147 fell into a **compaction orbit** mid fix-loop: 9 compacts in 36 minutes. Two
+effects the fresh-session replay could not see: (1) a deep-issue session's post-compact floor is
+**~152–177k**, not ~120k — the summary must carry the issue, and restored skills stack up; (2) a
+review/fix loop's **live working set** (the diff, verdict files, files under repair — ≥110k) is
+re-read after every compact, so once the band shrinks to the working-set size, every compact
+refills itself. Resume makes it worst-case: a restarted deep session's floor arrives at the
+trigger and it compacts on arrival (measured on all three 2026-08-15 restarts: immediate compact,
+0–24 calls of progress). The rule is therefore three-term: **0.9·W ≥ deep floor (~175k) + live
+working set (≥110k) + one ingestion (~130k) → W ≥ ~460k → 500000 shipped.** Corollary: never
+resume a deep fleet session — recover in-flight issues in fresh targeted `/auto BF-XXX` sessions,
+which re-enter the existing worktree with a fresh ~108k floor.
 
 Instruments added to `scripts/fleet-metrics.py` the same day:
 
@@ -82,13 +95,17 @@ Instruments added to `scripts/fleet-metrics.py` the same day:
 
 1. `~/.claude/scripts/fleet-metrics.py --checkout ~/projects/basefund --hours 36` (or `--since` the
    latest fleet's launch). Read **Context distribution** and **Cross-run trend** first.
-2. **Did the cap engage?** Post-change fleets should show the >=400k share at zero and the
-   >=200k share collapsed from ~94% to the pre-compact shoulder (calls run ~115–121k floor →
-   ~270k trigger under the 300k window; volume pooled *below* 150k is impossible — fixed session
-   overhead alone is ~108k). Auto-compact firing in background `claude agents` sessions is
-   CONFIRMED (2026-08-14: it fired immediately, and thrashed at the 150k setting — see verdict
+2. **Did the cap engage?** Post-change fleets should show no volume above ~460k (the 500k
+   window's trigger) — calls run ~115–177k floor → ~450k trigger, so a large >=200k share is the
+   expected pre-compact shoulder, not a failure; volume pooled *below* 150k is impossible (fixed
+   session overhead alone is ~108k). Auto-compact firing in background `claude agents` sessions
+   is CONFIRMED (2026-08-14: it fired immediately, and thrashed at the 150k setting — see verdict
    log), so a non-engaged cap now means the dispatch log lost the flag, not that the mechanism
-   is absent.
+   is absent. **Check compaction cadence, not just the size distribution**: count
+   `compact_boundary` rows per session and read their timestamp spacing — healthy is tens of
+   minutes apart and a handful per issue; accelerating spacing that collapses to minutes is the
+   orbit signature (band ≈ working set) and means the threshold is too low for the phase the
+   session was in, whatever the averages say.
 3. **Sized too small?** The signature is rework, read off the trend row against the 2026-08-13
    baselines above:
    - ktok/issue **rising** while $/Mtok out falls — re-derivation tax, the sharpest single tell;
@@ -96,10 +113,10 @@ Instruments added to `scripts/fleet-metrics.py` the same day:
      spec quality, not compaction — the origins split discriminates);
    - hours per shipped issue rising;
    - contract-forgetting flags clustering (shipped-without-recording, state drift, dangling calls).
-   Any two of these with the ctx share down → raise the threshold stepwise (400k → 500k) via
+   Any two of these with the ctx share down → raise the threshold stepwise (600k → 700k) via
    the launch override; an A/B inside one night is two `fleet-launch` invocations with different
    values, attributed by the per-session ctx column.
-4. **Sized right?** ctx>=400k% zero and ctx>=200k% down to the pre-compact shoulder, $/Mtok out down materially (baseline $767–809), churn
+4. **Sized right?** No volume above ~460k, compaction cadence a handful per issue at tens-of-minutes spacing, $/Mtok out down materially (baseline $767–809), churn
    gauges flat within noise, ktok/issue flat or down. Then consider whether $/issue's remaining
    excess is the churn factor (plan% ≥ 37% says spec/planning quality is the live lever, not
    context) and whether fresh% says the fleet is eating its own filings.
@@ -108,6 +125,10 @@ Instruments added to `scripts/fleet-metrics.py` the same day:
 
 ## Open follow-ups
 
+- ~~Subagent review scope~~ **Addressed 2026-08-15**: `/quality-review` Step 3's dispatch template
+  now forbids reviewers diffing long-lived branches (issue delta only) and marks generated
+  artifacts grep-only, and the orchestrator sizes each dispatch to the reviewer's context budget
+  (~94k fixed floor; working material is live context compaction cannot shed).
 - **The ~108k fixed floor is itself the next lever.** No compaction threshold can push context
   below the session's fixed overhead (system prompt + tool schemas + user and project CLAUDE.md +
   rules + skill bodies, re-injected after every compact), so every call in every fleet session
@@ -128,3 +149,5 @@ Instruments added to `scripts/fleet-metrics.py` the same day:
 |---|---|---|---|---|---|---|
 | 2026-08-14 | 2026-08-13 x6 (pre-change baseline) | 94% | 194 | 2.11 | baseline | shipped `--autocompact 150000` |
 | 2026-08-14 | 2026-08-14 x3 (first 150k fleet) | — (thrash-aborted pre-pick) | — | — | n/a | 150k below viability: fixed overhead ~108k first call, post-compact floor ~115–121k, trigger ~90% of window (~134k) → <20k band, 3–4 compacts in the first dozens of lines, harness thrash detector ended all 3 loops. Sized the replacement by replaying six uncapped 08-12→14 workloads against the compact cycle: max single-call ingestion 107–130k (skill-chain loads, big Reads) means 0.9·W must clear floor + ~130k; 200k/250k logged isolated quick refills, 300k clean in all six at 13–21 compacts/session. Raised default to 300000 (fleet-launch.sh, both SKILL.mds). |
+| 2026-08-15 am | 2026-08-14 x3 @300k (weekly-quota-cut; read mid-run with 3 issues in flight) | 79% (>=400k **0%**, was 44%) | 341 gross — 2 shipped + 3 in flight | 1.0 (fleet's own reviews) | impl:12 of 25 tagged | Morning read, PARTLY WRONG — it counted "5/5/2 widely-spaced compacts, zero main-loop thrash" off a boundary list the analysis script truncated to its first five entries; the pm row below has the full census. What held up: cap engaged (nothing above ~300k, >=400k 44%→0%), 2 shipped, 3 subagent thrashes from oversized live working sets (reviewer floors ~209–219k post-compact; re-spawns with explicit file lists worked — task-scoping fix filed in follow-ups). |
+| 2026-08-15 pm | same fleet, full-boundary census + the 3 restart attempts | — | — | — | — | **300k under-sized for the deep phase; raised default to 500000.** Real compact counts 18/8/3 (not 5/5/2); bf-1147 in a terminal orbit — 9 compacts in 36 min (03:03–03:39 UTC) mid fix-loop, then 8 consecutive retries at 295k before the quota killed it. Deep-issue post-compact floors 152–177k. Orbit mechanism: once band ≈ live working set, every compact forces re-reads that refill it. All 3 restarts compacted on arrival and produced 0/3/24 calls — **never resume a deep fleet session**; recover via fresh targeted `/auto BF-XXX` sessions into the existing worktrees. Sizing rule now three-term: 0.9·W ≥ deep floor (~175k) + working set (≥110k) + one ingestion (~130k) → W ≥ ~460k → 500000. |
