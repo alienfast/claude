@@ -1,6 +1,6 @@
 ---
 name: reflect
-description: Continuous-improvement reflection on the just-finished session — captures generalizable lessons and reconciles stale config, then auto-applies the small/safe shared-config edits (user-level `~/.claude` targets only on the keeper's machine; project-level edits inside a /start wt worktree are check-gated and committed so they ride the issue merge) and proposes the larger ones — filing the proposals as a certified (`specified`) Linear issue (Planned); keeper batches (any `~/.claude` target) file uncertified with `keeper` instead, since `/auto` cannot ship cross-repo config work. Two modes — session (default; reflect on this session's friction) and sweep (audit a project's CLAUDE.md/rules against the actual codebase and de-duplicate). Use when the user says 'reflect', 'reflect on this session', 'what did we learn', 'reflect sweep', 'audit the config', or invokes /reflect. Auto-invoked at the tail of /quality-review.
+description: Continuous-improvement reflection on the just-finished session — captures generalizable lessons and reconciles stale config, then auto-applies the small/safe shared-config edits (user-level `~/.claude` targets only on the keeper's machine; project-level edits inside a /start wt worktree are check-gated and committed so they ride the issue merge) and proposes the larger ones — filing the proposals as a certified (`specified`) Linear issue (Planned); keeper batches (any `~/.claude` target) file uncertified with `keeper` instead, since `/auto` cannot ship cross-repo config work. Three modes — session (default; reflect on this session's friction), sweep (audit a project's CLAUDE.md/rules against the actual codebase and de-duplicate), and fleet (batched post-fleet reflection over a whole run's evidence — invoked by /fleet-retro, the only scheduled reflection surface since the per-issue /quality-review tail was retired 2026-08-15). Use when the user says 'reflect', 'reflect on this session', 'what did we learn', 'reflect sweep', 'reflect fleet', 'audit the config', or invokes /reflect.
 ---
 
 # Reflect
@@ -16,8 +16,9 @@ Two directions:
 
 - (none) or `session` → **session mode**: reflect on the conversation in context.
 - `sweep [project-path]` → **sweep mode**: broad audit of a project's config vs. its codebase + cross-file dedup. Defaults to the current project.
+- `fleet [checkout-path]` → **fleet mode**: batched reflection over a just-finished fleet run's evidence. Invoked by `/fleet-retro`; defaults to the current checkout.
 
-Examples: `/reflect`, `/reflect sweep`, `/reflect sweep ~/projects/baseFund`.
+Examples: `/reflect`, `/reflect sweep`, `/reflect sweep ~/projects/baseFund`, `/reflect fleet`.
 
 ## Invariant — the noise guard is the whole point
 
@@ -51,7 +52,7 @@ Classify each verified candidate as exactly one:
    - One localized, **additive or clarifying** edit (a bullet, a sentence, a small section, or a reconcile fix that *corrects* a stale line in place — rewrite to current reality, **not** a deletion; removals are always `propose`).
    - Removes or contradicts no other guidance.
    - Clearly generalizable and confirmed not already covered.
-   - **User-level `~/.claude` targets: keeper machines only.** The `~/.claude` repo is shared (pushed to `alienfast/claude.git`) and has one keeper who reviews and commits it. On any other machine, an auto-applied edit sits uncommitted in a clone nobody inspects — invisible to the keeper, drifting from origin until it conflicts or is silently lost. Probe with a **literal absolute path, never a bare `git -C ~/.claude …`**: in a `/start wt` worktree — this skill's dominant invocation, as `/quality-review` Step 7 — the isolation guard refuses a `git -C` target it cannot resolve statically, and `~/.claude` needs runtime tilde expansion, so the probe as literally written is refused (`standards/git.md` § Worktree-isolated sessions). That refusal reads exactly like a probe error, which the Error-handling rule below then turns into a **silent non-keeper downgrade on a keeper machine**. Resolve the path first with a plain non-`-C` command (`echo ~/.claude`), then pass the resolved string: `git -C <resolved path> config --get reflect.keeper`. Never hardcode one machine's path — this file is shared across every keeper's checkout. Prints `true` → apply-now permitted (the edit stays uncommitted for the keeper's deliberate review). Anything else — unset, or the probe errors — → downgrade to `propose`; Step 6's auto-filed issue is the durable, keeper-visible route. One-time keeper setup per machine: `git -C ~/.claude config reflect.keeper true` (local git config — machine-scoped, never committed or synced).
+   - **User-level `~/.claude` targets: keeper machines only.** The `~/.claude` repo is shared (pushed to `alienfast/claude.git`) and has one keeper who reviews and commits it. On any other machine, an auto-applied edit sits uncommitted in a clone nobody inspects — invisible to the keeper, drifting from origin until it conflicts or is silently lost. Probe with a **literal absolute path, never a bare `git -C ~/.claude …`**: when this skill runs inside a `/start wt` worktree (a manual session-mode invocation there), the isolation guard refuses a `git -C` target it cannot resolve statically, and `~/.claude` needs runtime tilde expansion, so the probe as literally written is refused (`standards/git.md` § Worktree-isolated sessions). That refusal reads exactly like a probe error, which the Error-handling rule below then turns into a **silent non-keeper downgrade on a keeper machine**. Resolve the path first with a plain non-`-C` command (`echo ~/.claude`), then pass the resolved string: `git -C <resolved path> config --get reflect.keeper`. Never hardcode one machine's path — this file is shared across every keeper's checkout. Prints `true` → apply-now permitted (the edit stays uncommitted for the keeper's deliberate review). Anything else — unset, or the probe errors — → downgrade to `propose`; Step 6's auto-filed issue is the durable, keeper-visible route. One-time keeper setup per machine: `git -C ~/.claude config reflect.keeper true` (local git config — machine-scoped, never committed or synced).
    - **Project-scoped targets inside a `/start wt` worktree: apply-now is permitted but MUST go through Step 5's check-then-commit path.** (`WT_ABS != MAIN_CHECKOUT` is the worktree signal — the same derivation `/quality-review`/`/start` Step 8 already use.) Left uncommitted, the edit fails `finish-merge.sh` precondition 5 and blocks the merge, or is discarded to unblock it and lost with the worktree; committed on the issue branch it rides the `/finish … merge` to the source branch — the only path by which a worktree session's project-config improvement actually reaches the team.
    - → apply to the working tree now, no prompt.
 2. **`propose`** — *any* of: a new rule/standard/skill **file**; a structural `CLAUDE.md` change; a skill bug needing code/script work; cross-cutting; or the wording/placement needs a judgment call. → surface a ready-to-paste diff, and capture it in the auto-filed continuous-improvement issue (Step 6).
@@ -159,7 +160,7 @@ First, for each `propose` item, show its destination and a ready-to-paste diff �
 
    Reference the originating issue by its plain Linear URL (`linear-cli issues get <ID> -o json | jq -r '.url'`) so it renders as a mention — a bare `<ISSUE-ID>` written through the API stays dead text (linear skill gotcha #20). Do **not** parent-link — a config/process improvement is standalone, not a child of the feature that surfaced it. This body certifies via the trusted-pipeline carve-out documented in [standards/issue-spec.md](../../standards/issue-spec.md) — observation = problem, diff = outcome, checkboxes = criteria — so filing self-certifies without an interview.
 
-   **When a proposal's text describes code that landed under an issue — usually the originating one — record it as a checkable precondition, not just a link.** This skill runs as `/quality-review` Step 7, i.e. `/start` Step 9 — *before* `/finish` commits (its Step 7) and merges (its Step 9) — so the code the proposal describes is not on the source branch yet and **there is no merge SHA to cite**. Name the issue instead, as its own line in the body:
+   **When a proposal's text describes code that landed under an issue — usually the originating one — record it as a checkable precondition, not just a link.** A session-mode run mid-issue precedes `/finish`'s commit and merge, so the code the proposal describes may not be on the source branch yet and **there may be no merge SHA to cite** — and even in fleet mode, where the merges have landed, the precondition line beats a SHA (stable across rebases, and readable). Name the issue instead, as its own line in the body:
 
    ```text
    Precondition: this text describes code landed under <ORIGIN-ID>. Before editing, confirm it is in this tree —
@@ -191,9 +192,29 @@ First, for each `propose` item, show its destination and a ready-to-paste diff �
 
 ### Step 7 — Output
 
-Emit the compact Reflection block (see Output). When session mode was invoked from `/quality-review` Step 7, keep this terse so it never buries the verdict, and **emit no lifecycle tag** (this skill never owns one).
+Emit the compact Reflection block (see Output), and **emit no lifecycle tag** (this skill never owns one).
 
 ---
+
+## Fleet mode (`/reflect fleet [checkout-path]`)
+
+The batched replacement for the retired per-issue `/quality-review` tail (2026-08-15): one reflection per fleet run, invoked by `/fleet-retro` after its findings are adjudicated — never per issue. The per-issue tail cost 7–13 minutes plus two verification dispatches on every shipped issue, and its single-session vantage could not see the classes of problem that recur across a run.
+
+### Step 1 — Gather the run's evidence
+
+The retro has already measured; read its artifacts instead of re-deriving: the fleet-metrics report (per-session, churn, and flags tables plus the trend row), the window's `tmp/quality-review-verdict-*.md` files, `tmp/fleet-linear-window.json` (the filings census), and the retro's own findings from the invoking context. Sample session transcripts only to chase a specific signal — never wholesale.
+
+### Step 2 — Detect cross-run friction
+
+Session mode's Step 1 signals, aggregated across the run — plus the classes only a whole-run view exposes, which are this mode's reason to exist:
+
+- **Filing quality**: duplicate-shaped filings, missing `related`/`blocks` links between sibling filings, mislabeled or stranded states, dedup searches run as phrases that structurally returned nothing.
+- **Repeated friction**: the same workaround, refusal, or re-derivation appearing in two or more sessions — one session's noise is a fleet's pattern, and the per-issue tail could never see it.
+- **Config drift at fleet scale**: a skill step every session skipped, reinterpreted, or paid the same tax on.
+
+### Step 3 — Verify, triage, apply, file
+
+Exactly session mode's Steps 3–7: same adversarial bar-check and dedup, same triage gates, same apply/file routing (including the `keeper` path for `~/.claude` targets). The noise guard binds harder here, not softer — one fleet yields at most one batch, and `No improvements identified.` remains a success.
 
 ## Sweep mode (`/reflect sweep [project-path]`)
 

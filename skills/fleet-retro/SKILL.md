@@ -297,8 +297,13 @@ Present findings and wait. On approval, implement, then verify honestly:
 - Settings changes load at **session start**: state plainly that a new hook is inert in the current
   session and live for the next fleet.
 
-Route the config-improvement half through **`/reflect`** rather than reimplementing it — it already owns
-batching, the certified-issue filing, and the `keeper`-label path for `~/.claude` targets that `/auto`
-cannot ship. This skill owns the fleet-specific half: metrics, ledger, issue audit.
+**Then run the batched reflection: `Skill(skill: "reflect", args: "fleet")`.** Since 2026-08-15 this is
+the ONLY scheduled reflection surface — the per-issue `/quality-review` tail is retired (it cost 7–13
+minutes plus two verification dispatches on every shipped issue and could not see cross-session
+patterns), so skipping it here means no reflection happens for the run at all. Hand it the retro's
+findings; it owns the triage bar, batching, the certified-issue filing, and the `keeper`-label path for
+`~/.claude` targets that `/auto` cannot ship — and its fleet mode's filing-quality lens (duplicates,
+missing links, stranded states) is fed directly by this skill's Step 4 audit. This skill keeps the
+fleet-specific half: metrics, ledger, issue audit.
 
 Commit and push only on an explicit grant (`standards/git.md`) — running this skill is not one.
