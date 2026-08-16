@@ -257,10 +257,12 @@ Filed issues are output too, and they fail in ways the metrics cannot see. Check
   absent where it needs `/spec` first. Pipeline self-certification is sanctioned (keeper ruling
   2026-08-15): a filing whose body meets `standards/issue-spec.md`'s bar may carry `specified` from
   birth — the retro audits the *bar*, not the label's provenance. What it must audit is **placement**:
-  certified-at-filing issues belong in `Backlog` (the human curates Planned; a chain-inversion
-  promotion per `/auto-prep`'s FOCUS rules is the one sanctioned exception), and anything in the
-  team's default/Triage state is a stranded filing — a raw `issues create` without `--state` — to
-  move to Backlog and trace to its filing path.
+  certified-at-filing issues belong in `Backlog` (the human curates Planned; two sanctioned
+  exceptions — a chain-inversion promotion per `/auto-prep`'s FOCUS rules, and `/quality-review`'s
+  filing recipe routing a severity-carrying Critical/High (priority 1–2) or `security`-labeled
+  filing into `Planned` at birth, so audit a Planned filing against that rule before flagging it),
+  and anything in the team's default/Triage state is a stranded filing — a raw `issues create`
+  without `--state` — to move to Backlog and trace to its filing path.
 - **Correct cancellations.** An issue absorbed by another's fix should be canceled *with its evidence
   carried onto the survivor first* — the losing issue often holds a verified vector the winner lacks.
   **Re-verify each carried claim against current code before writing it onto the survivor; never transcribe.**
