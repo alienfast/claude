@@ -74,13 +74,13 @@ Specs are problem + outcomes + success criteria only — **no implementation pla
 # step 5, after the collision edges are wired. A single-issue run passes `specified` in
 # that position instead (a standalone issue is not an epic).
 #   ...write the description to tmp/prd-description.md via the Write tool...
-~/.claude/scripts/linear-create-child.sh - ENG Planned "User Authentication System" tmp/prd-description.md epic 2
+~/.claude/scripts/linear-create-child.sh --allow-planned - ENG Planned "User Authentication System" tmp/prd-description.md epic 2
 
 # Create a sub-issue linked to a parent. `linear-cli issues create` has no --parent
 # flag (set the parent's UUID via `--data` parentId instead), but prefer the helper — it
 # links via `relations parent` and verifies the link, failing on an orphan. Write the body to a file first.
 #   ...write the description to tmp/sub-issue-description.md via the Write tool...
-~/.claude/scripts/linear-create-child.sh ENG-100 ENG Planned "Add JWT refresh tokens" tmp/sub-issue-description.md
+~/.claude/scripts/linear-create-child.sh --allow-planned ENG-100 ENG Planned "Add JWT refresh tokens" tmp/sub-issue-description.md
 
 # Set a blocking dependency: ENG-101 blocks ENG-102 (i.e. ENG-102 is blocked by ENG-101).
 # Use `-r blocks` with the blocker FIRST — the `blocked-by` enum value is broken in every

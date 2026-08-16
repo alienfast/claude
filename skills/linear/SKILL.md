@@ -32,7 +32,7 @@ Auth: `linear-cli auth oauth` (browser) or `LINEAR_API_KEY`; check with `linear-
 3. **`issues create` has no `--parent` flag** — to set the parent at create time, pass its UUID as `parentId` in `--data` JSON (verified on 0.3.26; `--data` carries `description` too). For follow-ups use the helper anyway: it links via `relations parent` and **verifies** the link (a bare `--data` create doesn't), failing hard on an orphan:
 
    ```bash
-   ~/.claude/scripts/linear-create-child.sh <parent|-> <team> <state|-> <title> <body-file>
+   ~/.claude/scripts/linear-create-child.sh [--allow-planned] <parent|-> <team> <state|-> <title> <body-file>
    ```
 
 4. **Unassign** = `linear-cli issues assign <ID>` with the user omitted.
@@ -164,7 +164,7 @@ Output flags (agent-friendly): `-o json|ndjson`, `-q` (quiet), `--id-only`, `--c
 |---|---|
 | `linear-context.sh <ID>` | Full issue digest **including anchored comments** (gotcha #1). |
 | `linear-deps-graph.sh <ID> \| --team <KEY>` | Dependency graph as `{nodes, edges}` (gotcha #2). |
-| `linear-create-child.sh <parent\|-> <team> <state\|-> <title> <body-file>` | Parent-linked issue create — create → `relations parent` → verify (gotcha #3). |
+| `linear-create-child.sh [--allow-planned] <parent\|-> <team> <state\|-> <title> <body-file>` | Parent-linked issue create — create → `relations parent` → verify (gotcha #3). A caller-passed `Planned` is refused without the leading `--allow-planned` (the human curates Planned; the flag marks a deliberate placement). |
 | `linear-post.sh <comment\|description> <ID> <body-file>` | Post a comment or replace a description from a file. |
 | `linear-add-label.sh <ID> <label>` | Add one issue label without clobbering the rest (read-merge-set + verified attach; gotcha #7). A requested name that matches an existing label after normalization (case + space/`-`/`_`) heals to that label with a NOTE instead of minting a twin — a freehand `needsdecision` once minted a permanent near-miss that leaked its issue past `next-candidates.sh`'s `needs decision` park gate. Exit 2 + create-label pointer when genuinely missing/unattachable, or when several labels normalize to the request. |
 | `linear-remove-label.sh <ID> <label>` | Remove one issue label, preserving the rest (read-filter-set + verified; raw `issueUpdate labelIds: []` for the last-label case). Exit 0 on already-absent. |

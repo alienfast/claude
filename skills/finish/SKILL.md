@@ -240,7 +240,7 @@ If it **passes**: proceed to commit.
 **`--no-push` is required in TWO cases — easy to miss the second:**
 
 1. The user requested `no push` / `don't push` / `skip push` (Step 0 translates these to `NO_PUSH=1`).
-2. **`ACTION=merge`** — the temp branch is about to be merged into source and deleted locally; pushing it pollutes origin with abandoned branches. The merge commit reaches origin later via the source branch.
+2. **`ACTION=merge`** — the temp branch is about to be merged into source and deleted locally; pushing it pollutes origin with abandoned branches. The merge commit reaches origin only when a human pushes the source branch — deliberately manual, no skill or script owns that push (keeper ruling 2026-08-16), so origin lags Linear until the keeper pushes.
 
 If either condition holds, pass `--no-push`. The script does NOT enforce this rule (it has no awareness of `ACTION`), so the orchestrator MUST gate on `NO_PUSH=1 OR ACTION=merge`.
 

@@ -582,7 +582,11 @@ body_file=$(mktemp -u tmp/deferred-XXXXXX)   # -u = name only; Write creates it.
 #    and machine filings crowd it out (2026-08-04: 96 of 140 Planned issues were
 #    review-pipeline filings; 77 were bulk-demoted). File into `Planned` ONLY when the
 #    item is severity-carrying at Critical/High (priority 1-2) or takes the `security`
-#    class label below — release-relevant risks a human should see queued. Backlog
+#    class label below — release-relevant risks a human should see queued. On that
+#    Planned path, prepend `--allow-planned` (leading flag): the helper refuses a
+#    caller-passed Planned without it, and the flag is the audit record that the item
+#    was asserted Critical/High-or-security at file time, so retros stop re-adjudicating
+#    the exception by prose. Backlog
 #    filings lose nothing: `specified` keeps them /auto-eligible, and /next simply
 #    ranks them behind Planned — which is the intended ordering.
 #    If no issue was resolved in Step 1, pass "-" as the parent (a top-level issue) —
@@ -609,7 +613,7 @@ body_file=$(mktemp -u tmp/deferred-XXXXXX)   # -u = name only; Write creates it.
 #    the sub-step 6 render (the prompt display), not the filed title: the priority field
 #    now carries the grade, and a tag baked into the title duplicates it and goes stale
 #    if the grade is later revised.
-new_id=$(~/.claude/scripts/linear-create-child.sh <ISSUE-ID> <team> <Backlog|Planned per the state rule above> "<short title>" "$body_file" <specified|-> <1|2|3|->)
+new_id=$(~/.claude/scripts/linear-create-child.sh [--allow-planned on the Planned path] <ISSUE-ID> <team> <Backlog|Planned per the state rule above> "<short title>" "$body_file" <specified|-> <1|2|3|->)
 create_status=$?   # captured immediately, before any other command — the discriminator the
                    # filing-failure rules below branch on: 0 = filed and parent-linked; 2 = filed
                    # and linked, label not attached (keep the issue); anything else = create

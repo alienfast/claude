@@ -2,12 +2,20 @@
 # linear-create-child.sh — create a Linear issue (optionally linked to a parent),
 # with its description read from a file, and verify the parent link took.
 #
-# Usage: linear-create-child.sh <parent|-> <team> <state|-> <title> <body-file> [label|-] [priority|-]
+# Usage: linear-create-child.sh [--allow-planned] <parent|-> <team> <state|-> <title> <body-file> [label|-] [priority|-]
 #
+#   --allow-planned  Required (leading) to pass `Planned` as the state. Unattended filings land in
+#                Backlog — the human curates Planned (keeper ruling 2026-08-15) — and a caller-passed
+#                Planned without this flag is refused before anything is created. The flag doubles as
+#                the audit record that the placement was deliberate: quality-review's recipe passes it
+#                only on its Critical/High-or-security path, and interactive skills (/spec, /prd) pass
+#                it as the human-in-the-loop placement. Only the CALLER-passed state is gated — the
+#                internal fallback below stays exempt, since it can resolve `planned` only when the
+#                team has no Backlog/Todo state and refusing there would strand the filing in Triage.
 #   <parent>     Parent issue identifier (e.g., PL-396) to link under, or "-" / ""
 #                for a top-level issue.
 #   <team>       Team key or name (e.g., PL).
-#   <state>      Workflow state name (e.g., Planned), or "-" / "" for the team default.
+#   <state>      Workflow state name (e.g., Backlog), or "-" / "" for the team default.
 #   <title>      Issue title.
 #   <body-file>  Path to a file holding the markdown description.
 #   <label>      Optional issue label(s) to attach after create — a single name or a
@@ -50,7 +58,8 @@
 #       EXISTS and is fully usable — do NOT treat the item as unfiled; annotate it as
 #       related-not-sub-issue.
 #   4 = both 2 and 3: parent at cap (`related` edge wired) AND the label attach failed
-#   1 = usage / missing body file / create failed / no identifier returned — or created
+#   1 = usage / caller-passed Planned without --allow-planned (refused pre-create — nothing
+#       exists) / missing body file / create failed / no identifier returned — or created
 #       but the state or the parent linkage could not be established at all (stderr says
 #       which; id already on stdout whenever the issue exists)
 
@@ -59,8 +68,14 @@ set -eo pipefail
 # linear-cli installs to ~/.cargo/bin, which is not on a non-interactive PATH.
 export PATH="$HOME/.cargo/bin:$PATH"
 
+allow_planned=0
+if [ "${1:-}" = "--allow-planned" ]; then
+  allow_planned=1
+  shift
+fi
+
 if [ $# -lt 5 ] || [ $# -gt 7 ]; then
-  echo "usage: linear-create-child.sh <parent|-> <team> <state|-> <title> <body-file> [label|-] [priority|-]" >&2
+  echo "usage: linear-create-child.sh [--allow-planned] <parent|-> <team> <state|-> <title> <body-file> [label|-] [priority|-]" >&2
   exit 1
 fi
 
@@ -71,6 +86,13 @@ title="$4"
 body_file="$5"
 label="${6:-}"
 priority="${7:-}"
+
+# Gate the CALLER-passed state only (the internal fallback below is exempt — see header). Runs
+# before any create, so a refusal leaves nothing behind.
+if [ "$allow_planned" -eq 0 ] && [ -n "$state" ] && [ "$state" != "-" ] && printf '%s' "$state" | grep -qxi 'planned'; then
+  echo "ERROR: refusing caller-passed state 'Planned' without --allow-planned (leading flag) — unattended filings land in Backlog, the human curates Planned (keeper ruling 2026-08-15). Pass --allow-planned only when the placement is deliberate: Critical/High or security-labeled per quality-review's recipe, or a human-in-the-loop interactive filing" >&2
+  exit 1
+fi
 
 for cmd in linear-cli jq; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "ERROR: '$cmd' not found on PATH" >&2; exit 1; }

@@ -173,6 +173,10 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/no-blind-sleep.sh"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/linear-create-state-guard.sh"
           }
         ]
       },
