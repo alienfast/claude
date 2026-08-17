@@ -79,7 +79,7 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 
 ### dependency-updater
 
-**Version**: 1.0.0
+**Version**: 1.2.0
 
 **Description**: Orchestrates comprehensive dependency updates by delegating research, impact analysis, code changes, and validation to specialized agents.
 
@@ -91,11 +91,12 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 
 **Key Features**:
 
-- Parallel package research (10-20 concurrent subagents)
-- Semantic versioning classification
-- Breaking change analysis and migration
-- Quality validation (tests, linting, TypeScript)
-- Comprehensive PR generation
+- **Phase 0's two questions are the only interaction** — where to work (isolated worktree vs in place) and how to finish (`merge` vs `pr`). Everything after runs unattended; `--worktree`/`--in-place` and `--merge`/`--pr` skip even those
+- Files a tracking Linear issue every run, then builds the worktree via `start-wt-setup.sh` + `EnterWorktree` — deliberately NOT `/start … interactive`, whose halt is a terminal state that hands off to a human and opens an editor window
+- **Applies the whole update set at once, then fixes what the gate reports** — no per-package staging and no speculative impact analysis; the worktree makes a bad batch cheap to abandon
+- Delegation is selective: `general-purpose` for parallel research, `developer` for real migrations, `technical-writer` once at ship. `architect` and `quality-reviewer` are exception-only, never a routine pre-flight pass
+- Research depth follows semver — MAJOR full, MINOR skim, PATCH none, with the gate as the safety net for mis-tagged patches
+- Ships through `/quality-review auto` → `/finish merge|pr auto` (the verdict is required — `/finish auto` refuses to ship unreviewed), then removes its own worktree on the `pr` path (`merge` self-cleans)
 
 **Structure**:
 

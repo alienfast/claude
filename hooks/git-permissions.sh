@@ -35,10 +35,35 @@ deny() {
   exit 2
 }
 
+# Heredoc BODIES are data, not commands. `git commit -F - <<'EOF' ... EOF` legitimately carries prose
+# describing git commands — a commit message for this very hook did, and the segment scan below read
+# its lines as invocations and blocked the commit. Drop each body before scanning; the `<<` line
+# itself stays, so the real command is still inspected.
+scan=$(printf '%s' "$COMMAND" | awk '
+  { if (skip) { if ($0 == term || $0 == "\t" term) skip = 0; next } }
+  { line = $0
+    if (match(line, /<<-?[[:space:]]*[\047"]?[A-Za-z_][A-Za-z0-9_]*[\047"]?/)) {
+      t = substr(line, RSTART, RLENGTH)
+      gsub(/^<<-?[[:space:]]*|[\047"]/, "", t)
+      term = t; skip = 1
+    }
+    print line }
+')
+
+# Quoted text is normally DATA too — a `grep "git reset --hard" skills/` search must not trip this.
+# But under an executor the quoted text IS the code, and stripping it would be a trivial bypass.
+# Same rule as linear-create-state-guard.sh and no-blind-sleep.sh.
+# Leading space so one [[:space:]] branch covers start-of-string: `^` inside an ERE alternation
+# group is not an anchor, so `(^|[[:space:]])` silently never matched a command-initial executor.
+executor_probe=" $scan"
+if ! [[ "$executor_probe" =~ [[:space:]](ba|z|k)?sh[[:space:]]+-[A-Za-z]*c([[:space:]]|$) || "$executor_probe" =~ [[:space:]](eval|xargs)([[:space:]]|$) ]]; then
+  scan=$(printf '%s' "$scan" | sed -E "s/'[^']*'/ /g; s/\"[^\"]*\"/ /g")
+fi
+
 # Evaluate EVERY command in the string, not just the leading one. All rules below anchor on ^git,
 # so a compound like `git status && git reset --hard`, a leading space, or a second line used to
 # bypass the hook entirely — the first word of the whole string was all it ever inspected.
-normalized=${COMMAND//&&/$'\n'}
+normalized=${scan//&&/$'\n'}
 normalized=${normalized//||/$'\n'}
 normalized=${normalized//;/$'\n'}
 normalized=${normalized//|/$'\n'}

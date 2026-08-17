@@ -124,6 +124,18 @@ assert_blocked " git reset --hard" "one leading space defeated the ^git anchor"
 assert_blocked "git diff | git apply --force" "pipe segment"
 assert_blocked "$(printf 'git status\ngit reset --hard')" "second line of a multi-line command"
 
+echo "== 10b. data is not code: heredoc bodies and quoted text"
+assert_allowed "$(printf 'git commit -F - <<%sEOF%s\nfix: git worktree remove refuses, and --force is blocked\ngit reset --hard is mentioned here as prose\nEOF' "'" "'")" "heredoc body describing git commands"
+assert_allowed "$(printf 'git commit -F - <<EOF\ngit clean -fd in the body\nEOF')" "unquoted heredoc delimiter"
+assert_allowed "grep 'git reset --hard' skills/" "quoted search pattern"
+assert_allowed "git commit -m 'revert the git checkout foo.ts change'" "quoted commit message"
+# Executor forms are a DOCUMENTED bypass, not a regression: every rule requires the segment to start
+# with `git`, and these start with `bash`/`eval`. standards/git.md § "The hook only sees the Bash tool's
+# command string" states this is out of scope. The executor carve-out in the hook (which suppresses
+# quote-stripping here) is defense-in-depth for if that ever widens — it does not block these today.
+assert_allowed "bash -c 'git reset --hard'" "executor form — documented bypass, git not in command position"
+assert_allowed "eval 'git clean -fd'" "executor form — documented bypass"
+
 echo "== 11. the hook fails CLOSED on an unparseable payload"
 rc_bad=$(printf 'not json at all' | "$HOOK" >/dev/null 2>&1; echo $?)
 if [ "$rc_bad" = "2" ]; then
