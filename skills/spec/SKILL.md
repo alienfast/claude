@@ -52,16 +52,18 @@ Issues parked behind a human decision keep `specified` plus a `needs decision` l
 
 **Present the roster as three stage buckets in this fixed order — Planned, Backlog, Triage — never one mixed list** (keeper priority 2026-08-13: certify ALL of Planned first, then all of Backlog, and look at the inbox only once both are empty — the buckets exist so the user can SEE that a stage is drained). Bucket membership comes from each entry's `State:` line. Each bucket renders as its own numbered list — one line per candidate, `ID — title`, plus a clause on why it ranks (tier, priority, blocked-but-certifiable), never a prose paragraph — with that bucket's parked (`needs decision`) issues directly beneath it in the SAME rendering (measured 2026-08-12: parked Planned issues compressed into a prose sentence were missed and re-asked; a parked issue is part of draining its bucket — grooming one means making and recording the decision in the interview, after which certification clears the label, Step 6 item 5). An empty bucket still renders, as its one-line proof — `Planned: fully certified, nothing parked.` — because showing a stage is drained is half the roster's job. Then AskUserQuestion with options drawn from the **first non-empty bucket only**, top-ranked first, the recommendation its top item — parked issues included as options when they outrank the uncertified ones. Never offer or recommend a Backlog issue while the Planned bucket holds any candidate (uncertified or parked), nor a Triage issue while either earlier bucket does; `Other` already covers a deliberate out-of-order pick. **One exception, and it renders inside the Planned bucket:** a Backlog issue that BLOCKS a Planned candidate is Planned work in waiting — when a Planned candidate shows unresolved blockers, resolve them (`~/.claude/scripts/linear-deps-graph.sh <ID>`) and list any Backlog blocker in the Planned bucket annotated `Backlog — blocks <Planned-ID>`, fully eligible as an option; certifying it includes promoting it to Planned (Step 6 item 4's blocker-promotion clause). The dialog is where the user decides, so it must be legible on its own — a bare-ID option list sends them to Linear to find out what they're choosing. All three buckets empty → `Everything workable is already certified.` and stop.
 
-### Step 2: Research (read-only)
+### Step 2: Claim, then research
 
 1. **The issue itself:**
 
    ```bash
    ~/.claude/scripts/linear-context.sh <ID>          # digest: desc + deps + standalone AND anchored comments
-   linear-cli issues get <ID> -o json -q             # raw .description for round-tripping; note .state.name and labels
+   linear-cli issues get <ID> -o json -q             # raw .description for round-tripping; note .state.name, labels, and .assignee
    ```
 
    The digest is for reading (anchored reviewer comments are invisible to plain `issues get` — linear skill gotcha #1); the raw `.description` is what gets preserved verbatim in Step 4.
+
+   **Claim for the interview's duration.** When `.assignee` is empty, assign the issue to the user now — `linear-cli issues update <ID> --assignee me` — and remember that it arrived unassigned. Assignment is a claim (`standards/linear-workflow.md`), so the temporary claim makes the in-flight grooming visible to teammates and keeps the issue out of their rankings while the interview runs; Step 6 item 8 restores the pre-groom state once certification lands, and every earlier exit restores it too (Error Handling). An issue already assigned to someone else is never touched — pick mode never offers one (Step 1's hard gate), so it can only arrive via a targeted `/spec <ID>`; groom it without cycling their claim.
 2. **Related work:** `linear-cli search issues "<keywords>"` (workspace-wide — no `--team` flag) for duplicates/overlap; `~/.claude/scripts/linear-deps-graph.sh <ID>` for blockers and parent context.
 3. **Classify before dispatching research.** The issue is **decision-grade** when its deliverable is a decision rather than a buildable spec: the title or a "Decision needed" section asks a question ("Decide …"), two-plus candidate designs are named, an authorization/policy surface is in play, or other issues block on the answer. Decision-grade grooming runs the deltas in [Decision-grade issues](#decision-grade-issues) over Steps 2–6 — starting with the deeper `architect` dispatch replacing item 4 below. Everything else proceeds unchanged.
 4. **Codebase context** — delegate one read-only exploration to ground the interview in current behavior:
@@ -106,7 +108,7 @@ Write `tmp/spec-<id-lowercase>.md` in the canonical template shape ([standards/i
 Show the user the full draft either way — it is the artifact about to overwrite the Linear description, and it must be visible in chat before it lands. Whether to *ask* is what graduates:
 
 - **Faithful codification → no approval prompt.** If every substantive element of the draft — problem, outcome, each success criterion, each scope exclusion, priority — traces to an interview answer the user gave or corrected, to the issue's own description and comments, or to template boilerplate, the interview already WAS the approval. (The estimate is exempt from this trace: it is recommended, never elicited, so it can never block the no-prompt path.) Asking again re-asks settled questions. State in one line that the draft codifies the interview answers unchanged, present it, and proceed directly to Step 6.
-- **Material divergence → explicit approval, asked on the delta.** If the draft carries anything the interview never put to the user — a research-driven reframing, a criterion or exclusion you authored rather than they selected, a scope change discovered after their answers — lead with that delta (what is new and why), then iterate until they explicitly approve it. No approval → stop; nothing has been written to Linear.
+- **Material divergence → explicit approval, asked on the delta.** If the draft carries anything the interview never put to the user — a research-driven reframing, a criterion or exclusion you authored rather than they selected, a scope change discovered after their answers — lead with that delta (what is new and why), then iterate until they explicitly approve it. No approval → release the claim and stop; nothing beyond Step 2's temporary claim has been written to Linear.
 
 Cheapest way to stay on the first branch: when drafting surfaces something new, fold it into a final interview batch as pre-filled options (Step 3's correct-don't-author pattern) rather than carrying it silently into the draft.
 
@@ -149,9 +151,11 @@ Cheapest way to stay on the first branch: when drafting surfaces something new, 
    ~/.claude/scripts/linear-post.sh comment <ID> tmp/spec-comment-<id-lowercase>.md
    ```
 
+8. **Release the claim:** if Step 2 claimed a previously-unassigned issue, restore that state — `linear-cli issues assign <ID>` (the bare form unassigns, linear gotcha #4). Certification is the handoff to unattended pickup, and the released claim is part of it: an assignment left behind reads as a person's in-flight work and hides the issue from every teammate's ranking. An issue that carried an assignee before grooming keeps it.
+
 ### Step 7: Report and continue
 
-Compact summary: what was rewritten, state moved (Triage → Planned, or a Backlog blocker promoted), label applied, collision edges wired (if any), sub-issues created — and the handoff line: *eligible for `/next specified` and `/auto` pickup*. In pick mode, **re-run Step 1's roster and re-render the full three-bucket presentation for every subsequent pick** — same buckets, same rules each time, so the state of every stage stays visible across the session. When this certification just DRAINED a bucket (nothing uncertified, nothing parked left in it), announce the milestone as its own line before offering anything further — `Planned is fully certified — moving to Backlog.` / `Backlog is fully certified — the Triage inbox is next.` — the milestone is the point of the bucket order, not a footnote. Stop when the user is done.
+Compact summary: what was rewritten, state moved (Triage → Planned, or a Backlog blocker promoted), label applied, collision edges wired (if any), sub-issues created, the temporary claim released — and the handoff line: *eligible for `/next specified` and `/auto` pickup*. In pick mode, **re-run Step 1's roster and re-render the full three-bucket presentation for every subsequent pick** — same buckets, same rules each time, so the state of every stage stays visible across the session. When this certification just DRAINED a bucket (nothing uncertified, nothing parked left in it), announce the milestone as its own line before offering anything further — `Planned is fully certified — moving to Backlog.` / `Backlog is fully certified — the Triage inbox is next.` — the milestone is the point of the bucket order, not a footnote. Stop when the user is done.
 
 ## Decision-grade issues
 
@@ -177,12 +181,13 @@ The deliverable is a **recorded decision plus filed follow-ups**, not a certifie
 ## What /spec must NOT do
 
 - **No implementation planning** — no technical approach, no step-by-step code plan, no key-file lists, no verification-command blocks. `/start` Step 6 (plan mode) owns all of that.
-- **No claiming** — no assignment, no In Progress, no branch creation, no code edits.
+- **No persistent claiming** — no In Progress, no branch creation, no code edits, and no assignment that outlives the grooming: Step 2's temporary interview claim is the one assignment it makes, and every exit path releases it (Step 6 item 8; Error Handling on earlier exits).
 - **No certification without signoff** — Step 5's approval is implicit only for a draft that purely codifies the interview answers; a spec carrying material the user never saw or approved never gets the label.
 
 ## Error Handling
 
 - **Issue not found / linear-cli failure** → surface the error verbatim and stop.
+- **Any exit after Step 2's claim that never reaches Step 6 item 8** — signoff withheld, an error row below, the work turning out `human`-labeled and uncertified, the user moving on — release the claim before stopping (`linear-cli issues assign <ID>`): a dangling assignment reads as a person's in-flight work and hides the issue from teammates' rankings indefinitely.
 - **`linear-add-label.sh` exit 2** → the spec landed but the issue is NOT certified; give the `linear-cli labels create "specified" -t issue` pointer and stop before the collision step and the comment.
 - **Explore agent unavailable** → proceed on Linear context alone and say so before the interview.
 - **`linear-cli auth status` logged out** → prompt: `linear-cli auth oauth`.

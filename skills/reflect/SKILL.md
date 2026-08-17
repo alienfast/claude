@@ -271,7 +271,7 @@ Reflection:
 Config Audit — <project>:
 - Stale/contradicted: <N> — <file:claim — fix, applied|proposed>
 - Duplicates: <N> — <consolidation proposed>
-- Applied: <N> (committed|uncommitted per Step 5's rules)
+- Applied: <N> (always uncommitted — sweep never commits, per Step 4)
 - Proposed: <N>
 - Clean: <files audited with no findings>
 ```

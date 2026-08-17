@@ -60,11 +60,14 @@ sees only a slow `Agent` call.
 Three gauges ride the same run and the retro reads all three, not just the tables:
 
 - **Context distribution** — share of billable prompt volume by context size at call time. This is the
-  autocompact gauge: fleet-launch pins `--autocompact 150000` (2026-08-14; before that, `opus[1m]`
-  sessions never compacted and the 2026-08-13/14 fleets ran 91-94% of their volume at >=200k context).
-  Expect the >=200k share near zero on post-change runs; a high share means compaction didn't engage
-  (check the dispatch flags), and a falling share with RISING churn gauges means the threshold is too
-  aggressive — raise it rather than reverting.
+  autocompact gauge: fleet-launch pins `--autocompact 500000` (150000 shipped 2026-08-14 and
+  thrash-aborted its first fleet; 300000 orbited mid-review; 500000 kept across all four 2026-08-15/16
+  fleets — doc/compacting-investigation.md, verdict log). Under 500k the session floor is ~115–177k and
+  the sawtooth tops out at the ~460k trigger, so a LARGE >=200k share (84–94% on the verified fleets) is
+  the expected pre-compact shoulder, not a failure — the engagement signal is no volume above ~460k, and
+  the health signal is cadence (a handful of compact_boundary rows per session at tens-of-minutes
+  spacing; spacing collapsing to minutes is the orbit signature). A falling ctx share with RISING churn
+  gauges means the threshold is too aggressive — raise it rather than reverting.
 - **Shipped-issue provenance** — joins the shipped set against the Step 3 Linear exports; the fresh
   share (created during or <=7 days before the run) is the treadmill gauge, read alongside R.
 - **Cross-run trend** — every windowed run appends its headline row to
@@ -178,7 +181,7 @@ The script finds *shapes*; it does not explain them. Each flag is a lead:
 
 | Flag | What it usually means | Where to look |
 |---|---|---|
-| never armed a ScheduleWakeup | silent loop death — the run stopped with no `NO-CANDIDATES`/`AUTO-HALTED` | should now be caught by `hooks/auto-heartbeat.sh`; if it recurs, that hook failed |
+| never armed a ScheduleWakeup | silent loop death — the run stopped with no `NO-CANDIDATES`/`AUTO-HALTED` | should now be caught by `hooks/auto-heartbeat.sh`; if it recurs, that hook failed — but first check for an operator interjection: the hook deliberately stands down when a human message follows the iteration anchor (`human-override` in its decide() output; replay it with `TRANSCRIPT_PATH=<transcript> bash -c 'source ~/.claude/hooks/auto-heartbeat.sh; decide'`), so an attach-recovered session that ends un-armed is the hook working as designed, not failing — the bookkeeping gap it leaves is /auto's attach-recovery contract (skills/auto/SKILL.md) |
 | a stall far outlasting its own stated reset | the cutoff killed the turn **mid-iteration**, before any wakeup was armed — so nothing was pending to wake it and the session is dead until a human prompts it. **No hook can catch this**: a turn killed by an API error fires no Stop hook at all (verified — no `stop_hook_summary` follows the limit message), so `auto-heartbeat.sh` is structurally unable to see it | compare each stalled session's resume against the reset named in its limit message. A session with a wakeup pending resumes 1–8 min after reset; one without does not resume at all. On 2026-08-14 that split 1-recovered / 2-dead within one cutoff — 4.85 avoidable session-hours. The mitigation is `scripts/auto-stall-watch.sh` (launchd agent `com.alienfast.auto-stall-watch`, installed by `update.sh`) — detection only, since a live background agent accepts no scripted prompt, so recovery is the operator running `claude attach <id>`. If a stall outlived it silently, read `~/.claude/logs/auto-stall-watch.log` for whether the watcher flagged it and whether anyone acted |
 | shipped without recording it | Step 4 never ran; the run's own tally undercounts | compare against `git log` and Linear state |
 | classifier blocks | a permission-shaped stall; check whether the agent rerouted or silently dropped the step | the subagent transcript — read what it did *next* |
@@ -263,6 +266,15 @@ Filed issues are output too, and they fail in ways the metrics cannot see. Check
   filing into `Planned` at birth, so audit a Planned filing against that rule before flagging it),
   and anything in the team's default/Triage state is a stranded filing — a raw `issues create`
   without `--state` — to move to Backlog and trace to its filing path.
+- **Missing collision edges.** Group the run's filings by mechanism/file (their titles and bodies name
+  it) and check `linear-cli relations list` on each same-mechanism sibling pair: two fleet-pickable
+  `specified` siblings against one file need a `blocks` edge, mechanism-sharing pairs a `related` edge
+  plus a comment (the direction and certification rules live in standards/issue-spec.md § Certification
+  includes collision edges). The filing-time rule (quality-review's dedup/edge-wiring sub-step) loses
+  under exactly this audit's conditions — measured on two consecutive fleets (2026-08-16:
+  BF-1201/BF-1202/BF-1205; 2026-08-17: BF-1220→BF-1221, BF-1223↔BF-1203, BF-1208↔BF-1213), every edge
+  wired at retro by hand — so this bullet is the systematic backstop, and it is what actually produces
+  the "missing links" half of the filing-quality feed Step 6 hands to /reflect fleet.
 - **Correct cancellations.** An issue absorbed by another's fix should be canceled *with its evidence
   carried onto the survivor first* — the losing issue often holds a verified vector the winner lacks.
   **Re-verify each carried claim against current code before writing it onto the survivor; never transcribe.**
@@ -296,7 +308,11 @@ replaced instructions that had already failed two or more times.
 
 Present findings and wait. On approval, implement, then verify honestly:
 
-- Hooks and scripts ship with a regression suite carrying the **real transcript shape** as a fixture, and
+- Hooks and scripts ship with a regression suite carrying the **real shape of every live feed the
+  script consumes** as fixtures — transcripts, agent lists (`claude agents --json`), state files —
+  re-snapshotted from the live feed at edit time, never written from memory (auto-stall-watch's
+  hand-written agent-list fixture kept its suite green through 371 ticks of a watcher that matched
+  zero live rows), and
   every existing suite stays green (`hooks/*.test.sh`).
 - Re-run `fleet-metrics.py` after any change to numbers you cited — an ad-hoc measurement taken during
   investigation is easy to overstate, and a figure baked into a hook header must be one the script
