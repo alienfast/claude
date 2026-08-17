@@ -19,6 +19,10 @@ Because the token matches in the body too, write it literally only when you mean
 - Keep the subject to roughly 72 characters where it fits, and don't contort it to hit a number — a noun phrase naming what changed beats a truncated imperative. (Nothing enforces a limit; the old "under 50, imperative mood" rule matched neither the skills nor the history.)
 - Separate subject from body with blank line
 - Focus on what and why, not how
+- **One concern per commit — a subject that cannot represent the commit is the tell.** When the subject can only cover the change by naming two things, or by going vague enough to cover both (`chore: updates`, `fix: various`), the commit is wrong and the fix is to split it, not to reword it. The subject is what `git log --oneline`, `git blame`, and every future search actually surface, so work its subject does not name is work nobody finds. Measured here: a 283-line rewrite of `skills/dependency-updater/SKILL.md` shipped under `fix(hooks): heredoc bodies and quoted text are data, not commands` and was only recoverable via `git log -- <path>`.
+
+  **The unit is the concern, not the file or the finding — do not split a coherent change into pieces.** One honest subject covering thirty files is one commit and should stay one: a config sweep, a rename across a package, a fix and its test. Splitting per-file, per-finding, or per-agent-batch produces a log that is harder to read than the bundled commit was, and it makes a revert a multi-commit operation. Ask only whether a reader looking for one half would be surprised to find the other; if not, it is one concern however many files it touches.
+- **The bundling trap is a blocked commit.** A hook, a check, or a precondition refuses the commit; you fix the blocker; now the blocker's fix and the original work are staged together — with the blocker freshest in mind and most likely to win the subject. Commit the unblocking fix by itself first, then the original work. This is the ordinary way unrelated changes end up in one commit, and it never presents itself as a decision to bundle.
 
 ### PR Guidelines
 
