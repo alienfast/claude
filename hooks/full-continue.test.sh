@@ -294,24 +294,24 @@ check verdict-sidechain.jsonl .fire false fire
 check verdict-sidechain.jsonl .pending true pending
 
 # 22. BF-392 PRODUCTION SHAPE and the LOAD-BEARING guard for the give-up fix (the case #16/#23 do not discriminate):
-#     the mandatory /quality-review Step 7 /reflect tail emits several assistant turns BETWEEN the verdict and the
-#     stop. The upstream give-up counter must NOT count those as prior nudges — on the FIRST stop, attempts is 0 and
-#     the hook FIRES. Under the reverted turn-counter this reads 3+ and gives up without firing; only this fixture
-#     (4 reflect turns, 0 nudge records) fails on that revert, so do not prune it.
+#     VERBOSE POST-VERDICT TURNS — several assistant turns land BETWEEN the verdict and the stop. The upstream
+#     give-up counter must NOT count those as prior nudges — on the FIRST stop, attempts is 0 and the hook FIRES.
+#     Under the reverted turn-counter this reads 3+ and gives up without firing; only this fixture (4 post-verdict
+#     turns, 0 nudge records) fails on that revert, so do not prune it.
 { ucmd /full "wt PL-1"
   askill quality-review "PL-1"
   atext "Verdict: passed-clean
 Cycles: 1
 Open items: none"
-  atext "/reflect: scanning this session for improvements..."
-  atext "/reflect: found 2 candidate config edits; auto-applying the safe one."
-  atext "/reflect: filed the larger proposal as a certified issue. No blocking items."
-  atext "Reflection complete. Nothing else to apply."; } > "$TMP/verdict-reflect.jsonl"
-check verdict-reflect.jsonl .fire true fire
-check verdict-reflect.jsonl .upstream true upstream
-check verdict-reflect.jsonl .attempts 0 attempts
-check verdict-reflect.jsonl .turns_since_verdict 4 turns_since_verdict
-check verdict-reflect.jsonl .finishargs "PL-1 merge" finishargs
+  atext "Summarizing what changed for PL-1..."
+  atext "Two follow-ups are worth noting; neither blocks the handoff."
+  atext "Filed the follow-ups as sub-issues. No blocking items."
+  atext "Wrap-up complete. Nothing else to apply."; } > "$TMP/verdict-verbose.jsonl"
+check verdict-verbose.jsonl .fire true fire
+check verdict-verbose.jsonl .upstream true upstream
+check verdict-verbose.jsonl .attempts 0 attempts
+check verdict-verbose.jsonl .turns_since_verdict 4 turns_since_verdict
+check verdict-verbose.jsonl .finishargs "PL-1 merge" finishargs
 
 # 23. Upstream give-up bound: prior hook nudges (its own block-reason records) DO advance the counter, so a stuck
 #     re-block loop still terminates. Two prior nudge records in-window -> attempts 2 (main() gives up at >=3, or >=2

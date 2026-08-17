@@ -15,8 +15,8 @@ Because the token matches in the body too, write it literally only when you mean
 
 ### Commit Message Guidelines
 
-- Use imperative mood ("Add feature" not "Added feature")
-- Keep first line under 50 characters
+- Lead with the scope, then the summary: `<scope>: <summary>` — `keeper: <ID> — <summary>`, `docs(config): <summary> (via /reflect)`, `checkpoint: <summary> [<ID>]`. Skill-generated commits already follow this and are the bulk of the history.
+- Keep the subject to roughly 72 characters where it fits, and don't contort it to hit a number — a noun phrase naming what changed beats a truncated imperative. (Nothing enforces a limit; the old "under 50, imperative mood" rule matched neither the skills nor the history.)
 - Separate subject from body with blank line
 - Focus on what and why, not how
 
@@ -140,9 +140,12 @@ git add packages/  # Unless you explicitly worked on ALL of packages/
 Do not `restore` them, do not `reset` to "clean up", and do not sweep them in with `git add .`. Ask
 whether to include them, leave them unstaged, or commit them separately.
 
-### Safe Commands (Always Allowed)
+### Safe Commands (not blocked by the hook)
 
-These commands are safe and do not require permission:
+These commands pass the git-permissions hook without prompting. **Hook-safe is not authorization:**
+`git add` / `git commit` / `git push` appear below because they are not *destructive*, but they still
+require the explicit grant in § Commit and Push Authorization — the two are separate gates, and passing
+this one says nothing about the other.
 
 ```bash
 git status              # Check repository state
@@ -276,7 +279,7 @@ Commits and pushes are **separate, explicit grants**. Neither is implied by impl
 
 ### Named exceptions: skill-scoped grants
 
-Invoking `/finish` is an explicit grant to commit and push that one issue's change set — the documented contract of the skill IS the grant. Invoking `/auto` (or `/loop /auto`) is the single **run-scoped standing grant**: it authorizes the `/finish auto` commit+push of every issue that run ships, because unattended shipping is `/auto`'s entire documented purpose. The grant is bounded — no force-pushes, no history rewrites, no committing work unattributable to a Linear issue — and every shipped change is audited via the issue's plan and completion comments. Invoking `/keeper` is an explicit grant to commit and push, in the `~/.claude` repo only, the config changes that run adjudicates and accepts — bounded to files the skill edited or accepted (staged by name), no force-pushes, no history rewrites, and never files the adjudication rejected or deferred (concurrent-session WIP stays in the tree). No other skill or phrasing creates a standing grant.
+Invoking `/finish` is an explicit grant to commit and push that one issue's change set — the documented contract of the skill IS the grant. Invoking `/auto` (or `/loop /auto`) is the single **run-scoped standing grant**: it authorizes the `/finish auto` commit+push of every issue that run ships, because unattended shipping is `/auto`'s entire documented purpose. The grant is bounded — no force-pushes, no history rewrites, no committing work unattributable to a Linear issue — and every shipped change is audited via the issue's plan and completion comments. Invoking `/keeper` is an explicit grant to commit and push, in the `~/.claude` repo only, the config changes that run adjudicates and accepts — bounded to files the skill edited or accepted (staged by name), no force-pushes, no history rewrites, and never files the adjudication rejected or deferred (concurrent-session WIP stays in the tree). Invoking `/checkpoint` is an explicit grant to commit and push one WIP checkpoint of the named issue's change set — staged by name, push suppressible with `no push`. Invoking `/reflect` grants exactly one commit and no push: project-scoped config edits inside a `/start wt` worktree, check-gated and staged by name, so they ride the issue merge; user-level `~/.claude` edits are never committed by that skill in any mode. No other skill or phrasing creates a standing grant.
 
 ### Default Behavior
 

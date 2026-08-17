@@ -26,7 +26,9 @@ needs the `.js` specifier instead. Check the tsconfig before converting a repo e
 2. External dependencies
 3. Internal modules (absolute imports)
 4. Relative imports
-5. Type-only imports last
+
+Biome's `organizeImports` owns import order — it is on house-wide and sorts alphabetically by specifier,
+so don't hand-sort (type-only imports land wherever their specifier sorts, often first and interleaved).
 
 ## Type definitions
 

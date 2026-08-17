@@ -31,7 +31,7 @@ Execute comprehensive dependency updates by orchestrating specialized agents. **
 
 - Break dependency update workflow into discrete, testable phases
 - Create todos for analysis, research, impact assessment, updates, and validation
-- Refer to [Agent Coordination Standards](~/.claude/standards/agent-coordination.md) for parallel vs sequential execution patterns
+- Before dispatching a parallel batch, enumerate each agent's write targets — see [Agent Coordination Standards](~/.claude/standards/agent-coordination.md) § Write-target exclusivity
 
 ### 2. Delegate All Tasks
 

@@ -7,11 +7,18 @@ disagree with CI.
 
 | Task | Use | Not |
 |---|---|---|
-| Type checking | `pnpm check-types` | `tsc` |
-| Linting | `pnpm check` / `pnpm lint` | `eslint`, `biome` |
+| Everything, as one gate | `pnpm check` | running the members individually |
+| Type checking | `pnpm check-types` | `tsc`, `pnpm typecheck` (not a house script) |
+| Linting/formatting | `pnpm check-biome` | `eslint`, `biome`, `pnpm lint` (not a house script) |
 | Markdown | `pnpm check-markdown` | `markdownlint` |
 | Tests | `pnpm test` | `jest`, `vitest` |
 | Build | `pnpm build` | tool-specific build commands |
+
+`pnpm check` is the aggregate gate, not a linter: the house suite fans it out to
+`check-types check-biome check-circular check-markdown test` (see
+[standardize-tooling](../skills/standardize-tooling/SKILL.md), which owns the canonical script set).
+That fan-out is why "type checking is gated by `pnpm check`" is true even though no gate invokes
+`check-types` by name — and why a project whose `check` omits `check-types` is not actually type-gated.
 
 Direct invocation is correct only when no script covers what you need — a one-off flag, a single
 file, a diagnostic run.

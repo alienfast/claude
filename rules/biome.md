@@ -40,6 +40,9 @@ fix exists: genuine errors with no fix (e.g. `noDefaultExport`) and unsafe-fixab
 automatically. Don't disable a rule to make a finding go away; fix the code (see
 [Problem-Solving Standards](../standards/problem-solving.md)).
 
+The one carve-out: disable a rule when it conflicts with an intentional codebase pattern, with a one-line
+documented reason in the config — never to silence a real finding.
+
 ## CI verifies, it never mutates
 
 The `--write` form (e.g. a local `check` script) auto-fixes safe issues and exits 0, so on its own it **masks**

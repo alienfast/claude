@@ -27,10 +27,18 @@ paths:
 - To change what resolves: edit `package.json` / workspace config and run the package manager (`pnpm install`, `pnpm add`, `pnpm update <pkg>`) — let it regenerate the lockfile.
 - A merge-conflicted lockfile is a non-event, every time: clear the conflict whichever way is cheapest (checkout either side — the choice is immaterial), then delete the file and reinstall so the package manager regenerates it from `package.json`. Don't reason about which side to "base" the merge on, and don't call the resolution out in summaries or completion comments — it's routine, not a decision.
 
+## Supply-chain defaults
+
+The house baseline, applied to new projects and to any project being converged: **pnpm 11**
+(`packageManager: pnpm@11.x`), a `minimumReleaseAge` cooldown in `pnpm-workspace.yaml` so a
+freshly-published version can't be installed the moment it lands, an `allowBuilds` allow-list so only vetted
+packages run install scripts, and `blockExoticSubdeps` in monorepos to reject non-registry (git/tarball)
+transitive deps. Don't reproduce the values from memory — [standardize-tooling](../skills/standardize-tooling/SKILL.md)
+reads them live from the canonical configs and applies whatever a project is missing.
+
 ## Command Usage
 
-- Use project scripts over direct tool invocation
-- Prefer `pnpm check-types` over `npx tsc --noEmit` — see [Project Commands](../standards/project-commands.md), which owns the command table
+- Use project scripts over direct tool invocation — see [Project Commands](../standards/project-commands.md), which owns the command table
 - Use `pnpm audit` instead of `npm audit`
 
 ### Non-interactive installs (agent/CI shells)

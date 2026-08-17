@@ -280,7 +280,7 @@ Config Audit — <project>:
 
 ## Error handling
 
-- **Invoked from `/quality-review` with nothing to reflect on** → `No improvements identified.` and return. Add no latency-heavy work to clean runs.
+- **Invoked by `/fleet-retro` with nothing to reflect on** → `No improvements identified.` and return. Add no latency-heavy work to clean runs. (`/quality-review` cannot reach this skill at all — its per-issue tail was retired 2026-08-15.)
 - **Verifier agent unavailable** → do not auto-apply on faith. Downgrade every unverified candidate to `propose` and note that verification could not run.
 - **Keeper probe unavailable** (`git -C <resolved literal path> config` errors — e.g. `~/.claude` is not a git clone on this machine) → treat as non-keeper: user-level candidates downgrade to `propose`. Fail toward filing, never toward editing a shared repo blind. **A worktree-isolation guard refusal on the tilde form is NOT this case** — re-resolve `~/.claude` to a literal path (`echo ~/.claude`) and retry with `-C <literal>` before concluding the probe is unavailable.
 - **wt commit fails** (Step 5 — `git commit` rejected by a hook or precondition) → reverse the edits with the Edit tool exactly as in the red-check path, reclassify as `propose`, and surface the git error. Never leave a tracked project edit uncommitted in a merge-mode worktree.

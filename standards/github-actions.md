@@ -26,3 +26,7 @@ Keep the source tag as a trailing comment so the pin stays auditable:
 ```yaml
 uses: owner/repo@<commit-sha> # v4
 ```
+
+Bump actions to current majors while you are re-pinning — a pin freezes the version, so a stale pin stays
+stale until someone touches it. `skills/standardize-tooling/references/publishing.md` is this standard's
+consumer: it handles the workflow-authoring path and defers here for the pin mechanics.

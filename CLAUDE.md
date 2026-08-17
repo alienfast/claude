@@ -26,7 +26,7 @@ These are generic, file-type-scoped, and shared across all projects via `alienfa
 
 ## Available Skills
 
-Skills activate automatically based on context, and the harness lists the full available set each session — so this file does not enumerate them (the list drifts otherwise). See [Skills README](skills/README.md) for the catalog, grouping (Linear workflow vs development workflow), and creation guide. External skills are installed via `update.sh`.
+Skills activate automatically based on context, and the harness lists the full available set each session — so this file does not enumerate them (the list drifts otherwise). See [Skills README](skills/README.md) for the creation guide and conventions — the harness's per-session listing is the authoritative catalog, and that file documents only a subset. External skills are installed via `update.sh`.
 
 ## Standards
 
@@ -73,11 +73,11 @@ Effort governs how much thinking happens, not how much gets said. Length has to 
 
 You have autonomy to make good engineering decisions — architectural improvements, new abstractions, schema changes, API updates, cross-file refactors — without asking permission. Proceed directly when the solution is obvious, a codebase pattern exists, or a standard covers the scenario.
 
-Stop and ask when genuine uncertainty remains: root cause still unclear after investigation, multiple valid solutions with significant trade-offs, 2+ attempts failed, or a business / security / usability call is needed. When you stop, give what you tried, the trade-offs, your recommendation, and a clear question.
+Stop and ask when genuine uncertainty remains: root cause still unclear after investigation, multiple valid solutions with significant trade-offs, 2+ attempts failed, or a business / security / usability call is needed. When you stop, hand over in the shape [Problem-Solving Standards](standards/problem-solving.md) § Complexity Response Pattern prescribes — it owns the five elements, and the two most often dropped (the proper fix scoped concretely, and the workaround alternative with what it costs) are exactly what makes the handover decidable.
 
 Before reaching for a workaround — version pin/downgrade, error suppression, `any` cast, incomplete implementation (skipping tests or validation), disabling a lint rule, partial migration, silent default for required config — stop and fix the root cause. These are signals to dig deeper, not shortcuts.
 
-See [Problem-Solving Standards](standards/problem-solving.md) for the full decision framework, the seven workaround anti-patterns with their narrow exceptions, and the complexity-response template.
+See [Problem-Solving Standards](standards/problem-solving.md) for the full decision framework, the seven workaround anti-patterns with their narrow exceptions, and the Complexity Response Pattern.
 
 ## Delegation
 
@@ -89,7 +89,7 @@ The named review gates are the deliberate exception. `/quality-review`'s reviewe
 
 ### Waiting on delegated work
 
-**Need the result before you can continue? Dispatch with `run_in_background: false` — where your `Agent` tool exposes it.** Then the call blocks and hands back the result, so there is nothing to wait for and nothing to write. This is the right default for a review, a fix batch, or an implementation whose output the next step consumes — which is nearly every in-flight dispatch. **The parameter is feature-flagged, and where it is absent the dispatch backgrounds regardless** — passing it anyway is silently accepted, changes nothing, and skews `scripts/fleet-metrics.py`'s dispatch census. Judge by the tool result (an `Async agent launched successfully …` line in place of the report), not by the schema, which is ambiguous: one harness context omits the parameter precisely because only synchronous subagents are supported. Where it is absent, the next bullet is the normal path, not the fallback.
+**Need the result before you can continue? Dispatch with `run_in_background: false` — where your `Agent` tool exposes it.** Then the call blocks and hands back the result, so there is nothing to wait for and nothing to write. This is the right default for a review, a fix batch, or an implementation whose output the next step consumes — which is nearly every in-flight dispatch. **The parameter is feature-flagged, and where it is absent the dispatch backgrounds regardless** — judge by the tool result (an `Async agent launched successfully …` line in place of the report), never by the schema. Where it is absent, the next bullet is the normal path, not the fallback. `standards/agent-coordination.md` § Background-agent completion reports owns the mechanics — the schema's ambiguity, how the fleet-metrics census reads each case, and the per-task-type recovery ordering.
 
 **Don't need it yet? Leave it in the background and end the turn.** The harness re-invokes you when it finishes. Ending the turn is not abandoning the work.
 
@@ -128,7 +128,7 @@ Route by what the information is:
 
 Memory is the destination of last resort: if it's worth keeping and the team would benefit, promote it to shared config instead.
 
-The `/reflect` skill automates this routing: it turns session friction (thrashing, silently-worked-around skills, repeated corrections) into shared-config edits — auto-applying the small/safe ones (user-level `~/.claude` edits only on the keeper's machine, left uncommitted for their review; project-level edits inside a `/start wt` worktree check-gated and committed on the issue branch so they ride the merge), proposing the rest, and filing those proposals as a certified (`specified`) Linear issue (`Backlog` — the human curates Planned) so they survive autonomous `/full` runs and are eligible for `/auto` pickup — except keeper batches (any `~/.claude` target), which file uncertified with the `keeper` label instead: `/auto` cannot ship cross-repo config work, so those wait for the keeper's interactive pickup. Its scheduled surface is `/fleet-retro`'s batched `/reflect fleet` step (per-issue reflection was retired 2026-08-15 — it cost ~10 minutes per shipped issue and could not see cross-session patterns like filing/linking quality); run it manually when a session's friction warrants. `/reflect sweep` audits a project's config against the actual codebase and de-duplicates accumulated drift.
+The `/reflect` skill automates this routing: it turns session friction (thrashing, silently-worked-around skills, repeated corrections) into shared-config edits — auto-applying the small/safe ones (user-level `~/.claude` edits only on the keeper's machine, left uncommitted for their review; project-level edits inside a `/start wt` worktree check-gated and committed on the issue branch so they ride the merge), proposing the rest, and filing those proposals as a certified (`specified`) Linear issue (`Backlog` — the human curates Planned) so they are eligible for `/auto` pickup — except keeper batches (any `~/.claude` target), which file uncertified with the `keeper` label instead: `/auto` cannot ship cross-repo config work, so those wait for the keeper's interactive pickup. Its scheduled surface is `/fleet-retro`'s batched `/reflect fleet` step (per-issue reflection was retired 2026-08-15 — it cost ~10 minutes per shipped issue and could not see cross-session patterns like filing/linking quality); run it manually when a session's friction warrants. `/reflect sweep` audits a project's config against the actual codebase and de-duplicates accumulated drift.
 
 ### Multi-Session Safety
 

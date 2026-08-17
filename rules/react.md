@@ -12,6 +12,7 @@ paths:
 - **State**: `useState` (local), `useReducer` (complex state), `useActionState` (form actions)
 - **Data fetching**: `use()` hook for promises (React 19+), custom hooks for data fetching
 - **Composition**: Prefer over inheritance, compound patterns (Card.Header, Card.Body)
+- **Effect events**: `useEffectEvent` for values an effect reads but must not react to — keeps them out of the dependency array without suppressing the lint rule
 - **Imports**: Named imports only - `import { useState, useEffect } from 'react'`
 - **Legacy imports**: ALWAYS replace `import * as React from 'react'` and `import React from 'react'` with named imports
 
@@ -44,6 +45,8 @@ const ChangeNameDialog = ({ open }: Props) => { ... }
 
 ## Memoization
 
+Where the **React Compiler** is enabled (`reactCompiler: true` in the Next.js config), it memoizes for you: hand-written `useMemo` / `useCallback` / `memo()` are the exception there, and each one needs a stated reason for why the compiler's output isn't sufficient. Check the config before adding one. The rest of this section is the decision tree for projects without the compiler.
+
 Use memoization only when there is a measured performance need or a specific technical requirement:
 
 - **`memo()`**: Wrap with named function expression for DevTools: `export const X = memo(function X(...) { })`
@@ -69,7 +72,7 @@ Otherwise, mention it in the "Approved" section as a deliberate non-finding ("in
 - **Dependencies**: Always include all dependencies in `useEffect` arrays
 - **Functions in effects**: Define functions inside `useEffect` to avoid `useCallback`
 - **Objects in effects**: Create objects inside `useEffect` to avoid `useMemo`
-- **No dependency suppression**: Never suppress `exhaustive-deps` linter warnings
+- **No dependency suppression**: Never suppress `exhaustive-deps` linter warnings — when the effect must read a value without re-firing on it, move that read into a `useEffectEvent` callback and call it from the effect
 
 ## Transitions
 
@@ -78,12 +81,7 @@ Otherwise, mention it in the "Approved" section as a deliberate non-finding ("in
 
 ## Anti-Patterns
 
-- ❌ Class components (use function components)
-- ❌ Generic lifecycle hooks (`useMount`, `useUnmount`)
 - ❌ Higher-order hooks or passing hooks as props
-- ❌ Suppressing dependency linter warnings
 - ❌ Chaining effects to update interdependent state
 - ❌ Creating objects/functions in dependency arrays without memoization
 - ❌ `forwardRef` (deprecated in React 19+, use `ref` prop directly)
-- ❌ Legacy React imports (`import * as React` or `import React`) - use named imports
-- ❌ Wrapping every handler with `useCallback` — only when child is `memo()` or function is a dependency

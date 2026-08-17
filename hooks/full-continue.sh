@@ -256,8 +256,8 @@ decide() {
     # issue/finishargs reconstruct from $lastfull.args — same helper as the READY branch, no tag id to read.
     #
     # ATTEMPTS counts prior HOOK NUDGES, not post-verdict turns: the READY branch can count turns-since-READY (READY
-    # is the last emit before its stop), but the upstream stop sits AFTER the /quality-review /reflect tail, so a
-    # turn-count would false-read 3+ on the FIRST stop and give up without firing. Each block appends a `type:"user"
+    # is the last emit before its stop), but the upstream stop can sit an unbounded number of assistant turns after the
+    # verdict, so a turn-count would false-read 3+ on the FIRST stop and give up without firing. Each block appends a `type:"user"
     # isMeta:true` record carrying the REASON, so counting records with the shared marker "executing the /full macro"
     # (keep that phrase in BOTH main() variants) gives 0 on the first stop, climbing only on a real re-block.
     # `turns_since_verdict` is a format-independent backstop for a future harness that stores block reasons in a
@@ -330,13 +330,13 @@ if [[ "${BASH_SOURCE[0]:-}" == "${0}" ]]; then
   # Hard bound on continuations within one window. $ATTEMPTS climbs with each real re-block, but is anchored
   # differently per branch (both correct for their shape): the READY branch counts assistant turns since the
   # window's FIRST READY tag (READY is the last thing before its stop, so a re-emit adds a turn); the upstream
-  # branch counts prior hook nudges directly (its stop sits AFTER legitimate /reflect turns, so a turn-count
+  # branch counts prior hook nudges directly (its stop can trail the verdict by any number of legitimate turns, so a turn-count
   # would false-inflate). stop_hook_active (the harness's own re-entry flag) tightens the ceiling as a backstop:
   # at most ~2 nudges once we're already continuing from a prior block, ~3 otherwise.
   # TURNS_SINCE_VERDICT (upstream only) is a format-independent runaway backstop for the case where the nudge count
   # above ever mis-reads 0 (a future harness changing how block reasons are stored). It is GATED ON stop_hook_active
-  # so it can NEVER block the FIRST upstream stop: on the first stop stop_hook_active is false, so a long inline
-  # /reflect tail (which counts toward turns_since_verdict) cannot trip it and the hook always fires — the exact
+  # so it can NEVER block the FIRST upstream stop: on the first stop stop_hook_active is false, so a long run of
+  # post-verdict turns (which all count toward turns_since_verdict) cannot trip it and the hook always fires — the exact
   # BF-392 case that must not stall. It only arms once we are already re-entering after a prior block, where a high
   # turn count genuinely means a runaway loop the (possibly broken) nudge counter failed to bound.
   if [[ "${ATTEMPTS:-0}" -ge 3 || ( "$STOP_ACTIVE" == "true" && ( "${ATTEMPTS:-0}" -ge 2 || "${TURNS_SINCE_VERDICT:-0}" -ge 12 ) ) ]]; then

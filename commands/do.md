@@ -26,7 +26,7 @@ If the user doesn't specify, default to subagent delegation.
 
 - Break plan into discrete, testable phases
 - Create todos for each implementation and validation step
-- Track progress efficiently - refer to [Agent Coordination Standards](~/.claude/standards/agent-coordination.md) for parallel vs sequential execution patterns
+- Track progress efficiently - before dispatching a parallel batch, enumerate each agent's write targets per [Agent Coordination Standards](~/.claude/standards/agent-coordination.md) § Write-target exclusivity
 
 ### 2. Delegate All Tasks
 

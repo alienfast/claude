@@ -20,13 +20,15 @@ const secret = process.env.SESSION_SECRET
 if (!secret) throw new Error('SESSION_SECRET is not set')
 
 // ✅ Right — one shared assertion: throws a clear error, returns a non-optional string
-import { assertEnvVariable } from '@alienfast/common-node'
+import { assertEnvVariable } from '@repo/common-node/assertEnvVariable'
 const secret = assertEnvVariable('SESSION_SECRET')
 ```
 
 ## Use assertEnvVariable for required server vars
 
-`assertEnvVariable(name)` from `@alienfast/common-node` reads `process.env[name]`, throws `Expected to find value for ENV variable <name>` when missing/empty, and returns a narrowed `string`. Prefer it over hand-rolled `if (!x) throw` guards — it removes duplication and gives you the non-optional type for free. Server/Node contexts only (it touches `process.env`).
+`assertEnvVariable(name)` reads `process.env[name]`, throws `Expected to find value for ENV variable <name>` when missing/empty, and returns a narrowed `string`. Prefer it over hand-rolled `if (!x) throw` guards — it removes duplication and gives you the non-optional type for free. Server/Node contexts only (it touches `process.env`).
+
+The import path is project-specific: `@repo/common-node/assertEnvVariable` in basefund, `@alienfast/common-node` in the published tools repos. Copy the specifier from an existing call site rather than assuming either one.
 
 ## Request boundaries may degrade gracefully
 

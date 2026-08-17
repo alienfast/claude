@@ -212,20 +212,8 @@ In workflow order — seed, certify, fleet, then the per-issue tiers and upkeep:
 
 ### Standards
 
-Universal rules governing agent behavior. See [standards/README.md](standards/README.md).
-
-| Standard | Covers |
-|----------|--------|
-| [agent-coordination](standards/agent-coordination.md) | Parallel vs sequential execution patterns |
-| [git](standards/git.md) | Commit messages, destructive command blocking, multi-session safety |
-| [problem-solving](standards/problem-solving.md) | When to stop and ask vs proceed |
-| [technical-debt-prevention](standards/technical-debt-prevention.md) | No backups, no duplicates, delete aggressively |
-| [linear-workflow](standards/linear-workflow.md) | Terminal states, dependency rules, Linear CLI quoting gotchas |
-| [lifecycle-tags](standards/lifecycle-tags.md) | Final-line status tags for Linear-lifecycle skills |
-| [semver](standards/semver.md) | Version classification and compatibility rules |
-| [version-aware-planning](standards/version-aware-planning.md) | Check actual versions before planning |
-| [deprecation-handling](standards/deprecation-handling.md) | Proactively update deprecated code |
-| [project-commands](standards/project-commands.md) | Always use project-specific scripts |
+Universal rules governing agent behavior. [standards/README.md](standards/README.md) is the index and owns
+the per-standard summaries.
 
 ### Rules
 
