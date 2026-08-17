@@ -5,6 +5,13 @@
 # quota-cutoff tail (an assistant turn whose text is the limit message, with NO stop_hook_summary after
 # it), which is what makes the stall invisible to every Stop hook. A synthetic "silent session" fixture
 # would pass against a check that only looked at mtime and would not pin that distinction.
+#
+# The agent-list fixture is the LIVE `claude agents --json` schema, re-snapshotted 2026-08-17: rows carry
+# pid/cwd/kind/startedAt/sessionId/name — NO `id` field — and every session reports kind:"interactive",
+# fleet agents included. The original suite's fixtures hand-carried an older schema (id present, fleet
+# rows kind:"background"), so the suite stayed green for three days while the real watcher matched zero
+# rows — 371 ticks, no flags, through two real stalls. When this schema drifts again, re-snapshot from
+# the live feed, never from memory. One legacy-schema case stays to pin the fallback joins.
 
 set -uo pipefail
 SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/auto-stall-watch.sh"
@@ -19,7 +26,13 @@ export HOME="$TMP"
 PROJ="$TMP/.claude/projects/-tmp-repo"
 mkdir -p "$PROJ" "$TMP/repo/tmp"
 
-mk_agents() { # <file> <id> <sessionId>
+mk_agents() { # <file> <id-unused> <sessionId> — live 2026-08-17 schema: no id, kind interactive
+  cat > "$1" <<EOF
+[{"pid":1,"cwd":"$TMP/repo","kind":"interactive","startedAt":1,"sessionId":"$3","name":"claude-59"}]
+EOF
+}
+
+mk_agents_legacy() { # <file> <id> <sessionId> — pre-2026-08-17 schema: id present, kind background
   cat > "$1" <<EOF
 [{"pid":1,"id":"$2","cwd":"$TMP/repo","kind":"background","startedAt":1,"sessionId":"$3","name":"loop auto mode","status":"idle","state":"working"}]
 EOF
@@ -65,7 +78,7 @@ run_case() { # <name> <tail-fn> <status> <age-seconds> <expected-verdict-or-none
 
   local got
   got=$("$SCRIPT" --agents-json "$TMP/agents.json" --now "$NOW" --json 2>/dev/null \
-        | jq -r 'if length == 0 then "none" else .[0].verdict end')
+        | jq -r 'if (.stalled | length) == 0 then "none" else .stalled[0].verdict end')
   if [ "$got" = "$want" ]; then
     echo "  PASS  $name"; PASS=$((PASS+1))
   else
@@ -92,25 +105,39 @@ run_case "loop ended by tag, 300m silent     -> none"          tail_stopped acti
 run_case "state drained, quota tail, 300m    -> none"          tail_quota   drained 18000 "none"
 run_case "state halted, no tag, 300m         -> none"          tail_armed   halted 18000 "none"
 
-# A background session with no /auto run-state file is somebody else's session, not fleet work.
+# A session with no /auto run-state file is somebody else's session, not fleet work. The state file is
+# the ONLY scope filter — kind must play no part (the live schema reports every session interactive).
 echo -n "  "
 rm -f "$PROJ"/*.jsonl "$TMP/repo/tmp"/auto-state-*.json
 tail_quota > "$PROJ/bbbbbbbb-0000-0000-0000-000000000000.jsonl"
 mk_agents "$TMP/agents.json" "bbbbbbbb" "bbbbbbbb-0000-0000-0000-000000000000"
-got=$("$SCRIPT" --agents-json "$TMP/agents.json" --now "$NOW" --json 2>/dev/null | jq -r 'length')
-if [ "$got" = "0" ]; then echo "PASS  non-/auto bg session ignored"; PASS=$((PASS+1));
-else echo "FAIL  non-/auto bg session ignored — expected 0, got '$got'"; FAIL=$((FAIL+1)); fi
+got=$("$SCRIPT" --agents-json "$TMP/agents.json" --now "$NOW" --json 2>/dev/null | jq -r '"\(.stalled | length)/\(.in_scope)"')
+if [ "$got" = "0/0" ]; then echo "PASS  non-/auto session (no state file) ignored, in_scope 0"; PASS=$((PASS+1));
+else echo "FAIL  non-/auto session (no state file) ignored — expected 0/0, got '$got'"; FAIL=$((FAIL+1)); fi
 
-# An interactive session is never a fleet loop, even in the same cwd with a state file present.
+# THE 2026-08-17 REGRESSION: a stalled fleet session in the live schema — kind "interactive", no id
+# field, state file joined via the sessionId prefix. The original watcher's kind/background filter and
+# .id join each independently dropped this row; three sessions sat dead 8.4h overnight at 0 flags.
 rm -f "$PROJ"/*.jsonl "$TMP/repo/tmp"/auto-state-*.json
 tail_quota > "$PROJ/cccccccc-0000-0000-0000-000000000000.jsonl"
+touch -t "$(date -r $(( NOW - 8940 )) +%Y%m%d%H%M.%S 2>/dev/null || echo 202608140000.00)" "$PROJ/cccccccc-0000-0000-0000-000000000000.jsonl"
 mk_state "cccccccc" "active"
 cat > "$TMP/agents.json" <<EOF
-[{"pid":1,"id":"cccccccc","cwd":"$TMP/repo","kind":"interactive","startedAt":1,"sessionId":"cccccccc-0000-0000-0000-000000000000"}]
+[{"pid":1,"cwd":"$TMP/repo","kind":"interactive","startedAt":1,"sessionId":"cccccccc-0000-0000-0000-000000000000","name":"claude-61"}]
 EOF
-got=$("$SCRIPT" --agents-json "$TMP/agents.json" --now "$NOW" --json 2>/dev/null | jq -r 'length')
-if [ "$got" = "0" ]; then echo "  PASS  interactive session ignored"; PASS=$((PASS+1));
-else echo "  FAIL  interactive session ignored — expected 0, got '$got'"; FAIL=$((FAIL+1)); fi
+got=$("$SCRIPT" --agents-json "$TMP/agents.json" --now "$NOW" --json 2>/dev/null | jq -r 'if (.stalled | length) == 0 then "none" else "\(.stalled[0].verdict)/\(.in_scope)" end')
+if [ "$got" = "stalled-quota/1" ]; then echo "  PASS  live-schema fleet stall flagged (no id, kind interactive), in_scope 1"; PASS=$((PASS+1));
+else echo "  FAIL  live-schema fleet stall flagged — expected stalled-quota/1, got '$got'"; FAIL=$((FAIL+1)); fi
+
+# Legacy schema (id present, kind background) still joins through the .id fallback.
+rm -f "$PROJ"/*.jsonl "$TMP/repo/tmp"/auto-state-*.json
+tail_quota > "$PROJ/dddddddd-0000-0000-0000-000000000000.jsonl"
+touch -t "$(date -r $(( NOW - 8940 )) +%Y%m%d%H%M.%S 2>/dev/null || echo 202608140000.00)" "$PROJ/dddddddd-0000-0000-0000-000000000000.jsonl"
+mk_state "dddddddd" "active"
+mk_agents_legacy "$TMP/agents.json" "dddddddd" "dddddddd-0000-0000-0000-000000000000"
+got=$("$SCRIPT" --agents-json "$TMP/agents.json" --now "$NOW" --json 2>/dev/null | jq -r 'if (.stalled | length) == 0 then "none" else .stalled[0].verdict end')
+if [ "$got" = "stalled-quota" ]; then echo "  PASS  legacy-schema row still flagged (id fallback)"; PASS=$((PASS+1));
+else echo "  FAIL  legacy-schema row still flagged — expected stalled-quota, got '$got'"; FAIL=$((FAIL+1)); fi
 
 echo ""
 echo "  $PASS passed, $FAIL failed"

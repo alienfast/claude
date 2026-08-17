@@ -19,6 +19,14 @@
 # detection: turning a silent multi-hour loss into an alert the operator can act on with one `claude attach`.
 # If a scriptable send ever lands, resume belongs here behind an explicit opt-in flag, never as a default.
 #
+# SCOPING: an agent is in scope iff its cwd carries a matching /auto run-state file — NEVER by the agent
+# list's `kind` field, and never by an `id` field. Measured 2026-08-17: the live `claude agents --json`
+# rows carry NO `id` at all and report `kind:"interactive"` for every session, fleet agents included. The
+# original version selected `kind=="background"` and joined state files on `.id`, so it matched nothing —
+# 371 ticks, zero flags, through two real stalls (25.2 session-hours lost overnight on 2026-08-17 alone).
+# The state-file join derives the runKey from the sessionId's first segment (auto-state-<prefix>.json),
+# with the legacy `.id` and full-uuid forms kept as fallbacks.
+#
 # Exit 0 = ran (whether or not anything was flagged); 1 = a hard dependency is missing.
 # Run ./auto-stall-watch.test.sh after ANY change to classify().
 
@@ -66,7 +74,7 @@ mtime_of() {
 # ledger with no guessing. Older runs used the full uuid; try both.
 state_file_for() {
   local cwd="$1" id="$2" sid="$3"
-  for cand in "$cwd/tmp/auto-state-$id.json" "$cwd/tmp/auto-state-$sid.json"; do
+  for cand in "$cwd/tmp/auto-state-${sid%%-*}.json" "$cwd/tmp/auto-state-$id.json" "$cwd/tmp/auto-state-$sid.json"; do
     [ -f "$cand" ] && { printf '%s' "$cand"; return 0; }
   done
   return 1
@@ -123,13 +131,17 @@ else
 fi
 
 rows=""
-while IFS=$'\t' read -r id sid cwd; do
+INSCOPE=0
+while IFS=$'\t' read -r id sid cwd name; do
   [ -n "$sid" ] || continue
+  [ -n "$id" ] || id="${sid%%-*}"
   transcript=$(find_transcript "$sid")
   [ -n "$transcript" ] || continue
   state=$(state_file_for "$cwd" "$id" "$sid") || state=""
-  # No run-state file means this background session is not an /auto run — out of scope.
+  # No run-state file means this session is not an /auto run — out of scope. This presence test is the
+  # ONLY scope filter: kind is ignored (see SCOPING in the header).
   [ -n "$state" ] || continue
+  INSCOPE=$((INSCOPE + 1))
 
   mt=$(mtime_of "$transcript")
   [ -n "$mt" ] || continue
@@ -140,25 +152,32 @@ while IFS=$'\t' read -r id sid cwd; do
 
   case "$verdict" in
     stalled|stalled-quota)
-      rows="${rows}${id}"$'\t'"${verdict}"$'\t'"$(( silence / 60 ))"$'\t'"${detail}"$'\t'"${cwd}"$'\n' ;;
+      rows="${rows}${id}"$'\t'"${verdict}"$'\t'"$(( silence / 60 ))"$'\t'"${detail}"$'\t'"${cwd}"$'\t'"${name}"$'\n' ;;
   esac
-done < <(printf '%s' "$agents" | jq -r '.[] | select(.kind == "background") | [.id, .sessionId, .cwd] | @tsv' 2>/dev/null)
+# The id fallback happens in jq, not the shell: tab is IFS whitespace, so an EMPTY leading @tsv column
+# collapses and shifts every later field one left in `read` (id would silently become the sessionId).
+done < <(printf '%s' "$agents" | jq -r '.[] | select(.sessionId) | [(.id // (.sessionId | split("-")[0])), .sessionId, .cwd, (.name // "-")] | @tsv' 2>/dev/null)
 
+# The JSON shape is an OBJECT, not a bare array: `in_scope` is the blindness canary's input — it
+# distinguishes "no /auto session is stalled" from "the watcher matched NOTHING", which print
+# identically otherwise and did so through the 2026-08-17 schema-drift blindness (BF-1226). Consumers
+# read `.stalled`; the cron wrapper reads both fields and its jq failure is an ERROR, never "0 flagged".
 if [ "$AS_JSON" = "1" ]; then
-  printf '%s' "$rows" | jq -Rs 'split("\n") | map(select(length > 0) | split("\t"))
-    | map({id: .[0], verdict: .[1], silent_min: (.[2] | tonumber), detail: .[3], cwd: .[4]})'
+  printf '%s' "$rows" | jq -Rs --argjson inscope "$INSCOPE" '{in_scope: $inscope,
+    stalled: (split("\n") | map(select(length > 0) | split("\t"))
+    | map({id: .[0], verdict: .[1], silent_min: (.[2] | tonumber), detail: .[3], cwd: .[4], name: .[5]}))}'
   exit 0
 fi
 
 if [ -z "$rows" ]; then
-  echo "no stalled /auto sessions (threshold ${THRESHOLD_MIN}m)"
+  echo "no stalled /auto sessions (threshold ${THRESHOLD_MIN}m, ${INSCOPE} in scope)"
   exit 0
 fi
 
-printf '%s' "$rows" | while IFS=$'\t' read -r id verdict mins detail cwd; do
+printf '%s' "$rows" | while IFS=$'\t' read -r id verdict mins detail cwd name; do
   echo "STALLED  $id  ${mins}m silent  [$verdict]  $detail"
   echo "         cwd: $cwd"
-  echo "         resume with: claude attach $id"
+  echo "         resume with: claude attach ${name:-$id}"
 done
 
 if [ "$NOTIFY" = "1" ] && command -v osascript >/dev/null 2>&1; then

@@ -106,8 +106,15 @@ CONTAM_HALT = re.compile(r"^\s*BLOCKED-ON-REVIEW:\s*([A-Z][A-Z0-9]*-\d+)\b[^\n]*
 # request to be refused — absence from a cutoff measures activity, not scope. Route `session` as `5-hour`.
 LIMIT_HIT = re.compile(r"hit your (weekly|session|5-hour|usage) limit", re.I)
 # The reset the harness names alongside the refusal — the only source for how long the allowance itself
-# was going to bind, which is what separates unavoidable wait from avoidable recovery lag.
+# was going to bind, which is what separates unavoidable wait from avoidable recovery lag. Two forms:
+# 5h/session cutoffs name a clock time ("resets 5:10am (America/Chicago)"); weekly cutoffs name a DATE
+# with an often minute-less time ("resets Aug 18 at 2am (America/Chicago)") — the 2026-08-16 weekly
+# stall had a computable recovery lag that went unmeasured because only the first form parsed (BF-1206).
 LIMIT_RESET = re.compile(r"resets\s+(\d{1,2}):(\d{2})\s*([ap])m\s*\(([^)]+)\)", re.I)
+LIMIT_RESET_DATE = re.compile(
+    r"resets\s+([A-Z][a-z]{2})\s+(\d{1,2})\s+at\s+(\d{1,2})(?::(\d{2}))?\s*([ap])m\s*\(([^)]+)\)", re.I)
+MONTHS = {m: i + 1 for i, m in enumerate(
+    ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"])}
 LOOP_CMD = re.compile(r"<command-name>/loop</command-name>")
 LOOP_AUTO_ARGS = re.compile(r"<command-args>[^<]*/auto")
 GAP_MIN = 240  # seconds; a tool call slower than this is worth naming, not necessarily a fault
@@ -143,6 +150,10 @@ V_CYCLES = re.compile(r"^Cycles:\s*(\d+)", re.M)
 V_RESOLVED = re.compile(r"^Findings resolved:\s*(\d+|none)", re.M)
 V_RESOLVED_BLOCK = re.compile(r"^Findings resolved:.*?(?=^\S|\Z)", re.M | re.S)
 V_FILED_LINE = re.compile(r"^Deferred filed as issues:\s*(.+?)$", re.M)
+# Paired with quality-review-write-verdict.sh's WARN: a verdict that filed issues owes a record of the
+# sibling collision edges it wired (or `none owed`) — a never-attempted wiring was indistinguishable
+# from none-owed, and unwired same-mechanism siblings recurred on two consecutive fleets (BF-1226).
+V_EDGES_LINE = re.compile(r"^Collision edges:\s*(.+?)$", re.M)
 V_SEVERITY = re.compile(r"\b(CRIT(?:ICAL)?|HIGH|MED(?:IUM)?)\b")
 V_ORIGIN = re.compile(r"\b(?:CRIT(?:ICAL)?|HIGH|MED(?:IUM)?)/(plan|impl|spec|test|latent)\b")
 V_ISSUE_ID = re.compile(r"\b[A-Z][A-Z0-9]*-\d+\b")
@@ -346,7 +357,11 @@ def scan_transcript(path, agg, agent_type="main", description=""):
                 if t:
                     for hh, mm, ampm, tzname in LIMIT_RESET.findall(body):
                         hour = int(hh) % 12 + (12 if ampm.lower() == "p" else 0)
-                        agg["limit_resets"].append((t, tzname.strip(), hour, int(mm)))
+                        agg["limit_resets"].append((t, tzname.strip(), hour, int(mm), None, None))
+                    for mon, day, hh, mm, ampm, tzname in LIMIT_RESET_DATE.findall(body):
+                        hour = int(hh) % 12 + (12 if ampm.lower() == "p" else 0)
+                        agg["limit_resets"].append((t, tzname.strip(), hour, int(mm or 0),
+                                                    MONTHS.get(mon.lower()), int(day)))
             elif b.get("type") == "tool_use":
                 name = b.get("name", "")
                 inp = b.get("input") or {}
@@ -516,19 +531,26 @@ def reset_named_at(agg, when, grace_s=900):
     Resolved against the limit hit's own date, taking the next occurrence of that clock time — resets
     are always ahead of the refusal that reports them, and the harness states no date.
     """
-    hits = [(t, tz, hh, mm) for (t, tz, hh, mm) in agg.get("limit_resets", [])
-            if abs((t - when).total_seconds()) <= grace_s]
+    hits = [h for h in agg.get("limit_resets", [])
+            if abs((h[0] - when).total_seconds()) <= grace_s]
     if not hits:
         return None
-    t, tzname, hh, mm = min(hits, key=lambda h: abs((h[0] - when).total_seconds()))
+    t, tzname, hh, mm, month, day = min(hits, key=lambda h: abs((h[0] - when).total_seconds()))
     try:
         from zoneinfo import ZoneInfo
         local = t.astimezone(ZoneInfo(tzname)) if tzname else t
     except Exception:
         local = t
-    cand = local.replace(hour=hh, minute=mm, second=0, microsecond=0)
-    if cand <= local:
-        cand += timedelta(days=1)
+    if month is not None:
+        # Date-form reset (weekly limits): the date is explicit, only the year is inferred — the hit's
+        # own year, rolled forward when that lands in the past (the Dec 31 -> Jan 1 wrap).
+        cand = local.replace(month=month, day=day, hour=hh, minute=mm, second=0, microsecond=0)
+        if cand < local - timedelta(hours=1):
+            cand = cand.replace(year=cand.year + 1)
+    else:
+        cand = local.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        if cand <= local:
+            cand += timedelta(days=1)
     return cand.astimezone(timezone.utc)
 
 
@@ -889,6 +911,7 @@ def parse_verdicts(checkout, cutoff):
             "origin": Counter(V_ORIGIN.findall(blob)),
             "filed": filed,
             "missing_fields": missing,
+            "edges_recorded": bool(V_EDGES_LINE.search(text)),
         })
     return rows
 
@@ -1183,6 +1206,30 @@ def main():
             peak_5h_rate = round(peak_5h / (peak_5h_concurrency * 5))
     burn_rate_all = round(sum(fleet_tokens.values()) / session_hours) if session_hours else None
     stall_groups = quota_stalls(sessions)
+
+    # A stall gap that straddles the fleet deadline is only "lost" up to the deadline — quiet after it
+    # is wind-down the run owed anyway (2026-08-16 pm: ~0.9 of a reported 4.2 lost session-hours were
+    # post-deadline; BF-1206). The marker may be gone by retro time; clipping is best-effort.
+    fleet_deadline_dt = None
+    try:
+        dl = json.loads((checkout / "tmp" / "fleet-deadline.json").read_text())
+        if isinstance(dl.get("deadline_epoch"), (int, float)):
+            fleet_deadline_dt = datetime.fromtimestamp(dl["deadline_epoch"], tz=timezone.utc)
+    except Exception:
+        pass
+
+    def lost_seconds(g):
+        """Sum of a stall group's gap seconds, each gap clipped at the fleet deadline when known."""
+        total = 0
+        for m in g:
+            secs = m[2]["seconds"] or 0
+            if fleet_deadline_dt is not None and secs:
+                if m[0] >= fleet_deadline_dt:
+                    secs = 0
+                elif m[0] + timedelta(seconds=secs) > fleet_deadline_dt:
+                    secs = (fleet_deadline_dt - m[0]).total_seconds()
+            total += secs
+        return total
     # Only a group the harness actually refused (a limit message in some member's transcript) rewrites
     # the sizing basis — an unattributed stall may be a machine sleep or daemon restart, and a ceiling
     # taken from one would under-size the next fleet against a limit that never bound.
@@ -1274,12 +1321,16 @@ def main():
                 "output_tokens_per_session_hour_at_peak": peak_5h_rate,
                 "output_tokens_per_session_hour_all_sessions": burn_rate_all,
                 "quota_stall_groups": [{
-                    "runs": [m[1]["run_key"] for m in g],
+                    # Distinct sessions, first-quiet order — one session contributes several MARKS to a
+                    # cluster (its longest silence plus each limit-anchored gap), and a mark list read
+                    # as a session list overcounted a 4-session fleet as 8 (BF-1206).
+                    "runs": list(dict.fromkeys(m[1]["run_key"] for m in g)),
                     "kind": "recovered" if any(m[2]["kind"] == "recovered" for m in g) else "unrecovered",
                     "quiet_at": f"{g[0][0]:%Y-%m-%dT%H:%M:%SZ}",
                     "resumed_at": (f"{max(m[2]['resumed'] for m in g if m[2]['resumed']):%Y-%m-%dT%H:%M:%SZ}"
                                    if any(m[2]["resumed"] for m in g) else None),
-                    "lost_session_hours": round(sum(m[2]["seconds"] or 0 for m in g) / 3600, 1),
+                    "lost_session_hours": round(lost_seconds(g) / 3600, 1),
+                    "lost_clipped_at_deadline": fleet_deadline_dt is not None,
                     # Which allowance refused the run, straight from the harness message. Decides the
                     # sizing lever: weekly -> duration, 5-hour -> concurrency, session -> neither.
                     "limit_kind": sorted({m[1]["agg"]["first_limit_hit"][1] for m in g
@@ -1498,13 +1549,19 @@ def main():
               f"`trailing_at`).\n")
     if stall_groups:
         for g in stall_groups:
-            keys = ", ".join(f"`{m[1]['run_key']}`" for m in g)
+            # Distinct sessions, not marks — one session contributes several marks (longest silence
+            # plus each limit-anchored gap), and the mark list printed as "8 sessions" on a 4-session
+            # fleet (BF-1206).
+            run_keys = list(dict.fromkeys(m[1]["run_key"] for m in g))
+            keys = ", ".join(f"`{k}`" for k in run_keys)
             when = g[-1][0]
-            lost = sum(m[2]["seconds"] or 0 for m in g) / 3600
+            lost = lost_seconds(g) / 3600
+            clip_note = (f" (gaps clipped at the fleet deadline {fleet_deadline_dt:%H:%M UTC} — "
+                         f"post-deadline quiet is wind-down)" if fleet_deadline_dt is not None else "")
             resumed = [m[2]["resumed"] for m in g if m[2]["resumed"]]
             kinds = sorted({m[1]["agg"]["first_limit_hit"][1] for m in g
                             if m[1]["agg"]["first_limit_hit"]})
-            print(f"- **quota-stall fingerprint** — {len(g)} sessions ({keys}) went quiet within "
+            print(f"- **quota-stall fingerprint** — {len(run_keys)} sessions ({keys}) went quiet within "
                   f"120s of each other at {when:%Y-%m-%d %H:%M UTC}. "
                   f"A deadline wind-down ends sessions one at a time, each tagged; an account-level "
                   f"cutoff stops them together, mid-issue.")
@@ -1531,6 +1588,14 @@ def main():
                       f"(an API-killed turn fires none), so nothing wakes it — check "
                       f"`~/.claude/logs/auto-stall-watch.log` for whether the watcher flagged it, and "
                       f"whether anyone acted.")
+            elif kinds:
+                # This branch is the else of `if lags:` — it means NO RECOVERY LAG WAS COMPUTABLE, not
+                # that no limit message exists (the kind two lines up came from one). Printing "no
+                # limit message found" here contradicted the weekly limit the same block had just
+                # named, on a run whose transcripts carried the message in every session (BF-1206).
+                print("  Recovery lag not computable for this group: the limit message's reset time "
+                      "did not parse to a wall-clock instant, or resume preceded the reset — the "
+                      "cutoff itself IS established by the limit kind above.")
             else:
                 print("  No harness limit message found in these transcripts, so the cause is NOT "
                       "established as an allowance cutoff — check for a machine sleep, a daemon "
@@ -1538,8 +1603,8 @@ def main():
             if resumed:
                 print(f"  They resumed by {max(resumed):%Y-%m-%d %H:%M UTC} and drained normally, so "
                       f"their terminal tags and end-of-run bookkeeping look clean — **{lost:.1f} "
-                      f"session-hours produced nothing**. Size the next fleet against the allowance "
-                      f"this run actually had, not the wall-clock it was given.\n")
+                      f"session-hours produced nothing**{clip_note}. Size the next fleet against the "
+                      f"allowance this run actually had, not the wall-clock it was given.\n")
             else:
                 print("  None emitted a terminal tag, so they never recovered. Check those worktrees "
                       "for unfinished work before reaping anything.\n")
@@ -1640,6 +1705,13 @@ def main():
         print(f"- **Off-schema verdict body**: {detail} — composed as free-form prose instead of the "
               f"Output-block schema, so its findings data is unparseable and the churn totals "
               f"undercount. The review ran; only the machine-readable record is lost.")
+    no_edges = [v["issue"] for v in verdicts if v["filed"] and not v["edges_recorded"]]
+    if no_edges:
+        flagged = True
+        print(f"- **Filed issues with no `Collision edges:` record**: {', '.join(sorted(no_edges))} — "
+              f"the verdict names deferred filings but never says whether sibling edges were wired or "
+              f"none were owed, so retro Step 4's edge audit starts blind on these (unwired "
+              f"same-mechanism siblings recurred on two consecutive fleets; BF-1226).")
     no_merge = [i for i, m in merged.items() if m["commit"] and not m["merge"]]
     if no_merge:
         print(f"- Landed without a `Merge <ID>` commit (usually a fast-forward, worth one check): "

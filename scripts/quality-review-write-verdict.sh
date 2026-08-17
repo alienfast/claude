@@ -129,6 +129,17 @@ schema_missing=""
 miss() { schema_missing="${schema_missing:+$schema_missing, }$1"; }
 has() { grep -Eq "$1" "$body_file"; }
 
+# WARN (exit-0 stderr, deliberately outside the exit-3 schema set) when the verdict filed issues but
+# records nothing about sibling collision edges: SKILL.md mandates annotating only a FAILED
+# `relations add`, so a never-attempted wiring was indistinguishable from none-owed — and unwired
+# same-mechanism siblings recurred on two consecutive fleets, every edge wired by hand at retro
+# (BF-1226). `Collision edges: none owed` satisfies the disjoint-file and evidence-append cases.
+# Paired with fleet-metrics.py's V_EDGES_LINE flag, which surfaces the same omission at retro.
+if grep -Eq '^Deferred filed as issues:.*[A-Z]+-[0-9]+' "$body_file" \
+   && ! grep -Eq '^Collision edges:[[:space:]]*[^[:space:]]' "$body_file"; then
+  echo "WARN: verdict files issues but has no 'Collision edges:' line — record the wired edges (or 'none owed'); see quality-review/SKILL.md Output" >&2
+fi
+
 has '^Verdict:[[:space:]]*(passed-clean|passed-after-fixes|terminated-with-open-items|escalated-to-architect)([[:space:]][^|]*)?$' || miss "Verdict"
 has '^Cycles:[[:space:]]*[0-9]+' || miss "Cycles"
 has '^Findings resolved:[[:space:]]*([0-9]+|none)' || miss "Findings resolved"
