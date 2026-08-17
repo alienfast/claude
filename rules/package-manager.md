@@ -30,15 +30,15 @@ paths:
 ## Command Usage
 
 - Use project scripts over direct tool invocation
-- Prefer `pnpm typecheck` over `npx tsc --noEmit`
+- Prefer `pnpm check-types` over `npx tsc --noEmit` — see [Project Commands](../standards/project-commands.md), which owns the command table
 - Use `pnpm audit` instead of `npm audit`
 
 ### Non-interactive installs (agent/CI shells)
 
 `pnpm install` aborts with `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY` when it needs to purge `node_modules` (a
 hoist-pattern change, a workspace restructure, switching package managers) and there is no TTY to confirm. Run it
-as `CI=true pnpm install` so the purge proceeds unattended (equivalently, set `confirm-modules-purge=false` in
-`.npmrc`).
+as `CI=true pnpm install` so the purge proceeds unattended (equivalently, set `confirmModulesPurge: false` in
+`pnpm-workspace.yaml`, which is where house pnpm settings live — the old `.npmrc` home was migrated away).
 
 Caveat: `CI=true` also implies `--frozen-lockfile`, so if you intentionally changed `package.json` deps a plain
 `CI=true pnpm install` then fails with `ERR_PNPM_OUTDATED_LOCKFILE`. Use `CI=true pnpm install --no-frozen-lockfile`

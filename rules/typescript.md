@@ -8,13 +8,17 @@ paths:
 
 ## Import extensions
 
-All relative imports carry a `.js` extension, including in `.ts` files — ESM resolution and the build
-tooling both require it.
+All relative imports carry the extension of the file they name — `.ts` / `.tsx`, not `.js`. The shared
+`@alienfast/tsconfig` bases enable this (`allowImportingTsExtensions: true`, alongside `noEmit`), and the
+build tooling (tsdown, native `tsc`) consumes the `.ts` form directly.
 
 ```typescript
-import { UserService } from './services/user.js'
-import type { User } from './types/user.js'
+import { UserService } from './services/user.ts'
+import type { User } from './types/user.ts'
 ```
+
+A project that does not set `allowImportingTsExtensions` — an older repo, or one emitting JS via `tsc` —
+needs the `.js` specifier instead. Check the tsconfig before converting a repo either way.
 
 ## Import order
 

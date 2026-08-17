@@ -123,6 +123,18 @@ comment-formatting fixes as "scope creep," "unrelated changes," or
 them. The only exception is a comment fix in a file the change does not
 otherwise touch — that one is genuinely unrelated.
 
+**"Unrelated" licenses leaving it, never filing it.** A stale or wrong
+comment you have already read and diagnosed is a fix you can make in the
+same breath; routing it to a deferred issue spends a filing, a pick, a
+worktree, and a review cycle to change a line of prose you were already
+looking at. That is never the cheaper path, and the issue it creates
+reads as real work to whoever picks it up. This binds hardest on the
+audit surfaces — `/reflect sweep`, `/quality-review`, any review reading
+files it is not otherwise editing — because the exception above appears
+to cover them exactly when their context makes the fix trivial. Fix it
+in place and note it in the report. Never open an issue whose entire
+remedy is a comment edit.
+
 ## What NOT to write
 
 - WHAT the code does — well-named identifiers already do that

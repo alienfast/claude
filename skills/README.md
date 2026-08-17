@@ -262,10 +262,10 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 **Key Features**:
 
 - Two directions: **Add** (new lesson → rule/note) and **Reconcile** (config contradicts reality → fix the stale line)
-- Two modes: **session** (reflect on this session in context) and **sweep** (audit a project's `CLAUDE.md`/rules against the actual codebase + cross-file dedup; manual or scheduled)
+- Three modes: **session** (reflect on this session in context), **sweep** (audit a project's `CLAUDE.md`/rules against the actual codebase + cross-file dedup; manual or scheduled), and **fleet** (batched reflection over a finished fleet run's evidence; invoked by `/fleet-retro`)
 - Targets **shared, team-visible config** (`CLAUDE.md` / `rules/` / `standards/` / skills); memory is last resort
 - Adversarial verify gate drops anything not generalizable, already-covered, or that wouldn't have helped — "zero improvements" is a success
-- Auto-applies only additive/clarifying edits to the working tree; **never commits** (the explicit-commit step stays the review gate)
+- Auto-applies only additive/clarifying edits to the working tree; **commits only one scoped case** — project-scoped edits inside a `/start wt` worktree, check-gated and staged by name, so they ride the issue merge. User-level `~/.claude` edits are never committed; the explicit-commit step stays the review gate
 
 **Structure**:
 

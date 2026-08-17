@@ -57,8 +57,8 @@ default-on paste-to-upload as a plain `### Features` entry in 19.2.0, and the 20
 npm outdated                          # current vs wanted vs latest
 pnpm outdated
 ncu --jsonUpgraded                    # machine-readable upgrade info
-semver diff 1.2.3 1.3.0               # → "minor"
-semver satisfies 1.2.4 "^1.2.3"       # → true
+pnpm dlx semver diff 1.2.3 1.3.0      # → "minor"  (no global `semver` on this machine)
+pnpm dlx semver satisfies 1.2.4 "^1.2.3"  # → true
 ```
 
 For range-notation and pre-release edge cases, see the

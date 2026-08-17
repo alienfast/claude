@@ -610,11 +610,12 @@ fi
 # urgent_first > class_rank (security 0 > bug 1 > other 2 — defects ship before improvements,
 # but within a stage) > priority > spread_penalty (sibling in flight under the same parent) >
 # estimate.
-ranked_json=$(printf '%s' "$candidates_json" | jq '
+ranked_json=$(printf '%s' "$candidates_json" | jq --arg iskeeper "$is_keeper" '
   map(
     . + {
       tier: (
         if .is_reflection then 0
+        elif (.is_keeper and $iskeeper == "true") then 0
         elif .is_me then 1
         elif (.newly_unblocked and .unresolved_count == 0) then 2
         else 4
@@ -624,6 +625,11 @@ ranked_json=$(printf '%s' "$candidates_json" | jq '
     # keeper_rank orders WITHIN tier 0 only: keeper reflection edits the shared user-level
     # ~/.claude (every project benefits, and only the keeper machine can ship it — everywhere
     # else the pool excludes it), so it front-runs project-level reflection filings.
+    #
+    # A keeper batch reaches tier 0 on its `keeper` label alone, NOT via is_reflection: it files
+    # uncertified (`keeper` instead of `specified`, so /auto skips it — BF-591), and is_reflection
+    # requires both `specified` and `reflection`. Gating tier 0 on is_reflection alone left every
+    # real keeper filing in tier 4 with keeper_rank 1 — below the filings it was meant to outrank.
     | . + { keeper_rank: (if .tier == 0 and .is_keeper then 0 else 1 end) }
   )
   | sort_by([.tier, .keeper_rank, .state_rank, .urgent_first, .class_rank, .priority_rank, .spread_penalty, .estimate])

@@ -7,7 +7,7 @@ that costs the most, because it looks authoritative.
 ## Detect versions before claiming anything
 
 Read the actual versions first: dependency manifests (`package.json`, `Cargo.toml`, `pyproject.toml`),
-the lockfile for what is really resolved, version-bearing config (`biome.json`'s `$schema`), and the
+the lockfile for what is really resolved, version-bearing config (`biome.jsonc`'s `$schema`), and the
 runtime pin (`.nvmrc`, `pyproject.toml`).
 
 Never make a definitive statement about what is or isn't possible without that check — and this cuts

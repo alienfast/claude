@@ -12,7 +12,7 @@ See [Git Standards](standards/git.md) for detailed rules and examples.
 
 Rules in `~/.claude/rules/` are automatically applied based on file type:
 
-- `comments.md` - Applied to all files (`**/*`, language-agnostic) — default to no comments; size to the reader; no provenance decoration
+- `comments.md` - Applied to all files (`**/*`, `**/.*`, `**/.*/**` — dotfiles and dotted directories need their own globs; language-agnostic) — default to no comments; size to the reader; no provenance decoration
 - `typescript.md` - Applied to `**/*.ts`, `**/*.tsx` files
 - `react.md` - Applied to `**/*.tsx`, `**/*.jsx` files
 - `markdown.md` - Applied to `**/*.md`, `**/*.mdx` files
@@ -75,7 +75,7 @@ You have autonomy to make good engineering decisions — architectural improveme
 
 Stop and ask when genuine uncertainty remains: root cause still unclear after investigation, multiple valid solutions with significant trade-offs, 2+ attempts failed, or a business / security / usability call is needed. When you stop, give what you tried, the trade-offs, your recommendation, and a clear question.
 
-Before reaching for a workaround — version pin/downgrade, error suppression, `any` cast, disabling a lint rule, partial migration, silent default for required config — stop and fix the root cause. These are signals to dig deeper, not shortcuts.
+Before reaching for a workaround — version pin/downgrade, error suppression, `any` cast, incomplete implementation (skipping tests or validation), disabling a lint rule, partial migration, silent default for required config — stop and fix the root cause. These are signals to dig deeper, not shortcuts.
 
 See [Problem-Solving Standards](standards/problem-solving.md) for the full decision framework, the seven workaround anti-patterns with their narrow exceptions, and the complexity-response template.
 
@@ -93,7 +93,7 @@ The named review gates are the deliberate exception. `/quality-review`'s reviewe
 
 **Don't need it yet? Leave it in the background and end the turn.** The harness re-invokes you when it finishes. Ending the turn is not abandoning the work.
 
-**Never hold a turn open with a timed `sleep` to wait for something the harness already tracks.** A `for i in $(seq 1 22); do sleep 25; done` window cannot end early: it burns its full duration whether the agent finished in ten seconds or never started. Measured on one fleet run by `scripts/fleet-metrics.py`, two of four sessions lost **7.5 hours** to exactly this shape — 32% and 55% of their own wall-clock, rising to 54% and 81% once marker-polling is counted — while the two that dispatched synchronously lost none. This applies just as much when a human is watching: a session that sleeps through a nine-minute window it cannot exit is wasting the operator's time, not just the machine's. The `no-blind-sleep.sh` PreToolUse hook enforces it; a denied command means pick one of the three routes above, not retry with a different loop shape.
+**Never hold a turn open with a timed `sleep` to wait for something the harness already tracks.** A `for i in $(seq 1 22); do sleep 25; done` window cannot end early: it burns its full duration whether the agent finished in ten seconds or never started. Measured on one fleet run by `scripts/fleet-metrics.py`, two of four sessions lost **7.5 hours** to exactly this shape — 32% and 55% of their own wall-clock, rising to 54% and 81% once marker-polling is counted — while the two that dispatched synchronously lost none. This applies just as much when a human is watching: a session that sleeps through a nine-minute window it cannot exit is wasting the operator's time, not just the machine's. The `no-blind-sleep.sh` PreToolUse hook enforces it; a denied command means pick one of the three routes in this section, not retry with a different loop shape.
 
 The one sanctioned poll is for work the harness genuinely cannot see — a detached test run, CI, a remote queue. Poll a completion **marker** so the wait ends when the work does: `n=0; until [ -f tmp/run.done ] || [ $n -ge 60 ]; do sleep 10; n=$((n+1)); done`.
 
