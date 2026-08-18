@@ -173,22 +173,48 @@ label_failed=0
 if [ -n "$label" ] && [ "$label" != "-" ]; then
   all_names=$(linear-cli labels list -t issue --all --no-cache -o json 2>/dev/null \
     | jq -r '.. | objects | select(has("name")) | .name' 2>/dev/null || true)
+  # Normalized identity, mirroring linear-add-label.sh's healing: a multi-word label must keep its
+  # internal spacing (the old `tr -d '[:space:]'` turned `needs decision` into `needsdecision`,
+  # missed the canonical label, and MINTED the corruption — twice: BF-1109, BF-1243 — which then
+  # leaked issues past next-candidates.sh's exact-string park gate).
+  norm() { tr '[:upper:]' '[:lower:]' | tr -d ' _-'; }
   update_args=(issues update "$new_id")
   IFS=',' read -ra _labels <<< "$label"
   for lb in "${_labels[@]}"; do
-    lb=$(printf '%s' "$lb" | tr -d '[:space:]')
+    lb=$(printf '%s' "$lb" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
     [ -z "$lb" ] && continue
     have_label=$(printf '%s\n' "$all_names" | grep -Fxi -- "$lb" | head -1 || true)
+    if [ -z "$have_label" ] && [ -n "$all_names" ]; then
+      want=$(printf '%s' "$lb" | norm)
+      # The trailing `|| true` is load-bearing under set -eo pipefail: a last label that does NOT
+      # match leaves the loop body's final status 1, and the assignment would kill the script.
+      matches=$(while IFS= read -r n; do
+        [ -n "$n" ] || continue
+        [ "$(printf '%s' "$n" | norm)" = "$want" ] && printf '%s\n' "$n"
+      done <<< "$all_names" | sort -u) || true
+      match_count=$(printf '%s' "$matches" | grep -c . || true)
+      if [ "$match_count" = "1" ]; then
+        have_label="$matches"
+        echo "NOTE: requested label '$lb' does not exist; using existing label '$have_label' (normalized match) instead of minting a near-miss twin." >&2
+      elif [ "$match_count" != "0" ]; then
+        echo "WARN: requested label '$lb' does not exist and several existing labels normalize to it: $(printf '%s' "$matches" | tr '\n' ' ')— name one exactly; skipping this label." >&2
+        label_failed=1
+        continue
+      fi
+    fi
     if [ -z "$have_label" ]; then
       linear-cli labels create "$lb" -t issue >/dev/null 2>&1 || true
     fi
     update_args+=(-l "${have_label:-$lb}")
   done
   # One replace-semantics update carrying every -l — safe only because the label set is
-  # empty on a just-created issue (existing issues must use linear-add-label.sh).
-  if ! linear-cli "${update_args[@]}" >/dev/null 2>&1; then
-    echo "WARN: created $new_id but could not attach label(s) '$label' — if this gates /auto pickup, attach manually (~/.claude/scripts/linear-add-label.sh $new_id <label>)" >&2
-    label_failed=1
+  # empty on a just-created issue (existing issues must use linear-add-label.sh). Skipped
+  # when every requested label was ambiguous (nothing to attach).
+  if [ "${#update_args[@]}" -gt 3 ]; then
+    if ! linear-cli "${update_args[@]}" >/dev/null 2>&1; then
+      echo "WARN: created $new_id but could not attach label(s) '$label' — if this gates /auto pickup, attach manually (~/.claude/scripts/linear-add-label.sh $new_id <label>)" >&2
+      label_failed=1
+    fi
   fi
 fi
 

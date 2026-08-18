@@ -155,7 +155,12 @@ V_FILED_LINE = re.compile(r"^Deferred filed as issues:\s*(.+?)$", re.M)
 # from none-owed, and unwired same-mechanism siblings recurred on two consecutive fleets (BF-1226).
 V_EDGES_LINE = re.compile(r"^Collision edges:\s*(.+?)$", re.M)
 V_SEVERITY = re.compile(r"\b(CRIT(?:ICAL)?|HIGH|MED(?:IUM)?)\b")
-V_ORIGIN = re.compile(r"\b(?:CRIT(?:ICAL)?|HIGH|MED(?:IUM)?)/(plan|impl|spec|test|latent)\b")
+# NICE-TO-HAVE is in the origin alternation but deliberately not in V_SEVERITY: the C/H/M columns and
+# crit_high_per_review count the substantive tiers only, while the origin mandate covers "wherever a
+# severity tag renders" — the 2026-08-17 fleet's BF-837 authored 9 compliant tags of which 3
+# NICE-TO-HAVE/plan were silently dropped from the aggregate (BF-1248). Keep in sync with
+# quality-review-write-verdict.sh's origin_re, which warns at write time on the same pattern.
+V_ORIGIN = re.compile(r"\b(?:CRIT(?:ICAL)?|HIGH|MED(?:IUM)?|NICE-TO-HAVE)/(plan|impl|spec|test|latent)\b")
 V_ISSUE_ID = re.compile(r"\b[A-Z][A-Z0-9]*-\d+\b")
 SEV_SHORT = {"CRITICAL": "CRIT", "MEDIUM": "MED"}
 

@@ -94,6 +94,15 @@ tb ALLOW "38 multi-line commit -m mentioning rm and /tmp"  $'git commit -m "flee
 tb BLOCK "39 real command after the closing quote"         $'git commit -m "msg line one\nline two" && rm /tmp/x.rb'
 tb ALLOW "40 multi-line single-quoted prose"               $'printf \'%s\' \'del /tmp/a\nrm /tmp/b\ndone\' > tmp/out.txt'
 
+echo "  quality-review verdict files — the write-verdict script is the only writer (BF-815):"
+tf BLOCK "41 Write of a verdict file in a worktree tmp/"   '/Users/kross/projects/x/.claude/worktrees/bf-1/tmp/quality-review-verdict-bf-1.md'
+tf BLOCK "42 Write of a verdict file in project tmp/"      '/Users/kross/projects/x/tmp/quality-review-verdict-bf-1.md'
+tf BLOCK "43 Write of a verdict file in the scratchpad"    '/tmp/claude-501/s/quality-review-verdict-bf-1.md'
+tn BLOCK "44 NotebookEdit spelling of the same basename"   '/Users/kross/projects/x/tmp/quality-review-verdict-bf-1.md'
+tf ALLOW "45 differently-named staging body is fine"       '/Users/kross/projects/x/tmp/verdict-body-bf-1.md'
+tf ALLOW "46 verdict-adjacent name without the .md"        '/Users/kross/projects/x/tmp/quality-review-verdict-bf-1.txt'
+tb ALLOW "47 the sanctioned stdin publish is Bash, not a file tool" $'~/.claude/scripts/quality-review-write-verdict.sh BF-1 - <<\'VERDICT_EOF\'\nVerdict: passed-clean\nVERDICT_EOF'
+
 echo
 echo "passed: $PASS   failed: $FAIL"
 [[ "$FAIL" -eq 0 ]]

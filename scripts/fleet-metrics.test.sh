@@ -32,11 +32,13 @@ cat > "$CHECKOUT/tmp/auto-state-abc12345.json" <<'EOF'
 {"status": "halted", "reason": "test", "shipped": ["TT-1", "TT-2"], "canceled": [], "skipped": [], "failed": []}
 EOF
 
-# New-format verdict: origin-tagged severities, two filed issues. TT-1 is shipped by the session.
+# New-format verdict: origin-tagged severities (the NICE-TO-HAVE tag pins V_ORIGIN's widened
+# alternation — dropped compliant tags were invisible, BF-1248), two filed issues. TT-1 is shipped
+# by the session.
 cat > "$CHECKOUT/tmp/quality-review-verdict-tt-1.md" <<'EOF'
 Verdict: passed-after-fixes
 Cycles: 3 (initial + 2 re-reviews)
-Findings resolved: 4 (CRIT/impl: null deref in handler; HIGH/plan: missed absorbed criterion; MEDIUM/test: unpinned branch; MED/latent: adjacent gap)
+Findings resolved: 4 (CRIT/impl: null deref in handler; HIGH/plan: missed absorbed criterion; MEDIUM/test: unpinned branch; MED/latent: adjacent gap; NICE-TO-HAVE/plan: cosmetic rename)
 Deferred fixed in-session: 1 (comment fix)
 Deferred filed as issues: TT-40, TT-41 (sub-issues of TT-9)
 Deferred dropped: none
@@ -177,7 +179,7 @@ ck "churn rows"         "3"        "$(q "len(d['review_churn'])")"
 ck "tt1 cycles"         "3"        "$(q "[v for v in d['review_churn'] if v['issue']=='TT-1'][0]['cycles']")"
 ck "tt1 findings"       "4"        "$(q "[v for v in d['review_churn'] if v['issue']=='TT-1'][0]['findings_resolved']")"
 ck "tt1 severity"       "{'CRIT': 1, 'HIGH': 1, 'MED': 2}" "$(q "[v for v in d['review_churn'] if v['issue']=='TT-1'][0]['severity']")"
-ck "tt1 origins"        "{'impl': 1, 'plan': 1, 'test': 1, 'latent': 1}" "$(q "[v for v in d['review_churn'] if v['issue']=='TT-1'][0]['origin']")"
+ck "tt1 origins"        "{'impl': 1, 'plan': 2, 'test': 1, 'latent': 1}" "$(q "[v for v in d['review_churn'] if v['issue']=='TT-1'][0]['origin']")"
 ck "tt1 filed"          "['TT-40', 'TT-41']" "$(q "[v for v in d['review_churn'] if v['issue']=='TT-1'][0]['filed']")"
 ck "tt1 run matched"    "abc12345" "$(q "[v for v in d['review_churn'] if v['issue']=='TT-1'][0]['run']")"
 ck "tt3 old-format sev" "{'HIGH': 1, 'MED': 1}" "$(q "[v for v in d['review_churn'] if v['issue']=='TT-3'][0]['severity']")"
@@ -216,7 +218,7 @@ ck_has "unpriced footer"     "excluded from \$ (no price row): claude-nova-2" "$
 ck_has "no-verdict flag"     "Shipped with no persisted review verdict**: TT-2" "$MD"
 ck_has "off-schema flag"     "Off-schema verdict body**: TT-4 (no Findings resolved line)" "$MD"
 ck_has "off-schema ? render" "| TT-4 | \`-\` | passed-after-fixes | 2 | ? |" "$MD"
-ck_has "origin coverage"     "origin-tagged 4/6" "$MD"
+ck_has "origin coverage"     "origin-tagged 5/6" "$MD"
 ck_has "ledgerless flag"     "\`def45678\` ran without a surviving ledger" "$MD"
 ck_has "ledgerless names it" "no \`tmp/auto-state-def45678.json\`" "$MD"
 ck_has "ledgerless rec dash" "| \`def45678\`  ⚠ | 0.5h | 0% | -/1 | -/0 |" "$MD"

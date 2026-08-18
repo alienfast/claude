@@ -140,6 +140,23 @@ if grep -Eq '^Deferred filed as issues:.*[A-Z]+-[0-9]+' "$body_file" \
   echo "WARN: verdict files issues but has no 'Collision edges:' line — record the wired edges (or 'none owed'); see quality-review/SKILL.md Output" >&2
 fi
 
+# Origin-class WARNs (exit-0, publish-then-warn like the edges WARN above) — keep the pattern in sync
+# with fleet-metrics.py's V_ORIGIN, the consumer whose aggregate /fleet-retro tunes the fleet on.
+# Retro is too late to repair a verdict (the worktree and finding text are gone by then — BF-1248),
+# and the two modes are distinct: a verdict with findings and no parseable tag at all, and an
+# off-enum origin word (BF-611's HIGH/implementation — V_ORIGIN's trailing \b rejects it, so the
+# finding silently vanishes from the aggregate while the verdict looks tagged to its author).
+origin_re='\b(CRIT(ICAL)?|HIGH|MED(IUM)?|NICE-TO-HAVE)/(plan|impl|spec|test|latent)\b'
+resolved_count=$(grep -Eo '^Findings resolved:[[:space:]]*[0-9]+' "$body_file" | grep -Eo '[0-9]+' | head -1 || true)
+if [ -n "$resolved_count" ] && [ "$resolved_count" -gt 0 ] && ! grep -Eq "$origin_re" "$body_file"; then
+  echo "WARN: $resolved_count findings resolved but no severity tag carries a parseable origin class — every severity tag is SEVERITY/origin (e.g. HIGH/plan; classes plan|impl|spec|test|latent) or fleet-retro's origin aggregation reads zero from this verdict; see quality-review/SKILL.md Output" >&2
+fi
+off_enum=$(grep -Eo '\b(CRIT(ICAL)?|HIGH|MED(IUM)?|NICE-TO-HAVE)/[A-Za-z][A-Za-z-]*' "$body_file" \
+  | grep -Ev '/(plan|impl|spec|test|latent)$' | sort -u || true)
+if [ -n "$off_enum" ]; then
+  echo "WARN: severity tag(s) carry an off-enum origin class: $(printf '%s' "$off_enum" | tr '\n' ' ')— legal classes are plan|impl|spec|test|latent; fleet-metrics.py drops these findings from the origin aggregate" >&2
+fi
+
 has '^Verdict:[[:space:]]*(passed-clean|passed-after-fixes|terminated-with-open-items|escalated-to-architect)([[:space:]][^|]*)?$' || miss "Verdict"
 has '^Cycles:[[:space:]]*[0-9]+' || miss "Cycles"
 has '^Findings resolved:[[:space:]]*([0-9]+|none)' || miss "Findings resolved"
