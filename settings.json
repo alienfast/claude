@@ -214,6 +214,7 @@
   "effortLevel": "xhigh",
   "tui": "fullscreen",
   "theme": "dark",
+  "skipAutoPermissionPrompt": true,
   "agentPushNotifEnabled": true,
-  "skipAutoPermissionPrompt": true
+  "model": "opus"
 }
