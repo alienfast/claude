@@ -182,6 +182,26 @@ err=$(printf '# BF-366\n\nVerdict: passed-clean\nCycles: 1 (initial)\nFindings r
 ck "  none resolved -> exit 0" 0 $rc
 ck "  quiet" "no" "$(printf '%s' "$err" | grep -Eq 'origin class' && echo yes || echo no)"
 
+echo "== 15. parentless-filing WARN (exit 0 — the BF-1189 shape)"
+# filed with the (sub-issues of <PARENT>) suffix: compliant, quiet.
+err=$(printf '# BF-377\n\nVerdict: passed-after-fixes\nCycles: 2 (initial + 1 re-review)\nFindings resolved: 1 (HIGH/impl: example)\nDeferred fixed in-session: none\nDeferred filed as issues: TT-40, TT-41 (sub-issues of TT-9)\nCollision edges: none owed\nDeferred dropped: none\nOpen items: none\n' \
+  | (cd "$wt" && "$SCRIPT" BF-377 -) 2>&1 >/dev/null); rc=$?
+ck "  suffixed filing -> exit 0" 0 $rc
+ck "  quiet" "no" "$(printf '%s' "$err" | grep -q 'sub-issues of <PARENT>' && echo yes || echo no)"
+
+# filed WITHOUT the suffix: three BF-1189 filings landed parentless this way (which also kept the
+# collision-edge rule from firing) — warn, never refuse, since a genuinely parentless run is legal.
+err=$(printf '# BF-388\n\nVerdict: passed-after-fixes\nCycles: 2 (initial + 1 re-review)\nFindings resolved: 1 (HIGH/impl: example)\nDeferred fixed in-session: none\nDeferred filed as issues: TT-40, TT-41\nCollision edges: none owed\nDeferred dropped: none\nOpen items: none\n' \
+  | (cd "$wt" && "$SCRIPT" BF-388 -) 2>&1 >/dev/null); rc=$?
+ck "  unsuffixed filing -> exit 0" 0 $rc
+ck "  WARN fires" "yes" "$(printf '%s' "$err" | grep -q "without a '(sub-issues of <PARENT>)' suffix" && echo yes || echo no)"
+
+# filed: none — nothing filed, nothing to link.
+err=$(printf '# BF-399\n\nVerdict: passed-clean\nCycles: 1 (initial)\nFindings resolved: none\nDeferred fixed in-session: none\nDeferred filed as issues: none\nDeferred dropped: none\nOpen items: none\n' \
+  | (cd "$wt" && "$SCRIPT" BF-399 -) 2>&1 >/dev/null); rc=$?
+ck "  nothing filed -> exit 0" 0 $rc
+ck "  quiet" "no" "$(printf '%s' "$err" | grep -q 'sub-issues of <PARENT>' && echo yes || echo no)"
+
 echo
 echo "$pass passed / $fail failed"
 [ "$fail" -eq 0 ]
