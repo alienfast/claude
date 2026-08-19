@@ -252,6 +252,32 @@ if ! git -C "$wt_dir" diff --quiet || ! git -C "$wt_dir" diff --cached --quiet; 
   exit 1
 fi
 
+# The "main checkout" role below is cwd's, and nothing verified cwd actually IS the main
+# checkout — callers are merely contracted to cd there (/finish Step 9). A session that ran
+# this from inside its own worktree therefore made the WORKTREE play that role: HEAD is then
+# the issue branch, never source, so the finalize loop takes the `elsewhere` path against the
+# real main checkout and defers on EVERY pass — a permanent deadlock, not a retry. main_root
+# also feeds the merge-queue marker, which then lands in <worktree>/.claude/merge-queue/ and
+# dies with the worktree (silent queue loss — no hard_failed, no notification), while the
+# worktree self-registers in ~/.claude/merge-queue-repos.txt permanently. And merge-queue.sh's
+# drainer `cd "$repo_root"`s before re-invoking, so a poisoned marker reproduces the wrong cwd
+# on every retry and can never self-correct. (BF-1274, 2026-08-19: 12 identical deferrals, then
+# the marker vanished with the worktree.) So derive the main worktree from git rather than cwd.
+# Bare main repos are deliberately left alone: `git worktree list` reports them `bare`, they have
+# no working tree to advance, and the --absolute-git-dir handling below already covers them.
+main_worktree=$(git worktree list --porcelain 2>/dev/null \
+  | awk '/^worktree /{p=substr($0,10)} /^bare$/{b=1} /^$/{exit} END{if(!b) print p}') || true
+invoked_from=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
+if [ -n "$main_worktree" ] && [ "$main_worktree" != "$invoked_from" ]; then
+  echo "WARN: finish-merge.sh invoked from '$invoked_from', which is not this repo's main checkout." >&2
+  echo "      Relocating to '$main_worktree'. Callers should cd there first (/finish Step 9)." >&2
+  # Both may be relative to the OLD cwd; absolutize before moving. Each is already known to
+  # exist (preconditions 2 and the message-file check), so the dirname cd cannot fail.
+  case "$wt_dir" in /*) ;; *) wt_dir="$(cd "$(dirname "$wt_dir")" && pwd)/$(basename "$wt_dir")" ;; esac
+  case "$message_file" in /*) ;; *) message_file="$(cd "$(dirname "$message_file")" && pwd)/$(basename "$message_file")" ;; esac
+  cd "$main_worktree"
+fi
+
 # Precondition 6: main checkout (cwd) is clean AND not mid-operation. The new
 # flow never leaves the main checkout mid-merge, so a mid-operation here is a
 # foreign/manual state the user must resolve. Use --absolute-git-dir (not
