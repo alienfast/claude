@@ -47,8 +47,12 @@
 # Exit codes:
 #   0 — done: worktree branch fast-forwarded into source, worktree + branch removed.
 #   1 — precondition failure (setup issue; the merge was never completed).
-#   2 — worktree merge conflict: state preserved IN THE WORKTREE; the orchestrator
-#       resolves there (git -C <wt-dir> add/commit) and re-invokes this script.
+#   2 — worktree needs work before the merge can land, in one of two shapes; the
+#       orchestrator acts IN THE WORKTREE and re-invokes this script:
+#         - merge conflict: resolve (git -C <wt-dir> add/commit -F <message-file>);
+#         - GENERATED-DISCARD: a merge=ours driver dropped the source branch's hunks
+#           on generated file(s) — regenerate them from the merged sources, commit,
+#           re-run (see assert_no_ours_discards below).
 #   3 — transient block: source cannot advance right now but will succeed later
 #       untouched (main checkout on source with uncommitted WIP, source checked out
 #       in another worktree, main mid-operation, or continuous contention). The
@@ -122,6 +126,69 @@ enqueue_transient() {
 dequeue_self() {
   [ -x "$HOME/.claude/scripts/merge-queue.sh" ] || return 0
   "$HOME/.claude/scripts/merge-queue.sh" remove "$issue_slug" "$main_root" 2>/dev/null || true
+}
+
+# Generated-artifact discard guard. A repo may put a merge=ours driver on generated files
+# (schema dumps, codegen outputs) so a two-sided change never conflicts — but that driver
+# resolves by silently KEEPING the worktree branch's copy and discarding the source branch's
+# hunks (typically a sibling issue's regenerated artifacts), and nothing regenerates at merge
+# time. Finalizing such a merge ships the shared branch with the sibling's generated half
+# missing, so every worktree forked afterwards inherits a red baseline, and CI can only
+# rebuild DERIVED outputs from the committed root artifact — it reproduces a root-artifact
+# loss rather than repairing it.
+#
+# Detection is content-based, per merge commit unique to the worktree branch, so it covers
+# this script's own merges AND a manual mid-issue `git merge <source>` (which bakes the same
+# loss before /finish is invoked): for each merge=ours path BOTH sides changed since that
+# merge's base (one-sided changes fast-path without the driver), the discard signature is
+# merged blob == worktree-parent blob != source-parent blob — still unrepaired iff the branch
+# tip's blob hasn't moved since (a post-merge regeneration clears it) and the two branch tips
+# don't already agree. A clean normal merge that combined both sides also clears it, so a
+# missing driver config never false-fires.
+#
+# Fires exit 2 (same recovery loop as a conflict): regenerate in the worktree, commit,
+# re-run. The regeneration must come AFTER the merge — only the merged tree carries both
+# sides' sources — which is why this audits committed merges instead of blocking the merge.
+# _FM_SKIP_OURS_GUARD=1 skips it for a genuinely-intended discard.
+assert_no_ours_discards() {
+  if [ "${_FM_SKIP_OURS_GUARD:-0}" = "1" ]; then return 0; fi
+  local merges discards="" m p1 p2 mb both f attr s w cur cur_src
+  merges=$(git rev-list --merges "$source_branch..$worktree_branch" 2>/dev/null || true)
+  if [ -z "$merges" ]; then return 0; fi
+  while IFS= read -r m; do
+    [ -n "$m" ] || continue
+    p1=$(git rev-parse --quiet --verify "$m^1" 2>/dev/null || true)
+    p2=$(git rev-parse --quiet --verify "$m^2" 2>/dev/null || true)
+    if [ -z "$p1" ] || [ -z "$p2" ]; then continue; fi
+    # Only merges OF the source branch (its tip at some point) — not an unrelated feature merge.
+    git merge-base --is-ancestor "$p2" "$source_branch" 2>/dev/null || continue
+    mb=$(git merge-base "$p1" "$p2" 2>/dev/null || true)
+    [ -n "$mb" ] || continue
+    both=$(comm -12 <(git diff --name-only "$mb" "$p2" 2>/dev/null | sort) \
+                    <(git diff --name-only "$mb" "$p1" 2>/dev/null | sort))
+    [ -n "$both" ] || continue
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      attr=$(git -C "$wt_dir" check-attr merge -- "$f" 2>/dev/null | sed 's/.*: //')
+      [ "$attr" = "ours" ] || continue
+      s=$(git rev-parse --quiet --verify "$p2:$f" 2>/dev/null || true)
+      w=$(git rev-parse --quiet --verify "$p1:$f" 2>/dev/null || true)
+      [ "$s" = "$w" ] && continue                    # identical on both sides — nothing was discarded
+      cur=$(git rev-parse --quiet --verify "$worktree_branch:$f" 2>/dev/null || true)
+      [ "$cur" = "$w" ] || continue                  # tip content moved since the merge — regenerated/repaired
+      cur_src=$(git rev-parse --quiet --verify "$source_branch:$f" 2>/dev/null || true)
+      [ "$cur" = "$cur_src" ] && continue            # tips agree now — nothing left to lose
+      discards="${discards}  $f  (merge $(git rev-parse --short "$m" 2>/dev/null || echo "$m") kept this branch's copy; $source_branch's hunks were dropped by the merge=ours driver)"$'\n'
+    done <<< "$both"
+  done <<< "$merges"
+  if [ -z "$discards" ]; then return 0; fi
+  echo "GENERATED-DISCARD: this branch carries merge(s) whose merge=ours driver silently dropped $source_branch's changes to generated file(s):" >&2
+  printf '%s' "$discards" >&2
+  echo "Finalizing now would ship $source_branch without those hunks — every worktree forked afterwards inherits the loss, and CI cannot rebuild a root artifact (it only regenerates derived outputs from the committed one)." >&2
+  echo "Remedy IN THE WORKTREE: regenerate these artifacts from the merged sources (the project's documented schema/codegen regeneration), then:" >&2
+  echo "  git -C '$wt_dir' add <files> && git -C '$wt_dir' commit -m 'Regenerate merged artifacts'" >&2
+  echo "Then re-run /finish merge. If the discard is genuinely intended, re-run with _FM_SKIP_OURS_GUARD=1." >&2
+  exit 2
 }
 
 if [ ! -f "$message_file" ]; then
@@ -375,6 +442,10 @@ while : ; do
     fi
     continue
   fi
+
+  # Every merge is committed by this point (initial, loop re-merges, and any manual
+  # mid-issue merge) — audit them all for merge=ours discards before finalizing.
+  assert_no_ours_discards
 
   # Decide the tip source should advance to.
   src_old=$(git rev-parse --verify "$source_branch")
