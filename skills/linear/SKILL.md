@@ -100,6 +100,16 @@ Auth: `linear-cli auth oauth` (browser) or `LINEAR_API_KEY`; check with `linear-
     error strings — one per query, several queries. Never a phrase you composed to describe the defect. If a
     multi-word query is unavoidable, it must be text you have *seen verbatim* in an existing title.
 
+    **Search the target FILE's basename too, and search it first when the defect is a flake, a fixture, or
+    anything else whose identifiers are descriptions rather than symbols.** Near-duplicates routinely share zero
+    identifier tokens — each filer names the mechanism their own way — while every one of them names the same
+    file, so the basename is the only invariant token available. Measured: `rack_logger_spec.rb:208`'s one
+    assertion was filed FOUR times across three fleets (BF-1014/1222/1252/1283) under four different mechanism
+    descriptions; the single token `rack_logger_spec` returns all four. Apply the same distinctive-vs-generic
+    split `/reflect`'s Step 6 dedup search uses: a distinctive basename (`rack_logger_spec`,
+    `next-candidates.sh`) is searchable as-is; a generic one (`prepopulate` → ~50 hits, `user.rb`, `index.ts`)
+    discriminates nothing — fall back to the symbol there.
+
     Real cost of getting this wrong: BF-777 was filed Urgent against `ListHelper#resolve_list` after three
     dedup searches — `resolve_list scopes injection`, `list_helper scopes`, `SQL injection anonymous` — all
     multi-word, all structurally guaranteed to return nothing. BF-490 had described the same defect in the same
