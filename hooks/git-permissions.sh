@@ -199,9 +199,14 @@ To proceed: Explicitly tell Claude \"yes, run this git restore command\"
 
   # BLOCK: git checkout with any non-flag argument. The old rule required a space-delimited '--',
   # so it caught `git checkout -- foo.ts` and missed the bare `git checkout foo.ts` that people
-  # actually type — the form that destroys the file. A bare branch name is blocked for the same
-  # reason standards/git.md gives: switching moves the SHARED working tree and carries a
-  # concurrent session's WIP onto the target branch.
+  # actually type — the form that destroys the file. A bare branch name is caught by the same
+  # test, and deliberately: `git checkout` is overloaded, and nothing lexical separates a branch
+  # from a path (`main` and `foo.ts` are both bare words). A filesystem probe cannot settle it
+  # either — this hook's cwd is not reliably the repo, so an operand that "does not exist" may
+  # simply be a path in a directory we are not standing in, and guessing wrong destroys the file.
+  # `git switch <branch>` is the un-overloaded spelling and is allowed; it takes no pathspec, so
+  # it cannot reach the destructive mode at all. Point the caller there instead of at an approval
+  # phrase nothing reads: deny() is exit 2, a hard block with no approve path.
   # Flag-only forms stay allowed: --detach (recommended by /full, /auto-prep, /start), -b, -B.
   if [[ "$segment" =~ ^git[[:space:]]+checkout([[:space:]]|$) ]]; then
     args="${segment#*checkout}"
@@ -215,40 +220,27 @@ To proceed: Explicitly tell Claude \"yes, run this git restore command\"
 
 Command: $segment
 
-'git checkout <file>' PERMANENTLY DELETES uncommitted changes to that file.
-'git checkout <branch>' moves the SHARED working tree and can carry another
-session's WIP onto the target branch.
+'git checkout <file>' PERMANENTLY DELETES uncommitted changes to that file,
+and 'git checkout' cannot tell a file from a branch without guessing.
 
-⚠️  To restore a file, copy it aside and back, or 'git show HEAD:<path> >| <path>'.
+➡️  To CHANGE BRANCH, use 'git switch <branch>' — it takes no pathspec, so it
+    cannot reach the destructive mode. That form is allowed.
+⚠️  To RESTORE a file, copy it aside and back, or 'git show HEAD:<path> >| <path>'.
 
 Flag-only forms (--detach, -b, -B) remain allowed.
 
-To proceed: Explicitly tell Claude \"yes, run this git checkout command\""
+This is a hard block: no phrase you say to Claude will lift it. Run it yourself
+if you genuinely mean the file form."
     fi
   fi
 
-  # BLOCK: git switch <branch>. Mirrors the checkout rule above — without it, `git switch main`
-  # is a one-word detour around the shared-working-tree protection. -c/-C create a branch and
-  # --detach is recommended by /full, /auto-prep and /start, so flag-only forms stay allowed.
-  if [[ "$segment" =~ ^git[[:space:]]+switch([[:space:]]|$) ]]; then
-    sargs="${segment#*switch}"
-    if [[ "$sargs" =~ (^|[[:space:]])-[cC]([[:space:]]|$) ]]; then
-      continue
-    fi
-    if [[ "$sargs" =~ (^|[[:space:]])[^-[:space:]] ]]; then
-      deny "🛑 BLOCKED: Destructive git command requires explicit user approval
-
-Command: $segment
-
-'git switch <branch>' moves the SHARED working tree and can carry another
-session's uncommitted work onto the target branch — the same hazard as
-'git checkout <branch>'.
-
-Flag-only forms (--detach, -c, -C) remain allowed.
-
-To proceed: Explicitly tell Claude \"yes, run this git switch command\""
-    fi
-  fi
+  # `git switch` is deliberately NOT blocked. It was, mirroring checkout — but the two are not
+  # equivalent: checkout is overloaded (branch OR pathspec) while switch is branch-only and has no
+  # pathspec form at all, so it cannot destroy an uncommitted file. What remains is the
+  # shared-working-tree concern from standards/git.md, and git already fails that case closed —
+  # it refuses to switch when the move would overwrite local changes. Blocking it bought no safety
+  # over `git checkout`'s own block and left branch-switching with no allowed spelling, which is
+  # how the block message above came to promise an approval phrase that nothing honors.
 
   # BLOCK: git clean with a real force flag. The old substring match on -[fd] also caught
   # '--dry-run' (the '-d' inside it), blocking the one form that is a safe preview, while
