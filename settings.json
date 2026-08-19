@@ -177,6 +177,10 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/linear-create-state-guard.sh"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/auto-deadline-gate.sh"
           }
         ]
       },
