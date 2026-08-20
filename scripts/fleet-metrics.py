@@ -1561,11 +1561,28 @@ def main():
                   f"across runs ONLY within one `limit_kind`: three cutoffs once agreed on total "
                   f"billable to 0.08% while diverging 23% on output, and two of them were weekly limits "
                   f"against one per-session limit — unrelated ceilings coinciding.")
+        # Mean exceeding the at-peak rate fingerprints a peak window that landed OUTSIDE the run under
+        # review (overlap-counted concurrency inflates the divisor — e.g. an unscoped --since admitting
+        # the morning-after interactive sessions). Heuristic, not proof: an idle-heavy fleet can trip it
+        # legitimately, so WARN and let the operator re-scope; never refuse or alter a figure.
+        rate_inverted = (burn_rate_all is not None and peak_5h_rate is not None
+                         and burn_rate_all > peak_5h_rate)
         print(f"\nAt the 5h peak: **{peak_5h_concurrency} concurrent sessions**, "
               f"**{peak_5h_rate:,} output tokens per session-hour**.  "
               f"Across all {len(sessions)} sessions ({session_hours:,.0f} session-hours) the mean is "
-              f"{burn_rate_all:,} — lower because it pools idle and interactive sessions with fleet "
-              f"ones. **Size with the peak rate, not the mean.**\n")
+              f"{burn_rate_all:,}"
+              + (".\n" if rate_inverted else
+                 " — lower because it pools idle and interactive sessions with fleet "
+                 "ones. **Size with the peak rate, not the mean.**\n"))
+        if rate_inverted:
+            print(f"> **The peak 5h window probably falls OUTSIDE the run under review — do not size "
+                  f"on {peak_5h_rate:,}.** The all-sessions mean ({burn_rate_all:,}) EXCEEDS the "
+                  f"at-peak rate, which the sizing guidance assumes cannot happen: "
+                  f"`peak_5h_concurrency` counts sessions whose lifespan merely overlaps the window, "
+                  f"so a window landing on post-fleet interactive sessions inflates the divisor and "
+                  f"collapses the rate. The window starts {peak_5h_at:%Y-%m-%d %H:%M UTC} — check it "
+                  f"against the fleet's own span and re-run with `--sessions` (or `--until`) if it "
+                  f"falls outside.\n")
         if cutoff_groups:
             print("**This run was CUT OFF, so both peaks above are CEILINGS, not floors** — they bound "
                   "the allowance from above where an un-throttled run bounds it from below. This is the "
