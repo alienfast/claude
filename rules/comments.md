@@ -27,6 +27,19 @@ difference, a version-specific quirk — is the kind a reader trusts without
 re-checking, and the kind this file most invites you to write. Run it on the
 machine first. If you can't, write the narrower claim you did confirm.
 
+**Deciding to leave a detail out is a claim too.** Omitting a concrete — an error
+string, a command, a path — because you believe it varies rests on a belief about
+behavior, and that belief needs the same measurement an assertion would. The
+narrowing above is for a measurement genuinely out of reach, not a way past a
+one-command check, and hedging is not free: the concrete is usually the one thing
+the reader would have searched for. Measured: a build-failure note said "a
+module-load env assertion" instead of naming the error string, on the unverified
+premise that an earlier-imported database client's constructor would throw first
+and change the message. That constructor defers its validation and does not throw,
+so in the absent-config case the note was written for, the named string is exactly
+what the operator gets — the hedge traded away their only search anchor to cover a
+case that never arises.
+
 **Measure the value production actually produces, not a plausible stand-in.**
 Running *something* is not the bar — the input has to be the one the system
 builds. Where a library or framework constructs the value, construct it the
@@ -56,6 +69,19 @@ it first: remove the line, run the tests covering it, restore by file copy (neve
 `git restore`, and never `git stash` — the stash stack is shared across every
 worktree of the repo; see `standards/git.md` § Safe Commands). Anything red means the claim is false; nothing red means check
 the tests reach that line at all before you claim it.
+
+**A comment justifying why a guard exists names a failure you have never seen.**
+"Otherwise there's a race", "this would fire on mount", "without this the report
+pages break" — the guard is present, so the failure never happens, and re-reading
+the guard confirms the sentence every time. Check the *triggering condition*, not
+the guard: point at what makes it reachable — the type that admits null, the
+caller that passes it, the page that reads the column. If nothing points back, the
+reason is wrong even where the guard is right. Where the condition turns on
+runtime semantics no line shows (update batching, effect and ref ordering),
+inspection can't settle it — remove the guard, run what covers it, and record what
+actually broke, restoring by file copy as above. What that reports is routinely a
+near neighbour of what you were about to write, which is why the wrong reason
+survives review by anyone else reasoning from the same code.
 
 **A claim about a family is falsified by the member the change skipped.** When a
 change fixes some members of a set and a scope boundary leaves the rest alone,
