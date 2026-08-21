@@ -49,7 +49,7 @@ Do not retry, do not re-prompt, do not run any subsequent step. **Skip this pref
 Normalize the user's args before calling the script:
 
 - Look for the `auto` token (case-insensitive, position-agnostic) — it selects autonomous mode for this skill's prompt sites and is NOT passed to the script (its arg contract is `merge|pr|--no-push` only).
-- Look for `merge` and `pr` tokens (case-insensitive, position-agnostic) — pass through whichever is present (if both, the script errors).
+- Look for `merge` and `pr` tokens (case-insensitive, position-agnostic) — pass through whichever is present (if both, the script errors). **The token you were dispatched with is authoritative — never substitute the other flow.** Receiving `merge` and then running `finish-detect-mode.sh pr` is a real, repeated defect (JA-367 shipped PR #239 that way, reasoning from repo history); if the token looks wrong for this repo, say so and STOP rather than switching. Under an `auto` chain `hooks/finish-flow-guard.sh` blocks the substitution outright.
 - Look for `no push` / `don't push` / `skip push` — translate to `--no-push` for the script.
 - Look for label requests (`with label X`, `label X, Y`, `--label X`) — collect them into a list and **carry it forward to Step 9** (pr mode only). Labels are NOT passed to the script — its arg contract is `merge|pr|--no-push` only. **If labels were requested but the resolved `ACTION` is not `pr`** (i.e., `merge` or the standard flow), labels have no PR to attach to — warn the user once (`Labels apply only to /finish pr; ignoring: <list>.`) rather than silently dropping them.
 

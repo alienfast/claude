@@ -83,6 +83,8 @@ Wait for `/start`'s tagged final line — the LAST LLM-authored line of its outp
 
 Compose the args string for `/finish` based on mode (in `auto` mode, prepend `auto ` to every form below):
 
+**The flow is the caller's, not yours.** `pr` appears below only because the macro was *given* `pr`; never add it because the repo's recent issues shipped as PRs, because a memory or `CLAUDE.md` says so, or because a PR seems safer. Absent the token, `wt` mode is `merge` — full stop. (`hooks/finish-flow-guard.sh` refuses an injected `pr` under an `auto` chain, so adding one only converts a silent wrong flow into a blocked command.)
+
 - **Non-`wt` mode without `pr`** — `args = "<ISSUE-ID>"`. Append ` no push` if the user passed it. `/finish` runs its standard flow (commit/push the current branch, mark `Ready For Release`).
 - **Non-`wt` mode with `pr`** — `args = "<ISSUE-ID> pr"`. `/finish` opens an in-place PR against the repo's default branch and leaves the issue `In Progress`. No `no push` is possible here (fail-fast in Arguments rejects the combination upstream).
 - **`wt` mode without `pr`** — `args = "<ISSUE-ID> merge"`. Append ` no push` if the user passed it. Pass `merge` explicitly even though it is `/finish`'s worktree default — keeps the dispatch self-documenting. (`/finish` Step 0 short-circuits when `SOURCE_BRANCH` is set anyway.)
