@@ -35,6 +35,23 @@ if git -C "$claude_repo" rev-parse --git-dir >/dev/null 2>&1 \
   echo ""
 fi
 
+# Non-keeper machines must stay fast-forwardable clones of origin/main: local commits there can
+# never be pushed (main is branch-protected; contributions go through /keeper's proposal-PR flow),
+# so they only accumulate conflicts against future pulls. Warn-only, like the Codex check above —
+# /keeper contributor mode is the recovery surface that carries the commits onto a proposal branch
+# and resets main back to a pure clone with the user's consent.
+if git -C "$claude_repo" rev-parse --git-dir >/dev/null 2>&1 \
+   && git -C "$claude_repo" rev-parse --verify -q origin/main >/dev/null \
+   && [ "$(git -C "$claude_repo" config --get reflect.keeper 2>/dev/null)" != "true" ] \
+   && git -C "$claude_repo" merge-base HEAD origin/main >/dev/null 2>&1 \
+   && [ -n "$(git -C "$claude_repo" rev-list origin/main..HEAD 2>/dev/null | head -1)" ]; then
+  echo ""
+  echo "  ⚠️  ~/.claude main has local commits that cannot be pushed from this machine (it is not"
+  echo "      the keeper's). Run /keeper — it proposes what has global value as a PR and restores"
+  echo "      this clone to a clean copy of origin/main."
+  echo ""
+fi
+
 echo "Updating Claude Code..."
 # Non-fatal: a failed self-update (e.g. an npm-managed install on Windows where `claude update` is a
 # no-op or errors) must not abort the whole bootstrap.

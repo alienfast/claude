@@ -518,7 +518,7 @@ if [ "$is_keeper" != "true" ]; then
   keeper_hidden=$(jq '[.[] | select(any((.labels // [])[]; ascii_downcase == "keeper"))] | length' "$list_file" 2>/dev/null || echo 0)
 fi
 keeper_note() {
-  [ "$keeper_hidden" -gt 0 ] && printf '\n_%s keeper-gated improvement(s) hidden — this machine is not the ~/.claude keeper (setup: git -C ~/.claude config reflect.keeper true)._\n' "$keeper_hidden"
+  [ "$keeper_hidden" -gt 0 ] && printf '\n_%s keeper-gated improvement(s) hidden — this machine is not the ~/.claude keeper. Run /keeper to propose your own filings upstream as a PR._\n' "$keeper_hidden"
   return 0
 }
 
