@@ -131,6 +131,9 @@ describe('buggyFunction', () => {
 ## Related Issues
 
 - Fixes #123 - [Issue title]
+- Fixes PL-13 - [Linear issue title] — this PR's own Linear issue and no other. A Linear close keyword
+  beside any other Linear ID moves that issue on merge, silently (`standards/git.md` § Linear auto-close
+  keywords); the GitHub `#N` line above cannot touch Linear state at all. Reference siblings bare.
 - Related to #456 - [How it relates]
 
 ## Side Effects

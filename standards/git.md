@@ -24,6 +24,34 @@ Because the token matches in the body too, write it literally only when you mean
   **The unit is the concern, not the file or the finding — do not split a coherent change into pieces.** One honest subject covering thirty files is one commit and should stay one: a config sweep, a rename across a package, a fix and its test. Splitting per-file, per-finding, or per-agent-batch produces a log that is harder to read than the bundled commit was, and it makes a revert a multi-commit operation. Ask only whether a reader looking for one half would be surprised to find the other; if not, it is one concern however many files it touches.
 - **The bundling trap is a blocked commit.** A hook, a check, or a precondition refuses the commit; you fix the blocker; now the blocker's fix and the original work are staged together — with the blocker freshest in mind and most likely to win the subject. Commit the unblocking fix by itself first, then the original work. This is the ordinary way unrelated changes end up in one commit, and it never presents itself as a decision to bundle.
 
+### Linear auto-close keywords
+
+**Only the issue being shipped may sit behind a close keyword. Every other issue ID in a commit message, PR title, or PR description is referenced bare.**
+
+Linear's GitHub integration — not GitHub's own closing keywords, which only close GitHub `#N` issues and cannot touch Linear state — scans **commit messages, PR
+titles, and PR descriptions** for `<keyword> <ISSUE-ID>` and, on merge, moves that issue to the team's merge state. Commit messages are the surface most easily
+forgotten and the one an unattended `/auto` run always writes, merge-commit subjects included. The closing set is bigger than the familiar three:
+`close/closes/closed/closing`, `fix/fixes/fixed/fixing`, `resolve/resolves/resolved/resolving`, `complete/completes/completed/completing`, and
+`implement/implements/implemented/implementing`. **The match is positional, not grammatical** — it fires on a close verb adjacent to an ID regardless of what the
+sentence means, including when the word is a noun.
+
+This is silent in both directions: nothing in the PR flow warns, and the state change is visible only in Linear. Measured 2026-08-20: a shipped PR's body said *"Next
+in sequence: `<NEXT>` (…, which also closes `<THIRD>`'s archive gap)"* — a forward reference describing what a *future* issue would do — and moved `<THIRD>` to Done
+with all three success criteria unchecked and nothing in the repo implementing them. A second PR's *"this mirrors the fix `<OTHER>` shipped"* — `fix` as a noun —
+linked the wrong PR to `<OTHER>`; it was already Done, so that one only cost a bad link.
+
+It is structural rather than a one-off: across the 25 most recent merged PRs on that repo, 22 mentioned at least one sibling issue ID (median ~3, max 12), because
+`/quality-review` files deferred items as follow-up issues and `/finish` Step 4's template asks for follow-up work.
+
+Safe forms, verified on a negative control — five sibling IDs mentioned bare, zero linked, zero moved, while only the two behind a close verb were:
+
+- **Bare ID** — `the gap <ID> describes`, `supersedes <ID>`, `see <ID>`. No link, no state change.
+- **Non-closing keyword** — `ref`, `refs`, `references`, `part of`, `related to`, `relates to`, `contributes to`, `toward`, `towards`. Links the PR to the issue
+  without applying the merge status; use when the link is wanted.
+- **`skip <ID>` / `ignore <ID>`** — suppresses linking entirely.
+
+This is the same rule class as `[skip ci]` above — an external system parsing a magic token out of prose, across the same surfaces.
+
 ### PR Guidelines
 
 - Summarize the overall change, not individual commit details
