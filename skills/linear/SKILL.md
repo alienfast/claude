@@ -141,6 +141,14 @@ Auth: `linear-cli auth oauth` (browser) or `LINEAR_API_KEY`; check with `linear-
     linear-cli issues create --team BF "<TITLE>" --description - --state Backlog --labels specified < body.md
     ```
 
+22. **Filtering `relations list` output on `blocks` drops every `blocked by` row — and the result reads as "no blockers".** The two relation types render as distinct
+    strings and `blocks` is not a substring of `blocked by`, so `linear-cli relations list <ID> | grep -E 'blocks|related'` returns only the *outgoing* edges, exits
+    0, and inverts the answer to the question the command is usually asked. Measured 2026-08-21: an issue printed one `blocks` and one `related` row under that
+    filter while carrying two `blocked by` rows that decided whether it was pickable at all — and one of its siblings matched only because its *title* contained
+    "duplicated". This is not the line-scoped-pipeline or wrapped-phrase trap `~/.claude/CLAUDE.md` documents: both tokens are on the line, and the term you grepped
+    simply does not subsume the sibling term it looks like it should. The table is a few rows — read it whole, or grep `blocked` when what you want is blockers.
+    Gotcha #13 covers the complementary jq failure on the same command (`.relations[]` and `.inverseRelations[]`, both needed, neither carrying `.nodes`).
+
 23. **Every `statuses list` call reads through `linear-cli`'s Statuses cache, so a workflow state added minutes ago is invisible — and the error blames the
     team.** The cache covers statuses (gotcha #17), and no state-resolution call site opted out until this was measured. Symptom:
     `mark-ready-for-release.sh` exits 1 with `ERROR: no Ready-For-Release state found for team '<KEY>'. Set it manually.` while the state exists and every
