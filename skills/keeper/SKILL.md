@@ -61,6 +61,7 @@ Invoking `/keeper` is the explicit grant to commit and push **exactly the adjudi
 - One commit per keeper issue — `keeper: <ID> — <summary>`, body carrying per-item outcomes.
 - One commit for accepted pre-existing local edits — `keeper: accept local apply-now edits — <areas>`.
 - Accepted PRs: `gh pr merge --rebase` (per-issue commits land as-is, history stays linear). Rejected items in a PR: request changes with the recommendation and leave it open. A PR rejected outright is closed unmerged with the rationale in a review comment — its body's per-issue provenance says which Linear issues to reopen if any item deserves another round; otherwise the closed PR's thread is the durable rationale.
+- **Adoption**: when a mixed PR's contributor cannot or will not revise, the accepted subset does not strand with the PR. Re-apply each accepted item from the PR diff with its conditions and rewording, as per-item `keeper: <ID> — <summary>` commits (cherry-pick only a commit needing no rework), then close the PR unmerged with a comment naming what landed and what was dropped. The contributor's Linear issues stay as they closed at submit; the review comment remains the rationale.
 - Push once at the end. On a non-fast-forward rejection, `git -C ~/.claude pull --no-rebase` and push again; a merge conflict stops the run with commits local — report, never force.
 
 ### Step 5: Linear bookkeeping
