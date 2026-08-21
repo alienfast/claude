@@ -191,6 +191,7 @@ How you were spawned decides how the report reaches the orchestrator — the for
 - NEVER report a finding without a concrete triggering scenario
 - NEVER flag comment-width, comment-proportion, or comment-formatting fixes as scope creep, churn, or "unrelated changes" — bringing touched files up to rules/comments.md (the ~160-col and proportion rules) is explicitly in-scope, not deferrable
 - NEVER use "no visual harm," "cosmetic," "harmless to the app," "not a regression," or "no-op" to drop a real defect or grade it below a fix lane — those describe *severity* (which decides gating), never whether it gets fixed. Any defect with a concrete, safe fix MUST be flagged for fixing (Nice-to-Have at least), never omitted or waved off as out of scope
+- NEVER run state-mutating commands against databases or external services while reviewing — review is read-only verification. Read schema and migration files, run schema-to-schema diffs that touch no database, and issue read-only queries instead
 
 ### ALWAYS Do These
 
