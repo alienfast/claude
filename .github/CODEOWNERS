@@ -1,0 +1,3 @@
+# Every path requires the keeper's review on PRs into main (enforced once branch
+# protection enables "require review from code owners" — see the /keeper skill).
+* @rosskevin

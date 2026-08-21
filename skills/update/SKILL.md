@@ -70,13 +70,20 @@ from the output, hand the user the exact commands to run in their own terminal, 
 confirm, until the auth checks print `✓`. Platform-gap warnings (a missing prebuilt binary, an unsupported
 `claude update`) are report-only — name them and move on rather than looping on them.
 
-Two failure shapes are worth naming rather than retrying blindly:
+Three failure shapes are worth naming rather than retrying blindly. `/update` detects and routes; the recovery itself
+belongs to `/keeper`, never to this skill — do not commit, stash, reset, or discard anything here.
 
 - **`~/.claude` is not a git repo, or has the wrong origin** — the script refuses and prints the fix. Set it up as a
   checkout of `https://github.com/alienfast/claude` in place; never delete the directory.
-- **Uncommitted changes in `~/.claude`** — on a keeper's machine these are usually `/reflect`'s auto-applied edits
-  awaiting review. The pull will refuse rather than clobber them. Do not commit, stash, or discard them; report them and
-  point at `/keeper`.
+- **Uncommitted changes in `~/.claude`** — the pull will refuse rather than clobber them. What they mean depends on the
+  machine (`git -C ~/.claude config --get reflect.keeper`): on the keeper's machine (`true`) they are usually
+  `/reflect`'s auto-applied edits awaiting review — point at `/keeper`. On any other machine they are local drift that
+  can never be committed from here — point at `/keeper` too: its contributor mode folds what has global value into a
+  proposal PR and restores the files, and tells the user what to undo by hand for the rest.
+- **Local commits on `~/.claude` main** (the `--ff-only` pull refuses, or `git -C ~/.claude log --oneline
+  origin/main..HEAD` is non-empty) — on a non-keeper machine these can never be pushed and only accumulate conflicts.
+  Point at `/keeper`: contributor mode carries them onto a proposal branch, opens the PR, and — with the user's
+  in-session consent — resets main back to a pure clone, leaving a rescue branch behind.
 
 ## Step 3 — Report
 
