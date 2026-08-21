@@ -115,7 +115,7 @@ create_args=(issues create "$title" --team "$team" -o json -d -)
 # Backlog + `specified` stays fleet-eligible via stage-first ranking. Same `ready`
 # exclusion as linear-file-improvement.sh.
 if [ -z "$state" ] || [ "$state" = "-" ]; then
-  if states_json=$(linear-cli statuses list -t "$team" -o json 2>/dev/null); then
+  if states_json=$(linear-cli statuses list -t "$team" --no-cache -o json 2>/dev/null); then
     state_names=$(printf '%s' "$states_json" | jq -r '.. | objects | select(has("name")) | .name' 2>/dev/null || true)
     state=$(printf '%s\n' "$state_names" | grep -Fxi 'Backlog' | head -1 || true)
     [ -z "$state" ] && state=$(printf '%s\n' "$state_names" | grep -iE '^(backlog|planned|to.?do)$' | head -1 || true)
