@@ -244,7 +244,7 @@ fi
 # ---------- merge queue ----------
 
 queue=$( (cd "$main_checkout" && "$SCRIPT_DIR/merge-queue.sh" list 2>/dev/null) || true)
-if [ -n "$queue" ] && ! printf '%s' "$queue" | grep -q "queue empty"; then
+if [ -n "$queue" ] && ! printf '%s' "$queue" | grep -Eq "queue empty|no repos registered"; then
   printf '### Merge queue\n\n```text\n%s\n```\n\n' "$queue"
 fi
 

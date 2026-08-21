@@ -13,14 +13,14 @@
 #     no-ops — every zero-commit case then falls through to "branch merged" and passes for the wrong reason.
 #   • HOME is faked. linear_state_type() prepends $HOME/.cargo/bin to PATH, so the REAL linear-cli outranks
 #     a stub placed anywhere else and every issue state resolves against live Linear. $HOME/.cargo/bin IS
-#     the stub dir here; $HOME/.claude symlinks to the real one so $SELF, with-repo-lock.py, and
-#     wt-identity.sh still resolve. Cases pass an explicit repo arg, so the repo registries are never read.
+#     the stub dir here; $HOME/.claude symlinks to the checkout under test so $SELF, with-repo-lock.py,
+#     and wt-identity.sh still resolve. Cases pass an explicit repo arg, so the repo registries are never read.
 
 set -uo pipefail
 
-REAL_HOME="$HOME"
-SCRIPT="$REAL_HOME/.claude/scripts/reap-worktrees.sh"
-IDLIB="$REAL_HOME/.claude/scripts/wt-identity.sh"
+CLAUDE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+SCRIPT="$CLAUDE_DIR/scripts/reap-worktrees.sh"
+IDLIB="$CLAUDE_DIR/scripts/wt-identity.sh"
 ROOT=$(mktemp -d)
 # The live-owner sleepers are spawned inside build_case, which every caller runs under command substitution —
 # a shell variable set there dies with that subshell and the trap would never see the pid. A file crosses it.
@@ -32,7 +32,7 @@ trap '_p=$(cat "$OWNER_PIDS" 2>/dev/null); [ -n "$_p" ] && kill $_p 2>/dev/null;
 trap 'exit 130' INT TERM
 
 BIN="$ROOT/home/.cargo/bin"; mkdir -p "$BIN"
-ln -s "$REAL_HOME/.claude" "$ROOT/home/.claude"
+ln -s "$CLAUDE_DIR" "$ROOT/home/.claude"
 export HOME="$ROOT/home"
 
 # Nothing an ancestor exported may decide the owner verdicts below: WTID_* is wt-identity.sh's own override
