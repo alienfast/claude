@@ -180,6 +180,10 @@
           },
           {
             "type": "command",
+            "command": "~/.claude/hooks/finish-flow-guard.sh"
+          },
+          {
+            "type": "command",
             "command": "~/.claude/hooks/auto-deadline-gate.sh"
           }
         ]
