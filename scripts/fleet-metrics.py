@@ -879,13 +879,20 @@ def record_history(checkout, headline, record):
     return rows
 
 
-def parse_verdicts(checkout, cutoff, until=None):
+def parse_verdicts(checkout, cutoff, launch_epoch=None, until=None):
     """One row per quality-review verdict file in the window: the review-churn half of the retro.
-    Counts are self-reported by the review pipeline — the audit record, not independent ground truth."""
+    Counts are self-reported by the review pipeline — the audit record, not independent ground truth.
+
+    launch_epoch drops verdicts written by a PRIOR fleet. The session filter alone does not reach these:
+    verdict files are globbed off disk, not attributed through the session set, so a prior run's reviews
+    keep landing in the churn totals after its ledger is correctly excluded — which is how the 2026-08-21
+    retro read 7 reviews / 58 findings / severity 1/5/28 for a fleet whose real numbers were 5 / 46 / 0/3/19."""
     rows = []
     for p in sorted((checkout / "tmp").glob("quality-review-verdict-*.md")):
         mtime = datetime.fromtimestamp(p.stat().st_mtime, timezone.utc)
         if cutoff and mtime < cutoff:
+            continue
+        if isinstance(launch_epoch, (int, float)) and int(p.stat().st_mtime) <= launch_epoch:
             continue
         if until and mtime > until:
             continue
@@ -983,12 +990,30 @@ def main():
     until = datetime.fromisoformat(args.until).replace(tzinfo=timezone.utc) \
         if args.until and not req_keys else None
 
+    # A ledger whose last write lands at or before launch_epoch belongs to a PRIOR fleet: fleet-launch
+    # stamps that epoch as it dispatches, so such a session had not started when the write happened.
+    # The tie is the trap — measured 2026-08-21, a prior session's ledger matched launch_epoch to the
+    # second and rode a whole retro as a fleet member, inflating shipped 5→7, session-hours 7.4→12.0,
+    # and severity/origin mixes with a run nobody was measuring. Mirrors fleet-status.sh's -le.
+    launch_epoch = None
+    try:
+        launch_epoch = json.loads((checkout / "tmp" / "fleet-deadline.json").read_text()).get("launch_epoch")
+    except (json.JSONDecodeError, OSError, AttributeError):
+        pass
+
     states = []
+    prior_run_keys = set()
     for p in sorted((checkout / "tmp").glob("auto-state-*.json")):
         if req_keys is not None and p.stem.replace("auto-state-", "") not in req_keys:
             continue
         mtime = datetime.fromtimestamp(p.stat().st_mtime, timezone.utc)
         if cutoff and mtime < cutoff:
+            continue
+        # int() the mtime: launch_epoch is whole seconds while st_mtime carries a fraction, so a raw
+        # `<=` lets a same-second ledger through on the sub-second remainder (…573.448 > …573) and the
+        # filter silently does nothing. fleet-status.sh compares `stat -f %m`, which truncates already.
+        if isinstance(launch_epoch, (int, float)) and int(p.stat().st_mtime) <= launch_epoch:
+            prior_run_keys.add(p.stem.replace("auto-state-", ""))
             continue
         try:
             states.append((p, json.loads(p.read_text()), mtime))
@@ -1020,7 +1045,10 @@ def main():
     # /auto uses for <runKey>.
     ledgerless = []
     state_keys = {p.stem.replace("auto-state-", "") for p, _, _ in states}
-    seen_keys = set(state_keys)
+    # Seed with the prior-run keys too, or this pass re-adopts every ledger the launch_epoch filter just
+    # dropped: its adopt-the-real-ledger branch below reads the same state file straight back off disk,
+    # so filtering pass 1 alone silently changes nothing.
+    seen_keys = set(state_keys) | prior_run_keys
     for d in dirs:
         for tpath in sorted(d.glob("*.jsonl")):
             run_key = tpath.stem.split("-")[0]
@@ -1151,7 +1179,7 @@ def main():
         lasts = [s["agg"]["last"] for s in sessions if s["agg"]["last"]]
         v_cutoff = min(firsts) if firsts else None
         v_until = max(lasts) if lasts else None
-    verdicts = parse_verdicts(checkout, v_cutoff, v_until)
+    verdicts = parse_verdicts(checkout, v_cutoff, launch_epoch, v_until)
     filed_total = sum(len(v["filed"]) for v in verdicts)
     # The ratio pairs this fleet's filings with this fleet's ships: verdicts for issues no session in
     # the window shipped (run `-` in the table) stay out of the numerator, or a window that catches an

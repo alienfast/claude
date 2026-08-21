@@ -119,7 +119,7 @@ write_marker $((NOW - 500)) 0 true
 run_fs --no-runway
 ck_has "  wind-down banner" "**Deadline: STOPPED**" "$OUT"
 
-echo "== 6. scoping — prior-run ledgers hidden, launch-second tie shown"
+echo "== 6. scoping — prior-run ledgers hidden, launch-second tie hidden too"
 NOW=$(date +%s)
 T=$((NOW - 50))
 write_marker "$T" $((NOW + 3600))
@@ -128,11 +128,13 @@ touch -t "$(stamp $((T - 100)))" "$REPO/tmp/auto-state-old.json"
 jq -n '{status: "drained"}' > "$REPO/tmp/auto-state-tie.json"
 touch -t "$(stamp "$T")" "$REPO/tmp/auto-state-tie.json"
 run_fs --no-runway
-ck_has "  strictly-older ledger hidden, with count" "_1 prior-run ledger(s) hidden" "$OUT"
+ck_has "  both prior-run ledgers hidden, with count" "_2 prior-run ledger(s) hidden" "$OUT"
 ck_lacks "  hidden ledger has no row" "| old |" "$OUT"
-# The tie (mtime == launch_epoch) is SHOWN: scoping hides strictly-older ledgers only. If scoping
-# ever excludes ties, this arm flips with it — deliberately, not as collateral.
-ck_has "  launch-second tie still shown" "| tie | dead | drained" "$OUT"
+# The tie (mtime == launch_epoch) is HIDDEN: launch_epoch is stamped at dispatch, so a ledger whose
+# last write lands in that same second was written by a session not yet dispatched — prior-run
+# history. Scoping hides `mtime <= launch_epoch`. If scoping ever admits ties again, this arm flips
+# with it — deliberately, not as collateral.
+ck_lacks "  launch-second tie hidden too" "| tie |" "$OUT"
 
 echo "== 7. future launch_epoch — all ledgers prior-run"
 write_marker $((NOW + 1000)) $((NOW + 3600))
