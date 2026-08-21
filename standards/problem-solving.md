@@ -32,7 +32,27 @@
 - Change improves code quality (better abstractions, removes tech debt)
 - Error messages provide clear guidance
 - Standards explicitly cover the scenario
-- Fix aligns with existing patterns and conventions
+- Fix aligns with existing patterns and conventions (for the *shape* — see "A precedent is not a safety argument" below)
+
+### A precedent is not a safety argument
+
+"The sibling does it this way" establishes that a shape is *conventional*. It never establishes that it is *safe here* — it satisfies the PROCEED DIRECTLY bullets
+above for the shape, never for the consequences.
+
+Before copying a guard, lock, retry, timeout, cache, or self-healing mechanism from a sibling function, read the **new call site** and write one sentence: what happens
+when this mechanism misfires here, and how that differs from when it misfires where you copied it from. Identical code carries different blast radii — a stolen lock
+costing a redundant write is not a stolen lock costing an irreversible side effect (a customer email, a payment, a published record). When the consequences differ,
+the precedent transfers nothing: the mechanism needs its own justification, or a different mechanism.
+
+The sentence is the point. You cannot write it without leaving the function you are editing, and the invariant that forbids the copy is usually documented at the
+caller rather than at the thing being copied. Measured on JA-332: a stuck-claim fix added the two sibling functions' `5 * 60 * 1000` staleness OR to a third, and the
+justification written into both the code comment and the plan was that it should match the siblings. Adversarial review graded it **Critical** — the permanently-held
+claim *was* the anti-double-send guard, said so in a comment one file away at the caller, and a TTL would have re-emailed customers who already had their invoice. The
+inquiry never left the file because "match the siblings" had already terminated it.
+
+This is not `/quality-review`'s "following an established codebase pattern is not an open design choice," which governs whether a *fix* needs a design decision before
+it can auto-apply. A transplanted mechanism can be localized, small, and contract-free — clearing every one of those gates — and still be wrong at the new site,
+which is exactly what makes a copied TTL eligible for a silent `fix-now` auto-apply.
 
 ## Anti-Patterns: Technical Workarounds
 
@@ -65,6 +85,20 @@
 7. **Silent Defaults for Required Config**: "Let's default to X if the env var isn't set"
    - ✅ Instead: Keep the throw/error. Required means required — silent fallbacks mask misconfiguration.
    - Exception: The value is genuinely optional with a documented default (rare for required-by-name config)
+
+### Asserting a capability does not exist
+
+Never record that a tool, flag, or command is unavailable — and never skip a required step on that basis — without having **run the check**: `--help`, `command -v`,
+the tool's own listing, or the documented call itself. A capability claim is a factual claim about this machine, cheap to verify and expensive to get wrong: it
+converts a skipped step into a documented impossibility that no reviewer re-examines, and it can send a follow-up issue after tooling that already works. When a call
+genuinely fails, record the command and its exact error, never the generalization ("the toolchain cannot do this").
+
+This is worse than ignoring a rule, because the agent concludes compliance is *impossible* and documents the reasoning persuasively enough to pass its own review.
+Measured 2026-08-21 on JA-148: a `/quality-review` verdict recorded *"Collision edges: none wired — could not be created with available tooling. linear-cli exposes no
+relation subcommand… no script in ~/.claude/scripts/ can create a Linear issue relation"*, skipped a step Step 6 mandates, and recommended a `/reflect` to fix a
+toolchain gap that does not exist — `linear-cli relations add <BLOCKER> <BLOCKED> -r blocks` is in the linear skill's own command map, and `relations --help` settles
+it in one call. A mechanical guard now covers that one choke point (`scripts/quality-review-write-verdict.sh`), but the shape generalizes to any skipped step
+justified by an unchecked capability claim.
 
 ### A workaround's premise can expire — and the change that expires it owns its removal
 
