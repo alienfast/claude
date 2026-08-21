@@ -133,7 +133,7 @@ Start with the assertions guarding known-historical bugs and safety properties: 
 
 Where one slips through, the fixture is what needs fixing rather than the assertion count: vary whatever the implementation is meant to be independent of, so no accidental path reproduces the expected output — and **read the requirements for that word directly**, since a criterion of the form "driven by X, not by Y" names Y as a mutation to run and a fixture value to supply, which the natural fixture omits precisely because Y is irrelevant. Running several mutations also multiplies the chance one silently fails to land — a non-matching `sed`/`perl` pattern leaves the suite green, which under the rule below reads as *the arm pins nothing* and condemns a sound assertion, so `grep` the subject file for the mutated token before trusting the run.
 
-Report an assertion that survives its own mutation as **High**: it pins nothing and is worse than no test, because it advertises coverage. This is the review-side counterpart to the `developer` agent's author-side rule ("Prove each regression test fails without its fix").
+Report an assertion that survives its own mutation as **High**: it pins nothing and is worse than no test, because it advertises coverage. This is the review-side counterpart to the `developer` agent's author-side rule ("Prove each regression test fails without its fix"). [standards/testing.md](../standards/testing.md) carries the fixture-construction rules behind these shapes — cite it when the fix is fixture-side rather than assertion-side.
 
 ## Findings Format (REQUIRED — not a suggestion)
 
