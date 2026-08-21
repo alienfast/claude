@@ -9,6 +9,7 @@ These standards apply universally across all contexts:
 - [Agent Coordination](agent-coordination.md) - Interface contracts, write-target exclusivity, background-agent recovery
 - [Git](git.md) - Commit messages, PR descriptions, multi-session safety
 - [Problem-Solving](problem-solving.md) - When to ask vs. proceed, anti-patterns for workarounds
+- [Testing](testing.md) - Falsifiable tests: fixture construction, and the shapes that stay green against their own mutation
 - [Project Commands](project-commands.md) - Command discovery and usage
 - [Semantic Versioning](semver.md) - Version classification, compatibility rules, update strategies
 - [Technical Debt Prevention](technical-debt-prevention.md) - No backups, no duplicates, modify in place

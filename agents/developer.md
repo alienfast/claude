@@ -65,6 +65,7 @@ Implement tests according to CLAUDE.md requirements:
 - **Async operation testing** with proper mocking
 - Use configuration and test setup from the project
 - **Prove each regression test fails without its fix.** Revert the fix, confirm exactly that test fails, restore. A test still green against the reverted fix pins nothing.
+  - This is the protocol. **Choosing a fixture that can discriminate at all is a separate skill** — see [standards/testing.md](../standards/testing.md) for the degenerate-shape rule, the decision-boundary rule, and the two read-time shapes (subset matchers, already-satisfied fixtures) that stay green against the very mutation they exist to catch.
   - Revert **each independently-revertable part alone** (two code paths, a guard plus a transaction wrapper) — a whole-fix revert hides a half-fix regression.
   - If the asserted outcome is already correct pre-fix, assert the **mechanism** instead — write/version counts, the specific error raised — not the end state.
   - **Not only regression tests — any assertion that the code chose A over B owes the same proof.** A new test for new behavior has no fix to revert, so mutate the implementation line the assertion exists to pin (swap the chosen value for the rejected one; delete the restamp) and confirm that arm — and only that arm — reddens.
