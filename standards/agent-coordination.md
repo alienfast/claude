@@ -63,6 +63,29 @@ look. Measured 2026-08-20 on a change split into a reviewer-UI half and a data-l
 a new module's docblock documented a `?? null` write seam the sibling had already changed to a trimmed `|| null`, and another stated the change "didn't backfill
 existing rows" while the sibling was adding the backfill migration. Both passed `pnpm check` and reached an adversarial reviewer.
 
+## Prohibitions in a delegation prompt
+
+Two different things get written as "do NOT do X", and only one is safe as a blanket ban.
+
+A **scope** prohibition bounds what this dispatch may touch — `/quality-review`'s "do NOT extract a new shared abstraction to deduplicate them" is the canonical one.
+Those are legitimately categorical, and they are safe *because* they ship with a release valve: the fix-dispatch scope escape hatch, where a delegate that needs the
+excluded work stops and reports, and the orchestrator routes it. Keep writing them.
+
+A **correctness** prohibition — "X won't work here" — is different, and a blanket ban is how it fails. Name the specific SHAPE that fails and why, and say what a
+passing version looks like. A delegate cannot tell "this kind of X is useless here" from "no X", and will comply with the broader reading; when the right answer is a
+*different* X, the brief has foreclosed it and nothing surfaces that until review. The escape hatch does not rescue this — it fires when a fix needs MORE than the
+dispatch allows, and a delegate that can comply by doing *less* never trips it.
+
+The check before shipping such a line: **can you name what a passing version looks like?** If yes, name it. If no, do not prohibit at all — state the goal and let the
+delegate choose the shape.
+
+Measured 2026-08-20: a planning critique correctly established that extracting a *label-formatting* helper (`x.a ?? x.b`) would be useless coverage — the defect was
+which object got passed, never the coalesce. The brief turned that into "**Do NOT** extract a label-formatting helper as the test seam." The delegate complied.
+Adversarial review then graded a HIGH — nothing bound the operator-visible label to the id actually sent, proven by mutation (a literal wrong id at the send call left
+all 4312 tests green) — and its fix was a helper returning *both* the id and the label from one row: an extraction, inside the banned category. The orchestrator had to
+reverse its own instruction in the fix dispatch. Stating the goal instead — "the label and the id actually sent must be provably the same row; a formatting-only
+helper does not achieve that" — bans the useless shape and leaves the working one reachable.
+
 ## Long-running commands in delegations
 
 If a delegated task includes a multi-minute command (Rust/C++ compile, installer build, dev-server smoke test), tell the agent explicitly to run it
