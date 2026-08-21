@@ -140,6 +140,19 @@ if grep -Eq '^Deferred filed as issues:.*[A-Z]+-[0-9]+' "$body_file" \
   echo "WARN: verdict files issues but has no 'Collision edges:' line — record the wired edges (or 'none owed'); see quality-review/SKILL.md Output" >&2
 fi
 
+# WARN when the 'Collision edges:' line satisfies the presence check above with a TOOLING-UNAVAILABILITY
+# excuse. The capability exists: `linear-cli relations add <BLOCKER> <BLOCKED> -r blocks`, documented in
+# skills/linear/SKILL.md's command map (gotcha #10 covers only `-r blocked-by`, which 400s; `blocks`,
+# `related` and `duplicate` all work). Measured 2026-08-21: a verdict recorded "could not be created with
+# available tooling. linear-cli exposes no relation subcommand", skipped a mandated step on that basis, then
+# recommended a /reflect to fix the toolchain — filing config work against a gap that does not exist. One
+# `--help` call settles it. This is the failure mode prose cannot reach: the agent did not ignore the rule,
+# it concluded compliance was impossible and documented the reasoning persuasively enough to pass its own
+# review.
+if grep -Eqi '^Collision edges:.*(could not|cannot|unable to|no (relation|tooling)|not (available|possible|supported)|toolchain)' "$body_file"; then
+  echo "WARN: 'Collision edges:' claims the tooling cannot wire edges — it can: linear-cli relations add <BLOCKER> <BLOCKED> -r blocks (see skills/linear/SKILL.md). Verify with 'linear-cli relations --help' before recording an unavailability claim; if a specific call genuinely failed, quote the command and its error instead." >&2
+fi
+
 # Same shape for the parent link: SKILL.md requires the `(sub-issues of <PARENT>)` suffix whenever a
 # parent issue was resolved, so a filed line without it is either the legitimate no-parent case or a
 # batch filed parentless in breach of the mandate (BF-1189: three deferred filings with no parent and

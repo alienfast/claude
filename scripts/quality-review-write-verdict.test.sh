@@ -18,7 +18,7 @@
 
 set -uo pipefail
 
-SCRIPT="${SCRIPT_UNDER_TEST:-$HOME/.claude/scripts/quality-review-write-verdict.sh}"
+SCRIPT="$(cd "$(dirname "$0")" && pwd)/quality-review-write-verdict.sh"
 pass=0; fail=0
 
 ck() { # ck <desc> <expected> <actual>
@@ -201,6 +201,38 @@ err=$(printf '# BF-399\n\nVerdict: passed-clean\nCycles: 1 (initial)\nFindings r
   | (cd "$wt" && "$SCRIPT" BF-399 -) 2>&1 >/dev/null); rc=$?
 ck "  nothing filed -> exit 0" 0 $rc
 ck "  quiet" "no" "$(printf '%s' "$err" | grep -q 'sub-issues of <PARENT>' && echo yes || echo no)"
+
+echo "== 16. a 'Collision edges:' tooling-unavailability claim is warned about"
+# Measured 2026-08-21: a real verdict skipped a mandated step on the claim that "linear-cli exposes no
+# relation subcommand". It does — `linear-cli relations add A B -r blocks`. The line satisfied case 12's
+# presence check, so only a CONTENT guard catches it. It must warn without changing the exit code:
+# refusing the write would turn a lost audit record into a blocked ship.
+edges_body() { # edges_body <collision-edges-line>
+  printf '# BF-700\n\nVerdict: passed-after-fixes\nCycles: 1 (initial)\nFindings resolved: 1 (HIGH/impl: x)\nDeferred fixed in-session: none\nDeferred filed as issues: BF-701\nCollision edges: %s\nDeferred dropped: none\nOpen items: none\n' "$1"
+}
+warned() { printf '%s' "$1" | grep -qi 'claims the tooling cannot wire edges' && echo yes || echo no; }
+
+err=$(edges_body 'none wired — could not be created with available tooling. linear-cli exposes no relation subcommand' \
+  | (cd "$wt" && "$SCRIPT" BF-700 -) 2>&1 >/dev/null); rc=$?
+ck "  unavailability claim warns"        "yes" "$(warned "$err")"
+ck "  but still publishes (exit 0)"      0     $rc
+ck "  warning names the real command"    "yes" \
+  "$(printf '%s' "$err" | grep -q 'linear-cli relations add' && echo yes || echo no)"
+
+err=$(edges_body 'BF-701 blocks BF-702 (both edit invoicePayload.ts)' \
+  | (cd "$wt" && "$SCRIPT" BF-703 -) 2>&1 >/dev/null)
+ck "  a real wired edge does not warn"   "no"  "$(warned "$err")"
+
+err=$(edges_body 'none owed' | (cd "$wt" && "$SCRIPT" BF-704 -) 2>&1 >/dev/null)
+ck "  'none owed' does not warn"         "no"  "$(warned "$err")"
+
+# A genuine failure quoting its command and error is the sanctioned escape — but it necessarily
+# contains "could not", so it warns too. That is the intended tier: the warning asks for evidence,
+# and evidence is present, so the reviewer reads it and moves on. Pinned so nobody "fixes" it into
+# an exemption that the hallucinated case could also claim.
+err=$(edges_body 'attempted `linear-cli relations add BF-701 BF-702 -r blocks`; could not wire — API returned 400 Argument Validation Error' \
+  | (cd "$wt" && "$SCRIPT" BF-705 -) 2>&1 >/dev/null)
+ck "  evidenced failure still warns (by design)" "yes" "$(warned "$err")"
 
 echo
 echo "$pass passed / $fail failed"
