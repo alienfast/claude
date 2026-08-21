@@ -114,6 +114,26 @@ A background agent's completion often surfaces as a bare idle notification — t
 - For small verification tasks, prefer synchronous delegation (`run_in_background: false`) — the report returns directly as the tool result, avoiding the loss window entirely. **The parameter is feature-flagged on `Agent`, so this is conditional**: where the tool does not expose it, every dispatch backgrounds no matter what you pass, and the bullet above — end the turn, let the completion notification wake you — is the normal path rather than the fallback. Key off the tool result (`Async agent launched successfully …` in place of the report), never the schema, which cannot discriminate: one harness context omits the parameter precisely *because* only synchronous subagents are supported, so absence means the opposite there. Passing it where the schema omits it is silently accepted despite `additionalProperties: false` and has no effect, but it does not corrupt the census: `scripts/fleet-metrics.py` censuses at result time, and a typed `false` alongside an `Async agent launched successfully` result lands in the **`ignored`** bucket — the per-dispatch signal that this session ran on a harness without `run_in_background`, surfaced in the report as `<n> ignored (run_in_background absent on harness)`. The one place typed intent is trusted is `_census_dispatch_typed`, the fallback for dispatches whose result cannot testify (errored or dangling), where `false` does count as sync — so an errored dispatch carrying the parameter is the only shape that misreports.
 - **Omit `name` for one-shot dispatches you need back this turn** (adversarial review, exploration, planning). Passing `name` makes the agent an addressable, resumable teammate — its termination can surface as a bare idle notification with no recoverable findings, and pinging an already-terminated named agent does not recover the content (the remedy above doesn't rescue this case). Reserve `name` exclusively for agents you deliberately intend to resume across multiple conversation turns; unnamed one-shot Agent calls reliably return findings via the standard background-task pattern (an `output_file` plus a completion notification).
 
+## A write-capable delegation that dies mid-task leaves an unknown tree
+
+A `developer`/`debugger` delegation can terminate early — API error (`Connection closed mid-response`), timeout, session limit — after making an arbitrary number of
+edits. Whatever partial output the harness recovers is narration, not a filesystem record: `/start` Step 8 already holds that "a delegate's success report is not
+evidence its writes landed in the right tree," and a dead delegate's report is weaker still.
+
+So establish the actual state before resuming or re-dispatching: `git status --porcelain` for what changed, and the project's check gate for whether it still builds.
+In `wt` mode also run Step 8 item 1's `wt-baseline.sh diff` — a delegate that died can have written into the main checkout exactly like one that finished. Then route
+on what you find:
+
+- **Nothing changed** → resume the same agent via `SendMessage`, addressed by the `agentId` from its spawn result (both `/start` and `/quality-review` mandate
+  *unnamed* dispatch, so there is no name to address). Its context is intact, and re-dispatching would re-buy the reading it already paid for.
+- **Partial work, gate green** → resume, or re-dispatch scoped to only what remains — telling the delegate explicitly what is already on disk.
+- **Partial work, gate red** → restore green first; within `/start`/`/quality-review` the Working Application Contract makes that non-negotiable.
+
+**Never re-dispatch the original prompt verbatim against a partially-edited tree.** It was composed for a clean one, so the delegate double-applies or conflicts with
+work already there — silently, since neither outcome errors. This is the trap in `/auto`'s "transient API error → retry" policy: retrying the iteration is right, but
+the retry has to start from the tree's real state, not the state the original dispatch assumed. `/start`'s idempotence covers the issue and the worktree, never a
+half-applied delegation's edits.
+
 ## `file:line` citations lifted from a subagent's report
 
 A subagent that quotes source back to you does not carry the source's line numbering with it. Persist a long report and Read it back and the numbers
