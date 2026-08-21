@@ -30,6 +30,33 @@ Because the token matches in the body too, write it literally only when you mean
 - Focus on the business value and technical impact
 - Use clear, descriptive titles that explain the change's purpose
 
+### Linear auto-close keywords
+
+**Only the issue being shipped may sit behind a close keyword. Every other issue ID in a commit message, PR title, or PR description is referenced bare.**
+
+Linear's GitHub integration — not GitHub's own closing keywords, which only close GitHub `#N` issues and cannot touch Linear state — scans PR titles and descriptions
+for `<keyword> <ISSUE-ID>` and, on merge, moves that issue to the team's merge state. The closing set is bigger than the familiar three:
+`close/closes/closed/closing`, `fix/fixes/fixed/fixing`, `resolve/resolves/resolved/resolving`, `complete/completes/completed/completing`, and
+`implement/implements/implemented/implementing`. **The match is positional, not grammatical** — it fires on a close verb adjacent to an ID regardless of what the
+sentence means, including when the word is a noun.
+
+This is silent in both directions: nothing in the PR flow warns, and the state change is visible only in Linear. PR #211 shipped JA-328, and its sentence *"Next in
+sequence: JA-329 (…, which also closes JA-299's archive gap)"* — a forward reference describing what a *future* issue would do — moved JA-299 to Done with all three
+success criteria unchecked and nothing in the repo implementing them. PR #188's *"this mirrors the fix JA-269 shipped"* — `fix` as a noun — linked JA-269 to the wrong
+PR; it was already Done, so that one only cost a bad link.
+
+It is structural rather than a one-off: across the 25 most recent merged PRs, 22 mention at least one sibling issue ID (median ~3, max 12), because `/quality-review`
+files deferred items as follow-up issues and `/finish` Step 4's template asks for follow-up work.
+
+Safe forms, verified on PR #211 as a negative control — five sibling IDs mentioned bare, zero linked, zero moved, while only the two behind a close verb were:
+
+- **Bare ID** — `the gap JA-299 describes`, `supersedes JA-299`, `see JA-299`. No link, no state change.
+- **Non-closing keyword** — `ref`, `refs`, `references`, `part of`, `related to`, `relates to`, `contributes to`, `toward`, `towards`. Links the PR to the issue
+  without applying the merge status; use when the link is wanted.
+- **`skip <ID>` / `ignore <ID>`** — suppresses linking entirely.
+
+This is the same rule class as `[skip ci]` above — an external system parsing a magic token out of prose, across the same three surfaces.
+
 ## Branch Protection
 
 These standards help ensure:

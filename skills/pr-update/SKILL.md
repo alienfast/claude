@@ -365,6 +365,7 @@ Before finalizing the description, verify:
 - [ ] Breaking changes are clearly marked with "Breaking Changes" section
 - [ ] Testing sections describe actual tests that currently pass
 - [ ] Code snippets are from actual files in HEAD, not from memory
+- [ ] No issue ID other than this PR's own is preceded by a Linear close keyword ([standards/git.md](../../standards/git.md) § Linear auto-close keywords)
 
 ## PR Title Formats
 

@@ -130,7 +130,7 @@ describe('buggyFunction', () => {
 
 ## Related Issues
 
-- Fixes #123 - [Issue title]
+- Fixes #123 - [Issue title] — this PR's own issue only; a Linear close keyword beside any other ID closes that issue on merge (`standards/git.md`)
 - Related to #456 - [How it relates]
 
 ## Side Effects
