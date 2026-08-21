@@ -944,7 +944,15 @@ def git_merged(checkout, issues):
             commits = ""
         out[issue] = {
             "commit": bool(re.search(rf"\b{issue}\b", commits)),
-            "merge": bool(re.search(rf"Merge {issue}\b", commits)),
+            # Two landing shapes, and the flag must accept both or it fires on every ship of the
+            # other one: `/finish merge` writes `Merge <ID>`, while `/finish pr` lands through
+            # GitHub as `Merge pull request #N from <owner>/<branch>` — where the issue id appears
+            # only inside the branch name, lowercased. Measured on JA 2026-08-20: three PR-flow
+            # ships (JA-291, JA-321, JA-367), three false flags, each cleared by a hand `gh pr view`.
+            "merge": bool(
+                re.search(rf"Merge {issue}\b", commits)
+                or re.search(rf"Merge pull request #\d+ from \S*{issue.lower()}\b", commits)
+            ),
         }
     return out
 
@@ -1757,6 +1765,17 @@ def main():
             print(f"- **`{s['run_key']}` never armed a ScheduleWakeup** across {a['loop_firings']} "
                   f"loop firing(s) — the silent loop-death shape. Recorded status "
                   f"`{st.get('status')}`, terminal tags emitted: {a['terminal_tags']}.")
+        # A session killed mid-loop arms wakeups normally and simply never terminates, so the
+        # "never armed" flag above cannot see it (it requires wakeups == 0, making the two
+        # mutually exclusive). Its signature is a still-`active` ledger with zero stop-wakeups.
+        # Killing a session in `claude agents` is the documented way to abort in-flight work
+        # (skills/fleet-status/SKILL.md), so this is routine — and it always strands a Linear
+        # claim and a preserved worktree for a human to clean up.
+        if st.get("status") == "active" and a["wakeups"] > 0 and a["wakeup_stops"] == 0:
+            flagged = True
+            print(f"- **`{s['run_key']}` ended without recording an outcome** — ledger still "
+                  f"`active` after {a['wakeups']} wakeup(s) and no stop-wakeup, so it was killed "
+                  f"mid-loop or died. Check for a stranded Linear claim and a preserved worktree.")
         # Only an UNRECORDED ship is a fault. The reverse — recorded issues absent from the
         # transcript — is the ordinary result of a compacted session losing its earlier tags, and
         # flagging it buries the real signal under a false one on every long-running session.

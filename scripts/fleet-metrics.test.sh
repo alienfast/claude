@@ -14,11 +14,14 @@ PASS=0 FAIL=0
 ck() { # ck <label> <expected> <actual>
   if [ "$2" = "$3" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL: $1 — expected [$2] got [$3]"; fi
 }
+# `-e` is load-bearing: a needle starting with `-` (every markdown bullet in the report) is otherwise
+# parsed as a flag, and BSD grep exits 2 with a usage error — which ck_lacks reads as "absent" and
+# passes vacuously, on exactly the assertions most likely to be written against report bullets.
 ck_has() { # ck_has <label> <needle> <haystack-file>
-  if grep -qF "$2" "$3"; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL: $1 — missing [$2]"; fi
+  if grep -qF -e "$2" "$3"; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL: $1 — missing [$2]"; fi
 }
 ck_lacks() { # ck_lacks <label> <needle> <haystack-file>
-  if grep -qF "$2" "$3"; then FAIL=$((FAIL+1)); echo "FAIL: $1 — unexpected [$2]"; else PASS=$((PASS+1)); fi
+  if grep -qF -e "$2" "$3"; then FAIL=$((FAIL+1)); echo "FAIL: $1 — unexpected [$2]"; else PASS=$((PASS+1)); fi
 }
 ts_ago() { python3 -c "from datetime import datetime,timezone,timedelta; print((datetime.now(timezone.utc)-timedelta(seconds=$1)).strftime('%Y-%m-%dT%H:%M:%SZ'))"; }
 
@@ -873,6 +876,62 @@ ck "launch tie: tokens fleet-only"       "400" "$(q12 "sum(d['output_tokens'].va
 ck "launch tie: prior verdict excluded"  "['TT-FLEET']" "$(q12 "sorted(v['issue'] for v in d['review_churn'])")"
 ck "launch tie: fleet verdict kept"      "2"   "$(q12 "d['review_churn'][0]['findings_resolved']")"
 ck_lacks "launch tie: prior run absent from table" "prior001" "$MD12"
+
+# ---- landing shape + killed-mid-loop fixture (JA-422) ----
+# Two flags that misread this team's conventions. (1) The merge reconciliation searched only for a
+# `Merge <ID>` subject, which ONLY `/finish merge` produces — a `/finish pr` ship lands as
+# `Merge pull request #N from <owner>/<branch>`, carrying the id lowercased inside the branch name
+# and uppercased only in the BODY (which is why --grep finds the commit at all while --oneline shows
+# a subject with no uppercase id). Measured on JA 2026-08-20: three PR-flow ships, three false flags.
+# (2) A session killed mid-loop arms wakeups normally and never terminates, so the "never armed a
+# ScheduleWakeup" flag (wakeups == 0) structurally cannot see it and the run reported as clean.
+CK13="$WORK/checkout13"
+mkdir -p "$CK13/tmp"
+git -C "$CK13" init -q 2>/dev/null
+git -C "$CK13" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "seed"
+# TT-70 ships through the PR flow: a branch commit plus a GitHub merge commit whose SUBJECT carries
+# only the lowercased id (in the branch name) and whose BODY carries the uppercase one.
+git -C "$CK13" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "TT-70: fix the pr-flow widget"
+git -C "$CK13" -c user.email=t@t -c user.name=t commit -q --allow-empty \
+  -m "Merge pull request #7 from acme/acme/tt-70-fix-the-pr-flow-widget" -m "TT-70: fix the pr-flow widget"
+# TT-71 ships through the merge flow — the original arm must keep working.
+git -C "$CK13" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "TT-71: fix the merge-flow widget"
+git -C "$CK13" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "Merge TT-71"
+# TT-72 genuinely landed with no merge commit of either shape — the flag must still fire.
+git -C "$CK13" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "TT-72: fast-forwarded widget"
+M13="$(git -C "$CK13" rev-parse --show-toplevel | tr / -)"
+mkdir -p "$WORK/projects/$M13"
+
+# killed001: status still `active`, wakeups armed, NO stop-wakeup — the killed-mid-loop shape.
+cat > "$CK13/tmp/auto-state-killed001.json" <<'EOF'
+{"status": "active", "reason": "", "shipped": ["TT-70", "TT-71", "TT-72"], "canceled": [], "skipped": [], "failed": []}
+EOF
+cat > "$WORK/projects/$M13/killed001-0000.jsonl" <<EOF
+{"type":"user","timestamp":"$(ts_ago 6000)","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"$(ts_ago 5000)","message":{"role":"assistant","id":"msg_k1","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-70 done"},{"type":"tool_use","id":"tu_k1","name":"ScheduleWakeup","input":{"delaySeconds":1200,"reason":"next"}}]}}
+{"type":"assistant","timestamp":"$(ts_ago 4000)","message":{"role":"assistant","id":"msg_k2","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-71 done"},{"type":"tool_use","id":"tu_k2","name":"ScheduleWakeup","input":{"delaySeconds":1200,"reason":"next"}}]}}
+{"type":"assistant","timestamp":"$(ts_ago 3000)","message":{"role":"assistant","id":"msg_k3","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-72 done"},{"type":"tool_use","id":"tu_k3","name":"ScheduleWakeup","input":{"delaySeconds":1200,"reason":"next"}}]}}
+EOF
+# clean001: the control — armed wakeups AND a stop, ledger drained. Must not trip the new flag.
+cat > "$CK13/tmp/auto-state-clean001.json" <<'EOF'
+{"status": "drained", "reason": "deadline", "shipped": [], "canceled": [], "skipped": [], "failed": []}
+EOF
+cat > "$WORK/projects/$M13/clean001-0000.jsonl" <<EOF
+{"type":"user","timestamp":"$(ts_ago 6000)","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"$(ts_ago 2000)","message":{"role":"assistant","id":"msg_c1","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":50},"content":[{"type":"tool_use","id":"tu_c1","name":"ScheduleWakeup","input":{"delaySeconds":1200,"reason":"idle"}}]}}
+{"type":"assistant","timestamp":"$(ts_ago 1000)","message":{"role":"assistant","id":"msg_c2","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":50},"content":[{"type":"tool_use","id":"tu_c2","name":"ScheduleWakeup","input":{"stop":true}}]}}
+EOF
+
+MD13="$WORK/out13.md"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK13" --hours 24 > "$MD13" 2>&1
+# The PR-flow and merge-flow ships must both resolve; only the genuinely-unmerged one is named.
+NOMERGE="$(grep -F -e 'Landed without a `Merge <ID>` commit' "$MD13" || true)"
+ck "landing: PR-flow ship resolves"     "0" "$(printf '%s' "$NOMERGE" | grep -c 'TT-70' || true)"
+ck "landing: merge-flow ship resolves"  "0" "$(printf '%s' "$NOMERGE" | grep -c 'TT-71' || true)"
+ck "landing: unmerged still flagged"    "1" "$(printf '%s' "$NOMERGE" | grep -c 'TT-72' || true)"
+ck_has   "killed: mid-loop death flagged"  "\`killed001\` ended without recording an outcome" "$MD13"
+ck_lacks "killed: drained control clean"   "\`clean001\` ended without recording an outcome"  "$MD13"
+ck_lacks "killed: run not reported clean"  "- None. Every session armed its heartbeat"        "$MD13"
 
 echo
 echo "$PASS passed / $FAIL failed"
