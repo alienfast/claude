@@ -140,6 +140,19 @@ if grep -Eq '^Deferred filed as issues:.*[A-Z]+-[0-9]+' "$body_file" \
   echo "WARN: verdict files issues but has no 'Collision edges:' line — record the wired edges (or 'none owed'); see quality-review/SKILL.md Output" >&2
 fi
 
+# WARN when the 'Collision edges:' line satisfies the presence check above with a TOOLING-UNAVAILABILITY
+# excuse. The capability exists: `linear-cli relations add <BLOCKER> <BLOCKED> -r blocks`, documented in
+# skills/linear/SKILL.md's command map (gotcha #10 covers only `-r blocked-by`, which 400s; `blocks`,
+# `related` and `duplicate` all work). Measured 2026-08-21 on JA-148, whose verdict read "could not be
+# created with available tooling. linear-cli exposes no relation subcommand" and skipped a mandated step
+# on that basis — then recommended a /reflect to fix the toolchain, which would have filed config work
+# against a gap that does not exist. One `--help` call settles it. This is the failure mode prose cannot
+# reach: the agent did not ignore the rule, it concluded compliance was impossible and documented the
+# reasoning persuasively enough to pass its own review.
+if grep -Eqi '^Collision edges:.*(could not|cannot|unable to|no (relation|tooling)|not (available|possible|supported)|toolchain)' "$body_file"; then
+  echo "WARN: 'Collision edges:' claims the tooling cannot wire edges — it can: linear-cli relations add <BLOCKER> <BLOCKED> -r blocks (see skills/linear/SKILL.md). Verify with 'linear-cli relations --help' before recording an unavailability claim; if a specific call genuinely failed, quote the command and its error instead." >&2
+fi
+
 has '^Verdict:[[:space:]]*(passed-clean|passed-after-fixes|terminated-with-open-items|escalated-to-architect)([[:space:]][^|]*)?$' || miss "Verdict"
 has '^Cycles:[[:space:]]*[0-9]+' || miss "Cycles"
 has '^Findings resolved:[[:space:]]*([0-9]+|none)' || miss "Findings resolved"
