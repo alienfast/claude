@@ -47,6 +47,22 @@ reconciling the tree against the diff it was given.
 Writing to `tmp/`, the tracker, or files no dispatch named is free. Hold the files the dispatch named — every file in a supplied delta, whether inlined
 or passed by path — until it returns. If an edit genuinely cannot wait, state it in the next dispatch rather than leaving the agent to discover it.
 
+## Parallel delegations falsify each other's comments
+
+Write-target exclusivity above resolves parallel hazards by making file sets *disjoint*. For comments, disjoint is not sufficient. A delegate writes comments true of
+the tree it can see; when a sibling delegation is concurrently changing the behaviour one of those comments asserts, the comment lands false — and nothing catches it.
+A comment cannot fail a type check, nothing prompts the delegate to re-read the sibling's files, and each delegate's own `pnpm check` passes. This is specific to
+*parallel* dispatch: a sequential delegation reads the landed state. `rules/comments.md` § Empirical claims does not cover it either — a delegate that checks the
+machine first still ships a false comment, because the falsification happens after the check.
+
+So when one change is split across concurrent delegations, sweep the delta's comments before review: for every comment asserting how something behaves, ask whether a
+sibling changed that behaviour. The highest-risk shape is a comment explaining *why* a defensive branch exists ("X can still be `""` because the write seam does Y")
+when the sibling's job was to change Y — the rationale inverts while the code stays correct, so a reviewer sees working code and reads past the comment. Do not expect
+the review loop to find these: `/quality-review` bars a comment-accuracy audit as a new re-review lens, so the class is caught only if the initial reviewer happens to
+look. Measured 2026-08-20 on a change split into a reviewer-UI half and a data-layer half over disjoint files: the data half falsified two of the UI half's comments —
+a new module's docblock documented a `?? null` write seam the sibling had already changed to a trimmed `|| null`, and another stated the change "didn't backfill
+existing rows" while the sibling was adding the backfill migration. Both passed `pnpm check` and reached an adversarial reviewer.
+
 ## Long-running commands in delegations
 
 If a delegated task includes a multi-minute command (Rust/C++ compile, installer build, dev-server smoke test), tell the agent explicitly to run it
