@@ -32,7 +32,27 @@
 - Change improves code quality (better abstractions, removes tech debt)
 - Error messages provide clear guidance
 - Standards explicitly cover the scenario
-- Fix aligns with existing patterns and conventions
+- Fix aligns with existing patterns and conventions (for the *shape* — see "A precedent is not a safety argument" below)
+
+### A precedent is not a safety argument
+
+"The sibling does it this way" establishes that a shape is *conventional*. It never establishes that it is *safe here* — it satisfies the PROCEED DIRECTLY bullets
+above for the shape, never for the consequences.
+
+Before copying a guard, lock, retry, timeout, cache, or self-healing mechanism from a sibling function, read the **new call site** and write one sentence: what happens
+when this mechanism misfires here, and how that differs from when it misfires where you copied it from. Identical code carries different blast radii — a stolen lock
+costing a redundant write is not a stolen lock costing an irreversible side effect (a customer email, a payment, a published record). When the consequences differ,
+the precedent transfers nothing: the mechanism needs its own justification, or a different mechanism.
+
+The sentence is the point. You cannot write it without leaving the function you are editing, and the invariant that forbids the copy is usually documented at the
+caller rather than at the thing being copied. Measured 2026-08-20: a stuck-claim fix added the two sibling functions' `5 * 60 * 1000` staleness OR to a third, and the
+justification written into both the code comment and the plan was that it should match the siblings. Adversarial review graded it **Critical** — the permanently-held
+claim *was* the anti-double-send guard, said so in a comment one file away at the caller, and a TTL would have re-emailed customers who already had their invoice. The
+inquiry never left the file because "match the siblings" had already terminated it.
+
+This is not `/quality-review`'s "following an established codebase pattern is not an open design choice," which governs whether a *fix* needs a design decision before
+it can auto-apply. A transplanted mechanism can be localized, small, and contract-free — clearing every one of those gates — and still be wrong at the new site,
+which is exactly what makes a copied TTL eligible for a silent `fix-now` auto-apply.
 
 ## Anti-Patterns: Technical Workarounds
 

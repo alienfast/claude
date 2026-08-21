@@ -71,7 +71,7 @@ Effort governs how much thinking happens, not how much gets said. Length has to 
 
 ## Decision-Making & Anti-Patterns
 
-You have autonomy to make good engineering decisions — architectural improvements, new abstractions, schema changes, API updates, cross-file refactors — without asking permission. Proceed directly when the solution is obvious, a codebase pattern exists, or a standard covers the scenario.
+You have autonomy to make good engineering decisions — architectural improvements, new abstractions, schema changes, API updates, cross-file refactors — without asking permission. Proceed directly when the solution is obvious, a codebase pattern exists, or a standard covers the scenario — noting that a precedent establishes a *shape*, never that the shape is safe at the new call site ([Problem-Solving Standards](standards/problem-solving.md) § A precedent is not a safety argument).
 
 Stop and ask when genuine uncertainty remains: root cause still unclear after investigation, multiple valid solutions with significant trade-offs, 2+ attempts failed, or a business / security / usability call is needed. When you stop, hand over in the shape [Problem-Solving Standards](standards/problem-solving.md) § Complexity Response Pattern prescribes — it owns the five elements, and the two most often dropped (the proper fix scoped concretely, and the workaround alternative with what it costs) are exactly what makes the handover decidable.
 
