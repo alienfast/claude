@@ -200,6 +200,27 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 - All logic in `~/.claude/scripts/fleet-launch.sh`; `SKILL.md` dispatches and narrates
 - Deadline contract shared with `skills/auto/SKILL.md` Step 2's fleet-deadline gate
 
+### fleet-forecast
+
+**Description**: Estimate — explicitly not a plan — of what a fleet of parallel `/loop /auto` sessions would ship over a time horizon: simulates the certified backlog draining across N sessions as blockers resolve and unblock their dependents. Read-only; nothing is launched or written.
+
+**When Invoked**:
+
+- User says "fleet forecast", "what would a fleet run look like", "what order would issues run", "how many hours to burn the Planned issues"
+- Between `/auto-prep` (which grooms and sizes) and `/fleet-launch`, to see the projected drain's shape
+
+**Key Features**:
+
+- Greedy list-scheduling simulation: each free session picks the top-ranked available candidate (stage-first — Backlog only when nothing Planned/Todo is available), ships it after its estimated duration, and resolves its `blocks` edges; clean in-flight blockers are assumed to finish within one mean issue duration
+- `STAGE` line answers "hours to burn Planned/Todo and when Backlog picks begin"; `POOL-DRAINED` shows certified runway shorter than the horizon; `STRANDED`/`UNREACHED` separate keeper-action gaps from capacity/horizon gaps
+- Hours-per-issue calibrated from `tmp/fleet-metrics-history.jsonl` (recent fleets' session-hours ÷ shipped), estimate-point weighted; sessions/horizon default from `tmp/fleet-recommendation.json`
+- Eligibility mirrors `fleet-blockers.sh` gate rules; wave-1 picks are cross-checked against `next-candidates.sh`, which stays the pick-time authority — divergence is narrated, never edited away
+
+**Structure**:
+
+- Workflow in `SKILL.md`; simulation in `~/.claude/scripts/fleet-forecast.py` (fixture-testable via `--fixture`; regression suite `fleet-forecast.test.sh`)
+- Routes stranded-blocker remedies to `/auto-prep`'s FOCUS audit rather than re-deriving them
+
 ### fleet-retro
 
 **Description**: Post-mortem on a finished fleet of parallel `/loop /auto` sessions — measures where the capacity went, reconciles the shipped ledger, audits what the run filed, then applies the fixes you approve. The bookend to `/auto-prep`.
