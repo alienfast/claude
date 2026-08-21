@@ -12,8 +12,10 @@
 #            and the rm-block below then stranded it as permanent litter (BF-807).
 # Blocks: Bash — redirections, tee, and rm/mv/cp on root-level files (/name); in system temp (/tmp, /private/tmp) an rm
 #         anywhere in the command, but cp/mv only when /tmp is the DESTINATION (a /tmp source is a read);
-#         file tools — file_path/notebook_path in those same zones. The harness session scratchpads
-#         (/tmp/claude-*, /private/tmp/claude-*) stay fully allowed on both surfaces.
+#         file tools — file_path/notebook_path in those same zones, plus ANY path whose basename matches
+#         quality-review-verdict-*.md (quality-review-write-verdict.sh is that file's only sanctioned writer — see the
+#         case below). The harness session scratchpads (/tmp/claude-*, /private/tmp/claude-*) stay fully allowed on
+#         both surfaces.
 
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
@@ -21,6 +23,36 @@ COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 # File-tool surface: Write/Edit use file_path, NotebookEdit uses notebook_path. One absolute target, no parsing needed.
 FILE_TARGET=$(echo "$INPUT" | jq -r '.tool_input.file_path // .tool_input.notebook_path // empty')
 if [ -n "$FILE_TARGET" ]; then
+  # quality-review-write-verdict.sh is the ONLY writer of quality-review-verdict-*.md, in every zone
+  # (worktree tmp/ included): it publishes atomically to BOTH the worktree's and the main checkout's
+  # tmp/, which is what makes the verdict survive /finish merge deleting the worktree. A file staged
+  # here with Write reaches only one copy — the 2026-08-03 fleet lost 4 of 12 verdicts and BF-815
+  # lost another exactly that way (isolation guard refused the main-checkout write, the worktree copy
+  # died with the worktree; reap-worktrees-cron.sh and PR mode destroy worktrees with no /finish in
+  # the loop, so no downstream gate can catch this — only the write itself can).
+  case "${FILE_TARGET##*/}" in
+    quality-review-verdict-*.md)
+      cat >&2 <<EOF
+🛑 BLOCKED: direct write of a quality-review verdict file
+
+Target: $FILE_TARGET
+
+quality-review-write-verdict.sh is the only writer of quality-review-verdict-*.md: it publishes atomically to BOTH the
+current worktree's tmp/ and the main checkout's tmp/, which is what makes the verdict survive worktree removal. A file
+staged here reaches only one copy and is lost with the worktree.
+
+Publish in ONE call instead — pipe the resolved verdict block on stdin:
+
+  ~/.claude/scripts/quality-review-write-verdict.sh <ISSUE-ID> - <<'VERDICT_EOF'
+  [the resolved verdict block]
+  VERDICT_EOF
+
+If the isolation guard refuses the heredoc body, stage it under a DIFFERENT basename (e.g. tmp/verdict-body-<issue>.md)
+and pass that path as the second argument.
+EOF
+      exit 2
+      ;;
+  esac
   case "$FILE_TARGET" in
     /tmp/claude-*|/private/tmp/claude-*) exit 0 ;;
     /tmp/*|/private/tmp/*)

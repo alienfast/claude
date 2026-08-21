@@ -1092,6 +1092,24 @@ if [ "$HAVE_NODE" = yes ]; then
   stamp_env "CLAUDE_SESSION_ID=sess-A CLAUDE_HARNESS_PID=$LIVE" "$WT"
   mkjob sess-A done
   ck "1:dead" "$(alive "$WT" "CLAUDE_JOB_DIR=$JOBSROOT/self")" "a terminal session state adjudicates dead even while the stamped pid is a live harness"
+
+  # `stopped` is the harness's user/operator-stop terminal spelling (its own terminal set is
+  # done|failed|stopped — BF-1248); a dead set missing it read the stopped owner as alive through
+  # the shared fleet root pid, which is exactly what this live-pid fixture would reproduce.
+  mkrepo sessstopped
+  spawn_live
+  stamp_env "CLAUDE_SESSION_ID=sess-A CLAUDE_HARNESS_PID=$LIVE" "$WT"
+  mkjob sess-A stopped
+  ck "1:dead" "$(alive "$WT" "CLAUDE_JOB_DIR=$JOBSROOT/self")" "a stopped session adjudicates dead even while the stamped pid is a live harness"
+
+  # `crashed` is in the daemon's vocabulary but NOT its terminal set (auto-resume exists): it must
+  # answer alive on fresh evidence, never dead — mapping it dead would hand a resuming session's
+  # worktree to a sibling.
+  mkrepo sesscrashed
+  spawn_live
+  stamp_env "CLAUDE_SESSION_ID=sess-A CLAUDE_HARNESS_PID=$LIVE" "$WT"
+  mkjob sess-A crashed
+  ck "0:alive" "$(alive "$WT" "CLAUDE_JOB_DIR=$JOBSROOT/self")" "a crashed (auto-resumable) session with fresh evidence stays non-terminal"
 else
   skip "node not available — the terminal-state-beats-live-pid fixture needs a live allowlisted process"
 fi

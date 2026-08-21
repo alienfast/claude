@@ -181,6 +181,10 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/finish-flow-guard.sh"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/auto-deadline-gate.sh"
           }
         ]
       },
@@ -220,5 +224,6 @@
   "theme": "dark",
   "skipAutoPermissionPrompt": true,
   "agentPushNotifEnabled": true,
+  "outputStyle": "concise",
   "model": "opus"
 }

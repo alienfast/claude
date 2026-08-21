@@ -155,7 +155,12 @@ V_FILED_LINE = re.compile(r"^Deferred filed as issues:\s*(.+?)$", re.M)
 # from none-owed, and unwired same-mechanism siblings recurred on two consecutive fleets (BF-1226).
 V_EDGES_LINE = re.compile(r"^Collision edges:\s*(.+?)$", re.M)
 V_SEVERITY = re.compile(r"\b(CRIT(?:ICAL)?|HIGH|MED(?:IUM)?)\b")
-V_ORIGIN = re.compile(r"\b(?:CRIT(?:ICAL)?|HIGH|MED(?:IUM)?)/(plan|impl|spec|test|latent)\b")
+# NICE-TO-HAVE is in the origin alternation but deliberately not in V_SEVERITY: the C/H/M columns and
+# crit_high_per_review count the substantive tiers only, while the origin mandate covers "wherever a
+# severity tag renders" — the 2026-08-17 fleet's BF-837 authored 9 compliant tags of which 3
+# NICE-TO-HAVE/plan were silently dropped from the aggregate (BF-1248). Keep in sync with
+# quality-review-write-verdict.sh's origin_re, which warns at write time on the same pattern.
+V_ORIGIN = re.compile(r"\b(?:CRIT(?:ICAL)?|HIGH|MED(?:IUM)?|NICE-TO-HAVE)/(plan|impl|spec|test|latent)\b")
 V_ISSUE_ID = re.compile(r"\b[A-Z][A-Z0-9]*-\d+\b")
 SEV_SHORT = {"CRITICAL": "CRIT", "MEDIUM": "MED"}
 
@@ -874,7 +879,7 @@ def record_history(checkout, headline, record):
     return rows
 
 
-def parse_verdicts(checkout, cutoff, launch_epoch=None):
+def parse_verdicts(checkout, cutoff, launch_epoch=None, until=None):
     """One row per quality-review verdict file in the window: the review-churn half of the retro.
     Counts are self-reported by the review pipeline — the audit record, not independent ground truth.
 
@@ -888,6 +893,8 @@ def parse_verdicts(checkout, cutoff, launch_epoch=None):
         if cutoff and mtime < cutoff:
             continue
         if isinstance(launch_epoch, (int, float)) and int(p.stat().st_mtime) <= launch_epoch:
+            continue
+        if until and mtime > until:
             continue
         try:
             text = p.read_text(errors="replace")
@@ -947,6 +954,13 @@ def main():
     ap.add_argument("--checkout", default=".")
     ap.add_argument("--hours", type=float, default=36.0)
     ap.add_argument("--since")
+    ap.add_argument("--until",
+                    help="ISO date/datetime (UTC); exclude sessions whose activity starts after it. "
+                         "With --since, scopes to exactly one fleet when another starts inside the "
+                         "window.")
+    ap.add_argument("--sessions",
+                    help="Comma-separated run keys (e.g. 7d1f4d17,40a56675,9c0e0a3b). Overrides "
+                         "every window flag — the exact-set escape hatch for overlapping fleets.")
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--linear-issues", nargs="*", default=None,
@@ -963,12 +977,18 @@ def main():
     except (subprocess.SubprocessError, OSError):
         pass
 
-    if args.all:
+    # A fleet is a session set, not a time range — an explicit --sessions set overrides every
+    # window flag, including the recent-end bound.
+    req_keys = {k.strip() for k in args.sessions.split(",") if k.strip()} if args.sessions else None
+
+    if req_keys or args.all:
         cutoff = None
     elif args.since:
         cutoff = datetime.fromisoformat(args.since).replace(tzinfo=timezone.utc)
     else:
         cutoff = datetime.now(timezone.utc) - timedelta(hours=args.hours)
+    until = datetime.fromisoformat(args.until).replace(tzinfo=timezone.utc) \
+        if args.until and not req_keys else None
 
     # A ledger whose last write lands at or before launch_epoch belongs to a PRIOR fleet: fleet-launch
     # stamps that epoch as it dispatches, so such a session had not started when the write happened.
@@ -984,6 +1004,8 @@ def main():
     states = []
     prior_run_keys = set()
     for p in sorted((checkout / "tmp").glob("auto-state-*.json")):
+        if req_keys is not None and p.stem.replace("auto-state-", "") not in req_keys:
+            continue
         mtime = datetime.fromtimestamp(p.stat().st_mtime, timezone.utc)
         if cutoff and mtime < cutoff:
             continue
@@ -1032,10 +1054,13 @@ def main():
             run_key = tpath.stem.split("-")[0]
             if run_key in seen_keys:
                 continue
+            if req_keys is not None and run_key not in req_keys:
+                continue
             mtime = datetime.fromtimestamp(tpath.stat().st_mtime, timezone.utc)
             if cutoff and mtime < cutoff:
                 continue
-            if not is_auto_session(tpath):
+            # An explicitly requested key skips the is_auto_session probe — the operator named it.
+            if req_keys is None and not is_auto_session(tpath):
                 continue
             seen_keys.add(run_key)
             # A ledger that merely sorted out of the window in pass 1 is NOT a missing ledger. The two
@@ -1055,9 +1080,18 @@ def main():
                 pass
             ledgerless.append((run_key, mtime))
 
+    # A requested key with nothing on disk is a hard error, never a silent drop — a silently
+    # smaller set is exactly the mislabeled-fleet failure --sessions exists to fix.
+    if req_keys is not None:
+        missing = sorted(req_keys - seen_keys)
+        if missing:
+            print(f"--sessions: no auto-state file or transcript found for: {', '.join(missing)}",
+                  file=sys.stderr)
+            return 1
+
     if not states and not ledgerless:
         print(f"No auto-state files or /auto transcripts under {checkout}/tmp matching the window. "
-              f"Try --hours/--since/--all.", file=sys.stderr)
+              f"Try --hours/--since/--until/--all, or --sessions <run-keys>.", file=sys.stderr)
         return 1
 
     sessions = []
@@ -1076,19 +1110,26 @@ def main():
     # Sessions with no measurable activity (agg.last is None) are kept: absence of transcripts is a
     # fault to surface, not staleness.
     excluded_stale = []
-    if cutoff:
+    if cutoff or until:
         kept = []
         for s in sessions:
-            if s["agg"]["last"] is not None and s["agg"]["last"] < cutoff:
+            if cutoff and s["agg"]["last"] is not None and s["agg"]["last"] < cutoff:
                 excluded_stale.append({"run_key": s["run_key"],
                                        "end_epoch": s["agg"]["last"].timestamp(),
                                        "ended": f"{s['agg']['last']:%Y-%m-%dT%H:%M:%SZ}"})
+            # --until means "started after the window": a later fleet's session, measured by its
+            # own first activity — a state-file or transcript mtime is a last-write, not a start.
+            elif until and s["agg"]["first"] is not None and s["agg"]["first"] > until:
+                excluded_stale.append({"run_key": s["run_key"],
+                                       "end_epoch": s["agg"]["first"].timestamp(),
+                                       "started": f"{s['agg']['first']:%Y-%m-%dT%H:%M:%SZ}"})
             else:
                 kept.append(s)
         sessions = kept
     if not sessions:
-        print(f"All matched sessions ended before the window cutoff "
-              f"({', '.join(e['run_key'] for e in excluded_stale)}). Try --hours/--since/--all.",
+        print(f"All matched sessions fell outside the window "
+              f"({', '.join(e['run_key'] for e in excluded_stale)}). "
+              f"Try --hours/--since/--until/--all, or --sessions <run-keys>.",
               file=sys.stderr)
         return 1
 
@@ -1130,7 +1171,15 @@ def main():
     fresh_share = round((prov_counts["during_run"] + prov_counts["week_before"]) / prov_known, 3) \
         if prov_known else None
 
-    verdicts = parse_verdicts(checkout, cutoff, launch_epoch)
+    # With an explicit session set there is no time window — scope the verdict sweep to the
+    # selected sessions' own activity span instead, or every verdict on disk pools into this run.
+    v_cutoff, v_until = cutoff, until
+    if req_keys is not None:
+        firsts = [s["agg"]["first"] for s in sessions if s["agg"]["first"]]
+        lasts = [s["agg"]["last"] for s in sessions if s["agg"]["last"]]
+        v_cutoff = min(firsts) if firsts else None
+        v_until = max(lasts) if lasts else None
+    verdicts = parse_verdicts(checkout, v_cutoff, launch_epoch, v_until)
     filed_total = sum(len(v["filed"]) for v in verdicts)
     # The ratio pairs this fleet's filings with this fleet's ships: verdicts for issues no session in
     # the window shipped (run `-` in the table) stay out of the numerator, or a window that catches an
@@ -1378,8 +1427,9 @@ def main():
     print(f"Checkout: `{checkout}`  ·  sessions: {len(sessions)}"
           f"  ·  window: {'all' if not cutoff else cutoff.strftime('%Y-%m-%d %H:%M UTC')}\n")
     if excluded_stale:
-        print("Excluded as stale (file touched in-window, last activity before it): "
-              + ", ".join(f"`{e['run_key']}` (ended {e['ended']})" for e in excluded_stale) + "\n")
+        print("Excluded from the window (stale: last activity before it; late: started after --until): "
+              + ", ".join(f"`{e['run_key']}` (" + (f"ended {e['ended']}" if "ended" in e
+                          else f"started {e['started']}") + ")" for e in excluded_stale) + "\n")
 
     print("## Per session\n")
     print("| run | span | ctx>=200k | shipped (rec/obs) | canceled (rec/obs) | wakeups | dispatch bg/sync/ign | blind sleep | marker | cls | contam | dangling |")
@@ -1539,11 +1589,28 @@ def main():
                   f"across runs ONLY within one `limit_kind`: three cutoffs once agreed on total "
                   f"billable to 0.08% while diverging 23% on output, and two of them were weekly limits "
                   f"against one per-session limit — unrelated ceilings coinciding.")
+        # Mean exceeding the at-peak rate fingerprints a peak window that landed OUTSIDE the run under
+        # review (overlap-counted concurrency inflates the divisor — e.g. an unscoped --since admitting
+        # the morning-after interactive sessions). Heuristic, not proof: an idle-heavy fleet can trip it
+        # legitimately, so WARN and let the operator re-scope; never refuse or alter a figure.
+        rate_inverted = (burn_rate_all is not None and peak_5h_rate is not None
+                         and burn_rate_all > peak_5h_rate)
         print(f"\nAt the 5h peak: **{peak_5h_concurrency} concurrent sessions**, "
               f"**{peak_5h_rate:,} output tokens per session-hour**.  "
               f"Across all {len(sessions)} sessions ({session_hours:,.0f} session-hours) the mean is "
-              f"{burn_rate_all:,} — lower because it pools idle and interactive sessions with fleet "
-              f"ones. **Size with the peak rate, not the mean.**\n")
+              f"{burn_rate_all:,}"
+              + (".\n" if rate_inverted else
+                 " — lower because it pools idle and interactive sessions with fleet "
+                 "ones. **Size with the peak rate, not the mean.**\n"))
+        if rate_inverted:
+            print(f"> **The peak 5h window probably falls OUTSIDE the run under review — do not size "
+                  f"on {peak_5h_rate:,}.** The all-sessions mean ({burn_rate_all:,}) EXCEEDS the "
+                  f"at-peak rate, which the sizing guidance assumes cannot happen: "
+                  f"`peak_5h_concurrency` counts sessions whose lifespan merely overlaps the window, "
+                  f"so a window landing on post-fleet interactive sessions inflates the divisor and "
+                  f"collapses the rate. The window starts {peak_5h_at:%Y-%m-%d %H:%M UTC} — check it "
+                  f"against the fleet's own span and re-run with `--sessions` (or `--until`) if it "
+                  f"falls outside.\n")
         if cutoff_groups:
             print("**This run was CUT OFF, so both peaks above are CEILINGS, not floors** — they bound "
                   "the allowance from above where an un-throttled run bounds it from below. This is the "

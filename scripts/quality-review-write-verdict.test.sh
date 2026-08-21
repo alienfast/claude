@@ -153,7 +153,56 @@ ck "  conformant block -> exit 0" 0 $?
 echo "== 13. no stdin temp files leak into TMPDIR"
 ck "  qr-verdict-stdin-* cleaned up" "0" "$(find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'qr-verdict-stdin-*' 2>/dev/null | wc -l | tr -d ' ')"
 
-echo "== 14. a 'Collision edges:' tooling-unavailability claim is warned about (2026-08-21, JA-148)"
+echo "== 14. origin-class WARNs (exit 0, publish-then-warn — BF-1248)"
+# findings resolved but zero parseable SEVERITY/origin tags anywhere (6 of the 2026-08-17 fleet's 11
+# verdicts): warn, never refuse.
+err=$(printf '# BF-311\n\nVerdict: passed-after-fixes\nCycles: 2 (initial + 1 re-review)\nFindings resolved: 2 (HIGH: race in retry loop; MEDIUM: unchecked cast)\nDeferred fixed in-session: none\nDeferred filed as issues: none\nDeferred dropped: none\nOpen items: none\n' \
+  | (cd "$wt" && "$SCRIPT" BF-311 -) 2>&1 >/dev/null); rc=$?
+ck "  untagged findings -> exit 0" 0 $rc
+ck "  WARN fires" "yes" "$(printf '%s' "$err" | grep -q 'no severity tag carries a parseable origin class' && echo yes || echo no)"
+
+# off-enum origin word beside a legal one (the BF-611 shape: HIGH/implementation looks tagged to its
+# author, but the aggregator's trailing \b rejects it) — a zero-token check alone passes this body.
+err=$(printf '# BF-322\n\nVerdict: passed-after-fixes\nCycles: 2 (initial + 1 re-review)\nFindings resolved: 2 (HIGH/impl: a; HIGH/implementation: b)\nDeferred fixed in-session: none\nDeferred filed as issues: none\nDeferred dropped: none\nOpen items: none\n' \
+  | (cd "$wt" && "$SCRIPT" BF-322 -) 2>&1 >/dev/null); rc=$?
+ck "  off-enum tag -> exit 0" 0 $rc
+ck "  no zero-token WARN (a legal tag exists)" "no" "$(printf '%s' "$err" | grep -q 'no severity tag carries a parseable origin class' && echo yes || echo no)"
+ck "  off-enum WARN names the token" "yes" "$(printf '%s' "$err" | grep -q 'off-enum origin class: HIGH/implementation' && echo yes || echo no)"
+
+# NICE-TO-HAVE/<legal-class> is compliant (the mandate covers wherever a severity tag renders;
+# fleet-metrics.py's widened V_ORIGIN counts it) — neither WARN may fire.
+err=$(printf '# BF-355\n\nVerdict: passed-after-fixes\nCycles: 2 (initial + 1 re-review)\nFindings resolved: 1 (NICE-TO-HAVE/plan: cosmetic rename)\nDeferred fixed in-session: none\nDeferred filed as issues: none\nDeferred dropped: none\nOpen items: none\n' \
+  | (cd "$wt" && "$SCRIPT" BF-355 -) 2>&1 >/dev/null); rc=$?
+ck "  NICE-TO-HAVE/plan -> exit 0" 0 $rc
+ck "  no origin WARNs" "no" "$(printf '%s' "$err" | grep -Eq 'origin class' && echo yes || echo no)"
+
+# Findings resolved: none — nothing to tag, nothing to warn about.
+err=$(printf '# BF-366\n\nVerdict: passed-clean\nCycles: 1 (initial)\nFindings resolved: none\nDeferred fixed in-session: none\nDeferred filed as issues: none\nDeferred dropped: none\nOpen items: none\n' \
+  | (cd "$wt" && "$SCRIPT" BF-366 -) 2>&1 >/dev/null); rc=$?
+ck "  none resolved -> exit 0" 0 $rc
+ck "  quiet" "no" "$(printf '%s' "$err" | grep -Eq 'origin class' && echo yes || echo no)"
+
+echo "== 15. parentless-filing WARN (exit 0 — the BF-1189 shape)"
+# filed with the (sub-issues of <PARENT>) suffix: compliant, quiet.
+err=$(printf '# BF-377\n\nVerdict: passed-after-fixes\nCycles: 2 (initial + 1 re-review)\nFindings resolved: 1 (HIGH/impl: example)\nDeferred fixed in-session: none\nDeferred filed as issues: TT-40, TT-41 (sub-issues of TT-9)\nCollision edges: none owed\nDeferred dropped: none\nOpen items: none\n' \
+  | (cd "$wt" && "$SCRIPT" BF-377 -) 2>&1 >/dev/null); rc=$?
+ck "  suffixed filing -> exit 0" 0 $rc
+ck "  quiet" "no" "$(printf '%s' "$err" | grep -q 'sub-issues of <PARENT>' && echo yes || echo no)"
+
+# filed WITHOUT the suffix: three BF-1189 filings landed parentless this way (which also kept the
+# collision-edge rule from firing) — warn, never refuse, since a genuinely parentless run is legal.
+err=$(printf '# BF-388\n\nVerdict: passed-after-fixes\nCycles: 2 (initial + 1 re-review)\nFindings resolved: 1 (HIGH/impl: example)\nDeferred fixed in-session: none\nDeferred filed as issues: TT-40, TT-41\nCollision edges: none owed\nDeferred dropped: none\nOpen items: none\n' \
+  | (cd "$wt" && "$SCRIPT" BF-388 -) 2>&1 >/dev/null); rc=$?
+ck "  unsuffixed filing -> exit 0" 0 $rc
+ck "  WARN fires" "yes" "$(printf '%s' "$err" | grep -q "without a '(sub-issues of <PARENT>)' suffix" && echo yes || echo no)"
+
+# filed: none — nothing filed, nothing to link.
+err=$(printf '# BF-399\n\nVerdict: passed-clean\nCycles: 1 (initial)\nFindings resolved: none\nDeferred fixed in-session: none\nDeferred filed as issues: none\nDeferred dropped: none\nOpen items: none\n' \
+  | (cd "$wt" && "$SCRIPT" BF-399 -) 2>&1 >/dev/null); rc=$?
+ck "  nothing filed -> exit 0" 0 $rc
+ck "  quiet" "no" "$(printf '%s' "$err" | grep -q 'sub-issues of <PARENT>' && echo yes || echo no)"
+
+echo "== 16. a 'Collision edges:' tooling-unavailability claim is warned about (2026-08-21, JA-148)"
 # JA-148's real verdict skipped a mandated step on the claim that "linear-cli exposes no relation
 # subcommand". It does — `linear-cli relations add A B -r blocks`. The line satisfied case 12's
 # presence check, so only a CONTENT guard catches it. It must warn without changing the exit code:

@@ -4,7 +4,7 @@
   "scripts": {
     "check": "pnpm check-markdown && pnpm test",
     "check-markdown": "markdownlint-cli2 --fix '**/*.md'",
-    "test": "hooks/full-continue.test.sh && hooks/scratch-path-guard.test.sh && hooks/git-permissions.test.sh && hooks/no-blind-sleep.test.sh && hooks/linear-create-state-guard.test.sh && hooks/auto-heartbeat.test.sh && scripts/wt-identity.test.sh && scripts/wt-restamp.test.sh && scripts/wt-disown.test.sh && scripts/reap-worktrees.test.sh && scripts/fleet-launch.test.sh && scripts/fleet-metrics.test.sh && scripts/quality-review-write-verdict.test.sh && scripts/next-candidates.test.sh && scripts/fleet-blockers.test.sh && scripts/auto-stall-watch.test.sh && scripts/fleet-headroom.test.sh && scripts/linear-set-state.test.sh"
+    "test": "hooks/full-continue.test.sh && hooks/scratch-path-guard.test.sh && hooks/git-permissions.test.sh && hooks/no-blind-sleep.test.sh && hooks/linear-create-state-guard.test.sh && hooks/auto-heartbeat.test.sh && scripts/wt-identity.test.sh && scripts/wt-restamp.test.sh && scripts/wt-disown.test.sh && scripts/reap-worktrees.test.sh && scripts/finish-merge.test.sh && scripts/fleet-launch.test.sh && scripts/fleet-metrics.test.sh && scripts/quality-review-write-verdict.test.sh && scripts/next-candidates.test.sh && scripts/fleet-blockers.test.sh && scripts/auto-stall-watch.test.sh && scripts/fleet-headroom.test.sh && scripts/linear-set-state.test.sh"
   },
   "devDependencies": {
     "markdownlint-cli2": "^0.22.1"

@@ -32,11 +32,13 @@ cat > "$CHECKOUT/tmp/auto-state-abc12345.json" <<'EOF'
 {"status": "halted", "reason": "test", "shipped": ["TT-1", "TT-2"], "canceled": [], "skipped": [], "failed": []}
 EOF
 
-# New-format verdict: origin-tagged severities, two filed issues. TT-1 is shipped by the session.
+# New-format verdict: origin-tagged severities (the NICE-TO-HAVE tag pins V_ORIGIN's widened
+# alternation — dropped compliant tags were invisible, BF-1248), two filed issues. TT-1 is shipped
+# by the session.
 cat > "$CHECKOUT/tmp/quality-review-verdict-tt-1.md" <<'EOF'
 Verdict: passed-after-fixes
 Cycles: 3 (initial + 2 re-reviews)
-Findings resolved: 4 (CRIT/impl: null deref in handler; HIGH/plan: missed absorbed criterion; MEDIUM/test: unpinned branch; MED/latent: adjacent gap)
+Findings resolved: 4 (CRIT/impl: null deref in handler; HIGH/plan: missed absorbed criterion; MEDIUM/test: unpinned branch; MED/latent: adjacent gap; NICE-TO-HAVE/plan: cosmetic rename)
 Deferred fixed in-session: 1 (comment fix)
 Deferred filed as issues: TT-40, TT-41 (sub-issues of TT-9)
 Deferred dropped: none
@@ -177,7 +179,7 @@ ck "churn rows"         "3"        "$(q "len(d['review_churn'])")"
 ck "tt1 cycles"         "3"        "$(q "[v for v in d['review_churn'] if v['issue']=='TT-1'][0]['cycles']")"
 ck "tt1 findings"       "4"        "$(q "[v for v in d['review_churn'] if v['issue']=='TT-1'][0]['findings_resolved']")"
 ck "tt1 severity"       "{'CRIT': 1, 'HIGH': 1, 'MED': 2}" "$(q "[v for v in d['review_churn'] if v['issue']=='TT-1'][0]['severity']")"
-ck "tt1 origins"        "{'impl': 1, 'plan': 1, 'test': 1, 'latent': 1}" "$(q "[v for v in d['review_churn'] if v['issue']=='TT-1'][0]['origin']")"
+ck "tt1 origins"        "{'impl': 1, 'plan': 2, 'test': 1, 'latent': 1}" "$(q "[v for v in d['review_churn'] if v['issue']=='TT-1'][0]['origin']")"
 ck "tt1 filed"          "['TT-40', 'TT-41']" "$(q "[v for v in d['review_churn'] if v['issue']=='TT-1'][0]['filed']")"
 ck "tt1 run matched"    "abc12345" "$(q "[v for v in d['review_churn'] if v['issue']=='TT-1'][0]['run']")"
 ck "tt3 old-format sev" "{'HIGH': 1, 'MED': 1}" "$(q "[v for v in d['review_churn'] if v['issue']=='TT-3'][0]['severity']")"
@@ -216,7 +218,7 @@ ck_has "unpriced footer"     "excluded from \$ (no price row): claude-nova-2" "$
 ck_has "no-verdict flag"     "Shipped with no persisted review verdict**: TT-2" "$MD"
 ck_has "off-schema flag"     "Off-schema verdict body**: TT-4 (no Findings resolved line)" "$MD"
 ck_has "off-schema ? render" "| TT-4 | \`-\` | passed-after-fixes | 2 | ? |" "$MD"
-ck_has "origin coverage"     "origin-tagged 4/6" "$MD"
+ck_has "origin coverage"     "origin-tagged 5/6" "$MD"
 ck_has "ledgerless flag"     "\`def45678\` ran without a surviving ledger" "$MD"
 ck_has "ledgerless names it" "no \`tmp/auto-state-def45678.json\`" "$MD"
 ck_has "ledgerless rec dash" "| \`def45678\`  ⚠ | 0.5h | 0% | -/1 | -/0 |" "$MD"
@@ -684,7 +686,7 @@ ck "exclusion carries end time"  "2026-08-01T21:00:00Z" "$(q10 "d['excluded_stal
 ck "fleet tokens live-only"      "800"          "$(q10 "sum(d['output_tokens'].values())")"
 ck "per-shipped live-only"       "800"          "$(q10 "d['per_shipped']['output_tokens']")"
 ck "peak window live-only"       "800"          "$(q10 "d['windows']['peak_5h_output_tokens']")"
-ck_has "md notes the exclusion"  "Excluded as stale" "$MD10"
+ck_has "md notes the exclusion"  "Excluded from the window" "$MD10"
 ck_has "md names the stale run"  "\`stale0001\` (ended 2026-08-01T21:00:00Z)" "$MD10"
 ck_lacks "stale row absent from table" "| \`stale0001\`" "$MD10"
 # An --all run has no cutoff and must keep the stale session — the gate is the window's, not global.
@@ -755,6 +757,54 @@ cat > "$WORK/projects/$M11/ff666666-0000.jsonl" <<EOF
 EOF
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK11" --hours 24 > /dev/null 2>&1
 ck "history appends new set" "2" "$(wc -l < "$CK11/tmp/fleet-metrics-history.jsonl" | tr -d ' ')"
+
+# ---- exact-set and --until scoping: overlapping fleets in one window ----
+# The 2026-08-18 retro's gap: three fleets overlapped the window, no invocation could isolate the
+# one under review, and the history append stamped a 12-session row with the PREVIOUS fleet's
+# start. A fleet is a session set, not a time range — --sessions selects exactly that set, and the
+# history row (keyed by session_set) then describes the selected fleet, replacing its own earlier
+# row rather than minting a mislabeled one. CK11 carries two sessions with distinct starts
+# (ee555555 ~2h ago, ff666666 ~1h ago), so it doubles as the overlap fixture.
+J12="$WORK/out12.json"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK11" --sessions ee555555 --json > "$J12" 2>/dev/null
+q12() { python3 -c "import json,sys; d=json.load(open('$J12')); print($1)"; }
+ck "exact set selects one"    "['ee555555']" "$(q12 "sorted(s['run_key'] for s in d['sessions'])")"
+ck "exact set replaces its history row" "2" "$(wc -l < "$CK11/tmp/fleet-metrics-history.jsonl" | tr -d ' ')"
+ck "history row keyed to the set" "1" "$(python3 -c "
+import json
+rows=[json.loads(l) for l in open('$CK11/tmp/fleet-metrics-history.jsonl')]
+print(len([r for r in rows if r['session_set']=='ee555555']))")"
+
+# A requested key with nothing on disk is a hard error — a silent drop would report a smaller
+# fleet than requested, the exact mislabeling --sessions exists to prevent.
+if CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK11" --sessions ee555555,nosuchkey --json > /dev/null 2>"$WORK/err12"; then
+  FAIL=$((FAIL+1)); echo "FAIL: unknown --sessions key must exit non-zero"
+else
+  PASS=$((PASS+1))
+fi
+ck_has "missing key named" "nosuchkey" "$WORK/err12"
+
+# An explicitly named key overrides the is_auto_session probe (the operator named it), and the
+# verdict sweep scopes to the selected set's own activity span — CHECKOUT's three verdict files
+# have fresh mtimes while 99900001's span is 2026-08-04, so none may pool in.
+J13="$WORK/out13.json"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CHECKOUT" --sessions 99900001 --json > "$J13" 2>/dev/null
+q13() { python3 -c "import json,sys; d=json.load(open('$J13')); print($1)"; }
+ck "named key skips auto probe" "['99900001']" "$(q13 "sorted(s['run_key'] for s in d['sessions'])")"
+ck "verdicts scoped to set span" "0" "$(q13 "len(d['review_churn'])")"
+
+# --until excludes the later fleet's session by its own FIRST ACTIVITY (mtimes are last-writes),
+# and reports the exclusion as a late start rather than pooling it into this fleet's totals.
+J14="$WORK/out14.json"
+MD14="$WORK/out14.md"
+UNTIL="$(python3 -c "from datetime import datetime,timezone,timedelta; print((datetime.now(timezone.utc)-timedelta(seconds=5000)).strftime('%Y-%m-%dT%H:%M:%S'))")"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK11" --hours 24 --until "$UNTIL" --json > "$J14" 2>/dev/null
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK11" --hours 24 --until "$UNTIL" > "$MD14" 2>&1
+q14() { python3 -c "import json,sys; d=json.load(open('$J14')); print($1)"; }
+ck "--until keeps the earlier fleet" "['ee555555']" "$(q14 "sorted(s['run_key'] for s in d['sessions'])")"
+ck "--until reports the late start"  "ff666666"     "$(q14 "d['excluded_stale'][0]['run_key']")"
+ck "late exclusion says started"     "1"            "$(q14 "len([e for e in d['excluded_stale'] if 'started' in e])")"
+ck_has "md reports late exclusion"   "started " "$MD14"
 
 # ---- launch_epoch boundary: a PRIOR fleet's ledger must not ride this fleet's numbers ----
 # Measured 2026-08-21 on jarvis: a prior session's ledger mtime tied fleet-deadline.json's

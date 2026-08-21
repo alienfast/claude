@@ -649,7 +649,7 @@ _wtid_jobs_root() {
 # Session-scoped owner liveness (BF-1103). Sets WTID_SESSION_PROBE=alive|dead|"" — empty means the
 # probe cannot answer (no owner id, no job dir, or no fresh evidence) and the caller falls back to
 # the pid walk. The daemon writes each background session's lifecycle to ~/.claude/jobs/<session>/:
-# state.json's `state` records a terminal value when the session finishes (measured: "done"), and
+# state.json's `state` records a terminal value when the session finishes, and
 # state.json/timeline.jsonl mtimes move while it works. This is per-SESSION ground truth, which the
 # fleet-shared pid can never be:
 #   - terminal state        → dead  (positive evidence; the pid tier would read the shared root's
@@ -659,8 +659,18 @@ _wtid_jobs_root() {
 #                                    cannot go quiet that long)
 #   - anything else         → ""    (unanswerable here; NOT evidence of death — an interactive
 #                                    owner has no job dir at all, and a GC'd job dir looks the same)
-# An unrecognized terminal spelling degrades to "" and then to the pid walk / unknown — fail-safe,
-# since the create gate refuses foreign claims on unknown.
+# The daemon's full state vocabulary, read from its writer on harness 2.1.234 (regenerate:
+#   strings -a "$(realpath "$(command -v claude)")" | grep -oE '\["starting","running[^]]*\]')
+# is starting|running|resuming|adopted|crashed|working|blocked|done|stopped|failed, and the
+# harness's own terminal classification is done|failed|stopped — `stopped` is what a
+# user/operator stop writes, and a dead set missing it read the stopped owner as alive through
+# the pid walk (a fleet's shared root pid), forcing recovery toward --force (BF-1248, BF-871).
+# `crashed` is deliberately NOT mapped to dead: the harness excludes it from its own terminal
+# sets and can auto-resume a crashed session, so it degrades to the freshness/pid tiers like any
+# non-terminal state. killed/canceled/cancelled/error predate the measurement (no harness writes
+# them) and stay as harmless belt-and-suspenders for other harness versions. Any unrecognized
+# spelling degrades to "" and then to the pid walk / unknown — fail-safe, since the create gate
+# refuses foreign claims on unknown.
 _wtid_session_liveness() {
   local owner="$1" dir state_file state now window f m newest=0
   WTID_SESSION_PROBE=""
@@ -674,7 +684,7 @@ _wtid_session_liveness() {
     state=$(sed -n 's/.*"state"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$state_file" 2>/dev/null | head -1)
   fi
   case "$state" in
-    done|failed|killed|canceled|cancelled|error) WTID_SESSION_PROBE="dead"; return 0 ;;
+    done|failed|stopped|killed|canceled|cancelled|error) WTID_SESSION_PROBE="dead"; return 0 ;;
   esac
   window="${WTID_SESSION_FRESH_SECS:-7200}"
   now=$(_wtid_now)

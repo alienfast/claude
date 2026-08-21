@@ -66,6 +66,21 @@
    - ✅ Instead: Keep the throw/error. Required means required — silent fallbacks mask misconfiguration.
    - Exception: The value is genuinely optional with a documented default (rare for required-by-name config)
 
+### A workaround's premise can expire — and the change that expires it owns its removal
+
+Scaffolding built around a missing value, an unavailable dependency, or an unfinished decision usually **states its own precondition** — in a comment, a docblock, or the issue that added it. That sentence is an expiry condition. When your change is what supplies the missing thing, the scaffolding is dead as of your commit, and deleting it is part of the change — not a follow-up, not ops work, not someone else's ticket. This is the recognition step in front of [technical-debt-prevention.md](technical-debt-prevention.md)'s *Delete Aggressively*: the hard part is never the deletion, it is noticing that your own change is what killed it. Distinct from a stale *issue* premise, which someone else's work invalidates and which is answered by descoping, not deleting.
+
+The failure is a mis-framed question. Facing existing scaffolding, "how do I feed this design the new value?" and "does this design still have a reason to exist?" produce completely different work, and only the first one looks like configuration. Ask the second question first, and re-read the scaffolding's own comment before answering it.
+
+Two tells that you asked the wrong one:
+
+- **The remedy turns into infrastructure or process work** — a config key to set, an environment to update, a person to ask — when what you actually obtained was a value with an obvious home in code you already have open.
+- **You find yourself hardening the scaffolding** — adding a test, a guard, or a comment to machinery whose premise your change just retired. Effort spent there is spent on code that should be deleted in the same commit.
+
+Removal is inside the change's blast radius, not adjacent work: your commit is what made the code dead, so the issue's scope boundary — written before the premise expired — does not exclude it. Its tests go with it; they only ever pinned the workaround's behavior, and leaving them is what makes the next reader believe it is load-bearing. **Keep any invariant the scaffolding was incidentally enforcing**, in generalized form — a fail-closed guard that happened to live inside it is worth relocating and re-testing, not deleting along with it.
+
+Worked case: an env-sourced template id, a nil-returning reader, a fail-closed operation guard, and Pulumi wiring, all built because the id did not exist yet — the reader's own docblock said as much ("every other send here hardcodes an id that was verified in the console, and there is no id to guess for this one"). The issue whose entire purpose was to obtain that id shipped without deleting any of it: it filed a ticket asking an operator to set the config key, and during review added an assertion to a spec arm titled "enqueues against the configured template" — an arm whose subject was about to be deleted. Unwinding it by hand touched 17 files, and hardcoding the id immediately exposed a collision with a sibling send that the indirection had kept invisible.
+
 ### A verification you never watched fail is not a verification
 
 A sweep, checker, or audit whose passing result gates a decision — ship it, mark it fixed, declare convergence — must prove it can still fail before its verdict is worth anything:

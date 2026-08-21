@@ -11,6 +11,10 @@
 #
 # Emits KEY=value lines on stdout:
 #   VERDICT_FILE=<absolute path, or empty if file absent>
+#   VERDICT_PUBLISHED_ACROSS=<0|1>
+#     1 → the verdict existed only in the worktree; this run copied it to the main
+#         checkout's tmp/ so it survives worktree removal (backstop for a publish
+#         that reached one copy — BF-815; WARN on stderr names both paths)
 #   VERDICT=passed-clean|passed-after-fixes|terminated-with-open-items|escalated-to-architect|malformed|none-found
 #     - none-found  → no verdict file located at either probe path (file absent)
 #     - malformed   → file exists but lacks a parseable `Verdict:` line, or the
@@ -71,6 +75,28 @@ do
     break
   fi
 done
+
+# Backstop: a verdict that exists ONLY in the worktree dies with the worktree (/finish merge, PR
+# mode, and reap-worktrees-cron.sh all remove it) — BF-815 shipped with the review run and the
+# verdict lost exactly this way. quality-review-write-verdict.sh writes both copies and the
+# scratch-path-guard hook denies file-tool writes of this basename, so this fires only when a
+# publish reached one copy anyway; it runs only when /finish runs, which is why it is the backstop
+# and not the fix.
+published_across=0
+main_twin="${main_checkout:+$main_checkout/tmp/quality-review-verdict-${issue_lower}.md}"
+if [ -n "$verdict_file" ] && [ -n "$main_twin" ] && [ "$main_checkout" != "$worktree_root" ] \
+   && [ "$verdict_file" != "$main_twin" ] && [ ! -e "$main_twin" ]; then
+  if mkdir -p "$main_checkout/tmp" 2>/dev/null \
+     && cross_tmp=$(mktemp "$main_checkout/tmp/.qr-verdict-XXXXXX" 2>/dev/null) \
+     && cp "$verdict_file" "$cross_tmp" 2>/dev/null \
+     && chmod 644 "$cross_tmp" 2>/dev/null \
+     && mv "$cross_tmp" "$main_twin" 2>/dev/null; then
+    published_across=1
+    echo "WARN: verdict existed only in the worktree — published across to $main_twin (the write-verdict stdin form writes both copies; see quality-review/SKILL.md)" >&2
+  else
+    echo "WARN: verdict exists only in the worktree and could not be copied to $main_twin — it will be lost when the worktree is removed" >&2
+  fi
+fi
 
 verdict="none-found"
 cycles=""
@@ -193,6 +219,7 @@ if [ -n "$verdict_file" ]; then
 fi
 
 printf 'VERDICT_FILE=%s\n' "$verdict_file"
+printf 'VERDICT_PUBLISHED_ACROSS=%s\n' "$published_across"
 printf 'VERDICT=%s\n' "$verdict"
 printf 'CYCLES=%s\n' "$cycles"
 printf 'SUB_ISSUES=%s\n' "$sub_issues"
