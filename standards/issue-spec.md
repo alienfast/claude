@@ -4,6 +4,14 @@ A **certified spec** is an issue description that states the problem, the desire
 
 Specs describe the **WHAT, never the HOW**. Implementation planning — technical approach, file lists, step-by-step design — happens in `/start` Step 6 (plan mode) at execution time, against the codebase as it exists then. Verification commands belong to project quality gates (`pnpm check`), not the ticket.
 
+**When the work IS site enumeration** — a normalization sweep, an encoding pass, "these N call sites lack the guard" — the ban on file lists still holds for *planning*, but the census is the requirement and has to live somewhere. This is a gap the ban alone leaves open, and with nowhere sanctioned to put the census an author writes bare line numbers into the criteria. Write it so it degrades honestly instead of lying:
+
+- Describe each site by **greppable code shape** (`inv.Status !== 'VOIDED'`), never by line number alone. A shape survives every edit that does not change the defect; a line number is wrong after the next commit.
+- **Anchor the census to a commit** — "as of `<sha>`, six sites" — and say in the body that line numbers are a convenience, not a specification. A reader can then tell a stale count from a wrong one.
+- Make the count **re-derivable**: state the grep that produces it, so pickup re-runs the census rather than trusting it.
+
+In a fleet this decays fast, because parallel sessions land adjacent work continuously and nothing detects the decay. Measured 2026-08-20: an issue certified naming six raw `Status` sites at specific lines had two left by grooming — four fixed in the interim, two cited lines gone — and a sibling certified hours earlier the same session went stale within hours when another session merged into the file it names.
+
 ## The `specified` label
 
 - **Semantics:** this issue's description is a certified spec — "an unattended agent may pick this up and ship it."
@@ -107,7 +115,7 @@ The checkboxes are load-bearing: `/start` Step 6 treats description checkboxes a
 - [ ] Every success criterion is testable and implementation-agnostic
 - [ ] Boundaries name at least one explicit exclusion
 - [ ] Sized for one focused session (<150k tokens of context); epic-sized work is broken into sub-issues — each certified individually — via `~/.claude/scripts/linear-create-child.sh`
-- [ ] No implementation planning: no technical approach, no file lists, no verification-command blocks
+- [ ] No implementation planning: no technical approach, no file lists, no verification-command blocks — unless the work *is* site enumeration, in which case the census follows the greppable-shape / commit-anchored / re-derivable form above
 - [ ] No success criterion asks for a decision ("decide X", "determine whether Y" as an open question) — open product/design questions are resolved *before* certification, and the criterion prescribes the chosen behavior. An **empirical determination is not a decision**: a criterion may direct a measurement when it prescribes the response to each outcome ("measure whether the chain is reachable; if it is, bind the argument and assert the downstream predicate; if not, record why at the site") — the forbidden shape is the question left open, not the experiment (BF-673 shipped unattended on exactly such a criterion)
 - [ ] No success criterion embeds a literal pattern (regex, glob, SQL predicate, field index) as its pass condition — state the property the data must have and let execution derive the check
 - [ ] Original human text preserved under `## Original request` when regrooming
