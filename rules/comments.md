@@ -27,6 +27,19 @@ difference, a version-specific quirk — is the kind a reader trusts without
 re-checking, and the kind this file most invites you to write. Run it on the
 machine first. If you can't, write the narrower claim you did confirm.
 
+**Deciding to leave a detail out is a claim too.** Omitting a concrete — an error
+string, a command, a path — because you believe it varies rests on a belief about
+behavior, and that belief needs the same measurement an assertion would. The
+narrowing above is for a measurement genuinely out of reach, not a way past a
+one-command check, and hedging is not free: the concrete is usually the one thing
+the reader would have searched for. Measured: a build-failure note said "a
+module-load env assertion" instead of naming the error string, on the unverified
+premise that an earlier-imported database client's constructor would throw first
+and change the message. That constructor defers its validation and does not throw,
+so in the absent-config case the note was written for, the named string is exactly
+what the operator gets — the hedge traded away their only search anchor to cover a
+case that never arises.
+
 **Measure the value production actually produces, not a plausible stand-in.**
 Running *something* is not the bar — the input has to be the one the system
 builds. Where a library or framework constructs the value, construct it the
