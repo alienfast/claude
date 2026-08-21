@@ -70,6 +70,19 @@ it first: remove the line, run the tests covering it, restore by file copy (neve
 worktree of the repo; see `standards/git.md` § Safe Commands). Anything red means the claim is false; nothing red means check
 the tests reach that line at all before you claim it.
 
+**A comment justifying why a guard exists names a failure you have never seen.**
+"Otherwise there's a race", "this would fire on mount", "without this the report
+pages break" — the guard is present, so the failure never happens, and re-reading
+the guard confirms the sentence every time. Check the *triggering condition*, not
+the guard: point at what makes it reachable — the type that admits null, the
+caller that passes it, the page that reads the column. If nothing points back, the
+reason is wrong even where the guard is right. Where the condition turns on
+runtime semantics no line shows (update batching, effect and ref ordering),
+inspection can't settle it — remove the guard, run what covers it, and record what
+actually broke, restoring by file copy as above. What that reports is routinely a
+near neighbour of what you were about to write, which is why the wrong reason
+survives review by anyone else reasoning from the same code.
+
 **A claim about a family is falsified by the member the change skipped.** When a
 change fixes some members of a set and a scope boundary leaves the rest alone,
 the prose it writes routinely states the new property universally ("every reader
