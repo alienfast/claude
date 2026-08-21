@@ -18,6 +18,14 @@ After the fleet finishes, [`/fleet-retro`](../fleet-retro/SKILL.md) is the booke
 
 ## Step 1: Resolve scope and fetch the pool
 
+**Refuse to wire anything while a fleet is live.** This skill is the *before* step, and nothing else detects that a fleet is already running. Check
+`tmp/fleet-deadline.json` first: an unpassed `deadline_epoch`, or any `tmp/auto-state-*.json` whose mtime is newer than the marker's `launch_epoch` and whose `status`
+is `active`, means sessions are picking right now. The pool is then a moving target — every certification the running fleet changes invalidates both the Step 3 edges
+and the Step 5 lane count, and an edge wired onto an issue a live session parks moments later strands its dependents behind a blocker nothing will ever pick up.
+Measured 2026-08-21: JA-303 was demoted `specified` → `backburner-specified` at 01:54:34 and two `blocks` edges were wired onto it at 02:21:33, stranding JA-313 and
+JA-290 on top of the five already stranded by the demotion; the lane count went stale twice in forty minutes. Report the audit read-only and stop before Step 3's
+writes — `/fleet-status` is the during-view. Proceed only on an explicit user override.
+
 Team scope: a `team:KEY` (or bare key) argument, else `$LINEAR_TEAM`, else error — fleet prep is a deliberate per-team act, never workspace-guessed. Multi-team fleets: run once per team.
 
 One paginated GraphQL fetch for everything (descriptions, labels, parents, relations both directions) across the team's unstarted workable states (Backlog/Planned/Todo — match `/next`'s `WORKABLE_STATES`).
@@ -79,6 +87,15 @@ Split into the certified set (`specified` label) and the rest. Read every certif
 While reading bodies, also catch cheap ranking wins: a flake fix or check-stabilizer that other sessions' quality gates depend on deserves a priority bump (it sorts within-tier by priority); `bug`/`security` labels missing from issues that plainly are one feed the class rank.
 
 ## Step 3: Consolidate families, then wire collision edges
+
+**Before wiring any edge, confirm the team has a completed-type state that `/finish` actually lands in.** `next-candidates.sh` clears a blocker only once its state's
+*type* is `completed` (or `canceled`), so an edge whose blocker ships into a `started` state never releases — the dependent stays hidden until a human transitions it
+by hand, and an unattended fleet idles the lane instead. Read the team's state types with
+`linear-cli statuses list -t <KEY> --no-cache -o json | jq -r '.statuses[] | "\(.name) \(.type)"'` and compare against where `/finish` lands
+(`mark-ready-for-release.sh` targets a Ready-For-Release-like state). When no completed-type landing state exists, still wire the edges — they are correct about the
+collision — but say so in the report and treat every chain as manual: the lane count stands, the release does not. Measured on JA 2026-08-18, when `In Review`
+(`started`) was still that team's landing state: three wired edges, three hand transitions mid-run, and one session drained ~2.3h before the deadline with work
+available behind an edge it could not see. JA has since added a `Ready for Release` (`completed`) state — the check is what tells you which situation you are in.
 
 From the descriptions' named files/components, build overlap groups. For each group, consolidation is the first disposition; serialization is the fallback.
 
