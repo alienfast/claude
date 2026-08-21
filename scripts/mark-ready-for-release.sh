@@ -41,7 +41,7 @@ fi
 
 # Resolve the exact release-state name from the team's workflow states.
 team="${issue%%-*}"
-matched=$(linear-cli statuses list -t "$team" -o json 2>/dev/null \
+matched=$(linear-cli statuses list -t "$team" --no-cache -o json 2>/dev/null \
   | jq -r '.statuses[]?.name // empty' 2>/dev/null \
   | grep -iE '^ready[ _-]?for[ _-]?(release|deploy|ship)$' \
   | head -1 || true)
@@ -65,7 +65,7 @@ actual=$(linear-cli issues get "$issue" --no-cache -o json 2>/dev/null | jq -r '
 if [ "$actual" != "$matched" ]; then
   echo "WARN: issues update reported success but $issue reads '${actual:-unreadable}' (expected '$matched'); retrying via raw mutation..." >&2
   issue_uuid=$(linear-cli issues get "$issue" --no-cache -o json 2>/dev/null | jq -r '.id // empty' 2>/dev/null || true)
-  state_uuid=$(linear-cli statuses list -t "$team" -o json 2>/dev/null \
+  state_uuid=$(linear-cli statuses list -t "$team" --no-cache -o json 2>/dev/null \
     | jq -r --arg n "$matched" '.statuses[]? | select(.name == $n) | .id // empty' 2>/dev/null | head -1 || true)
   result=""
   if [ -n "$issue_uuid" ] && [ -n "$state_uuid" ]; then

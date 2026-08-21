@@ -36,7 +36,7 @@ state_uuid=""
 
 resolve_state() { # $1 = team key; sets cached_team/state_name/state_uuid or returns 1
   local team="$1" json
-  json=$(linear-cli statuses list -t "$team" -o json 2>/dev/null) || json=""
+  json=$(linear-cli statuses list -t "$team" --no-cache -o json 2>/dev/null) || json=""
   if [ -z "$json" ]; then
     echo "ERROR: could not list workflow states for team '$team' (auth? team key?)" >&2
     return 1

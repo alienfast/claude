@@ -96,7 +96,7 @@ push, PR, and state transitions instead of a hand-rolled git/gh path.
    team — these projects use `Planned` where Linear's default template says `Todo` — and a hardcoded name
    fails the create outright (`State 'Todo' not found for team`), then costs a round of flailing at the
    CLI. `linear-create-child.sh` already does this lookup for you on `-`: it reads
-   `linear-cli statuses list -t <TEAM> -o json` and picks the team's Backlog, falling back to
+   `linear-cli statuses list -t <TEAM> --no-cache -o json` and picks the team's Backlog, falling back to
    Planned/Todo. That is also why `-` is not "team default" — an omitted `--state` lands on Triage, which
    is why the `linear-create-state-guard.sh` hook refuses a raw `linear-cli issues create` without one.
 

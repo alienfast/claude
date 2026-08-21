@@ -141,6 +141,15 @@ Auth: `linear-cli auth oauth` (browser) or `LINEAR_API_KEY`; check with `linear-
     linear-cli issues create --team BF "<TITLE>" --description - --state Backlog --labels specified < body.md
     ```
 
+23. **Every `statuses list` call reads through `linear-cli`'s Statuses cache, so a workflow state added minutes ago is invisible — and the error blames the
+    team.** The cache covers statuses (gotcha #17), and no state-resolution call site opted out until this was measured. Symptom:
+    `mark-ready-for-release.sh` exits 1 with `ERROR: no Ready-For-Release state found for team '<KEY>'. Set it manually.` while the state exists and every
+    matcher handles it. Measured 2026-08-21 against a live team with a 24-minute-old cache: the cached path returned no output and the script exited 1,
+    `--no-cache` returned `Ready for Release`, and `linear-cli cache clear` fixed the cached path. It self-heals on expiry, which makes it intermittent and
+    easy to dismiss, and it appears only in the window right after someone changes a workflow state — exactly when these scripts matter most. Every state
+    resolution in `~/.claude/scripts` now passes `--no-cache` (`grep -rn 'statuses list' ~/.claude/scripts` is the current roster); keep it that way in any
+    new one, at the cost of one API round-trip on a path that already makes several.
+
 ## Command map
 
 ```bash

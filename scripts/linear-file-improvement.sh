@@ -124,7 +124,7 @@ fi
 #    default, which on a triage-enabled team is Triage and invisible to /next and /auto.
 #    `ready` is intentionally excluded so we never latch onto "Ready For Release"/"Ready For
 #    Review".
-if ! states_json=$(linear-cli statuses list -t "$team" -o json 2>/dev/null); then
+if ! states_json=$(linear-cli statuses list -t "$team" --no-cache -o json 2>/dev/null); then
   echo "ERROR: could not list workflow states for team '$team' (auth? network?)" >&2
   exit 1
 fi
