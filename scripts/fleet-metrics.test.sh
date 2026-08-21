@@ -756,6 +756,74 @@ EOF
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK11" --hours 24 > /dev/null 2>&1
 ck "history appends new set" "2" "$(wc -l < "$CK11/tmp/fleet-metrics-history.jsonl" | tr -d ' ')"
 
+# ---- launch_epoch boundary: a PRIOR fleet's ledger must not ride this fleet's numbers ----
+# Measured 2026-08-21 on jarvis: a prior session's ledger mtime tied fleet-deadline.json's
+# launch_epoch to the second (1787271573). Both the `-lt`/`<` comparison and the session filter alone
+# let it through, so a finished 4.6h session with 2 pre-launch ships rode a whole retro as a fleet
+# member — shipped 5 -> 7, session-hours 7.4 -> 12.0, churn 5 reviews -> 7, severity 0/3/19 -> 1/5/28
+# — and /fleet-status showed it ALIVE, sending the operator after a phantom idle session for four
+# consecutive checks. Three arms, because the bug had three independent limbs.
+CK12="$WORK/checkout12"
+mkdir -p "$CK12/tmp"
+git -C "$CK12" init -q 2>/dev/null
+git -C "$CK12" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "TT-40: fleet work"
+M12="$(git -C "$CK12" rev-parse --show-toplevel | tr / -)"
+mkdir -p "$WORK/projects/$M12"
+
+LAUNCH=$(python3 -c "import time; print(int(time.time()) - 7200)")
+cat > "$CK12/tmp/fleet-deadline.json" <<EOF
+{"deadline_epoch": $((LAUNCH + 43200)), "deadline": "test", "count": 1, "launch_epoch": $LAUNCH}
+EOF
+
+for run in prior001 fleet001; do
+  cat > "$CK12/tmp/auto-state-$run.json" <<EOF
+{"status": "drained", "reason": "deadline", "shipped": ["TT-$run"], "canceled": [], "skipped": [], "failed": []}
+EOF
+  cat > "$WORK/projects/$M12/$run-0000.jsonl" <<EOF
+{"type":"user","timestamp":"$(ts_ago 6000)","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"$(ts_ago 1200)","message":{"role":"assistant","id":"msg_$run","model":"claude-opus-5","usage":{"input_tokens":10,"cache_read_input_tokens":1000,"output_tokens":400},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-$run done"}]}}
+EOF
+done
+cat > "$CK12/tmp/quality-review-verdict-tt-prior.md" <<'EOF'
+# /quality-review verdict — TT-PRIOR
+Verdict: passed-after-fixes
+Cycles: 2
+Findings resolved: 6 (HIGH/impl: prior fleet finding)
+EOF
+cat > "$CK12/tmp/quality-review-verdict-tt-fleet.md" <<'EOF'
+# /quality-review verdict — TT-FLEET
+Verdict: passed-after-fixes
+Cycles: 1
+Findings resolved: 2 (MED/plan: this fleet finding)
+EOF
+
+# The tie itself, carried with a SUB-SECOND remainder. launch_epoch is whole seconds while st_mtime
+# is a float, so a raw `<=` compares ...573.448 against ...573 and passes the prior ledger through —
+# the first fix for this bug was inert for exactly that reason and its suite went green anyway.
+python3 - "$CK12" "$LAUNCH" <<'PY'
+import os, sys, pathlib
+ck, launch = pathlib.Path(sys.argv[1]), int(sys.argv[2])
+for name, mt in (("tmp/auto-state-prior001.json", launch + 0.448),
+                 ("tmp/quality-review-verdict-tt-prior.md", launch + 0.9),
+                 ("tmp/auto-state-fleet001.json", launch + 60),
+                 ("tmp/quality-review-verdict-tt-fleet.md", launch + 60)):
+    os.utime(ck / name, (mt, mt))
+PY
+
+J12="$WORK/out12.json"; MD12="$WORK/out12.md"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK12" --hours 24 --json > "$J12" 2>/dev/null
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK12" --hours 24 > "$MD12" 2>&1
+q12() { python3 -c "import json,sys; d=json.load(open('$J12')); print($1)"; }
+ck "launch tie: prior ledger excluded"   "['fleet001']" "$(q12 "sorted(s['run_key'] for s in d['sessions'])")"
+# The ledgerless pass re-adopts an excluded state file straight off disk, so pass-1 filtering alone
+# changes nothing — this arm is what catches that limb regressing.
+ck "launch tie: not re-added as ledgerless" "0" "$(q12 "len(d.get('ledgerless', []))")"
+ck "launch tie: tokens fleet-only"       "400" "$(q12 "sum(d['output_tokens'].values())")"
+# Verdicts are globbed off disk, not attributed through the session set, so they need their own gate.
+ck "launch tie: prior verdict excluded"  "['TT-FLEET']" "$(q12 "sorted(v['issue'] for v in d['review_churn'])")"
+ck "launch tie: fleet verdict kept"      "2"   "$(q12 "d['review_churn'][0]['findings_resolved']")"
+ck_lacks "launch tie: prior run absent from table" "prior001" "$MD12"
+
 echo
 echo "$PASS passed / $FAIL failed"
 [ "$FAIL" -eq 0 ]

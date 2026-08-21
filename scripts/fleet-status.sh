@@ -109,7 +109,12 @@ hidden=0
 for f in $state_files; do
   if [[ "$scope_epoch" =~ ^[0-9]+$ ]]; then
     mtime=$(stat -f %m "$f" 2>/dev/null || stat -c %m "$f" 2>/dev/null || echo "")
-    if [[ "$mtime" =~ ^[0-9]+$ ]] && [ "$mtime" -lt "$scope_epoch" ]; then
+    # -le, not -lt: fleet-launch stamps launch_epoch as it dispatches, so a ledger whose last write
+    # lands in that same second was written by a session that had not been dispatched yet — it is
+    # prior-run history. Measured 2026-08-21: a prior session's ledger tied launch_epoch exactly
+    # (1787271573) and read as current-fleet for a whole run, inflating shipped 5→7 and session-hours
+    # 7.4→12.0, and presenting a finished session as a live one idling through four status checks.
+    if [[ "$mtime" =~ ^[0-9]+$ ]] && [ "$mtime" -le "$scope_epoch" ]; then
       hidden=$((hidden + 1))
       continue
     fi
