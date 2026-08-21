@@ -86,6 +86,20 @@ which is exactly what makes a copied TTL eligible for a silent `fix-now` auto-ap
    - ✅ Instead: Keep the throw/error. Required means required — silent fallbacks mask misconfiguration.
    - Exception: The value is genuinely optional with a documented default (rare for required-by-name config)
 
+### Asserting a capability does not exist
+
+Never record that a tool, flag, or command is unavailable — and never skip a required step on that basis — without having **run the check**: `--help`, `command -v`,
+the tool's own listing, or the documented call itself. A capability claim is a factual claim about this machine, cheap to verify and expensive to get wrong: it
+converts a skipped step into a documented impossibility that no reviewer re-examines, and it can send a follow-up issue after tooling that already works. When a call
+genuinely fails, record the command and its exact error, never the generalization ("the toolchain cannot do this").
+
+This is worse than ignoring a rule, because the agent concludes compliance is *impossible* and documents the reasoning persuasively enough to pass its own review.
+Measured 2026-08-21: a `/quality-review` verdict recorded *"Collision edges: none wired — could not be created with available tooling. linear-cli exposes no relation
+subcommand… no script in ~/.claude/scripts/ can create a Linear issue relation"*, skipped a step Step 6 mandates, and recommended a `/reflect` to fix a toolchain gap
+that does not exist — `linear-cli relations add <BLOCKER> <BLOCKED> -r blocks` is in the linear skill's own command map, and `relations --help` settles it in one call.
+A mechanical guard now covers that one choke point (`scripts/quality-review-write-verdict.sh`), but the shape generalizes to any skipped step justified by an unchecked
+capability claim.
+
 ### A workaround's premise can expire — and the change that expires it owns its removal
 
 Scaffolding built around a missing value, an unavailable dependency, or an unfinished decision usually **states its own precondition** — in a comment, a docblock, or the issue that added it. That sentence is an expiry condition. When your change is what supplies the missing thing, the scaffolding is dead as of your commit, and deleting it is part of the change — not a follow-up, not ops work, not someone else's ticket. This is the recognition step in front of [technical-debt-prevention.md](technical-debt-prevention.md)'s *Delete Aggressively*: the hard part is never the deletion, it is noticing that your own change is what killed it. Distinct from a stale *issue* premise, which someone else's work invalidates and which is answered by descoping, not deleting.
