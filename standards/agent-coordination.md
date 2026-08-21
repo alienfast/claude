@@ -47,6 +47,45 @@ reconciling the tree against the diff it was given.
 Writing to `tmp/`, the tracker, or files no dispatch named is free. Hold the files the dispatch named — every file in a supplied delta, whether inlined
 or passed by path — until it returns. If an edit genuinely cannot wait, state it in the next dispatch rather than leaving the agent to discover it.
 
+## Parallel delegations falsify each other's comments
+
+Write-target exclusivity above resolves parallel hazards by making file sets *disjoint*. For comments, disjoint is not sufficient. A delegate writes comments true of
+the tree it can see; when a sibling delegation is concurrently changing the behaviour one of those comments asserts, the comment lands false — and nothing catches it.
+A comment cannot fail a type check, nothing prompts the delegate to re-read the sibling's files, and each delegate's own `pnpm check` passes. This is specific to
+*parallel* dispatch: a sequential delegation reads the landed state. `rules/comments.md` § Empirical claims does not cover it either — a delegate that checks the
+machine first still ships a false comment, because the falsification happens after the check.
+
+So when one change is split across concurrent delegations, sweep the delta's comments before review: for every comment asserting how something behaves, ask whether a
+sibling changed that behaviour. The highest-risk shape is a comment explaining *why* a defensive branch exists ("X can still be `""` because the write seam does Y")
+when the sibling's job was to change Y — the rationale inverts while the code stays correct, so a reviewer sees working code and reads past the comment. Do not expect
+the review loop to find these: `/quality-review` bars a comment-accuracy audit as a new re-review lens, so the class is caught only if the initial reviewer happens to
+look. In JA-320 (reviewer UI + data layer, dispatched in parallel over disjoint files) the data half falsified two of the UI half's comments — a new module's docblock
+documented a `?? null` write seam the sibling had already changed to a trimmed `|| null`, and another stated the change "didn't backfill existing rows" while the
+sibling was adding the backfill migration. Both passed `pnpm check` and reached an adversarial reviewer.
+
+## Prohibitions in a delegation prompt
+
+Two different things get written as "do NOT do X", and only one is safe as a blanket ban.
+
+A **scope** prohibition bounds what this dispatch may touch — `/quality-review`'s "do NOT extract a new shared abstraction to deduplicate them" is the canonical one.
+Those are legitimately categorical, and they are safe *because* they ship with a release valve: the fix-dispatch scope escape hatch, where a delegate that needs the
+excluded work stops and reports, and the orchestrator routes it. Keep writing them.
+
+A **correctness** prohibition — "X won't work here" — is different, and a blanket ban is how it fails. Name the specific SHAPE that fails and why, and say what a
+passing version looks like. A delegate cannot tell "this kind of X is useless here" from "no X", and will comply with the broader reading; when the right answer is a
+*different* X, the brief has foreclosed it and nothing surfaces that until review. The escape hatch does not rescue this — it fires when a fix needs MORE than the
+dispatch allows, and a delegate that can comply by doing *less* never trips it.
+
+The check before shipping such a line: **can you name what a passing version looks like?** If yes, name it. If no, do not prohibit at all — state the goal and let the
+delegate choose the shape.
+
+In JA-337 a planning critique correctly established that extracting a *label-formatting* helper (`x.a ?? x.b`) would be useless coverage — the defect was which object
+got passed, never the coalesce. The brief turned that into "**Do NOT** extract a label-formatting helper as the test seam." The delegate complied. Adversarial review
+then graded a HIGH — nothing bound the operator-visible label to the id actually sent, proven by mutation (a literal wrong id at the send call left all 4312 tests
+green) — and its fix was a helper returning *both* the id and the label from one row: an extraction, inside the banned category. The orchestrator had to reverse its
+own instruction in the fix dispatch. Stating the goal instead — "the label and the id actually sent must be provably the same row; a formatting-only helper does not
+achieve that" — bans the useless shape and leaves the working one reachable.
+
 ## Long-running commands in delegations
 
 If a delegated task includes a multi-minute command (Rust/C++ compile, installer build, dev-server smoke test), tell the agent explicitly to run it
@@ -74,6 +113,26 @@ A background agent's completion often surfaces as a bare idle notification — t
 - **Before** a notification arrives, the opposite applies: end the turn rather than filling it with no-op tool calls. Something always wakes the session — an unnamed one-shot dispatch returns its report in a completion notification (the omit-`name` bullet below), and a named agent that dies silently still produces the idle notification the bullet above is written for — so repeated status probes (re-running `git status`, re-grepping a log still being written) buy nothing and burn context while the agent works. The rule above is scoped to the *post*-notification case, where the push signal has already been spent; it is not licence to poll while work is still in flight. Narrating what you're waiting on in prose is free; a tool call that only says it is not. Under self-paced `/loop`, ending the turn still means re-arming whatever long fallback heartbeat the skill prescribes — the agent's task notification is the real wake signal, but polling is not a substitute for the timer either.
 - For small verification tasks, prefer synchronous delegation (`run_in_background: false`) — the report returns directly as the tool result, avoiding the loss window entirely. **The parameter is feature-flagged on `Agent`, so this is conditional**: where the tool does not expose it, every dispatch backgrounds no matter what you pass, and the bullet above — end the turn, let the completion notification wake you — is the normal path rather than the fallback. Key off the tool result (`Async agent launched successfully …` in place of the report), never the schema, which cannot discriminate: one harness context omits the parameter precisely *because* only synchronous subagents are supported, so absence means the opposite there. Passing it where the schema omits it is silently accepted despite `additionalProperties: false` and has no effect, but it does not corrupt the census: `scripts/fleet-metrics.py` censuses at result time, and a typed `false` alongside an `Async agent launched successfully` result lands in the **`ignored`** bucket — the per-dispatch signal that this session ran on a harness without `run_in_background`, surfaced in the report as `<n> ignored (run_in_background absent on harness)`. The one place typed intent is trusted is `_census_dispatch_typed`, the fallback for dispatches whose result cannot testify (errored or dangling), where `false` does count as sync — so an errored dispatch carrying the parameter is the only shape that misreports.
 - **Omit `name` for one-shot dispatches you need back this turn** (adversarial review, exploration, planning). Passing `name` makes the agent an addressable, resumable teammate — its termination can surface as a bare idle notification with no recoverable findings, and pinging an already-terminated named agent does not recover the content (the remedy above doesn't rescue this case). Reserve `name` exclusively for agents you deliberately intend to resume across multiple conversation turns; unnamed one-shot Agent calls reliably return findings via the standard background-task pattern (an `output_file` plus a completion notification).
+
+## A write-capable delegation that dies mid-task leaves an unknown tree
+
+A `developer`/`debugger` delegation can terminate early — API error (`Connection closed mid-response`), timeout, session limit — after making an arbitrary number of
+edits. Whatever partial output the harness recovers is narration, not a filesystem record: `/start` Step 8 already holds that "a delegate's success report is not
+evidence its writes landed in the right tree," and a dead delegate's report is weaker still.
+
+So establish the actual state before resuming or re-dispatching: `git status --porcelain` for what changed, and the project's check gate for whether it still builds.
+In `wt` mode also run Step 8 item 1's `wt-baseline.sh diff` — a delegate that died can have written into the main checkout exactly like one that finished. Then route
+on what you find:
+
+- **Nothing changed** → resume the same agent via `SendMessage`, addressed by the `agentId` from its spawn result (both `/start` and `/quality-review` mandate
+  *unnamed* dispatch, so there is no name to address). Its context is intact, and re-dispatching would re-buy the reading it already paid for.
+- **Partial work, gate green** → resume, or re-dispatch scoped to only what remains — telling the delegate explicitly what is already on disk.
+- **Partial work, gate red** → restore green first; within `/start`/`/quality-review` the Working Application Contract makes that non-negotiable.
+
+**Never re-dispatch the original prompt verbatim against a partially-edited tree.** It was composed for a clean one, so the delegate double-applies or conflicts with
+work already there — silently, since neither outcome errors. This is the trap in `/auto`'s "transient API error → retry" policy: retrying the iteration is right, but
+the retry has to start from the tree's real state, not the state the original dispatch assumed. `/start`'s idempotence covers the issue and the worktree, never a
+half-applied delegation's edits.
 
 ## `file:line` citations lifted from a subagent's report
 
