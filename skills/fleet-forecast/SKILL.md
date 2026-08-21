@@ -1,5 +1,5 @@
 ---
-name: Fleet Forecast
+name: fleet-forecast
 description: Estimate — explicitly not a plan — of what a fleet of parallel /loop /auto sessions would ship over a time horizon. Simulates the certified backlog draining across N sessions (blockers resolve and make way for their dependents), reporting the projected pick order as waves, roughly when the Planned/Todo stage burns down and Backlog picks begin, what a given horizon (e.g. 12h) cannot reach, and which candidates are stranded behind blockers the fleet can never ship. Read-only; nothing is launched or written. Use when the user says 'fleet forecast', 'forecast the fleet', 'what would a fleet run look like', 'what order would issues run', 'how many hours to burn the Planned issues', 'what would ship overnight/in 12 hours', or invokes /fleet-forecast.
 ---
 

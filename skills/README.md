@@ -365,7 +365,7 @@ Every `SKILL.md` must start with YAML frontmatter:
 
 ```yaml
 ---
-name: "Your Skill Name"
+name: your-skill-name
 description: "What the skill does and when it's invoked. Include trigger phrases users might say."
 version: "1.0.0"  # Optional: most workflow skills in this repo omit it
 allowed-tools: ["Bash", "Read", "Write"]  # Optional: restrict available tools
@@ -374,7 +374,7 @@ allowed-tools: ["Bash", "Read", "Write"]  # Optional: restrict available tools
 
 **Frontmatter Fields**:
 
-- `name` (required): Human-readable skill name (title case)
+- `name` (required): kebab-case, identical to the directory name — the harness surfaces this field as the skill's `/name` identity, so a title-case name registers as `/Fleet Forecast` among `/fleet-*` siblings
 - `description` (required): What + when the skill is used, including trigger phrases
 - `version` (optional): Semantic version (1.0.0); most workflow skills in this repo omit it
 - `allowed-tools` (optional): Whitelist of tools this skill can use
@@ -389,9 +389,7 @@ allowed-tools: ["Bash", "Read", "Write"]  # Optional: restrict available tools
 
 **Skill Names (in frontmatter)**:
 
-- Use title case: "Dependency Updater", "PR Title and Description Generator"
-- Can be more descriptive than directory name
-- Should match the workflow purpose
+- Identical to the directory name, kebab-case — every skill in this directory does this, and the frontmatter `name` is what the harness registers as the invocation/display identity
 
 ### Description Best Practices
 
