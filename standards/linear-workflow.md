@@ -36,16 +36,19 @@ Short inline values can be passed directly: `linear-cli issues create "Bug" --te
 
 ## Terminal States for Dependency Resolution
 
-When evaluating whether an issue's blockers are resolved (for triage, dependency analysis, next-issue suggestions, or any workflow that checks "is this issue unblocked?"), treat both of these states as **completed**:
+When evaluating whether an issue's blockers are resolved (for triage, dependency analysis, next-issue suggestions, or any workflow that checks "is this issue unblocked?"), treat all of these states as **completed**:
 
 - **Done** — Fully released
 - **Ready For Release** — Implementation complete, code reviewed, PR ready to merge (merge triggers automated deployment)
+- **In Review** — Implementation complete, awaiting human review (keeper ruling 2026-08-21)
 
-**Ready For Release** means the work is finished from an implementation perspective. Downstream issues that depend on it can begin — they are unblocked. The remaining step is PR merge, which triggers automated deployment — an operational concern, not an implementation dependency.
+**Ready For Release** and **In Review** mean the work is finished from an implementation perspective. Downstream issues that depend on it can begin — they are unblocked. The remaining steps (review, PR merge, automated deployment) are operational concerns, not implementation dependencies. A review kick-back moves the issue out of In Review, which reinstates its blocks automatically.
+
+**In Review must be matched by NAME, not state type.** Linear registers every team's In Review state as type `started`, and the API cannot change a state's type after creation (`WorkflowStateUpdateInput` carries only name/color/description/position — verified by introspection 2026-08-21), so a type-based terminal filter reads In Review as in-flight and silently holds its dependents out of every ranking.
 
 ## Implication for Skills
 
-Any skill that checks whether blockers are resolved (triage, next) should treat "Ready For Release" identically to "Done" when determining if an issue is workable.
+Any skill that checks whether blockers are resolved (triage, next) should treat "Ready For Release" and "In Review" identically to "Done" when determining if an issue is workable.
 
 ## Assignment Is a Claim
 

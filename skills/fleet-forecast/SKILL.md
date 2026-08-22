@@ -41,7 +41,9 @@ same gate rules as `fleet-blockers.sh` (certified + workable state, unclaimed, n
 `human`/`needs decision`/`solo`/`stalled`, not Triage), then greedily drains the graph: each free
 session picks the top-ranked available candidate (stage-first — Backlog only when nothing Planned/Todo
 is available; Urgent does not pierce stage), ships it after its estimated duration, and resolves its
-`blocks` edges. Clean in-flight blockers are assumed to finish within one mean issue duration.
+`blocks` edges. Clean in-flight blockers (In Progress) are assumed to finish within one mean issue
+duration; `In Review` is completed-in-substance (`standards/linear-workflow.md` § Terminal States) —
+its blocks are already resolved and its dependents are available at t=0.
 
 ### Step 3: Cross-check the first wave
 

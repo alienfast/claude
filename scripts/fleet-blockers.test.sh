@@ -70,7 +70,9 @@ cat > "$FIX/issues-page.json" <<'EOF'
  {"identifier":"TT-61","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"}]},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-60"}}]}},
  {"identifier":"TT-80","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[]},"assignee":{"email":"other@test"},"relations":{"nodes":[]}},
  {"identifier":"TT-81","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[]},"assignee":{"email":"keeper@test"},"relations":{"nodes":[]}},
- {"identifier":"TT-82","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"}]},"assignee":{"email":"other@test"},"relations":{"nodes":[]}}
+ {"identifier":"TT-82","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"}]},"assignee":{"email":"other@test"},"relations":{"nodes":[]}},
+ {"identifier":"TT-90","state":{"name":"In Review","type":"started"},"labels":{"nodes":[{"name":"specified"}]},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-91"}}]}},
+ {"identifier":"TT-91","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"}]},"relations":{"nodes":[]}}
 ],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
 EOF
 
@@ -94,7 +96,11 @@ HOME="$WORK/home" PATH="$WORK/bin:$PATH" "$SCRIPT" --team TT > "$OUT" 2>"$OUT.er
 # ---- FOCUS section: the release-scope audit is the primary output and leads ----
 # TT-54 (blocked only by clean-Backlog TT-55) counts as attention, not draining: the promotion
 # is required release scope (keeper ruling 2026-08-13), so its dependent waits on the batch.
-ck "focus summary leads" "FOCUS: 27 unstarted — 1 fleet-workable · 22 need keeper action · 4 draining on their own" "$(head -1 "$OUT")"
+ck "focus summary leads" "FOCUS: 28 unstarted — 2 fleet-workable · 22 need keeper action · 4 draining on their own" "$(head -1 "$OUT")"
+# TT-91's only blocker is In Review TT-90 — completed-in-substance, so the edge never exists:
+# TT-91 counts fleet-workable (not draining) and neither issue appears in any row.
+ck "in-review blocker resolved by construction" "0" "$(grep -c 'TT-90' "$OUT")"
+ck "in-review-blocked issue emits no rows" "0" "$(grep -c 'TT-91' "$OUT")"
 ck_has "gated planned is a keeper action"      "FOCUS-ACTION: TT-21 [Planned] — needs decision (decide and clear the label)" "$OUT"
 ck_has "uncertified planned is a keeper action" "FOCUS-ACTION: TT-31 [Planned] — uncertified (/spec to certify)" "$OUT"
 ck_has "hidden dependent surfaces in focus"    "FOCUS-ACTION: TT-40 [Planned] — needs decision (decide and clear the label)" "$OUT"

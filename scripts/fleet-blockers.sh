@@ -125,6 +125,10 @@ printf '%s' "$all" | jq -r --arg me "${me_email:-}" '
                            labels: [((.labels.nodes // [])[].name) | ascii_downcase]}} ]
      | from_entries) as $m
   | ([ $nodes[]
+       # "In Review" is completed-in-substance (keeper ruling 2026-08-21): its outgoing blocks are
+       # resolved like the terminal states the fetch filter drops. Matched by NAME — Linear has the
+       # state registered as type `started`, and state types cannot be changed after creation.
+       | select(((.state.name // "") | ascii_downcase) != "in review")
        | .identifier as $blocker
        | (.relations.nodes // [])[]
        | select(.type == "blocks" and .relatedIssue != null)

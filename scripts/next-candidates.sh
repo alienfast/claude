@@ -301,7 +301,11 @@ me_email=$(linear-cli api query -q -o json 'query{viewer{email}}' 2>/dev/null | 
 # State sets — keep terminal states defensive across teams. Terminal matching is
 # case-insensitive: workspaces vary the casing (BF's state is "Ready for Release"),
 # and an exact match silently treats a shipped blocker as unresolved forever.
-TERMINAL_STATES='["Done","Canceled","Cancelled","Duplicate","Ready For Release"]'
+# "In Review" is terminal by keeper ruling (2026-08-21): the work is done and awaiting human
+# review, so it resolves blocks — a kick-back moves the issue out of the state, reinstating them.
+# It sits here by NAME because Linear registers the state as type `started` and a state's type
+# cannot be changed after creation (WorkflowStateUpdateInput carries no `type` field).
+TERMINAL_STATES='["Done","Canceled","Cancelled","Duplicate","Ready For Release","In Review"]'
 # Triage (Linear's `type: "triage"` state) is deliberately NOT workable: it's the unreviewed-inbox
 # bucket, so an issue there hasn't been accepted for work yet and must never be surfaced as "next".
 # (Parent epics can still be in Triage — the parent-weight scale below keeps handling that; this

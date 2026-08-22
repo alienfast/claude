@@ -211,7 +211,7 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 
 **Key Features**:
 
-- Greedy list-scheduling simulation: each free session picks the top-ranked available candidate (stage-first — Backlog only when nothing Planned/Todo is available), ships it after its estimated duration, and resolves its `blocks` edges; clean in-flight blockers are assumed to finish within one mean issue duration
+- Greedy list-scheduling simulation: each free session picks the top-ranked available candidate (stage-first — Backlog only when nothing Planned/Todo is available), ships it after its estimated duration, and resolves its `blocks` edges; clean In Progress blockers are assumed to finish within one mean issue duration, and In Review blockers are already resolved (completed-in-substance, per `standards/linear-workflow.md` § Terminal States)
 - `STAGE` line answers "hours to burn Planned/Todo and when Backlog picks begin"; `POOL-DRAINED` shows certified runway shorter than the horizon; `STRANDED`/`UNREACHED` separate keeper-action gaps from capacity/horizon gaps
 - Hours-per-issue calibrated from `tmp/fleet-metrics-history.jsonl` (recent fleets' session-hours ÷ shipped), estimate-point weighted; sessions/horizon default from `tmp/fleet-recommendation.json`
 - Eligibility mirrors `fleet-blockers.sh` gate rules; wave-1 picks are cross-checked against `next-candidates.sh`, which stays the pick-time authority — divergence is narrated, never edited away

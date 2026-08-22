@@ -307,6 +307,13 @@ def main():
     issues = {}
     for node in nodes:
         i = Issue(node, me)
+        # "In Review" is completed-in-substance (keeper ruling 2026-08-21): work done, awaiting human
+        # review — dropped here like the terminal states the fetch filter excludes, so its outgoing
+        # blocks resolve by construction and dependents are available at t=0. Matched by name because
+        # Linear registers the state as type `started` and a state's type cannot be changed after
+        # creation; a kick-back moves the issue out of the state, reinstating its blocks.
+        if i.sname.strip().lower() == "in review":
+            continue
         issues[i.id] = i
     for node in nodes:
         for r in ((node.get("relations") or {}).get("nodes") or []):

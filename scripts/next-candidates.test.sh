@@ -51,6 +51,9 @@ mkdir -p "$FIX" "$WORK/bin" "$WORK/home"
 #                                     --include-claimed
 #   TT-17 Backlog Low, assigned to VIEWER (t@t.test) -> tier 1, FIRST in every default list —
 #                                     pins that the claim gate never hides your own issues
+#   TT-18 Planned None, IN REVIEW blocker -> after TT-7 (blocker resolved: "In Review" is terminal
+#                                     by name — completed-in-substance, keeper ruling 2026-08-21)
+#   TT-19 In Review                   -> blocker only, never a candidate
 cat > "$FIX/issues-page.json" <<'EOF'
 {"data":{"issues":{"nodes":[
  {"identifier":"TT-1","title":"urgent backlog","estimate":null,"priority":1,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[]},"parent":null},
@@ -69,15 +72,19 @@ cat > "$FIX/issues-page.json" <<'EOF'
  {"identifier":"TT-14","title":"triage urgent inbox","estimate":null,"priority":1,"state":{"name":"Triage","type":"triage"},"assignee":null,"labels":{"nodes":[]},"parent":null},
  {"identifier":"TT-15","title":"triage security inbox","estimate":null,"priority":3,"state":{"name":"Triage","type":"triage"},"assignee":null,"labels":{"nodes":[{"name":"security"}]},"parent":null},
  {"identifier":"TT-16","title":"claimed by another person","estimate":null,"priority":4,"state":{"name":"Planned","type":"unstarted"},"assignee":{"email":"blake@t.test"},"labels":{"nodes":[]},"parent":null},
- {"identifier":"TT-17","title":"mine already","estimate":null,"priority":4,"state":{"name":"Backlog","type":"backlog"},"assignee":{"email":"t@t.test"},"labels":{"nodes":[]},"parent":null}
+ {"identifier":"TT-17","title":"mine already","estimate":null,"priority":4,"state":{"name":"Backlog","type":"backlog"},"assignee":{"email":"t@t.test"},"labels":{"nodes":[]},"parent":null},
+ {"identifier":"TT-18","title":"planned review-blocked","estimate":null,"priority":0,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[]},"parent":null},
+ {"identifier":"TT-19","title":"review blocker","estimate":null,"priority":0,"state":{"name":"In Review","type":"started"},"assignee":null,"labels":{"nodes":[]},"parent":null}
 ],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
 EOF
 
-# Deps page (linear-deps-graph.sh --team shape): TT-8 blocks TT-7, TT-10 blocks TT-9.
+# Deps page (linear-deps-graph.sh --team shape): TT-8 blocks TT-7, TT-10 blocks TT-9,
+# TT-19 (In Review — terminal by name, keeper ruling 2026-08-21) blocks TT-18.
 cat > "$FIX/deps-page.json" <<'EOF'
 {"data":{"issues":{"nodes":[
  {"identifier":"TT-8","title":"shipped blocker","state":{"name":"Ready for Release","type":"completed"},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-7"}}]}},
- {"identifier":"TT-10","title":"open blocker","state":{"name":"In Progress","type":"started"},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-9"}}]}}
+ {"identifier":"TT-10","title":"open blocker","state":{"name":"In Progress","type":"started"},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-9"}}]}},
+ {"identifier":"TT-19","title":"review blocker","state":{"name":"In Review","type":"started"},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-18"}}]}}
 ],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
 EOF
 
@@ -108,8 +115,10 @@ order_of() { grep -E '^[0-9]+\. ' "$1" | grep -oE 'TT-[0-9]+' | tr '\n' ' ' | se
 OUT="$WORK/out.md"
 run "$OUT" --limit 20 || { echo "FAIL: default run exited $?"; cat "$OUT.err"; exit 1; }
 
-ck "stage-first order" "TT-17 TT-3 TT-2 TT-4 TT-5 TT-7 TT-1 TT-6" "$(order_of "$OUT")"
+ck "stage-first order" "TT-17 TT-3 TT-2 TT-4 TT-5 TT-7 TT-18 TT-1 TT-6" "$(order_of "$OUT")"
 ck_has  "rfr blocker resolved"  "TT-7" "$OUT"
+ck_has  "in-review blocker resolved" "TT-18" "$OUT"
+ck_lacks "in-review blocker not candidate" "TT-19" "$OUT"
 ck_lacks "open blocker hidden"  "TT-9" "$OUT"
 ck_lacks "blocker not candidate" "TT-8" "$OUT"
 ck_has  "needs-decision note"   '1 issue(s) hidden awaiting a human decision (`needs decision` label; top: TT-11)' "$OUT"
@@ -123,7 +132,7 @@ ck_lacks "human hidden"         "TT-13" "$OUT"
 # ---- --include-blocked: TT-9 restored (Low outranks TT-7's None), everything else unchanged ----
 OUT2="$WORK/out2.md"
 run "$OUT2" --limit 20 --include-blocked || { echo "FAIL: include-blocked run exited $?"; cat "$OUT2.err"; exit 1; }
-ck "blocked order" "TT-17 TT-3 TT-2 TT-4 TT-5 TT-9 TT-7 TT-1 TT-6" "$(order_of "$OUT2")"
+ck "blocked order" "TT-17 TT-3 TT-2 TT-4 TT-5 TT-9 TT-7 TT-18 TT-1 TT-6" "$(order_of "$OUT2")"
 
 # ---- label filter: only the security-labeled issues, stage-first within the filter ----
 OUT3="$WORK/out3.md"
@@ -136,7 +145,7 @@ ck "label filter order" "TT-2 TT-6" "$(order_of "$OUT3")"
 ck_lacks "triage absent by default" "TT-14" "$OUT"
 OUT5="$WORK/out5.md"
 run "$OUT5" --limit 20 --include-triage || { echo "FAIL: include-triage run exited $?"; cat "$OUT5.err"; exit 1; }
-ck "triage ranks last" "TT-17 TT-3 TT-2 TT-4 TT-5 TT-7 TT-1 TT-6 TT-14 TT-15" "$(order_of "$OUT5")"
+ck "triage ranks last" "TT-17 TT-3 TT-2 TT-4 TT-5 TT-7 TT-18 TT-1 TT-6 TT-14 TT-15" "$(order_of "$OUT5")"
 
 # ---- assignment is a claim: a foreign assignee hides the issue from every ranking (with the
 # ---- note), --include-claimed restores it, and the viewer's own claim is never hidden ----
@@ -144,7 +153,7 @@ ck_lacks "foreign-claimed hidden" "TT-16" "$OUT"
 ck_has  "claimed note"  "1 issue(s) hidden as claimed by a person" "$OUT"
 OUT6="$WORK/out6.md"
 run "$OUT6" --limit 20 --include-claimed || { echo "FAIL: include-claimed run exited $?"; cat "$OUT6.err"; exit 1; }
-ck "claimed restored in place" "TT-17 TT-3 TT-2 TT-4 TT-5 TT-16 TT-7 TT-1 TT-6" "$(order_of "$OUT6")"
+ck "claimed restored in place" "TT-17 TT-3 TT-2 TT-4 TT-5 TT-16 TT-7 TT-18 TT-1 TT-6" "$(order_of "$OUT6")"
 ck_lacks "no claimed note when included" "hidden as claimed" "$OUT6"
 
 # ---- the limit cut never hides Planned/Todo: --limit 1 keeps a one-item top list but
@@ -152,9 +161,9 @@ ck_lacks "no claimed note when included" "hidden as claimed" "$OUT6"
 # ---- while the Backlog tail stays cut ----
 OUT4="$WORK/out4.md"
 run "$OUT4" --limit 1 || { echo "FAIL: limit-floor run exited $?"; cat "$OUT4.err"; exit 1; }
-ck "planned never hidden"   "TT-17 TT-3 TT-2 TT-4 TT-5 TT-7" "$(order_of "$OUT4")"
+ck "planned never hidden"   "TT-17 TT-3 TT-2 TT-4 TT-5 TT-7 TT-18" "$(order_of "$OUT4")"
 ck_has  "planned-below section" "### Planned/Todo below the cut — always surfaced" "$OUT4"
-ck_has  "remaining note"        "7 more workable candidate(s) available" "$OUT4"
+ck_has  "remaining note"        "8 more workable candidate(s) available" "$OUT4"
 
 echo
 echo "$PASS passed / $FAIL failed"

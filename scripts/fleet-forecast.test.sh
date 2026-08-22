@@ -149,6 +149,19 @@ python3 "$SCRIPT" --fixture "$WORK/b.json" --me me@x.com \
 ck "I no-count exit" 1 "$?"
 ck_has "I no-count error" "no --sessions and no usable tmp/fleet-recommendation.json" "$WORK/i.err"
 
+# ---- An In Review blocker is completed-in-substance: dependent free at t=0, no in-flight modeling ----
+cat > "$WORK/k.json" <<'EOF'
+[
+ {"identifier":"TT-95","state":{"name":"In Review","type":"started"},"labels":{"nodes":[{"name":"specified"}]},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-96"}}]}},
+ {"identifier":"TT-96","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"}]},"relations":{"nodes":[]}}
+]
+EOF
+rc=$(run "$WORK/k.json" "$WORK/k.out" --sessions 1 --horizon-h 12 --hours-per-issue 2 --flat)
+ck "K exit" 0 "$rc"
+ck_has "K dependent free at t=0" "PICK t=0.0h: TT-96 → s1 (~2.0h)" "$WORK/k.out"
+ck_lacks "K no inflight modeling" "INFLIGHT" "$WORK/k.out"
+ck_lacks "K in-review blocker absent" "TT-95" "$WORK/k.out"
+
 # ---- Empty pool is distinguishable from a broken run ----
 cat > "$WORK/j.json" <<'EOF'
 [
