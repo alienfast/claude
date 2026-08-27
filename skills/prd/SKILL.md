@@ -34,7 +34,7 @@ Use this skill when:
    Each sub-issue body is itself a spec (same template) and should:
    - Be completable in one focused session (<150k tokens of context)
    - Have clear success criteria stated as observable outcomes
-   - Define boundaries (what's in/out of scope)
+   - Define boundaries (what's in/out of scope — deliverable exclusions, not mechanism guesses; a mechanism-exclusion only records containment the human in this conversation chose, marked `(decided: <who/why>)` — standards/issue-spec.md § Out of Scope bounds the deliverable, never the evidence)
    - **Be executable by exactly one kind of worker**: an unattended agent (a repo-shaped deliverable whose success criteria the project's quality gates can verify) or a human (outreach, ops, confirmation passes — labeled `human` at Step 5). Never bundle both: BF-856 fused a fully-specified registry schema to a confirmation pass the source plan itself called "human-in-the-loop work, not a script", so `/auto` declined the whole issue and the shippable slice sat idle. When a flow needs both, split at the handoff and wire the `blocks` edge across it (build → confirm, confirm → enforce).
    - **Depend on no unstated mapping or unenumerated scope**: "the appropriate owner" and "everywhere transactions name an organization" are decisions wearing requirement clothes (BF-857, BF-856 — both declined for exactly this) — enumerate or decide them in this conversation, before the issue exists; criteria that assert production state no test suite can verify belong on a `human` issue, not an agent one.
 

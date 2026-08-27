@@ -558,6 +558,12 @@ mkdir -p tmp
 #    with its concrete scenario/evidence), ## Desired Outcome, ## Success Criteria
 #    (checkboxes) — which is what licenses the `specified` label below under that
 #    standard's trusted-pipeline carve-out.
+#    A ## Boundaries section is optional in this shape; when included and the root
+#    cause is undiagnosed, exclude deliverables (separate-ticket work), never
+#    mechanisms. Write `(decided: <who/why>)` only when relaying a human's recorded
+#    call — never the review's own judgment — and do not author `(assumed)`:
+#    unmarked text already reads as a falsifiable hypothesis, per standards/issue-spec.md
+#    § Out of Scope bounds the deliverable, never the evidence.
 #    Exception — a severity-carrying item whose remedy turns on an unresolved product or
 #    design question: file it WITHOUT `specified`. Its Success Criteria would read "decide
 #    X", which standards/issue-spec.md's quality bar forbids certifying — that standard's
@@ -575,6 +581,11 @@ mkdir -p tmp
 #    fleet-pickable, so an /auto session ranks and claims it and pays /start Step 0's worktree
 #    create + `pnpm install` before the reason surfaces, then durably declines and applies
 #    `needs decision` itself (skills/auto/SKILL.md), after which no session re-picks it.
+#    A human-shaped route-out filing — per standards/issue-spec.md
+#    § Out of Scope bounds the deliverable, never the evidence — uses the same
+#    after-create attach route (`linear-add-label.sh <new-id> human`) but keeps
+#    `specified` when the body meets the bar: `human` records the executor, not
+#    spec quality.
 body_file=$(mktemp -u tmp/deferred-XXXXXX)   # -u = name only; Write creates it. Plain mktemp pre-creates and Write then refuses.
 # ...write body to "$body_file" via the Write tool...
 
