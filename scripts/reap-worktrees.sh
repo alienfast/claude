@@ -452,6 +452,51 @@ sweep_signal_victim() {
   fi
 }
 
+# True (exit 0) iff the stack-slot registry names at least one owner directory that no longer exists --
+# a genuine orphan to reclaim, as opposed to slots that are all still owned. Registry entries live at
+# $HOME/.basefund/stack-slots/<N>.slot with an `owner=<path>` line (tools/stack-slot's own layout); this
+# reads it directly rather than shelling out, since the check must stay cheap and side-effect-free.
+_stack_slot_has_dead_owner() {
+  local reg_dir="$HOME/.basefund/stack-slots" f owner
+  [ -d "$reg_dir" ] || return 1
+  for f in "$reg_dir"/*.slot; do
+    [ -e "$f" ] || continue
+    owner=$(sed -n 's/^owner=//p' "$f" 2>/dev/null | head -n1) || true
+    [ -n "$owner" ] || continue
+    [ -d "$owner" ] || return 0
+  done
+  return 1
+}
+
+# Reclaim a removed worktree's docker stack. Every teardown path in this script is git-only, so removing a
+# worktree leaves its stack slot's containers running while the slot's registry entry is lazily reclaimed --
+# after which another checkout can allocate that slot and collide with the still-live containers (and a
+# reallocated slot's db_setup then DROPs the databases the survivor is using). The project's own
+# `tools/stack-slot reap` already tears down exactly that population and skips anything still listening;
+# nothing invoked it automatically, which is the whole of the gap. Delegate rather than reimplement, so the
+# docker knowledge stays in the repo that owns it and this script stays project-agnostic.
+#
+# `stack-slot reap` was designed for interactive, on-demand use; this calls it from an hourly unattended
+# job instead, which changes what its pass 2 (unregistered bf-s* stacks with nothing listening) can hit --
+# a db-only stack never has a listener, so an unregistered one in that shape reads as abandoned. Narrowing
+# the trigger to a registry entry with a confirmed-dead owner keeps that invocation aimed at a genuine
+# orphan; it does not close the residual: an unregistered db-only stack in the same window is invisible to
+# both this check and to `reap`'s own registry scan.
+sweep_orphan_stacks() {
+  local repo="$1" mode="$2" slot_tool="$repo/tools/stack-slot"
+  [ -x "$slot_tool" ] || return 0   # repo has no stack-slot registry -- nothing to sweep
+  if [ "$mode" = list ]; then
+    echo "  (stack sweep available: run '$slot_tool reap')"
+    return 0
+  fi
+  _stack_slot_has_dead_owner || return 0
+  have docker || { err "  (docker not found -- stack sweep skipped)"; return 0; }
+  # An unreachable daemon must skip rather than run: `stack-slot reap` reads docker to decide what is
+  # abandoned, and a daemon that answers nothing would make every stack look already-gone.
+  docker info >/dev/null 2>&1 || { err "  (docker daemon unavailable -- stack sweep skipped)"; return 0; }
+  "$slot_tool" reap 2>&1 | sed 's/^/  /' || err "  (stack sweep failed -- skipped)"
+}
+
 sweep_orphan_processes() {
   local repo="$1" mode="$2" phys prefix pid cwd rest name entry victims=() ancestry lsof_out lsof_rc line
   have lsof || { err "  (lsof not found — orphan process sweep skipped)"; return 0; }
@@ -539,6 +584,7 @@ cmd_reap_one() {
     echo "  (no worktrees directory)"
   fi
   sweep_orphan_processes "$repo" reap
+  sweep_orphan_stacks "$repo" reap
 }
 
 # Resolve the repo set: an explicit arg, else the deduped union of both registries. Missing dirs are
@@ -603,6 +649,7 @@ cmd_list() {
       echo "  (no worktrees directory)"
     fi
     sweep_orphan_processes "$repo" list
+    sweep_orphan_stacks "$repo" list
   done
 }
 
