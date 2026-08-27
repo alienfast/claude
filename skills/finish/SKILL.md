@@ -264,10 +264,20 @@ In all other cases (no worktree, or `ACTION == "merge"`), gate the transition on
 
 - A branch that completed `linear-cli issues update --state "Ready For Release"` AND `ACTION` from Step 0 is empty (standard flow, no Step 9 to follow) → emit `RELEASED: <ISSUE-ID> — <one-line summary>` as the last LLM-authored line.
 - A branch that passed the verdict gate AND `ACTION == "merge"` → do NOT change Linear state and do NOT emit a tag here (per "Who performs the transition" above, merge mode defers the state update). Step 9 owns BOTH the Ready-For-Release transition (after the merge lands) and the terminal line (`SHIPPED-MERGE:` on a completed merge, or `DEFERRED-MERGE:` when `finish-merge.sh` exits 3 and the merge is queued — the issue stays In Progress until it lands). (`ACTION == "pr"` never reaches a state update — Step 8 is skipped for it — so it isn't in these bullets; Step 9 owns `SHIPPED-PR:`. Discriminate on `ACTION`, not `SOURCE_BRANCH`: a non-worktree `pr` has an empty `SOURCE_BRANCH` yet still flows to Step 9.)
-- A branch that exited via the user picking `abort` or `re-run` at the gate prompt → emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — <one-line reason>` as the last LLM-authored line. State was NOT changed.
+- A branch that exited via the user picking `abort` at the gate prompt → emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — <one-line reason>` as the last LLM-authored line. State was NOT changed. (`re-run` never exits — it dispatches and resumes; see the block below.)
 - **A branch where `linear-cli issues update` itself failed** (API error, auth dropped mid-session, team's terminal state name differs from `Ready For Release`) → see the **State-update failure** section below for the recovery + terminator rule. **This bullet supersedes bullets 1 and 2 whenever the state update doesn't succeed** — never emit `RELEASED:` on a failed update.
 
 The per-branch instructions below indicate which terminator each branch uses; trust the contract above for the literal tag wording.
+
+**`re-run` dispatches the review — it is never a stop (applies to every gate prompt below).** Each prompt offers `re-run` as "invoke `/quality-review`", and the reply means exactly that: the user asked this session to run the review, not to be told to run it themselves (measured 2026-08-27: a session answered the none-found prompt's recommended "Run /quality-review first" and got a stop instructing it to run the review by hand). On `re-run`:
+
+1. Invoke `/quality-review <ISSUE-ID>` via the Skill tool and let it run to completion.
+2. Resume at Step 1.5 — run `finish-read-verdict.sh` again and carry the fresh `VERDICT`/`VERDICT_STALE`/`SUB_ISSUES` forward. Do NOT repeat Steps 2–5: the description update and completion comment already posted.
+3. Re-run Steps 6–7 — the review's fix loop may have left uncommitted edits (`/quality-review` holds no commit grant), and `finish-commit.sh` no-ops when the tree is already synced. The same `--no-push` gate applies. Reading the verdict before committing the fix delta mirrors the normal Step 1.5 → Step 7 ordering, so the carried `VERDICT_STALE=0` stays honest.
+4. Post a short comment with the fresh verdict via `~/.claude/scripts/linear-post.sh` (reuse Step 4's Adversarial-review section shape) — the completion comment posted before this review ran, so its verdict line is stale, or omitted entirely on the `none-found` path.
+5. Re-enter this gate on the fresh values. A `re-run` reply has no terminator of its own — the resumed gate (or Step 9) ends the flow, and a still-non-passing fresh verdict simply prompts again.
+
+Auto mode never reaches this block — every refuse-with-override branch resolves to `abort` unattended (above).
 
 **State-update failure recovery (applies to every branch that attempts `linear-cli issues update --state "Ready For Release"`).** If the call exits non-zero:
 
@@ -295,7 +305,7 @@ The per-branch instructions below indicate which terminator each branch uses; tr
     > Mark `Ready For Release` anyway? Reply `yes` to override (the prior verdict was passing and you've verified the new commits don't introduce findings), `re-run` to invoke `/quality-review` and produce a fresh verdict for current HEAD, or `abort` to stop here.
 
     On `yes`: proceed with the state update AND post an override comment: `Override: marked Ready For Release on stale verdict <VERDICT> (additional commits since /quality-review ran). User-acknowledged.` **Terminator:** `RELEASED:` (non-worktree) or none (worktree).
-    On `re-run`: stop with `Re-run /quality-review <ISSUE-ID> to produce a fresh verdict for current HEAD, then retry /finish.` **Terminator:** `BLOCKED-ON-REVIEW: <ISSUE-ID> — stale verdict, user opted to re-run /quality-review against current HEAD before /finish.`
+    On `re-run`: dispatch `/quality-review <ISSUE-ID>` and resume per **`re-run` dispatches the review** above. No terminator — the resumed gate ends the flow.
     On `abort`: stop with no state change. **Terminator:** `BLOCKED-ON-REVIEW: <ISSUE-ID> — stale verdict, user aborted at /finish gate. No state change.`
 
 - **`terminated-with-open-items` / `escalated-to-architect`** — **refuse by default.** The implementation has known unresolved findings per `/quality-review`. Before composing the prompt, `Read` the file at `VERDICT_FILE` and extract the `Open items:` line (and any continuation lines, if `Open items:` is followed by an indented bullet list). Substitute that text into the prompt below — never emit the literal placeholder `<open items list from VERDICT_FILE>`. **If `VERDICT_STALE=1`, prepend a staleness note to the prompt** so the user knows the open-items list may not reflect current code (recent commits may have resolved some). Then prompt the user (single message, wait for reply):
@@ -309,7 +319,7 @@ The per-branch instructions below indicate which terminator each branch uses; tr
   > Mark `Ready For Release` anyway? Reply `yes` to override, `re-run` to invoke `/quality-review` and try to converge, or `abort` to stop here.
 
   On `yes`: proceed with the state update AND post an additional Linear comment recording the override — body: `Override: marked Ready For Release despite verdict <VERDICT>. Open items at override time: <list>. User-acknowledged.` (If `VERDICT_STALE=1`, append: ` Verdict was stale; user explicitly accepted the risk of overriding without a fresh /quality-review.`) Use `~/.claude/scripts/linear-post.sh` to post. **Terminator:** `RELEASED:` (non-worktree) or none (worktree).
-  On `re-run`: stop `/finish` with the message `Re-run /quality-review <ISSUE-ID> to address open items, then retry /finish.` Do not change state. **Terminator:** `BLOCKED-ON-REVIEW: <ISSUE-ID> — verdict <VERDICT>, user opted to re-run /quality-review before /finish.`
+  On `re-run`: dispatch `/quality-review <ISSUE-ID>` and resume per **`re-run` dispatches the review** above. Do not change state now. No terminator — the resumed gate ends the flow.
   On `abort`: stop with no state change and no further output. **Terminator:** `BLOCKED-ON-REVIEW: <ISSUE-ID> — verdict <VERDICT>, user aborted at /finish gate. No state change.`
 
 - **`malformed`** — verdict file exists at `VERDICT_FILE` but cannot be parsed (no `Verdict:` line, or value is the pipe-separated schema example, or value is not one of the four recognized enums). **Refuse with the same prompt as the non-passing path above**, but with this preamble instead of the open-items list:
@@ -318,7 +328,7 @@ The per-branch instructions below indicate which terminator each branch uses; tr
   >
   > Mark `Ready For Release` anyway? Reply `yes` to override (consider inspecting the file first), `re-run` to invoke `/quality-review` and produce a fresh artifact, or `abort` to stop here.
 
-  Same response handling as the non-passing path: `yes` posts an override comment (body: `Override: marked Ready For Release despite malformed /quality-review verdict file. User-acknowledged.` — do NOT include `VERDICT_FILE`'s absolute path in the comment body, since Linear comments are not necessarily private and the path leaks the user's home directory and project layout); `re-run` stops with the re-run suggestion; `abort` stops. **Terminators:** `yes` → `RELEASED:` (non-worktree) or none (worktree); `re-run` → `BLOCKED-ON-REVIEW: <ISSUE-ID> — malformed verdict, user opted to re-run /quality-review.`; `abort` → `BLOCKED-ON-REVIEW: <ISSUE-ID> — malformed verdict, user aborted at /finish gate. No state change.`
+  Same response handling as the non-passing path: `yes` posts an override comment (body: `Override: marked Ready For Release despite malformed /quality-review verdict file. User-acknowledged.` — do NOT include `VERDICT_FILE`'s absolute path in the comment body, since Linear comments are not necessarily private and the path leaks the user's home directory and project layout); `re-run` dispatches and resumes per the shared block; `abort` stops. **Terminators:** `yes` → `RELEASED:` (non-worktree) or none (worktree); `re-run` → none (the resumed gate ends the flow); `abort` → `BLOCKED-ON-REVIEW: <ISSUE-ID> — malformed verdict, user aborted at /finish gate. No state change.`
 
 - **`none-found`** — no verdict file located: `/quality-review` never ran for this issue (or ran from a different repo). **Refuse with the same prompt as the non-passing path above**, but with this preamble instead of the open-items list:
 
@@ -326,7 +336,7 @@ The per-branch instructions below indicate which terminator each branch uses; tr
   >
   > Mark `Ready For Release` anyway? Reply `yes` to override and ship unreviewed, `re-run` to invoke `/quality-review` and produce a verdict, or `abort` to stop here.
 
-  Same response handling as the non-passing path: `yes` posts an override comment (body: `Override: marked Ready For Release with no /quality-review artifact — shipped unreviewed. User-acknowledged.`); `re-run` stops with the re-run suggestion; `abort` stops. An issue finished before this gate existed is the legitimate `yes` case. **Terminators:** `yes` → `RELEASED:` (non-worktree) or none (worktree); `re-run` → `BLOCKED-ON-REVIEW: <ISSUE-ID> — no /quality-review artifact, user opted to run /quality-review before /finish.`; `abort` → `BLOCKED-ON-REVIEW: <ISSUE-ID> — no /quality-review artifact, user aborted at /finish gate. No state change.`
+  Same response handling as the non-passing path: `yes` posts an override comment (body: `Override: marked Ready For Release with no /quality-review artifact — shipped unreviewed. User-acknowledged.`); `re-run` dispatches and resumes per the shared block; `abort` stops. An issue finished before this gate existed is the legitimate `yes` case. **Terminators:** `yes` → `RELEASED:` (non-worktree) or none (worktree); `re-run` → none (the resumed gate ends the flow); `abort` → `BLOCKED-ON-REVIEW: <ISSUE-ID> — no /quality-review artifact, user aborted at /finish gate. No state change.`
 
 - **Any other value** (defense in depth — shouldn't happen since the script normalizes everything else to `malformed`) → treat as `malformed`. Do NOT proceed silently. **Terminators:** same as `malformed`.
 
