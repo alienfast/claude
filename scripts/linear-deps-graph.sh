@@ -51,10 +51,12 @@ if [ "$mode" = "team" ]; then
   all_nodes='[]'
   after=''
   while :; do
+    # `|| true` on each capture: under set -e a failing linear-cli would exit on the assignment itself, before the
+    # guard below can name the failure — measured 2026-08-28 as exit 1 with empty stderr, indistinguishable from a broken run.
     if [ -z "$after" ]; then
-      out=$(linear-cli api query -q -o json -v team="$target" "$page_q" 2>/dev/null)
+      out=$(linear-cli api query -q -o json -v team="$target" "$page_q" 2>/dev/null) || true
     else
-      out=$(linear-cli api query -q -o json -v team="$target" -v after="$after" "$page_q" 2>/dev/null)
+      out=$(linear-cli api query -q -o json -v team="$target" -v after="$after" "$page_q" 2>/dev/null) || true
     fi
     [ -n "$out" ] || { echo "ERROR: failed to fetch dependency graph for team '$target'" >&2; exit 1; }
     if [ "$(printf '%s' "$out" | jq 'has("errors")')" = "true" ]; then

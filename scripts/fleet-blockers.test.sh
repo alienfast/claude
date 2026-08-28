@@ -170,6 +170,9 @@ else
   PASS=$((PASS+1))
 fi
 ck_lacks "no verdict on failure" "FLEET-BLOCKED" "$OUT2"
+# The shim's failed `cat` is the silent shape — empty stdout, exit 1 — which set -e used to turn into a bare
+# exit 1 with nothing on stderr; the guard must get to name it.
+ck_has "fetch failure is named" "ERROR: issue fetch failed for team 'TT'" "$OUT2.err"
 ck_lacks "no promote-set on failure" "PROMOTE-SET" "$OUT2"
 
 if "$SCRIPT" 2>/dev/null; then FAIL=$((FAIL+1)); echo "FAIL: no-args exited 0"; else PASS=$((PASS+1)); fi

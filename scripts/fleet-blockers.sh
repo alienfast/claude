@@ -60,10 +60,12 @@ q='query($team:String!,$after:String){issues(filter:{team:{key:{eq:$team}}, stat
 all='[]'
 after=''
 while :; do
+  # `|| true` on each capture: under set -e a failing linear-cli would exit on the assignment itself, before the
+  # guard below can name the failure — measured 2026-08-28 as exit 1 with empty stderr, indistinguishable from a broken run.
   if [ -z "$after" ]; then
-    out=$(linear-cli api query -q -o json -v team="$team" "$q" 2>/dev/null)
+    out=$(linear-cli api query -q -o json -v team="$team" "$q" 2>/dev/null) || true
   else
-    out=$(linear-cli api query -q -o json -v team="$team" -v after="$after" "$q" 2>/dev/null)
+    out=$(linear-cli api query -q -o json -v team="$team" -v after="$after" "$q" 2>/dev/null) || true
   fi
   [ -n "$out" ] || { echo "ERROR: issue fetch failed for team '$team' (auth? network?)" >&2; exit 1; }
   if [ "$(printf '%s' "$out" | jq 'has("errors")')" = "true" ]; then
