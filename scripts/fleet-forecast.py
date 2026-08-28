@@ -25,8 +25,15 @@ Usage:
   fetch with a JSON array of issue nodes (test seam); --me sets the viewer email for claim checks.
 
 Output: verdict lines to stdout — FORECAST / HOURS-PER-ISSUE / THROTTLE-RISK / INFLIGHT /
-PICK / SHIP / POOL-DRAINED / LANE / STRANDED / UNREACHED. Exit 0 when fetched and simulated
-(counts may be 0); non-zero on fetch/parse failure. Read-only — no Linear writes.
+PICK / HOLD / SHIP / POOL-DRAINED / PLANNED-HOLD / LANE / STRANDED / UNREACHED / WITHHELD. Exit 0
+when fetched and simulated (counts may be 0); non-zero on fetch/parse failure. Read-only — no
+Linear writes.
+
+The Planned gate (keeper ruling 2026-08-28, standards/linear-workflow.md § Stage Priorities) is
+simulated as next-candidates.sh applies it: while any Planned/Todo issue not claimed by another
+person is unshipped and unpicked, a session with no pickable Planned issue IDLES (HOLD) rather
+than taking Backlog; blockers and children of Planned work inherit the Planned stage and stay
+pickable. A Backlog candidate the gate holds for the whole run is WITHHELD, not UNREACHED.
 """
 
 import argparse
@@ -38,9 +45,15 @@ import sys
 from pathlib import Path
 
 GATE_LABELS = ("human", "needs decision", "solo", "stalled")
+
+
+def issue_key(iid):
+    """Sort issue ids by team then number, so TT-2 precedes TT-11 in every human-facing list."""
+    prefix, _, num = iid.rpartition("-")
+    return (prefix, int(num) if num.isdigit() else 0, iid)
 QUERY = ('query($team:String!,$after:String){issues(filter:{team:{key:{eq:$team}},'
          ' state:{type:{nin:["completed","canceled"]}}}, first:250, after:$after){'
-         'nodes{identifier estimate priority state{name type} assignee{email}'
+         'nodes{identifier estimate priority state{name type} assignee{email} parent{identifier}'
          ' labels{nodes{name}} relations{nodes{type relatedIssue{identifier}}}}'
          ' pageInfo{hasNextPage endCursor}}}')
 
@@ -87,7 +100,9 @@ class Issue:
         self.priority = int(node.get("priority") or 0)
         assignee = ((node.get("assignee") or {}).get("email") or "")
         self.claimed = bool(assignee) and (not me or assignee != me)
+        self.parent = ((node.get("parent") or {}).get("identifier")) or None
         self.blockers = set()  # filled from edges
+        self.gates_unstarted = []  # filled after edges: Planned/Todo issues this one gates (blocks, or descends from)
 
     def gate_reason(self):
         """First reason the fleet can never ship this issue, or None. Order mirrors what a keeper
@@ -115,12 +130,14 @@ class Issue:
 
     def rank(self):
         """Within-availability order, approximating next-candidates.sh's within-tier rules: stage
-        strictly first (Backlog only after Planned/Todo; Urgent does not pierce stage), then Urgent,
-        then security/bug, then priority (Linear 0 = none, sorted last), then estimate, then ID.
+        strictly first (Backlog only after Planned/Todo; Urgent does not pierce stage — but a Backlog
+        issue that transitively blocks Planned/Todo work inherits the Planned stage, release scope by
+        implication), then Urgent, then security/bug, then priority (Linear 0 = none, sorted last),
+        then estimate, then ID.
         The tier system above these (assigned-to-me, newly-unblocked, sibling spread, parent
         weight) is deliberately not reproduced — pick-time authority stays with the shell script."""
         num = int(self.id.split("-")[1]) if "-" in self.id and self.id.split("-")[1].isdigit() else 0
-        return (0 if self.stype == "unstarted" else 1,
+        return (0 if self.stype == "unstarted" or self.gates_unstarted else 1,
                 0 if self.priority == 1 else 1,
                 0 if self.labels & {"security", "bug"} else 1,
                 self.priority if self.priority > 0 else 5,
@@ -180,10 +197,22 @@ def simulate(issues, n_sessions, horizon, hours):
     heapq.heapify(free)
     drained_at = None
 
+    def held():  # what keeps the Planned gate closed: the unstarted column, minus other people's claims
+        return sorted((i.id for i in issues.values() if i.stype == "unstarted" and not i.claimed
+                       and i.id not in shipped and i.id not in picked), key=issue_key)
+
+    def unblocked(p):
+        return all(b in shipped or b not in issues for b in p.blockers)
+
     def available():
-        return sorted((p for p in pool.values() if p.id not in picked
-                       and all(b in shipped or b not in issues for b in p.blockers)),
+        gate = bool(held())
+        return sorted((p for p in pool.values() if p.id not in picked and unblocked(p)
+                       and not (gate and p.stype == "backlog" and not p.gates_unstarted)),
                       key=Issue.rank)
+
+    def withheld_now():
+        return sorted(p.id for p in pool.values() if p.id not in picked and unblocked(p)
+                      and p.stype == "backlog" and not p.gates_unstarted)
 
     while free:
         t, k = heapq.heappop(free)
@@ -205,9 +234,18 @@ def simulate(issues, n_sessions, horizon, hours):
             lanes[k].append((issue.id, t, t + d))
             via = next((b for b in sorted(issue.blockers) if b in ship_time), None)
             note = f" (unblocked by {via})" if via else ""
+            if issue.gates_unstarted:
+                note += f" (Backlog — blocks Planned/Todo {', '.join(issue.gates_unstarted)})"
             events.append((t, 2, f"PICK t={t:.1f}h: {issue.id} → s{k} (~{d:.1f}h){note}"))
             heapq.heappush(active, (t + d, issue.id, k))
             heapq.heappush(free, (t + d, k))
+        elif withheld_now() and (h := held()):
+            shown = ", ".join(h[:4]) + (f" +{len(h) - 4} more" if len(h) > 4 else "")
+            events.append((t, 2, f"HOLD t={t:.1f}h: s{k} — Backlog withheld (Planned/Todo not drained: {shown})"))
+            if active:
+                heapq.heappush(free, (active[0][0], k))
+            elif drained_at is None:
+                drained_at = t
         elif active:
             heapq.heappush(free, (active[0][0], k))  # wake at the next ship; ships ≤ t are already processed, so time advances
         else:
@@ -222,7 +260,7 @@ def simulate(issues, n_sessions, horizon, hours):
             late = " (past deadline — in-flight finish)" if end > horizon and sess is None else ""
             events.append((end, 1, f"SHIP t={end:.1f}h: {iid}{late}"))
 
-    return pool, picked, shipped, ship_time, events, lanes, drained_at
+    return pool, picked, shipped, ship_time, events, lanes, drained_at, held()
 
 
 def unreached_reason(issue, issues, pool, shipped, ship_time, horizon, seen=None):
@@ -321,28 +359,62 @@ def main():
                 blocked = r["relatedIssue"]["identifier"]
                 if blocked in issues:
                     issues[blocked].blockers.add(node["identifier"])
+    # Inherited stage, mirroring next-candidates.sh: a Backlog issue that transitively blocks
+    # Planned/Todo work ranks in the Planned stage. Every issue here is non-terminal (the fetch
+    # drops completed/canceled, In Review is dropped above), so the walk needs no terminal stop.
+    dependents = {}
+    for i in issues.values():
+        for b in i.blockers:
+            dependents.setdefault(b, set()).add(i.id)
+    for i in issues.values():
+        if i.stype != "backlog":
+            continue
+        seen, frontier = {i.id}, [i.id]
+        while frontier:
+            nxt = {d for f in frontier for d in dependents.get(f, ()) if d not in seen}
+            seen |= nxt
+            frontier = list(nxt)
+        gates = {d for d in seen if d != i.id and issues[d].stype == "unstarted"}
+        # A child gates its epic the way a blocker gates its dependent — same inheritance, up the parent chain.
+        p, hops = i.parent, 0
+        while p and p in issues and p not in seen and hops < 10:
+            seen.add(p)
+            if issues[p].stype == "unstarted":
+                gates.add(p)
+            p, hops = issues[p].parent, hops + 1
+        i.gates_unstarted = sorted(gates)
 
     base, source = calibrate(args.history, args.hours_per_issue)
     certified = [i for i in issues.values()
                  if i.stype in ("unstarted", "backlog") and "specified" in i.labels and "epic" not in i.labels]
     hours = duration_fn([i for i in issues.values() if i.shippable], base, args.flat)
-    pool, picked, shipped, ship_time, events, lanes, drained_at = simulate(issues, n_sessions, horizon, hours)
+    pool, picked, shipped, ship_time, events, lanes, drained_at, held_end = simulate(issues, n_sessions, horizon, hours)
 
     shipped_pool = [iid for iid in pool if iid in shipped]
     late = [iid for iid in shipped_pool if ship_time[iid] > horizon]
     leftovers = [pool[iid] for iid in sorted(pool) if iid not in shipped]
+    # The held set only shrinks, so a non-empty end state means the gate never opened: every unblocked,
+    # unpicked Backlog candidate was withheld by it, not out-ranked or out-of-time.
+    withheld = [iid for iid in sorted(pool) if iid not in shipped and held_end
+                and pool[iid].stype == "backlog" and not pool[iid].gates_unstarted
+                and all(b in shipped or b not in issues for b in pool[iid].blockers)]
     verdicts = {iid: unreached_reason(pool[iid], issues, pool, shipped, ship_time, horizon)
-                for iid in sorted(pool) if iid not in shipped}
+                for iid in sorted(pool) if iid not in shipped and iid not in withheld}
     stranded = [iid for iid, v in verdicts.items() if v[0] == "STRANDED"]
     unreached = [iid for iid, v in verdicts.items() if v[0] == "UNREACHED"]
 
     print(f"FORECAST: {n_sessions} sessions × {horizon:.1f}h horizon — est. {len(shipped_pool)} ship"
           f"{f' ({len(late)} past deadline)' if late else ''}"
-          f" · {len(unreached)} unreached · {len(stranded)} stranded — pool {len(pool)} shippable of {len(certified)} certified")
+          f" · {len(unreached)} unreached · {len(stranded)} stranded"
+          f"{f' · {len(withheld)} withheld' if withheld else ''}"
+          f" — pool {len(pool)} shippable of {len(certified)} certified")
     print(f"HOURS-PER-ISSUE: {base} ({source}{'' if args.flat else '; estimate-weighted'})")
     unstarted_ids = [iid for iid in pool if pool[iid].stype == "unstarted"]
     backlog_ids = [iid for iid in pool if pool[iid].stype == "backlog"]
-    backlog_starts = [s for iid, (_k, s, _e) in picked.items() if pool[iid].stype == "backlog"]
+    # An inherited-stage blocker is a Planned-stage pick by construction — it is not the crossover
+    # into deferred work this line reports.
+    backlog_starts = [s for iid, (_k, s, _e) in picked.items()
+                      if pool[iid].stype == "backlog" and not pool[iid].gates_unstarted]
     if not unstarted_ids:
         stage = "STAGE: no Planned/Todo candidates in the pool — Backlog picks from t=0.0h"
     else:
@@ -366,14 +438,22 @@ def main():
     for _, _, line in sorted(events, key=lambda e: (e[0], e[1], e[2])):
         print(line)
     if drained_at is not None and drained_at < horizon:
-        blocked_note = f" ({len(leftovers)} remain blocked)" if leftovers else ""
+        blocked_note = f" ({len(leftovers)} remain blocked or withheld)" if leftovers else ""
         print(f"POOL-DRAINED: t={drained_at:.1f}h — no pickable candidates remain{blocked_note}; "
               f"{horizon - drained_at:.1f}h of horizon unused")
+    if withheld:
+        def held_reason(iid):
+            i = issues[iid]
+            return i.gate_reason() or ("blocked" if any(b in issues and b not in shipped for b in i.blockers) else "unshipped")
+        print(f"PLANNED-HOLD: {len(withheld)} unblocked Backlog candidate(s) withheld through the run — Planned/Todo never drained: "
+              + ", ".join(f"{iid} [{held_reason(iid)}]" for iid in held_end))
     for k in sorted(lanes):
         segs = " ".join(f"{iid}[{a:.1f}→{b:.1f}]" for iid, a, b in lanes[k]) or "(idle)"
         print(f"LANE s{k}: {segs}")
     for iid in stranded:
         print(f"STRANDED: {iid} — {verdicts[iid][1]}")
+    for iid in withheld:
+        print(f"WITHHELD: {iid} — Backlog withheld (Planned/Todo not drained)")
     capacity = [iid for iid in unreached if verdicts[iid][1].startswith("capacity")]
     for iid in unreached:
         if iid not in capacity:

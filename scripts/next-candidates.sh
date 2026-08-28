@@ -5,6 +5,7 @@
 #   next-candidates.sh [--team KEY[,KEY...]] [--completed PL-XX] [--limit N]
 #                      [--no-parent-walk] [--label NAME] [--exclude-label NAME]
 #                      [--include-triage] [--include-blocked] [--include-claimed]
+#                      [--no-stage-gate]
 #
 # Assignment is a claim (standards/linear-workflow.md): an issue assigned to anyone other
 # than the viewer is hidden from every ranking — certifying and working alike — with a
@@ -37,6 +38,29 @@
 # (BF-183, filed April, rolled forward for months while outranking the whole Planned
 # column). Stage carries the planning signal instead.
 #
+# Stage is INHERITED down a blocking chain: a Backlog issue that transitively blocks a
+# Planned/Todo issue ranks in the Planned stage (release scope by implication — an issue is
+# scoped by what it gates, not by its column: keeper ruling 2026-08-13,
+# standards/linear-workflow.md § Stage Priorities). The walk stops at terminal blockers and
+# never lifts Triage. Without it a fleet drained every other Planned issue and then picked
+# Backlog work by class and priority while the one issue gating a Planned item sat at Backlog
+# rank — /auto-prep's PROMOTE-SET batch fixes the column at prep time, but chains wired
+# between preps (review filings, a hand promotion of the dependent alone) re-created the
+# inversion mid-run.
+#
+# The Planned GATE (keeper ruling 2026-08-28): every Planned/Todo issue is worked before any
+# Backlog issue, and no usage is spent on Backlog while that column is not drained. Ordering
+# alone only holds while a Planned issue is pickable this instant — the moment the rest of the
+# column is blocked behind in-flight work or parked, ordering falls through to Backlog, which is
+# exactly the usage the ruling forbids. So while the column holds anything not claimed by another
+# person, every Backlog candidate is WITHHELD (inherited-stage blockers and children stay — they
+# are Planned scope) and a PLANNED-HOLD note names what holds the gate: what releases on its own
+# (blocked behind in-flight or fleet-eligible chains) and what needs the keeper (parked,
+# uncertified, epics to close). With nothing pickable the caller waits — /auto treats it as a
+# no-pick tick, never as drained. Discovery listings (--include-blocked, --include-triage, and
+# the solo / needs decision / human label views) are exempt; --no-stage-gate lifts it to inspect
+# what waits behind it.
+#
 # Emits a ranked markdown list to stdout. The --limit cut never hides unstarted-stage
 # work: every Planned/Todo candidate below the cut is appended in a trailing
 # "Planned/Todo below the cut" section carrying its true rank number (keeper policy
@@ -66,6 +90,13 @@
 # itself is human-performed (standards/issue-spec.md), so unlike `solo` there is no
 # targeted-mode carve-out: /auto refuses a human-labeled target in any mode.
 #
+# `epic`-labeled issues are hidden the same way and surfaced via --label epic: a delegated
+# container whose children carry the work (BF-95 — certify per child, close the epic when they
+# release), so it never counts fleet-workable, certified or not. fleet-blockers.sh and
+# fleet-forecast.py already classify it so; here it was only the BF-504 de-rank, which the
+# Planned gate made insufficient — with Backlog withheld, an all-children-shipped Planned epic
+# sat one pick behind the workable Planned set instead of behind the whole Backlog.
+#
 # Exit codes: 0 success (incl. "no workable issues"), 1 arg error,
 # 2 Linear/network failure, 3 missing dependency.
 #
@@ -88,6 +119,7 @@ exclude_label=""
 include_triage=0
 include_blocked=0
 include_claimed=0
+stage_gate=1
 
 # Value-taking flags must fail loudly, not silently: a missing value makes the `shift 2`
 # below fail under set -e with no stderr, and an empty value (e.g. --label "") must not
@@ -111,6 +143,7 @@ while [ $# -gt 0 ]; do
     --include-triage) include_triage=1; shift ;;
     --include-blocked) include_blocked=1; shift ;;
     --include-claimed) include_claimed=1; shift ;;
+    --no-stage-gate) stage_gate=0; shift ;;
     -h|--help)
       sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
@@ -393,13 +426,15 @@ fi
 # outside the keeper's review flow), with a trailing note so the hiding is never silent.
 is_keeper=$(git -C "$HOME/.claude" config --get reflect.keeper 2>/dev/null || true)
 
-# Filter workable issues whose blockers are all in terminal states.
-# Emit per-candidate metadata for ranking.
-candidates_json=$(jq \
+# Every issue that passes the state, claim, label, and gate-label filters — blocked or not — with
+# its per-candidate ranking metadata. The blocker filter is applied afterwards, so the Planned gate
+# below can classify a blocked Planned issue by its chain.
+eligible_json=$(jq \
   --argjson workable "$WORKABLE_STATES" \
   --argjson terminal "$TERMINAL_STATES" \
   --slurpfile sm_doc "$state_map_file" \
   --slurpfile bm_doc "$blocker_map_file" \
+  --slurpfile rbm_doc "$reverse_blocker_map_file" \
   --slurpfile newly_doc "$newly_unblocked_file" \
   --arg me "${me_email:-}" \
   --arg label "$label" \
@@ -410,7 +445,12 @@ candidates_json=$(jq \
   --arg iskeeper "$is_keeper" '
     ($sm_doc[0]) as $sm
     | ($bm_doc[0]) as $bm
+    | ($rbm_doc[0]) as $rbm
     | ($newly_doc[0]) as $newly
+    # Stage by identifier for the inherited-stage walk: the fetch carries every non-terminal
+    # team issue, so a Planned dependent is present whether or not it is itself a candidate.
+    | (map({key: .identifier, value: {t: .state_type, s: .state}}) | from_entries) as $stage
+    | (map({key: .identifier, value: .parent}) | from_entries) as $parent_of
     # Hot parents: a sibling In Progress/In Review under the same parent means a live
     # session is likely editing nearby files — feeds the soft spread de-rank below.
     | ([ .[] | select(.state_type == "started" and (.parent != null)) | .parent ] | unique) as $hot
@@ -427,6 +467,20 @@ candidates_json=$(jq \
       elif p == 3 then 3
       elif p == 4 then 4
       else 5 end;
+    def is_terminal($x): ((($terminal | map(ascii_downcase)) | index((($sm[$x] // "Unknown") | ascii_downcase))) != null);
+    def is_unstarted_id($x): (($stage[$x].t == "unstarted") or ((($stage[$x].s // "") | ascii_downcase) | IN("planned", "todo")));
+    # Everything reachable DOWN the blocks graph from the frontier through non-terminal issues —
+    # the work those issues gate. A terminal node neither counts nor propagates: a chain through
+    # a shipped issue gates nothing. $seen guards cycles.
+    def gated($frontier; $seen):
+      ([ $frontier[] | ($rbm[.] // [])[] ] | unique
+       | map(select(. as $x | (($seen | index($x)) == null) and (is_terminal($x) | not)))) as $next
+      | if ($next | length) == 0 then $seen else gated($next; $seen + $next) end;
+    # Every ancestor UP the parent chain within the fetched pool — a child gates its epic the way a
+    # blocker gates its dependent, so it inherits the same stage. Depth-capped like the parent walk.
+    def lineage($x; $seen): ($parent_of[$x] // null) as $p
+      | if ($p == null) or (($seen | index($p)) != null) or (($seen | length) > 10) then []
+        else [$p] + lineage($p; $seen + [$p]) end;
     map(
       . as $i
       | (.identifier) as $id
@@ -439,7 +493,6 @@ candidates_json=$(jq \
       # and with the viewer unresolvable every assigned issue reads as claimed by a person
       # and hides, which fails toward respecting the claim.
       | select(($claimed == "1") or (($i.assignee // "") == "") or (($me != "") and ($i.assignee == $me)))
-      | select(($blocked == "1") or ($unresolved | length == 0))
       # any() over an empty label array is false and all() is true, so unlabeled issues
       # correctly fail a --label requirement and pass an --exclude-label one.
       | select(($label == "") or (any(($i.labels // [])[]; ascii_downcase == ($label | ascii_downcase))))
@@ -465,6 +518,17 @@ candidates_json=$(jq \
       # NOT to a solo listing — that one is a running order for targeted /auto, and a
       # human-labeled issue must never appear runnable there.
       | select((($label | ascii_downcase) | . == "human" or . == "needs decision") or (all(($i.labels // [])[]; ascii_downcase != "human")))
+      # epic gate: a delegated container — its children carry the work — so it is never a pick
+      # (fleet-blockers.sh / fleet-forecast.py agree); the delegated de-rank below still covers
+      # an unlabeled parent. Listed only by --label epic.
+      | select((($label | ascii_downcase) == "epic") or (all(($i.labels // [])[]; ascii_downcase != "epic")))
+      # Planned/Todo issues this Backlog candidate gates — transitively blocks, or descends from —
+      # non-empty means it inherits the Planned stage below. Computed for Backlog candidates only;
+      # a Planned or Triage candidate has nothing to inherit.
+      | (if ($i.state_type == "backlog") or (($i.state // "") | ascii_downcase) == "backlog"
+         then ([ (gated([$id]; [$id])[] | select(. != $id)), (lineage($id; [$id])[]) ]
+               | map(select(is_unstarted_id(.))) | unique)
+         else [] end) as $gates_unstarted
       | {
           id: $id,
           title: $i.title,
@@ -496,16 +560,23 @@ candidates_json=$(jq \
           # defer it; an unreviewed inbox item has not even been accepted for work). Backlog
           # is keyed on state TYPE with a name fallback for a team that renamed the state
           # without changing its type; Triage needs no name fallback — its only admission
-          # path (--include-triage) is already type-keyed. NO apostrophes in this comment
-          # block: it lives inside the single-quoted jq program, and one ends the shell
-          # string mid-script.
+          # path (--include-triage) is already type-keyed. A Backlog issue that transitively
+          # blocks Planned/Todo work inherits stage 0 — release scope by implication (keeper
+          # ruling 2026-08-13, standards/linear-workflow.md § Stage Priorities): the fleet must
+          # reach it before any deferred Backlog work whether or not its column was promoted.
+          # NO apostrophes in this comment block: it lives inside the single-quoted jq program,
+          # and one ends the shell string mid-script.
           state_rank: (if ($i.state_type == "triage") then 2
-            elif ($i.state_type == "backlog") or (($i.state // "") | ascii_downcase) == "backlog" then 1
+            elif ($i.state_type == "backlog") or (($i.state // "") | ascii_downcase) == "backlog"
+              then (if ($gates_unstarted | length) > 0 then 0 else 1 end)
             else 0 end),
           # Unstarted stage is never hidden by the --limit render cut (keeper policy
           # 2026-08-12 — below-cut Planned/Todo candidates emit in a trailing section);
-          # matched like state_rank — by type, with a name fallback for a renamed state.
-          is_unstarted: (($i.state_type == "unstarted") or ((($i.state // "") | ascii_downcase) | IN("planned", "todo"))),
+          # matched like state_rank — by type, with a name fallback for a renamed state — and
+          # an inherited-stage blocker is surfaced there too, since it is part of that queue.
+          is_unstarted: (($i.state_type == "unstarted") or ((($i.state // "") | ascii_downcase) | IN("planned", "todo"))
+            or (($gates_unstarted | length) > 0)),
+          gates_unstarted: $gates_unstarted,
           class_rank: ((($i.labels // []) | map(ascii_downcase)) as $ls
             | if ($ls | index("security")) != null then 0
               elif ($ls | index("bug")) != null then 1
@@ -514,6 +585,94 @@ candidates_json=$(jq \
         }
     )
   ' "$list_file")
+
+candidates_json=$(printf '%s' "$eligible_json" | jq --arg blocked "$include_blocked" \
+  'map(select(($blocked == "1") or (.unresolved_count == 0)))')
+
+# ---------- Planned gate: no Backlog usage while the Planned/Todo column is not drained ----------
+#
+# A FILTER, not an ordering (see the header): while the column holds anything not claimed by another
+# person, Backlog candidates (state_rank 1 — inherited-stage issues keep rank 0 and stay) are withheld,
+# and the PLANNED-HOLD note classifies every held issue as pickable now, releasing on its own (every
+# unresolved blocker in its chain is in flight or fleet-eligible), or the keeper's (a gate label, an
+# epic, uncertified under the label filter, or a chain through such a blocker). The claimed-by-another
+# carve-out is the only one — that work is neither the fleet's nor the keeper's to drain.
+label_lc=$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')
+gate_on=0
+if [ "$stage_gate" -eq 1 ] && [ "$include_blocked" -eq 0 ] && [ "$include_triage" -eq 0 ] \
+   && [ "$label_lc" != "solo" ] && [ "$label_lc" != "needs decision" ] && [ "$label_lc" != "human" ]; then
+  gate_on=1
+fi
+gate_closed=0
+withheld=0
+hold_line=""
+if [ "$gate_on" -eq 1 ]; then
+  eligible_map_file="$tmpdir/eligible_map.json"
+  printf '%s' "$eligible_json" | jq -c 'map({key: .id, value: .unresolved_count}) | from_entries' > "$eligible_map_file"
+  pickable_file="$tmpdir/pickable.json"
+  printf '%s' "$candidates_json" | jq -c 'map(.id)' > "$pickable_file"
+  held_json=$(jq -c \
+    --argjson terminal "$TERMINAL_STATES" \
+    --slurpfile sm_doc "$state_map_file" \
+    --slurpfile bm_doc "$blocker_map_file" \
+    --slurpfile el_doc "$eligible_map_file" \
+    --slurpfile pk_doc "$pickable_file" \
+    --arg me "${me_email:-}" --arg claimed "$include_claimed" --arg label "$label" --arg iskeeper "$is_keeper" '
+    ($sm_doc[0]) as $sm | ($bm_doc[0]) as $bm | ($el_doc[0]) as $el | ($pk_doc[0]) as $pk
+    | (map({key: .identifier, value: .}) | from_entries) as $m
+    | def is_terminal($x): ((($terminal | map(ascii_downcase)) | index((($sm[$x] // "Unknown") | ascii_downcase))) != null);
+      def claimed_other($i): ((($i.assignee // "") != "") and (($me == "") or ($i.assignee != $me)));
+      def unstarted($i): (($i.state_type == "unstarted") or ((($i.state // "") | ascii_downcase) | IN("planned", "todo")));
+      def lbl($i; $n): (any(($i.labels // [])[]; ascii_downcase == $n));
+      # Why a held issue is the keeper to move — empty when the fleet could pick it (now or once unblocked).
+      def self_reason($i):
+        if lbl($i; "epic") then "epic — certify per child, close it when they release"
+        elif lbl($i; "needs decision") then "needs decision"
+        elif lbl($i; "human") then "human"
+        elif lbl($i; "solo") then "solo"
+        elif (($iskeeper != "true") and lbl($i; "keeper")) then "keeper-gated"
+        elif ($el[$i.identifier] == null) then (if ($label != "") then "lacks label \($label)" else "filtered out" end)
+        else "" end;
+      # Walk the unresolved blocker chain: a blocker in flight (started, not stalled) or fleet-eligible
+      # releases on its own; the first keeper-owned one names the reason. $seen guards cycles.
+      def chain_reason($ids; $seen):
+        if ($ids | length) == 0 then ""
+        else ($ids[0]) as $b | ($m[$b] // null) as $bi
+          | (if (($seen | index($b)) != null) or is_terminal($b) then ""
+             elif $bi == null then "blocked by \($b) (outside the fetched teams)"
+             elif ($bi.state_type == "started") then (if lbl($bi; "stalled") then "blocked by \($b) [stalled]" else "" end)
+             elif ($el[$b] != null) and (lbl($bi; "epic") | not) then chain_reason(($bm[$b] // []); $seen + [$b])
+             else "blocked by \($b) [\(self_reason($bi) | if . == "" then ($bi.state // "?") else . end)]" end) as $r
+          | if $r != "" then $r else chain_reason($ids[1:]; $seen + [$b]) end
+        end;
+      [ .[] | select(unstarted(.)) | select(($claimed == "1") or (claimed_other(.) | not)) | . as $i
+        | self_reason($i) as $sr
+        # $i.identifier throughout: inside `$pk | index(…)` the pipe rebinds `.` to the array.
+        | (if $sr != "" then {id: $i.identifier, kind: "keeper", reason: $sr}
+           elif (($pk | index($i.identifier)) != null) then {id: $i.identifier, kind: "pickable", reason: ""}
+           else (chain_reason(($bm[$i.identifier] // []); [$i.identifier])) as $cr
+             | (if $cr == "" then {id: $i.identifier, kind: "releasing", reason: ""}
+                else {id: $i.identifier, kind: "keeper", reason: $cr} end)
+           end) ]
+  ' "$list_file")
+  if [ "$(printf '%s' "$held_json" | jq 'length')" -gt 0 ]; then
+    gate_closed=1
+    withheld=$(printf '%s' "$candidates_json" | jq '[.[] | select(.state_rank == 1)] | length')
+    candidates_json=$(printf '%s' "$candidates_json" | jq 'map(select(.state_rank != 1))')
+    hold_line=$(printf '%s' "$held_json" | jq -r --argjson w "$withheld" '
+      ([.[] | select(.kind == "pickable")] | length) as $p
+      | [.[] | select(.kind == "releasing") | .id] as $r
+      | [.[] | select(.kind == "keeper") | "\(.id) [\(.reason)]"] as $k
+      | "_PLANNED-HOLD: Backlog withheld — the Planned/Todo column is not drained (\(length) issue(s) hold the gate: \($p) pickable now"
+        + (if ($r | length) > 0 then "; \($r | length) will release on their own — \($r | join(", "))" else "" end)
+        + (if ($k | length) > 0 then "; \($k | length) need the keeper — \($k | join(", "))" else "" end)
+        + "). \($w) Backlog candidate(s) wait behind the gate; it opens when the column drains — pass --no-stage-gate to list them._"')
+  fi
+fi
+hold_note() {
+  [ "$gate_closed" -eq 1 ] && printf '\n%s\n' "$hold_line"
+  return 0
+}
 
 # Count what the keeper gate hid (from the fetched list, pre-filter) so the exclusion is
 # visible on every output path — a silently thinner list reads as "nothing there".
@@ -578,6 +737,17 @@ human_note() {
   return 0
 }
 
+# Epic gate note — counted over workable stages only, like the claimed note (a shipped or in-flight
+# epic is not what the reader is missing from a pick list).
+epic_hidden=0
+if [ "$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')" != "epic" ]; then
+  epic_hidden=$(jq '[.[] | . as $i | select((["Backlog","Planned","Todo"] | index($i.state)) != null) | select(any(($i.labels // [])[]; ascii_downcase == "epic"))] | length' "$list_file" 2>/dev/null || echo 0)
+fi
+epic_note() {
+  [ "$epic_hidden" -gt 0 ] && printf '\n_%s issue(s) hidden as delegated epics (`epic` label — the children carry the work; certify per child, close the epic when they release) — list with --label epic._\n' "$epic_hidden"
+  return 0
+}
+
 candidate_count=$(printf '%s' "$candidates_json" | jq 'length')
 if [ "$candidate_count" -eq 0 ]; then
   filter_desc=""
@@ -585,12 +755,19 @@ if [ "$candidate_count" -eq 0 ]; then
   [ -n "$exclude_label" ] && filter_desc="$filter_desc lacking label '$exclude_label'"
   team_word="team"
   [ ${#teams[@]} -gt 1 ] && team_word="teams"
-  printf '## Suggested next\n\n_No workable issues%s in %s %s._\n' "$filter_desc" "$team_word" "$teams_label"
+  if [ "$gate_closed" -eq 1 ]; then
+    # Deliberately not the drained text: /auto keys on this headline to wait instead of latching drained.
+    printf '## Suggested next\n\n_Nothing pickable right now%s in %s %s — the Planned/Todo column is not drained, so Backlog is withheld (PLANNED-HOLD below). Wait for a release or act on the held issues; do not pick Backlog._\n' "$filter_desc" "$team_word" "$teams_label"
+  else
+    printf '## Suggested next\n\n_No workable issues%s in %s %s._\n' "$filter_desc" "$team_word" "$teams_label"
+  fi
+  hold_note
   keeper_note
   nd_note
   claimed_note
   solo_note
   human_note
+  epic_note
   exit 0
 fi
 
@@ -804,6 +981,7 @@ printf '%s' "$ranked_json" | jq -r --argjson lim "$limit" '
         else "\n   - Delegated: all sub-issues shipped/terminal — de-ranked; the epic likely needs closing, not implementation" end)
     else "" end) +
     (if (.value.spread_penalty // 0) > 0 then "\n   - Spread: a sibling under the same parent is in flight — soft de-rank to reduce file collisions" else "" end) +
+    (if ((.value.gates_unstarted // []) | length) > 0 then "\n   - Stage inherited: Backlog, but it gates Planned/Todo \(.value.gates_unstarted | join(", ")) (as blocker or child) — release scope by implication, ranked in the Planned stage" else "" end) +
     (if .value.unresolved_count > 0 then "\n   - Blocked: \(.value.unresolved_count) unresolved blocker(s)" else "" end)
 '
 
@@ -826,10 +1004,13 @@ printf '%s' "$ranked_json" | jq -r --argjson lim "$limit" '
       "\(.key + 1). **\(.value.id)** — \"\(.value.title)\"" +
       "\n   - State: \(.value.state) | Priority: \(.value.priority_label)" +
       (if .value.class_rank == 0 then " | security" elif .value.class_rank == 1 then " | bug" else "" end) +
+      (if ((.value.gates_unstarted // []) | length) > 0 then " | Gates Planned/Todo: \(.value.gates_unstarted | join(", "))" else "" end) +
       (if .value.unresolved_count > 0 then " | Blocked: \(.value.unresolved_count) unresolved blocker(s)" else "" end))
   end'
+hold_note
 keeper_note
 nd_note
 claimed_note
 solo_note
 human_note
+epic_note
