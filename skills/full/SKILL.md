@@ -1,6 +1,6 @@
 ---
 name: full
-description: End-to-end Linear issue macro — runs /start then /finish in sequence, gated on the /quality-review verdict. Worktree mode is opt-in via the `wt` token, mirroring /start. Pauses only for plan approval and the deferred-items filing decision; otherwise autonomous. The `auto` token removes those two gates too (documented defaults instead of prompts; used by /auto). Use when the user says 'full PL-XX', 'ship PL-XX end-to-end', or invokes /full.
+description: End-to-end Linear issue macro — runs /start then /finish in sequence, gated on the /quality-review verdict. Worktree mode is opt-in via the `wt` token, mirroring /start. Pauses only for plan approval and the deferred-items filing decision; otherwise autonomous. The `auto` token removes those two gates too (documented defaults instead of prompts; used by /auto). The `simple` token selects the simple review tier (pass-through to /start). Use when the user says 'full PL-XX', 'ship PL-XX end-to-end', or invokes /full.
 ---
 
 # Full Issue (Macro)
@@ -18,7 +18,7 @@ Worktree mode is **opt-in**, mirroring `/start`: `/full PL-13` runs in-place on 
 ## Arguments
 
 ```text
-/full <ISSUE-ID> [wt] [auto] [pr] [no push|don't push|skip push]
+/full <ISSUE-ID> [wt] [auto] [simple] [pr] [no push|don't push|skip push]
 ```
 
 All tokens are **position-agnostic and case-insensitive** (matching the convention `/start wt` and `/finish` use — `WT`, `Wt`, `AUTO`, `PR`, `NO PUSH` are all accepted). Exactly one token must be a valid issue ID; everything else is an optional modifier.
@@ -26,16 +26,17 @@ All tokens are **position-agnostic and case-insensitive** (matching the conventi
 - `<ISSUE-ID>` — required, exactly one. Validated via `~/.claude/scripts/detect-issue-id.sh --validate-only --input <arg>` (enforces `^[A-Z]+-[0-9]+$` after uppercasing). Lowercase IDs (`pl-13`) are accepted; the script uppercases.
 - `wt` — optional. Pass-through to `/start`; selects worktree mode. Omit for in-place mode on the current branch.
 - `auto` — optional. Pass-through to BOTH `/start` and `/finish` (see Auto mode above). Compatible with every other token.
+- `simple` — optional. Pass-through to `/start`, which forwards it to `/quality-review` at its Step 9; selects the simple review tier ([standards/issue-spec.md](../../standards/issue-spec.md) § The `simple` label). The issue's `simple` label implies it without the token. Compatible with every other token.
 - `pr` — optional. Pass-through to `/finish` Step 3 below; opens a PR instead of the default finalize. Works in **both** modes: with `wt` the PR base is the recorded source branch and the worktree is preserved; without `wt` (in-place) the base is the repo's default branch. The issue stays `In Progress` until the PR merges.
 - `no push` / `don't push` / `skip push` — optional. Pass-through to `/finish`; commit still happens, push is skipped. Compatible with both modes (worktree-merge accepts `no push` implicitly via the macro's gating in Step 3; `pr` does not, in either mode — see fail-fast below).
-- Any other token — error. Surface: `Unrecognized argument 'X'. /full accepts <ISSUE-ID>, optionally with 'wt', 'auto', 'pr', or a 'no push' variant.`
+- Any other token — error. Surface: `Unrecognized argument 'X'. /full accepts <ISSUE-ID>, optionally with 'wt', 'auto', 'simple', 'pr', or a 'no push' variant.`
 
 **Fail-fast validation — catch incompatible combinations before invoking `/start`.** These are mechanical refusals (errors, not interactive prompts), so they do NOT violate the "two gates only" design constraint:
 
 1. **`pr` + `no push`** — refuse: `/finish pr requires pushing the branch. Remove 'no push' or use plain /full <ISSUE-ID> [wt].`
 2. **Multiple issue IDs** — refuse: `/full accepts exactly one issue identifier.`
 
-Examples: `/full PL-13` (in-place), `/full PL-13 pr` (in-place PR to default branch), `/full wt PL-13` (worktree merge), `/full wt PL-13 pr` (worktree PR), `/full PL-13 no push` (in-place, commit only), `/full wt PL-13 no push` (worktree merge, commit only), `/full WT pl-13` (case-insensitive, position-agnostic, lowercase ID).
+Examples: `/full PL-13` (in-place), `/full PL-13 pr` (in-place PR to default branch), `/full wt PL-13` (worktree merge), `/full wt PL-13 pr` (worktree PR), `/full PL-13 no push` (in-place, commit only), `/full wt PL-13 no push` (worktree merge, commit only), `/full WT pl-13` (case-insensitive, position-agnostic, lowercase ID), `/full PL-13 simple` (simple review tier).
 
 ## Workflow
 
@@ -46,6 +47,7 @@ Compose `/start`'s args from the mode:
 - `wt` mode → `args = "wt <ISSUE-ID>"`
 - in-place → `args = "<ISSUE-ID>"`
 - `auto` mode → prepend `auto ` to either form (e.g., `"auto wt <ISSUE-ID>"`)
+- `simple` → append ` simple` to either form (e.g., `"auto wt <ISSUE-ID> simple"`); `/start` also infers it from the issue's label, so omitting it is never an error
 
 Do NOT pass `pr` or `no push` — those are `/finish` arguments and `/start` rejects unknown tokens.
 

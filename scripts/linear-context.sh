@@ -91,7 +91,7 @@ fi
 
 # One call: scalar fields, project, immediate parent, the documentContent id,
 # standalone comments, and both relation directions for the dependency graph.
-main_sel='identifier title url priority state{name} assignee{displayName email}
+main_sel='identifier title url priority state{name} assignee{displayName email} labels{nodes{name}}
   project{name id} parent{identifier} description documentContent{id}
   comments{nodes{body createdAt user{displayName email}}}
   relations{nodes{type relatedIssue{identifier title state{name}}}}
@@ -123,10 +123,12 @@ parent_id=$(printf '%s' "$issue_json" | jq -r '.parent.identifier // ""')
 url=$(printf '%s' "$issue_json" | jq -r '.url // ""')
 description=$(printf '%s' "$issue_json" | jq -r '.description // ""')
 doc_id=$(printf '%s' "$issue_json" | jq -r '.documentContent.id // ""')
+labels=$(printf '%s' "$issue_json" | jq -r '[.labels.nodes[]?.name] | join(", ")')
 
 printf '# %s — %s\n\n' "$issue" "$title"
 printf '**State:** %s | **Priority:** %s | **Assignee:** %s | **Project:** %s\n' \
   "$state" "$priority" "$assignee" "${project_name:-<none>}"
+printf '**Labels:** %s\n' "${labels:-<none>}"
 if [ -n "$project_id" ]; then
   printf '**Project ID:** %s\n' "$project_id"
 fi

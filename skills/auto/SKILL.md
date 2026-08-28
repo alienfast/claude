@@ -163,6 +163,8 @@ Call `Skill(skill: "next", args: "specified")` — appending ` team:<KEYS>` when
 
 Call `Skill(skill: "full", args: "auto wt [pr] <ISSUE-ID>")` — including `pr` **only** if the invocation carried the literal token (see Arguments); never add it here on your own judgment, and never to match repo history. `/full auto` runs `/start auto` (plan posted to Linear, no approval pause), `/quality-review auto`, and `/finish auto`, and terminates with exactly one lifecycle tag. Wait for that tag; do not narrate or race ahead. Under self-paced `/loop`, do NOT arm a heartbeat before this dispatch — `ScheduleWakeup` ends the turn, so arming here would skip `/full` entirely. A turn that stalls inside `/full` is recovered by `hooks/auto-heartbeat.sh`, which blocks the un-armed stop and re-drives the arming. The tag, when it arrives, is this step's *input to Step 4* — never end the turn on it (the Nesting rule in `standards/lifecycle-tags.md`; `/finish`'s closing messages say so too).
 
+A `simple`-labeled pick gets the simple review tier with no token here: `/start` reads the label from the digest and forwards it to `/quality-review`, whose guards escalate to the full tier when the change does not fit ([standards/issue-spec.md](../../standards/issue-spec.md) § The `simple` label). `simple` is not an `/auto` argument — `/auto BF-541 simple` fails team-key validation — the label is the mechanism.
+
 ### Step 4: Record outcome + emit the iteration tag
 
 Maintain `tmp/auto-state-<runKey>.json` (Step 0's pinned path) in the project. Shape:
