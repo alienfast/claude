@@ -237,6 +237,20 @@ ck_has   "  but its worktree is still in-flight" "session beefcafe-1111" "$OUT"
 ck_lacks "  stale sidecar produces no row" "sess-stale" "$OUT"
 rm -f "$REPO/.claude/worktree-identity/wt-identity-xx-99.env"
 
+echo "== 13. a registry row WITHOUT an id joins on the sessionId prefix"
+# Live shape 2026-08-29: `--bg` rows carry `id`, interactive rows do not, and the 2026-08-17 snapshot
+# auto-stall-watch.sh was rebuilt against had none at all. A targeted /auto run in a terminal is
+# exactly a ledger whose registry row has no `id`: keyed on `.id` alone it read `dead` with the
+# registry present and raised the stranded-claim flag — the false death the join exists to prevent.
+jq -n '{status: "active", shipped: [], canceled: [], failed: [], reviewBlocks: 0}' > "$REPO/tmp/auto-state-c0ffee01.json"
+write_agents '[{"id":"sess-a","cwd":"/x","kind":"background","sessionId":"sess-a-full","name":"n","state":"working"},
+               {"cwd":"/x","kind":"interactive","sessionId":"c0ffee01-1111-4222-8333-444455556666","name":"n","pid":1,"startedAt":1}]'
+run_fs --no-runway
+ck "clean exit" "0" "$RC"
+ck_has "  id-less row joins on the sessionId prefix" "| c0ffee01 | ALIVE (running) | active" "$OUT"
+ck_lacks "  and raises no stranded-claim flag" 'Session c0ffee01 reads `active`' "$OUT"
+rm -f "$REPO/tmp/auto-state-c0ffee01.json"
+
 echo ""
 echo "$PASS passed / $FAIL failed"
 [ "$FAIL" -eq 0 ]

@@ -112,13 +112,18 @@ fi
 
 # Registry lookup: prints a display state when the run key is present, empty when it is absent.
 # Always exits 0 so a caller's `x=$(registry_row ...)` cannot trip `set -e`. Keyed on `.id`, the
-# 8-char short id that is also the ledger filename key; `.pid` is deliberately not read (absent on
-# 16 of 23 rows in the live sample) and a null `.state` means present-but-unlabelled, so it renders
-# as running rather than being mistaken for absence.
+# 8-char short id that is also the ledger filename key, falling back to the sessionId's first
+# segment (the same value) because `id` comes and goes by harness version and session kind:
+# present on every `--bg` row and absent on every interactive row on 2026-08-29, absent on every
+# row in the 2026-08-17 snapshot auto-stall-watch.sh was rebuilt against. Without the fallback a
+# targeted `/auto <ID>` run in a terminal — a ledger, no `id` — reads `dead` with the registry
+# present and raises the stranded-claim flag this join exists to prevent. `.pid` is deliberately
+# not read (absent on 16 of 23 rows in one live sample) and a null `.state` means
+# present-but-unlabelled, so it renders as running rather than being mistaken for absence.
 registry_row() {
   [ "$have_registry" -eq 1 ] || return 0
   printf '%s' "$agents_json" \
-    | jq -r --arg k "$1" 'map(select(.id == $k)) | if length == 0 then "" else (.[0].state // "running") end' 2>/dev/null \
+    | jq -r --arg k "$1" 'map(select((.id // (.sessionId // "" | split("-")[0])) == $k)) | if length == 0 then "" else (.[0].state // "running") end' 2>/dev/null \
     || true
 }
 
