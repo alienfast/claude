@@ -275,7 +275,7 @@ fi
 [ -n "$ledgerless_keys" ] && printf '_%d /auto session(s) own a worktree here but have written no `auto-state` ledger. Their shipped work is NOT counted in the cross-check below, which is built from ledgers only — /fleet-retro recovers them from transcripts. Interactive sessions holding a worktree are deliberately not listed._\n\n' "$(printf '%s' "$ledgerless_keys" | wc -w | tr -d ' ')"
 [ "$hidden" -gt 0 ] && printf '_%d prior-run ledger(s) hidden (written before the current launch); /fleet-retro reads them until the next launch clears the dead ones._\n\n' "$hidden"
 for k in $died_active; do
-  printf '⚠️  **Session %s reads `active` but its process is gone** — it died without recording an outcome; check its last issue for a stranded In Progress claim.\n\n' "$k"
+  printf '⚠️  **Session %s reads `active` but its process is gone** — either it died without recording an outcome (check its last issue for a stranded In Progress claim), or it wound down cleanly and never wrote its terminal status, which strands nothing. Its transcript tells them apart: a `NO-CANDIDATES`/`AUTO-HALTED` tag or a ScheduleWakeup(stop:true) means it finished. `fleet-metrics.py` reports the second shape as `wound down but never finalized its ledger`.\n\n' "$k"
 done
 
 # ---------- in-flight (live worktrees) ----------

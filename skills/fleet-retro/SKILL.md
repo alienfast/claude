@@ -62,6 +62,14 @@ The event-based flags are real either way — classifier blocks, contamination h
 surviving ledger, shipped with no persisted verdict, off-schema verdict body. Only the bookkeeping ones
 need this gate.
 
+**`wound down but never finalized its ledger` is a bookkeeping flag that is also real either way** — it
+fires only on a terminal tag or a stop-wakeup, which is exactly what a live session lacks, so its own
+condition IS the finished-gate. Do not discount it as a live-session artifact. It is the complement of
+`ended without recording an outcome`, not a duplicate: that one catches a loop that never terminated,
+this one a loop that terminated and lost only its bookkeeping write — nothing is stranded, but
+`/fleet-status` reads the same field, so the session renders as live or wedged and invites a needless
+kill.
+
 **`ps -p <the state file's pid>` does not settle it.** Under `claude agents` every session in a fleet
 embeds the *fleet root* pid (`skills/auto/SKILL.md` Step 0 and Step 4), so it answers identically for all
 of them and can go empty mid-run. `/fleet-status` no longer inherits that limitation — its liveness
