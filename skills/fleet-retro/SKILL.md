@@ -57,6 +57,19 @@ token-attribution tables plus a Flags section. `--json` for machine use. Subagen
 disproportionately: a delegated reviewer that gets blocked or stalls is invisible to its parent, which
 sees only a slow `Agent` call.
 
+**Check the discovered session count against the fleet's own before reading any number.** Discovery reaches
+`<repo>/tmp/auto-state-*.json` plus a transcript sweep for ledgerless sessions — and a targeted `/auto <ID>` run
+writes a ledger of exactly the same shape, so a time window scopes by *when*, never by membership: every targeted
+run that touched this repo in the window lands in the tables and every total. Measured 2026-08-29 on a
+`/fleet-launch 3 12h` run: `--since 2026-08-28` reported 21 sessions, a tighter `--since 2026-08-28T18:50`
+reported 11, against a real fleet of 3. The tell is the per-session table's `wakeups` column — a `/loop /auto`
+session arms one per iteration, a targeted run shows `0 (0 stop)`. Compare the report header's `sessions:` count
+against `count` in `tmp/fleet-deadline.json` (absent when the launch carried no duration — then count the `/loop`
+sessions yourself), and read the direction, because the two disagreements are opposite faults. **More than
+`count`** = non-fleet sessions admitted: re-scope with `--sessions <the /loop run keys>` and re-run, since a
+mis-scoped run also appends a junk row to `tmp/fleet-metrics-history.jsonl`. **Fewer than `count`** = a fleet
+session missing from discovery, which is a finding in itself — chase it; `--sessions` would only hide it.
+
 Three gauges ride the same run and the retro reads all three, not just the tables:
 
 - **Context distribution** — share of billable prompt volume by context size at call time. This is the
@@ -71,7 +84,8 @@ Three gauges ride the same run and the retro reads all three, not just the table
 - **Shipped-issue provenance** — joins the shipped set against the Step 3 Linear exports; the fresh
   share (created during or <=7 days before the run) is the treadmill gauge, read alongside R.
 - **Cross-run trend** — every windowed run appends its headline row to
-  `tmp/fleet-metrics-history.jsonl` (keyed by session set, so re-runs replace) and the report's tail
+  `tmp/fleet-metrics-history.jsonl` (keyed by session set, so a re-run replaces its row only when it yields the
+  identical set — a differently-scoped re-run APPENDS) and the report's tail
   diffs the last six fleets. This is where drift lives: the $90 → $161 cost-per-issue climb across the
   2026-08-05..14 fleets sat in individually-saved reports that nothing compared until it was found by
   hand. Read $/issue through its two factors — ktok/issue (work per issue) x $/Mtok out (context

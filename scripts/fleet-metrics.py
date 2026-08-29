@@ -854,9 +854,11 @@ def record_history(checkout, headline, record):
     existed the diff step was manual, so it never happened: the 2026-08-14 cost-per-issue regression
     climbed monotonically across five fleets' saved reports with nothing comparing them. Rows are
     keyed by the sorted session set, so re-running a retro over the same fleet (different flags,
-    --json vs markdown) replaces its row instead of duplicating it. `record=False` (the --all sweep:
-    an all-time pool is not a fleet, and one row of it would dwarf the trend) still returns the
-    stored history so the trend renders."""
+    --json vs markdown) replaces its row instead of duplicating it. Only an IDENTICAL set replaces:
+    a re-run under a different window is a different key and APPENDS, so a mis-scoped window leaves
+    a permanent junk row -- scope with --sessions when the session count disagrees with the fleet's.
+    `record=False` (the --all sweep: an all-time pool is not a fleet, and one row of it would dwarf
+    the trend) still returns the stored history so the trend renders."""
     path = checkout / "tmp" / "fleet-metrics-history.jsonl"
     rows = []
     try:
