@@ -1847,11 +1847,33 @@ def main():
         # (skills/fleet-status/SKILL.md), so this is routine — and it always strands a Linear
         # claim and a preserved worktree for a human to clean up.
         if st.get("status") == "active" and a["wakeups"] > 0 and a["wakeup_stops"] == 0 \
+                and a["terminal_tags"] == 0 \
                 and not session_alive(st.get("pid"), st.get("pidStart")):
             flagged = True
             print(f"- **`{s['run_key']}` ended without recording an outcome** — ledger still "
                   f"`active` after {a['wakeups']} wakeup(s) and no stop-wakeup, so it was killed "
                   f"mid-loop or died. Check for a stranded Linear claim and a preserved worktree.")
+        # The complement of the kill shape above: the loop ENDED correctly — a terminal tag and/or
+        # ScheduleWakeup(stop: true) — and only the ledger's terminal-status write was dropped.
+        # Measured 2026-08-22 (3-session fleet): one session emitted `NO-CANDIDATES: fleet deadline
+        # reached` and armed its stop wakeup one second later, having shipped all 3 of its issues,
+        # but its ledger still read {"status":"active","reason":""} five hours later while both
+        # siblings read `drained` with a populated reason. Do NOT key on the ledger mtime against
+        # the deadline: the surviving write is the previous iteration's ship, which lands AFTER the
+        # deadline (measured +15.0 min), so a mtime test would not fire on the session this was
+        # written for. No liveness gate either, unlike the kill flag above: a stop-wakeup or a
+        # terminal tag proves the loop is over by contract, while the recorded pid is the shared
+        # fleet ROOT (alive while any sibling runs), so gating on it would suppress the flag
+        # exactly when a mid-fleet operator needs it.
+        if st.get("status") == "active" and (a["wakeup_stops"] > 0 or a["terminal_tags"] > 0):
+            flagged = True
+            print(f"- **`{s['run_key']}` wound down but never finalized its ledger** — it emitted "
+                  f"{a['terminal_tags']} terminal tag(s) and {a['wakeup_stops']} stop-wakeup(s), so "
+                  f"the loop ended as designed, but `status` is still `active` (reason "
+                  f"'{st.get('reason') or ''}'). /auto Step 2's deadline gate (or a Step 4 halt row) "
+                  f"owed a `drained`/`halted` write that never landed. Nothing is stranded and no "
+                  f"work was lost — but /fleet-status reads this same field, so the session renders "
+                  f"as live or wedged and invites a needless kill.")
         # Only an UNRECORDED ship is a fault. The reverse — recorded issues absent from the
         # transcript — is the ordinary result of a compacted session losing its earlier tags, and
         # flagging it buries the real signal under a false one on every long-running session.

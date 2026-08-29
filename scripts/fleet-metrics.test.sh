@@ -938,6 +938,34 @@ cat > "$WORK/projects/$M13/clean001-0000.jsonl" <<EOF
 {"type":"assistant","timestamp":"$(ts_ago 1000)","message":{"role":"assistant","id":"msg_c2","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":50},"content":[{"type":"tool_use","id":"tu_c2","name":"ScheduleWakeup","input":{"stop":true}}]}}
 EOF
 
+# wounddown001: the COMPLEMENT of killed001 — the loop ended as designed (a NO-CANDIDATES terminal
+# tag and a stop-wakeup) and only the ledger's terminal-status write was dropped. Deliberately
+# carries NO pid, so the flag must fire with no liveness evidence at all: the recorded pid is the
+# shared fleet root, so a liveness gate here would suppress the flag exactly when a mid-fleet
+# operator needs it. Measured 2026-08-22 on a session that had shipped all 3 of its issues.
+cat > "$CK13/tmp/auto-state-wounddown001.json" <<'EOF'
+{"status": "active", "reason": "", "shipped": [], "canceled": [], "skipped": [], "failed": []}
+EOF
+cat > "$WORK/projects/$M13/wounddown001-0000.jsonl" <<EOF
+{"type":"user","timestamp":"$(ts_ago 6000)","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"$(ts_ago 2400)","message":{"role":"assistant","id":"msg_w1","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":50},"content":[{"type":"tool_use","id":"tu_w1","name":"ScheduleWakeup","input":{"delaySeconds":1200,"reason":"next"}}]}}
+{"type":"assistant","timestamp":"$(ts_ago 1200)","message":{"role":"assistant","id":"msg_w2","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":50},"content":[{"type":"text","text":"NO-CANDIDATES: fleet deadline reached"},{"type":"tool_use","id":"tu_w2","name":"ScheduleWakeup","input":{"stop":true}}]}}
+EOF
+
+# taggedonly001: the case the mutual-exclusivity clause exists for, and the ONLY arm that pins it.
+# Status active, wakeups armed, NO stop-wakeup and a dead pid — killed001's exact signature — but it
+# emitted a terminal tag, so the loop DID end as designed. Without `terminal_tags == 0` on the kill
+# guard this session is reported as killed mid-loop, sending an operator hunting for a stranded
+# Linear claim and a preserved worktree that do not exist.
+cat > "$CK13/tmp/auto-state-taggedonly001.json" <<'EOF'
+{"status": "active", "reason": "", "shipped": [], "canceled": [], "skipped": [], "failed": []}
+EOF
+cat > "$WORK/projects/$M13/taggedonly001-0000.jsonl" <<EOF
+{"type":"user","timestamp":"$(ts_ago 6000)","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"$(ts_ago 2400)","message":{"role":"assistant","id":"msg_t1","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":50},"content":[{"type":"tool_use","id":"tu_t1","name":"ScheduleWakeup","input":{"delaySeconds":1200,"reason":"next"}}]}}
+{"type":"assistant","timestamp":"$(ts_ago 1100)","message":{"role":"assistant","id":"msg_t2","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":50},"content":[{"type":"text","text":"AUTO-HALTED: circuit breaker"}]}}
+EOF
+
 MD13="$WORK/out13b.md"
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK13" --hours 24 > "$MD13" 2>&1
 # The PR-flow and merge-flow ships must both resolve; only the genuinely-unmerged one is named.
@@ -950,6 +978,13 @@ ck_has   "killed: mid-loop death flagged"  "\`killed001\` ended without recordin
 ck_lacks "killed: live session not flagged" "\`live001\` ended without recording an outcome"  "$MD13"
 ck_lacks "killed: drained control clean"   "\`clean001\` ended without recording an outcome"  "$MD13"
 ck_lacks "killed: run not reported clean"  "- None. Every session armed its heartbeat"        "$MD13"
+ck_has   "wounddown: unfinalized ledger flagged" "\`wounddown001\` wound down but never finalized" "$MD13"
+ck_lacks "wounddown: not also called killed"     "\`wounddown001\` ended without recording"        "$MD13"
+ck_has   "taggedonly: terminal tag alone flagged" "\`taggedonly001\` wound down but never finalized" "$MD13"
+ck_lacks "taggedonly: kill guard yields to it"    "\`taggedonly001\` ended without recording"        "$MD13"
+ck_lacks "killed: not called wound down"         "\`killed001\` wound down but never finalized"    "$MD13"
+ck_lacks "live: not called wound down"           "\`live001\` wound down but never finalized"      "$MD13"
+ck_lacks "clean: drained control not flagged"    "\`clean001\` wound down but never finalized"     "$MD13"
 
 # ---- 14. --sessions must not silently drop a ledger-less session from its own fleet ----
 # The 2026-08-25 retro reported 3 sessions/18.1h/9 shipped from a --sessions scoping. The flag is
