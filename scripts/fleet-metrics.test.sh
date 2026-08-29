@@ -951,6 +951,55 @@ ck_lacks "killed: live session not flagged" "\`live001\` ended without recording
 ck_lacks "killed: drained control clean"   "\`clean001\` ended without recording an outcome"  "$MD13"
 ck_lacks "killed: run not reported clean"  "- None. Every session armed its heartbeat"        "$MD13"
 
+# ---- 14. --sessions must not silently drop a ledger-less session from its own fleet ----
+# The 2026-08-25 retro reported 3 sessions/18.1h/9 shipped from a --sessions scoping. The flag is
+# documented to override every window flag, so it also carries NO time bound: every ledger-less
+# /auto session the project ever held reads as "excluded". Only one overlapping the measured
+# fleet's OWN span can be work this report is missing — that bound is what this case pins.
+stamp14() { python3 -c 'import time,sys; print(time.strftime("%Y%m%d%H%M.%S", time.localtime(int(time.time())-int(sys.argv[1]))))' "$1"; }
+CK14="$WORK/ck14"; mkdir -p "$CK14/tmp"
+git -C "$CK14" init -q 2>/dev/null
+git -C "$CK14" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "TT-90: ship it"
+M14="$(git -C "$CK14" rev-parse --show-toplevel | tr / -)"
+T14="$WORK/projects/$M14"; mkdir -p "$T14"
+
+echo '{"status":"drained","reason":"t","shipped":["TT-90"],"canceled":[],"skipped":[],"failed":[]}' \
+  > "$CK14/tmp/auto-state-keep0001.json"
+
+auto_txn() { # auto_txn <path> <start-secs-ago> <end-secs-ago>
+  cat > "$1" <<EOF
+{"type":"user","timestamp":"$(ts_ago "$2")","message":{"role":"user","content":"<command-name>/auto</command-name>"}}
+{"type":"assistant","timestamp":"$(ts_ago "$3")","message":{"role":"assistant","id":"m_$$_$3","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-90 done"}]}}
+EOF
+}
+auto_txn "$T14/keep0001-0000.jsonl" 3600 60
+auto_txn "$T14/drop0001-0000.jsonl" 3000 1800   # ledger-less, INSIDE keep0001's span
+auto_txn "$T14/old00001-0000.jsonl" 3000 1800   # ledger-less, mtime OUTSIDE the span
+touch -t "$(stamp14 1800)" "$T14/drop0001-0000.jsonl"
+touch -t "$(stamp14 0)"    "$T14/old00001-0000.jsonl"
+
+hist14() { [ -f "$CK14/tmp/fleet-metrics-history.jsonl" ] && wc -l < "$CK14/tmp/fleet-metrics-history.jsonl" | tr -d ' ' || echo 0; }
+
+E14="$WORK/err14.log"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK14" --sessions keep0001 > /dev/null 2> "$E14"
+ck_has "partial: overlapping exclusion warned"      "excluded 1 ledger-less" "$E14"
+ck_has "partial: names the overlapping session"     "drop0001" "$E14"
+ck_lacks "partial: out-of-span exclusion not warned" "old00001" "$E14"
+ck_has "partial: refusal explained"                 "No trend row written" "$E14"
+ck "partial: trend row withheld"                    "0" "$(hist14)"
+
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK14" --sessions keep0001 --allow-partial > /dev/null 2> "$E14"
+ck_has "allow-partial: still warns"        "excluded 1 ledger-less" "$E14"
+ck_lacks "allow-partial: no refusal line"  "No trend row written" "$E14"
+ck "allow-partial: trend row written"      "1" "$(hist14)"
+
+# Control: with no --sessions the ledger-less sessions are measured rather than excluded, so there
+# is nothing to warn about and the row persists normally.
+rm -f "$CK14/tmp/fleet-metrics-history.jsonl"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK14" --hours 24 > /dev/null 2> "$E14"
+ck_lacks "control: no warning without --sessions" "ledger-less" "$E14"
+ck "control: trend row written"                   "1" "$(hist14)"
+
 echo
 echo "$PASS passed / $FAIL failed"
 [ "$FAIL" -eq 0 ]

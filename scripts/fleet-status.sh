@@ -23,9 +23,15 @@
 # about that run only — a later session or an interactive pickup can ship the issue without
 # any ledger recording it, and without the join a long-resolved failure reads as live.
 #
-# A session is ALIVE when its recorded pid exists AND the process start time matches the
-# recorded one (pid reuse otherwise reads a dead session as running). A state file that says
-# "active" with a dead pid is flagged — that session died without recording an outcome.
+# Liveness comes from the session registry (`claude agents --json`), joined on the ledger's own
+# filename key. The ledger's recorded pid CANNOT answer it: under `claude agents` every session in
+# a fleet embeds the fleet-root pid (skills/auto/SKILL.md Step 4 — "only ever a coarse 'is anything
+# still running' hint"), so siblings share one value and a session whose recorded ancestor exited
+# reads dead while it works. Measured 2026-08-25: all three ledgers of one fleet held a pid that
+# was not their session's, in both directions — two shared the live fleet root and read ALIVE for
+# the fleet, one read dead while busy and was nearly reaped. The pid pair survives only as a
+# last-resort hint when the registry is unavailable, and then the row says `unknown`, never `dead`.
+# Only a registry-confirmed absence is flagged as a session that died without recording an outcome.
 #
 # Exit codes: 0 success, 1 not a git repo / missing dependency.
 
@@ -47,6 +53,17 @@ for cmd in git jq; do
 done
 have_linear=0
 command -v linear-cli >/dev/null 2>&1 && have_linear=1
+
+# Session registry, fetched once (not per row). Empty whenever `claude` is missing, exits non-zero,
+# or returns something that is not a JSON array — every one of which degrades to `unknown`, never to
+# a death claim.
+agents_json=""
+if command -v claude >/dev/null 2>&1; then
+  agents_json=$(claude agents --json 2>/dev/null || true)
+  printf '%s' "$agents_json" | jq -e 'type == "array"' >/dev/null 2>&1 || agents_json=""
+fi
+have_registry=0
+[ -n "$agents_json" ] && have_registry=1
 
 main_checkout=$(git worktree list --porcelain 2>/dev/null | awk '/^worktree /{print substr($0,10); exit}')
 [ -n "$main_checkout" ] || { echo "ERROR: not inside a git repository — run from the fleet's project" >&2; exit 1; }
@@ -93,8 +110,52 @@ fi
 
 # ---------- sessions (auto-state ledgers) ----------
 
-# Liveness: pid exists AND its start time matches the recorded one (whitespace-normalized —
-# ps pads single-digit days). A mismatch means pid reuse: the session is dead.
+# Registry lookup: prints a display state when the run key is present, empty when it is absent.
+# Always exits 0 so a caller's `x=$(registry_row ...)` cannot trip `set -e`. Keyed on `.id`, the
+# 8-char short id that is also the ledger filename key; `.pid` is deliberately not read (absent on
+# 16 of 23 rows in the live sample) and a null `.state` means present-but-unlabelled, so it renders
+# as running rather than being mistaken for absence.
+registry_row() {
+  [ "$have_registry" -eq 1 ] || return 0
+  printf '%s' "$agents_json" \
+    | jq -r --arg k "$1" 'map(select(.id == $k)) | if length == 0 then "" else (.[0].state // "running") end' 2>/dev/null \
+    || true
+}
+
+# True when a run key's transcript opens with /auto or /loop /auto. Mirrors fleet-metrics.py's
+# is_auto_session, INCLUDING its decisive rule: the verdict comes from the FIRST human turn, so a
+# session that merely mentions /auto later (this readout quotes it) is not one. Without this gate an
+# interactive session that claimed an issue here is rowed in a fleet table as though the fleet ran
+# it — measured 2026-08-25, where the operator's own /start wt session was mistaken for a fourth
+# fleet member for a whole retro. Transcripts live under the mangled checkout path, plus one dir per
+# worktree, so the glob matches what fleet-metrics.py walks. The gsub is load-bearing: a real
+# opening turn is a MULTI-LINE string ("<command-message>loop</command-message>\n<command-name>…"),
+# so without flattening, `head -1` takes the first LINE rather than the first MESSAGE and every
+# genuine /loop /auto session reads as interactive.
+proj_root="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
+proj_mangled=$(printf '%s' "$main_checkout" | tr / -)
+is_auto_run() {
+  local key="$1" d f first
+  for d in "$proj_root/$proj_mangled"*; do
+    [ -d "$d" ] || continue
+    for f in "$d/$key"*.jsonl; do
+      [ -f "$f" ] || continue
+      first=$(head -n 60 "$f" 2>/dev/null \
+        | jq -rR 'fromjson? | select(.type == "user") | (.message.content? // empty)
+                  | if type == "string" then . else ([.[]? | select(.type? == "text") | .text? // empty] | join(" ")) end
+                  | select(. != "") | gsub("\n"; " ")' 2>/dev/null | head -1) || first=""
+      [ -n "$first" ] || continue
+      case "$first" in
+        *"<command-name>/auto</command-name>"*) return 0 ;;
+        *"<command-name>/loop</command-name>"*) case "$first" in *"/auto"*) return 0 ;; esac ;;
+      esac
+    done
+  done
+  return 1
+}
+
+# Fallback only, and only ever reported as `unknown` — see the pid note in the header. Kept because
+# a live-vs-dead pid still narrows the guess for a reader with no registry.
 session_alive() {
   local pid="$1" recorded="$2" actual
   [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 1
@@ -121,10 +182,51 @@ for f in $state_files; do
   fi
   shown_files="$shown_files $f"
 done
+# Ledger-less sessions: an /auto session that owns a worktree here but has written no auto-state file
+# — one killed before /auto Step 4 records its outcome. Without this pass it is absent from the table
+# entirely while its worktree still shows up under "In flight", which reads as an unowned worktree.
+# The gate below is what keeps that from over-firing: on 2026-08-25 the only worktree owner missing a
+# ledger was the operator's own interactive session, which belongs in neither this pass nor the table.
+# The worktree identity sidecar is the source rather than
+# the registry's cwd: a sidecar means the session claimed an issue here, whereas cwd would also
+# match any interactive session sitting in the checkout. fleet-metrics.py has the transcript-based
+# equivalent for after the fact; this one only sees a session while its worktree exists, which is
+# exactly the window this readout is read in. Owners are recorded in both the 8-char and the full
+# uuid form, so both normalize to the short id the ledger filenames and the registry use.
+ledger_keys=" "
+for f in $state_files; do
+  ledger_keys="$ledger_keys$(basename "$f" | sed 's/auto-state-//;s/\.json//') "
+done
+ledgerless_keys=""
+for sc in "$main_checkout"/.claude/worktree-identity/wt-identity-*.env; do
+  [ -f "$sc" ] || continue
+  # Sidecars OUTLIVE their worktree — the directory retains one per worktree ever created, so the
+  # bare glob yields every session that ever worked this repo (17 of them here on first run). Only
+  # a sidecar whose worktree still exists names a session that is plausibly mid-issue right now.
+  wt_name=$(basename "$sc" .env); wt_name=${wt_name#wt-identity-}
+  [ -d "$main_checkout/.claude/worktrees/$wt_name" ] || continue
+  o=$(sed -n 's/^WT_IDENTITY_OWNER=//p' "$sc" | head -1)
+  [ -n "$o" ] || continue
+  # Owners are written in BOTH forms — short id (84c3c783) and full uuid (35d198f1-9722-...) were
+  # both observed in one fleet — while ledger filenames and registry ids are always the short one.
+  # Truncate only what actually looks like a uuid: a blind ${o%%-*} also eats the first hyphen of a
+  # non-uuid owner, silently turning a session that HAS a ledger into a phantom ledger-less row.
+  case "$o" in
+    [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-*) o=${o%%-*} ;;
+  esac
+  [ -n "$o" ] || continue
+  case "$ledger_keys" in *" $o "*) continue ;; esac
+  case " $ledgerless_keys " in *" $o "*) continue ;; esac
+  # Only an /auto session belongs in a fleet table. An interactive session owning a worktree here is
+  # the operator's own work, not a fleet member that lost its ledger.
+  is_auto_run "$o" || continue
+  ledgerless_keys="$ledgerless_keys $o"
+done
+
 died_active=""
 all_shipped=""
 fc_entries=""
-if [ -z "$shown_files" ]; then
+if [ -z "$shown_files" ] && [ -z "$ledgerless_keys" ]; then
   if [ "$hidden" -gt 0 ]; then
     printf '_No ledger from this fleet yet — sessions write their state file at the first recorded outcome._\n\n'
   else
@@ -145,16 +247,32 @@ else
     all_shipped="$all_shipped $(printf '%s' "$shipped" | tr -d ',')"
     for id in $(printf '%s' "$failed" | tr -d ','); do fc_entries="$fc_entries$id failed $key"$'\n'; done
     for id in $(printf '%s' "$canceled" | tr -d ','); do fc_entries="$fc_entries$id canceled $key"$'\n'; done
-    if session_alive "$pid" "$pid_start"; then
-      live="ALIVE (pid $pid)"
+    if [ "$have_registry" -eq 1 ]; then
+      rstate=$(registry_row "$key")
+      if [ -n "$rstate" ]; then
+        live="ALIVE ($rstate)"
+      else
+        live="dead"
+        [ "$status" = "active" ] && died_active="$died_active $key"
+      fi
+    elif session_alive "$pid" "$pid_start"; then
+      live="unknown (no registry; pid live)"
     else
-      live="dead"
-      [ "$status" = "active" ] && died_active="$died_active $key"
+      live="unknown (no registry; pid dead)"
     fi
     printf '| %s | %s | %s | %s | %s | %s | %s |\n' "$key" "$live" "$status" "${shipped:-—}" "${canceled:-—}" "${failed:-—}" "$blocks"
   done
+  for k in $ledgerless_keys; do
+    live="unknown"
+    if [ "$have_registry" -eq 1 ]; then
+      rstate=$(registry_row "$k")
+      if [ -n "$rstate" ]; then live="ALIVE ($rstate)"; else live="dead"; fi
+    fi
+    printf '| %s | %s | %s | %s | %s | %s | %s |\n' "$k" "$live" "**no ledger**" "?" "?" "?" "?"
+  done
   printf '\n'
 fi
+[ -n "$ledgerless_keys" ] && printf '_%d /auto session(s) own a worktree here but have written no `auto-state` ledger. Their shipped work is NOT counted in the cross-check below, which is built from ledgers only — /fleet-retro recovers them from transcripts. Interactive sessions holding a worktree are deliberately not listed._\n\n' "$(printf '%s' "$ledgerless_keys" | wc -w | tr -d ' ')"
 [ "$hidden" -gt 0 ] && printf '_%d prior-run ledger(s) hidden (written before the current launch); /fleet-retro reads them until the next launch clears the dead ones._\n\n' "$hidden"
 for k in $died_active; do
   printf '⚠️  **Session %s reads `active` but its process is gone** — it died without recording an outcome; check its last issue for a stranded In Progress claim.\n\n' "$k"

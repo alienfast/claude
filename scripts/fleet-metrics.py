@@ -999,6 +999,10 @@ def main():
                     help="Comma-separated run keys (e.g. 7d1f4d17,40a56675,9c0e0a3b). Overrides "
                          "every window flag — the exact-set escape hatch for overlapping fleets.")
     ap.add_argument("--all", action="store_true")
+    ap.add_argument("--allow-partial", action="store_true",
+                    help="Persist a trend row even when --sessions excluded a ledger-less session "
+                         "active in the same window. Reading a partial measurement is fine; this is "
+                         "the opt-in to WRITE one into the cross-run ledger.")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--linear-issues", nargs="*", default=None,
                     help="Linear issue export(s) — a GraphQL response or bare node list with "
@@ -1081,6 +1085,13 @@ def main():
     # smaller than it really was. Keyed on the transcript stem's leading segment, which is what
     # /auto uses for <runKey>.
     ledgerless = []
+    # Ledger-less sessions that --sessions filtered OUT. Not an error — the operator scoped the run —
+    # but a silent one, and the headline it produces is appended to the cross-run trend ledger as fact.
+    # The harm is unexercised rather than measured: the one 2026-08-25 candidate turned out to be the
+    # operator's own interactive session, correctly excluded on both counts (out of span, and not an
+    # /auto run). That near-miss is why the span bound and the is_auto_session probe both gate this —
+    # without them the warning fired on 18 sessions from earlier fleets, every exclusion correct.
+    excluded_ledgerless = {}
     state_keys = {p.stem.replace("auto-state-", "") for p, _, _ in states}
     # Seed with the prior-run keys too, or this pass re-adopts every ledger the launch_epoch filter just
     # dropped: its adopt-the-real-ledger branch below reads the same state file straight back off disk,
@@ -1091,13 +1102,19 @@ def main():
             run_key = tpath.stem.split("-")[0]
             if run_key in seen_keys:
                 continue
-            if req_keys is not None and run_key not in req_keys:
-                continue
+            excluded_by_req = req_keys is not None and run_key not in req_keys
             mtime = datetime.fromtimestamp(tpath.stat().st_mtime, timezone.utc)
             if cutoff and mtime < cutoff:
                 continue
             # An explicitly requested key skips the is_auto_session probe — the operator named it.
-            if req_keys is None and not is_auto_session(tpath):
+            # An EXCLUDED key was never vouched for, so it takes the probe like an undirected one.
+            if (req_keys is None or excluded_by_req) and not is_auto_session(tpath):
+                continue
+            if excluded_by_req:
+                # A session with a ledger on disk was excluded deliberately and is fully recoverable
+                # by re-running with a wider scope; only a LEDGER-LESS one vanishes without trace.
+                if not (checkout / "tmp" / f"auto-state-{run_key}.json").exists():
+                    excluded_ledgerless.setdefault(run_key, mtime)
                 continue
             seen_keys.add(run_key)
             # A ledger that merely sorted out of the window in pass 1 is NOT a missing ledger. The two
@@ -1298,7 +1315,32 @@ def main():
     session_hours = sum(((s["agg"]["last"] - s["agg"]["first"]).total_seconds() / 3600)
                         for s in sessions if s["agg"]["first"] and s["agg"]["last"])
     headline["session_hours"] = round(session_hours, 1)
-    history = record_history(checkout, headline, record=not args.all)
+    # --sessions carries NO time bound, so every ledger-less /auto session the project has ever
+    # held counts as "excluded" — 18 of them on the 2026-08-25 checkout, all from earlier fleets and
+    # every one a correct exclusion. Only an exclusion OVERLAPPING the measured fleet's own span can
+    # be a session this fleet ran and this report is silently missing. Bounding on that span is what
+    # separates the signal from a roster of everything that ever ran here.
+    partial_scope = False
+    if excluded_ledgerless:
+        firsts = [x["agg"]["first"] for x in sessions if x["agg"]["first"]]
+        lasts = [x["agg"]["last"] for x in sessions if x["agg"]["last"]]
+        if firsts and lasts:
+            lo, hi = min(firsts), max(lasts)
+            overlapping = {k: v for k, v in excluded_ledgerless.items() if lo <= v <= hi}
+            if overlapping:
+                partial_scope = not args.allow_partial
+                listed = ", ".join(f"{k} (last active {v:%Y-%m-%d %H:%M}Z)"
+                                   for k, v in sorted(overlapping.items()))
+                print(f"WARNING: --sessions excluded {len(overlapping)} ledger-less /auto session(s) "
+                      f"active inside this fleet's own span: {listed}", file=sys.stderr)
+                print("         They wrote no auto-state file, so their ships, hours and tokens are "
+                      "absent from every number above.", file=sys.stderr)
+                if partial_scope:
+                    print("         No trend row written. Re-run with --since/--hours to include "
+                          "them, or --allow-partial to persist this partial measurement anyway.",
+                          file=sys.stderr)
+
+    history = record_history(checkout, headline, record=not args.all and not partial_scope)
     # A rate averaged over EVERY session in the window is the wrong number to size a fleet with: it
     # pools dense fleet sessions with idle and interactive ones and lands roughly half the truth
     # (measured 55.9k vs 84.9k on the same BF data). Scope it to the peak window instead — that is

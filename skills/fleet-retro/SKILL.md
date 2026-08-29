@@ -40,12 +40,15 @@ need this gate.
 
 **`ps -p <the state file's pid>` does not settle it.** Under `claude agents` every session in a fleet
 embeds the *fleet root* pid (`skills/auto/SKILL.md` Step 0 and Step 4), so it answers identically for all
-of them and can go empty mid-run; `/fleet-status`'s ALIVE/dead column reads the same `pid`/`pidStart`
-pair and inherits the limitation. Compare the newest transcript `mtime` against now instead — and stale
-is not finished either: a quota-stalled session resumes hours later on a pending wakeup, so cross-check
-`tmp/fleet-deadline.json` (passed, or `stopped`) and the sessions' harness limit messages. When a session
-may still be writing, either wait for it or mark its row provisional — never file a bookkeeping finding
-against it. `/fleet-status` is the read-only skill for a fleet still in flight.
+of them and can go empty mid-run. `/fleet-status` no longer inherits that limitation — its liveness
+column joins the session registry (`claude agents --json`) on the ledger key and degrades to `unknown`,
+never `dead`, when the registry is unavailable — but a registry answers whether a session is *running*,
+not whether it has finished writing, so it does not settle this gate either. Compare the newest
+transcript `mtime` against now instead — and stale is not finished either: a quota-stalled session
+resumes hours later on a pending wakeup, so cross-check `tmp/fleet-deadline.json` (passed, or `stopped`)
+and the sessions' harness limit messages. When a session may still be writing, either wait for it or mark
+its row provisional — never file a bookkeeping finding against it. `/fleet-status` is the read-only skill
+for a fleet still in flight.
 
 ```bash
 ~/.claude/scripts/fleet-metrics.py --checkout <repo> --since YYYY-MM-DD   # or --hours N, --all
