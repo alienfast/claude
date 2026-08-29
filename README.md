@@ -49,6 +49,7 @@ The primary shipping mode: N parallel autonomous sessions draining the certified
 | Step | Command | Notes |
 | ---- | ------- | ----- |
 | Prep | `/auto-prep` | Certification honesty audit (the `needs decision` / `solo` / `human` gates), family consolidation, `blocks` edges between file-colliding issues, and a recommended session count — interactive; run it before every launch |
+| Forecast | `/fleet-forecast 12 hours` | Optional dry run of the drain — projected pick order as waves, when Planned burns down into Backlog, what the horizon can't reach, and what is stranded behind blockers the fleet can never ship. Read-only; an estimate, never a plan |
 | Launch | `/fleet-launch 3 10 hours` | Staggered background sessions. Count defaults to prep's persisted recommendation (an explicit count is your quota throttle); the duration winds the fleet down cleanly at the deadline |
 | Watch | `/fleet-status` | One screen, any time, read-only: time remaining, per-session shipped/failed ledgers with liveness, in-flight issues, merges cross-checked against git, remaining runway |
 | End early | `/fleet-stop` | Rationing quota or done for the day — ends the timer; in-flight issues finish; nothing is killed |
@@ -97,6 +98,7 @@ Reach for these as needed — between loop steps or on their own:
 | `/checkpoint` | Mid-task — commits WIP and posts a progress update to Linear |
 | `/quality-review` | On demand — adversarial review + triage/fix loop until convergence (also auto-runs inside `/start`) |
 | `/next` | Starting a day or week — suggests the best next issue to pick up |
+| `/update` | Start of day, and first thing to try when a tool is missing or a skill behaves like an older version — pulls the latest project code and `~/.claude`, then re-runs the setup script |
 
 ## Autonomous (`/auto`)
 
@@ -155,6 +157,7 @@ Specialized personas the main thread delegates to — directly, or through skill
 | [developer](agents/developer.md) | Code implementation from specifications | Opus · high |
 | [debugger](agents/debugger.md) | Root cause analysis through systematic evidence gathering | Opus · xhigh |
 | [quality-reviewer](agents/quality-reviewer.md) | Adversarial review — edge cases, contract violations, security | Opus · xhigh |
+| [quality-verifier](agents/quality-verifier.md) | Verification pass over a fix delta, and the `simple` tier's scoped review | Sonnet · high |
 | [research-lead](agents/research.md) | Multi-perspective research and synthesis | Sonnet · high |
 | [technical-writer](agents/technical-writer.md) | Concise documentation for completed features | Sonnet · low |
 
@@ -179,23 +182,27 @@ In workflow order — seed, certify, fleet, then the per-issue tiers and upkeep:
 | [triage](skills/triage/) | Analyze backlog for staleness, blockers, and priority suggestions |
 | [next](skills/next/) | Suggest best next issue using cycle, dependency, and triage signals |
 | [auto-prep](skills/auto-prep/) | Fleet prep — certification honesty audit (`needs decision` / `solo` / `human`), family consolidation, collision `blocks` edges, recommended session count |
-| [fleet-launch](skills/fleet-launch/) | Launch N parallel `/loop /auto` background sessions, staggered and deadline-bounded; `stop` ends a run early, letting in-flight work finish |
+| [fleet-forecast](skills/fleet-forecast/) | Read-only projection of what a fleet would ship over a horizon — pick order as waves, the Planned→Backlog crossover, stranded candidates |
+| [fleet-launch](skills/fleet-launch/) | Launch N parallel `/loop /auto` background sessions, staggered and deadline-bounded |
+| [fleet-stop](skills/fleet-stop/) | Wind a running fleet down early — in-flight issues finish, no new picks; nothing is killed |
 | [fleet-status](skills/fleet-status/) | Read-only mid-run readout — time remaining, per-session ledgers with liveness, in-flight issues, merges cross-checked against git, runway |
 | [fleet-retro](skills/fleet-retro/) | Post-mortem a finished fleet — capacity metrics, filed-issue audit, state reconciliation; feeds the next prep |
 | [auto](skills/auto/) | Autonomous backlog iteration — ships one issue per invocation; run continuously as `/loop /auto` (see [Autonomous](#autonomous-auto)) |
 | [full](skills/full/) | End-to-end macro: `/start` → `/quality-review` → `/finish`, gated on verdict |
 | [start](skills/start/) | Start a Linear issue — check blockers, assign, create branch, plan, execute, auto-review |
 | [checkpoint](skills/checkpoint/) | Save progress — commit WIP and post progress update to Linear |
-| [quality-review](skills/quality-review/) | Adversarial review + triage/fix loop until convergence (gates `pnpm check`) |
+| [quality-review](skills/quality-review/) | Adversarial review + triage/fix loop until convergence (gates `pnpm check`); the `simple` label or token runs a lighter verifier-only tier that escalates fail-closed |
 | [finish](skills/finish/) | Finish an issue — read verdict, commit/push, mark Ready For Release |
 | [merge-queue](skills/merge-queue/) | Inspect and drain `/finish` merges that were deferred, then retried by the launchd drainer |
 | [reap-worktrees](skills/reap-worktrees/) | Inspect and reclaim leftover `/start wt` worktrees (PR/branch merged, or issue Done/Canceled) |
-| [reflect](skills/reflect/) | Turn session friction into shared-config edits — auto-applies the safe ones, files the rest as certified Linear issues (auto-runs at the `/quality-review` tail; `sweep` mode audits a project's config against its codebase) |
+| [reflect](skills/reflect/) | Turn session friction into shared-config edits — auto-applies the safe ones, files the rest as Linear issues (scheduled surface is `/fleet-retro`'s batched `reflect fleet` step; `sweep` mode audits a project's config against its codebase) |
+| [keeper](skills/keeper/) | Interactive pickup for the config work autonomous runs cannot ship — uncommitted `~/.claude` edits, `keeper`-labeled issues, and contributor proposal PRs, adjudicated in one pass |
 
 **Development skills:**
 
 | Skill | Description |
 |-------|-------------|
+| [update](skills/update/) | Bring the machine current — pull the latest project code and `~/.claude`, then run the update script (the project's `.claude/update.sh`, or `~/.claude/update.sh`) |
 | [pr-update](skills/pr-update/) | Generate PR titles and descriptions from actual code changes |
 | [dependency-updater](skills/dependency-updater/) | Orchestrate dependency updates with research and validation |
 | [deprecation-handler](skills/deprecation-handler/) | Migrate deprecated APIs with safe patterns |
@@ -240,6 +247,11 @@ Automatic quality checks that run without manual invocation.
 | [git-permissions](hooks/git-permissions.sh) | Before git commands | Blocks destructive operations (`reset --hard`/`--mixed`, `restore`/`checkout <file>`, `clean -f`, `--force`) |
 | [scratch-path-guard](hooks/scratch-path-guard.sh) | Before bash commands | Denies scratch writes to bare root paths and system `/tmp` (session scratchpads exempt), steering to project-relative `tmp/` — the model self-corrects instead of stalling an autonomous run on a dangerous-path prompt |
 | [full-continue](hooks/full-continue.sh) | On stop | Keeps `/full` going: re-dispatches `/finish` if the macro stalls after `READY-FOR-FINISH` |
+| [auto-heartbeat](hooks/auto-heartbeat.sh) | On stop | Keeps a self-paced `/loop /auto` alive — blocks a turn that ended without arming the next wakeup, which otherwise kills the loop silently |
+| [no-blind-sleep](hooks/no-blind-sleep.sh) | Before bash commands | Refuses a `sleep` wait that cannot end early; marker-polling loops with an exit condition still run |
+| [linear-create-state-guard](hooks/linear-create-state-guard.sh) | Before bash commands | Refuses a raw `linear-cli issues create` with no `--state` — it would land in the team default (Triage) and be invisible to `/next` and `/auto` forever |
+| [auto-deadline-gate](hooks/auto-deadline-gate.sh) | Before bash commands | Refuses a new `/auto` pick once the fleet deadline has passed, so a wind-down actually returns the machine |
+| [finish-flow-guard](hooks/finish-flow-guard.sh) | Before bash commands | Refuses PR mode in an unattended run whose invocation carried no `pr` token — in PR mode source never advances and `blocks` edges never release |
 
 ### Background daemons
 
@@ -249,6 +261,7 @@ Local `launchd` agents installed by `update.sh` (macOS only) that keep the workt
 |--------|---------|-------------|
 | [merge-queue-drain](launchd/com.alienfast.merge-queue-drain.plist) | Every 15 min | Lands `/finish` merges that were deferred — e.g. main was busy with another session's WIP |
 | [worktree-reap](launchd/com.alienfast.worktree-reap.plist) | Hourly | Reclaims completed or abandoned `/start wt` worktrees |
+| [auto-stall-watch](launchd/com.alienfast.auto-stall-watch.plist) | Every 10 min | Surfaces a `/loop /auto` background session gone silent mid-iteration — the one silent-death shape no Stop hook can catch, since an API-killed turn fires none |
 
 ### Commands
 
@@ -286,6 +299,8 @@ git pull
 ```sh
 ~/.claude/update.sh
 ```
+
+From then on, `/update` is the skill that does this — it pulls the latest project code and `~/.claude` first, then runs the script.
 
 This installs:
 
