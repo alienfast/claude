@@ -217,10 +217,14 @@ def load(path):
     return rows
 
 
-def is_auto_session(path, probe_lines=60):
-    """True when this transcript's opening prompt is /auto or /loop /auto.
+def auto_session_mode(path, probe_lines=60):
+    """The transcript's opening prompt: "loop" for /loop /auto, "single" for a direct /auto (a
+    targeted `/auto <ID>` or a one-shot pick), None when the first human turn is anything else.
 
-    Session discovery cannot rest on state files alone: /auto's Step 0 GC deletes sibling state
+    A single run is not a fleet member. It writes a ledger of exactly a loop session's shape (/auto
+    Step 4 stamps `mode` since 2026-08-29; older ledgers are classified through this probe), and
+    admitting it is how a 3-session fleet retro'd as 21 sessions, then 11, and a 5-session fleet
+    as 26 (2026-08-29). Session discovery cannot rest on state files alone: /auto's Step 0 GC deletes sibling state
     files, so a finished run's ledger can be gone before the retro reads it — and then the whole
     session, transcripts included, is invisible here. Reported as a smaller, healthier fleet, which
     is the worst possible failure for a tool whose one job is to measure. Observed 2026-08-04: two
@@ -242,13 +246,13 @@ def is_auto_session(path, probe_lines=60):
                 if not text:
                     continue
                 if "<command-name>/auto</command-name>" in text:
-                    return True
+                    return "single"
                 if "<command-name>/loop</command-name>" in text and "/auto" in text:
-                    return True
-                return False  # first human turn was something else — not an /auto run
+                    return "loop"
+                return None  # first human turn was something else — not an /auto run
     except OSError:
-        return False
-    return False
+        return None
+    return None
 
 
 def subagent_meta(path):
@@ -991,7 +995,8 @@ def session_alive(pid, recorded_start):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--checkout", default=".")
-    ap.add_argument("--hours", type=float, default=36.0)
+    ap.add_argument("--hours", type=float, default=None,
+                    help="Window in hours (36 when nothing else scopes the run — see --sessions)")
     ap.add_argument("--since")
     ap.add_argument("--until",
                     help="ISO date/datetime (UTC); exclude sessions whose activity starts after it. "
@@ -999,7 +1004,8 @@ def main():
                          "window.")
     ap.add_argument("--sessions",
                     help="Comma-separated run keys (e.g. 7d1f4d17,40a56675,9c0e0a3b). Overrides "
-                         "every window flag — the exact-set escape hatch for overlapping fleets.")
+                         "every window flag. With no scope flag at all, the set the launch recorded "
+                         "in tmp/fleet-deadline.json (fleet_sessions) is used when present.")
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--allow-partial", action="store_true",
                     help="Persist a trend row even when --sessions excluded a ledger-less session "
@@ -1020,9 +1026,27 @@ def main():
     except (subprocess.SubprocessError, OSError):
         pass
 
-    # A fleet is a session set, not a time range — an explicit --sessions set overrides every
-    # window flag, including the recent-end bound.
+    # A fleet is a session set, not a time range. Precedence: an explicit --sessions set; an explicit
+    # window (--since/--until/--hours/--all); the set the launch recorded in tmp/fleet-deadline.json;
+    # the default window. A window scopes by WHEN, never by membership — a targeted `/auto <ID>` run
+    # writes a ledger of the same shape, and measured 2026-08-29 a bare --since read 21, then 11,
+    # then 26 sessions against real fleets of 3 and 5 — so the recorded set is the default whenever
+    # the launch wrote one (every /fleet-launch since 2026-08-29).
     req_keys = {k.strip() for k in args.sessions.split(",") if k.strip()} if args.sessions else None
+    scope = "--sessions" if req_keys else None
+    explicit_window = bool(args.since or args.until or args.all or args.hours is not None)
+    if req_keys is None and not explicit_window:
+        try:
+            recorded = json.loads((checkout / "tmp" / "fleet-deadline.json").read_text()).get("fleet_sessions")
+        except (json.JSONDecodeError, OSError, AttributeError):
+            recorded = None
+        if isinstance(recorded, list) and recorded:
+            req_keys = {str(k).strip() for k in recorded if str(k).strip()}
+            scope = f"fleet_sessions from tmp/fleet-deadline.json ({len(req_keys)})"
+    if args.hours is None:
+        args.hours = 36.0
+    if scope is None:
+        scope = "--all" if args.all else (f"--since {args.since}" if args.since else f"--hours {args.hours:g}")
 
     if req_keys or args.all:
         cutoff = None
@@ -1044,8 +1068,12 @@ def main():
     except (json.JSONDecodeError, OSError, AttributeError):
         pass
 
+    mangled = str(checkout).replace("/", "-")
+    dirs = [d for d in PROJ.glob(f"{mangled}*") if d.is_dir()]
+
     states = []
     prior_run_keys = set()
+    single_excluded = []
     for p in sorted((checkout / "tmp").glob("auto-state-*.json")):
         if req_keys is not None and p.stem.replace("auto-state-", "") not in req_keys:
             continue
@@ -1059,12 +1087,22 @@ def main():
             prior_run_keys.add(p.stem.replace("auto-state-", ""))
             continue
         try:
-            states.append((p, json.loads(p.read_text()), mtime))
+            st = json.loads(p.read_text())
         except (json.JSONDecodeError, OSError):
             continue
-
-    mangled = str(checkout).replace("/", "-")
-    dirs = [d for d in PROJ.glob(f"{mangled}*") if d.is_dir()]
+        # A single-run ledger (a targeted or one-shot /auto) is not a fleet member. Stamped by /auto
+        # since 2026-08-29; an older ledger is classified from its transcript's opening turn. An
+        # explicitly named key is measured whatever its mode — the operator asked.
+        if req_keys is None:
+            key = p.stem.replace("auto-state-", "")
+            mode = st.get("mode") if isinstance(st, dict) else None
+            if mode not in ("loop", "single"):
+                mode = next((auto_session_mode(t) for d in dirs for t in sorted(d.glob(f"{key}*.jsonl"))
+                             if "/subagents/" not in str(t)), None)
+            if mode == "single":
+                single_excluded.append(key)
+                continue
+        states.append((p, st, mtime))
 
     def measure(run_key, state, mtime, ledger_missing=False):
         agg = new_agg()
@@ -1082,7 +1120,7 @@ def main():
                 "ledger_missing": ledger_missing,
                 "transcripts": len(transcripts), "agg": agg}
 
-    # Second discovery pass: an /auto session whose ledger no longer exists. See is_auto_session —
+    # Second discovery pass: an /auto session whose ledger no longer exists. See auto_session_mode —
     # a deleted state file must surface as a flagged session, never as a fleet that was one session
     # smaller than it really was. Keyed on the transcript stem's leading segment, which is what
     # /auto uses for <runKey>.
@@ -1091,7 +1129,7 @@ def main():
     # but a silent one, and the headline it produces is appended to the cross-run trend ledger as fact.
     # The harm is unexercised rather than measured: the one 2026-08-25 candidate turned out to be the
     # operator's own interactive session, correctly excluded on both counts (out of span, and not an
-    # /auto run). That near-miss is why the span bound and the is_auto_session probe both gate this —
+    # /auto run). That near-miss is why the span bound and the auto_session_mode probe both gate this —
     # without them the warning fired on 18 sessions from earlier fleets, every exclusion correct.
     excluded_ledgerless = {}
     state_keys = {p.stem.replace("auto-state-", "") for p, _, _ in states}
@@ -1108,10 +1146,19 @@ def main():
             mtime = datetime.fromtimestamp(tpath.stat().st_mtime, timezone.utc)
             if cutoff and mtime < cutoff:
                 continue
-            # An explicitly requested key skips the is_auto_session probe — the operator named it.
-            # An EXCLUDED key was never vouched for, so it takes the probe like an undirected one.
-            if (req_keys is None or excluded_by_req) and not is_auto_session(tpath):
-                continue
+            # An explicitly requested key skips the probe — the operator named it. An EXCLUDED key
+            # was never vouched for, so it takes the probe like an undirected one.
+            if req_keys is None or excluded_by_req:
+                mode = auto_session_mode(tpath)
+                if mode is None:
+                    continue
+                # A single run (targeted or one-shot /auto) is not a fleet member — the undirected
+                # route through which 13 of the 21 extras entered the 2026-08-29 retro.
+                if mode == "single":
+                    if req_keys is None:
+                        single_excluded.append(run_key)
+                    seen_keys.add(run_key)
+                    continue
             if excluded_by_req:
                 # A session with a ledger on disk was excluded deliberately and is fully recoverable
                 # by re-running with a wider scope; only a LEDGER-LESS one vanishes without trace.
@@ -1501,12 +1548,18 @@ def main():
             },
             "merge_reconciliation": merged,
             "excluded_stale": excluded_stale,
+            "scope": scope,
+            "single_runs_excluded": sorted(single_excluded),
         }, indent=2))
         return 0
 
     print(f"# Fleet metrics — {checkout.name}\n")
-    print(f"Checkout: `{checkout}`  ·  sessions: {len(sessions)}"
+    print(f"Checkout: `{checkout}`  ·  sessions: {len(sessions)}  ·  scope: {scope}"
           f"  ·  window: {'all' if not cutoff else cutoff.strftime('%Y-%m-%d %H:%M UTC')}\n")
+    if single_excluded:
+        print("Not fleet members, excluded from an undirected scope (single-run /auto — a targeted or "
+              "one-shot invocation; name them with --sessions to measure them): "
+              + ", ".join(f"`{k}`" for k in sorted(single_excluded)) + "\n")
     if excluded_stale:
         print("Excluded from the window (stale: last activity before it; late: started after --until): "
               + ", ".join(f"`{e['run_key']}` (" + (f"ended {e['ended']}" if "ended" in e

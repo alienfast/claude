@@ -251,6 +251,38 @@ ck_has "  id-less row joins on the sessionId prefix" "| c0ffee01 | ALIVE (runnin
 ck_lacks "  and raises no stranded-claim flag" 'Session c0ffee01 reads `active`' "$OUT"
 rm -f "$REPO/tmp/auto-state-c0ffee01.json"
 
+echo "== 14. a marker carrying fleet_sessions scopes by membership; single-run ledgers never row"
+# Every launch since 2026-08-29 records the set. sess-a is a member; sess-b (a loop ledger newer than
+# launch_epoch) is not — under the mtime scope it rowed as a fleet session, which is how a 3-session
+# fleet retro'd as 21. sess-z is a member with no ledger yet (preflight). c0ffee02 is a single run.
+jq -n --argjson le "$((NOW - 500))" '{count: 2, launch_epoch: $le, fleet_sessions: ["sess-a", "sess-z"]}' > "$REPO/tmp/fleet-deadline.json"
+jq -n '{status: "active", mode: "single", shipped: ["XX-9"], canceled: [], failed: [], reviewBlocks: 0}' > "$REPO/tmp/auto-state-c0ffee02.json"
+write_agents '[{"id":"sess-a","cwd":"/x","kind":"background","sessionId":"sess-a-full","name":"n","state":"working"},
+               {"id":"sess-z","cwd":"/x","kind":"background","sessionId":"sess-z-full","name":"n","state":"working"},
+               {"id":"sess-b","cwd":"/x","kind":"background","sessionId":"sess-b-full","name":"n","state":"working"}]'
+run_fs --no-runway
+ck "clean exit" "0" "$RC"
+ck_has "  undated marker reads as no deadline, with the set size" "**Deadline:** none — loops run until the certified backlog drains. (2 session(s) in the fleet)" "$OUT"
+ck_has "  member rowed"                       "| sess-a | ALIVE (working) |" "$OUT"
+ck_lacks "  non-member loop ledger not rowed" "| sess-b |" "$OUT"
+# old, tie and sess-b: every ledger outside the set, whatever its mtime.
+ck_has "  non-members counted as hidden"      "3 prior-run ledger(s) hidden" "$OUT"
+ck_lacks "  single-run ledger not rowed"      "| c0ffee02 |" "$OUT"
+ck_has "  single-run ledger disclosed"        "1 single-run ledger(s) not listed" "$OUT"
+ck_has "  member without a ledger rowed"      "| sess-z | ALIVE (working) | **no ledger** |" "$OUT"
+rm -f "$REPO/tmp/auto-state-c0ffee02.json"
+
+echo "== 15. a registry row in state done is an ended session, not a live one"
+# `claude agents --json` keeps listing a finished background session with state "done" (measured
+# 2026-08-29), so listed is not alive: an active ledger on a done row is the stranded-claim shape.
+write_marker $((NOW - 500)) $((NOW + 3600))
+write_agents '[{"id":"sess-a","cwd":"/x","kind":"background","sessionId":"sess-a-full","name":"n","state":"working"},
+               {"id":"sess-b","cwd":"/x","kind":"background","sessionId":"sess-b-full","name":"n","state":"done"}]'
+run_fs --no-runway
+ck "clean exit" "0" "$RC"
+ck_has "  done row reads dead"                "| sess-b | dead (ended) | active" "$OUT"
+ck_has "  and the stranded-claim flag fires"  'Session sess-b reads `active` but its process is gone' "$OUT"
+
 echo ""
 echo "$PASS passed / $FAIL failed"
 [ "$FAIL" -eq 0 ]

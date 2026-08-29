@@ -9,15 +9,18 @@
 #   remaining-candidates count, the one section that costs a Linear ranking call (~10-20s).
 #
 # Sources (all read-only; no Linear writes, no git mutations):
-#   tmp/fleet-deadline.json            deadline + launched count + launch_epoch (fleet-launch.sh)
-#   tmp/auto-state-*.json              per-session ledgers: shipped/canceled/failed, pid liveness
+#   tmp/fleet-deadline.json            fleet_sessions (the session set) + launch_epoch + count, plus
+#                                      the deadline when the launch carried one (fleet-launch.sh)
+#   tmp/auto-state-*.json              per-session ledgers: shipped/canceled/failed, mode
 #   .claude/worktrees/ + worktree-identity/ sidecars   in-flight issues, session ownership
 #   linear-cli (optional)              issue state/title joins, failed/canceled cross-check,
 #                                      stalled flags, runway
 #   .claude/merge-queue/               deferred merges (via merge-queue.sh list)
 #
-# Sessions are scoped to the CURRENT fleet: ledgers whose last write predates the launch are
-# prior-run history (fleet-launch clears the dead ones at the next launch; until then they are
+# Sessions are scoped to the CURRENT fleet: the marker's fleet_sessions decides membership when the
+# launch recorded it (every launch since 2026-08-29), and a single-run ledger (`mode: single` — a
+# targeted or one-shot /auto) is never a member; without the set, ledgers whose last write predates
+# the launch are prior-run history (fleet-launch clears the dead ones at the next launch; until then they are
 # hidden here with a count, and /fleet-retro reads them). Failed/canceled entries are further
 # cross-checked against each issue's current Linear state, because a ledger entry is a claim
 # about that run only — a later session or an interactive pickup can ship the issue without
@@ -74,17 +77,24 @@ printf '## Fleet status — %s\n\n' "$(basename "$main_checkout")"
 # ---------- deadline ----------
 
 marker="$main_checkout/tmp/fleet-deadline.json"
+fleet_set=""
 if [ -s "$marker" ]; then
   d_epoch=$(jq -r '.deadline_epoch // empty' "$marker")
   d_human=$(jq -r '.deadline // empty' "$marker")
   d_count=$(jq -r '.count // empty' "$marker")
+  fleet_set=$(jq -r '(.fleet_sessions // []) | join(" ")' "$marker" 2>/dev/null || true)
+  f_n=$(printf '%s' "$fleet_set" | wc -w | tr -d ' ')
+  if [ "$f_n" -gt 0 ]; then launched_note=" ($f_n session(s) in the fleet)"; else launched_note="${d_count:+ ($d_count session(s) launched)}"; fi
   if [ "$(jq -r '.stopped // false' "$marker")" = "true" ]; then
     printf '**Deadline: STOPPED** (wind-down requested) — sessions finish their in-flight issue and end at the next pick.\n\n'
   elif [ -n "$d_epoch" ] && [ "$d_epoch" -gt "$now" ]; then
     rem=$(( (d_epoch - now) / 60 ))
-    printf '**Deadline:** %s — **%dh%02dm remaining**%s\n\n' "$d_human" $((rem / 60)) $((rem % 60)) "${d_count:+ ($d_count session(s) launched)}"
-  else
+    printf '**Deadline:** %s — **%dh%02dm remaining**%s\n\n' "$d_human" $((rem / 60)) $((rem % 60)) "$launched_note"
+  elif [ -n "$d_epoch" ]; then
     printf '**Deadline:** %s — **passed**; sessions stop at their next pick boundary.\n\n' "$d_human"
+  else
+    # Every launch writes the marker; only a dated one carries deadline_epoch.
+    printf '**Deadline:** none — loops run until the certified backlog drains.%s\n\n' "$launched_note"
   fi
 else
   printf '**Deadline:** none — loops run until the certified backlog drains.\n\n'
@@ -119,7 +129,9 @@ fi
 # targeted `/auto <ID>` run in a terminal — a ledger, no `id` — reads `dead` with the registry
 # present and raises the stranded-claim flag this join exists to prevent. `.pid` is deliberately
 # not read (absent on 16 of 23 rows in one live sample) and a null `.state` means
-# present-but-unlabelled, so it renders as running rather than being mistaken for absence.
+# present-but-unlabelled, so it renders as running rather than being mistaken for absence. A `done`
+# state is an ENDED background session the registry still lists (measured 2026-08-29); callers
+# treat it as gone.
 registry_row() {
   [ "$have_registry" -eq 1 ] || return 0
   printf '%s' "$agents_json" \
@@ -172,8 +184,19 @@ printf '### Sessions\n\n'
 state_files=$(ls -t "$main_checkout"/tmp/auto-state-*.json 2>/dev/null || true)
 shown_files=""
 hidden=0
+single_hidden=0
 for f in $state_files; do
-  if [[ "$scope_epoch" =~ ^[0-9]+$ ]]; then
+  key=$(basename "$f" | sed 's/auto-state-//;s/\.json//')
+  # A single-run ledger (`mode: single` — a targeted or one-shot /auto, skills/auto/SKILL.md Step 4)
+  # is never a fleet member, whatever its mtime: it is what a time-window scope admitted 26 of.
+  if [ "$(jq -r '.mode // "loop"' "$f" 2>/dev/null)" = "single" ]; then
+    single_hidden=$((single_hidden + 1))
+    continue
+  fi
+  # Membership when the launch recorded the set; the launch_epoch window only for older markers.
+  if [ -n "$fleet_set" ]; then
+    case " $fleet_set " in *" $key "*) ;; *) hidden=$((hidden + 1)); continue ;; esac
+  elif [[ "$scope_epoch" =~ ^[0-9]+$ ]]; then
     mtime=$(stat -f %m "$f" 2>/dev/null || stat -c %m "$f" 2>/dev/null || echo "")
     # -le, not -lt: fleet-launch stamps launch_epoch as it dispatches, so a ledger whose last write
     # lands in that same second was written by a session that had not been dispatched yet — it is
@@ -227,6 +250,12 @@ for sc in "$main_checkout"/.claude/worktree-identity/wt-identity-*.env; do
   is_auto_run "$o" || continue
   ledgerless_keys="$ledgerless_keys $o"
 done
+# A recorded member with no ledger yet: still in preflight, or killed before its first outcome.
+for k in $fleet_set; do
+  case "$ledger_keys" in *" $k "*) continue ;; esac
+  case " $ledgerless_keys " in *" $k "*) continue ;; esac
+  ledgerless_keys="$ledgerless_keys $k"
+done
 
 died_active=""
 all_shipped=""
@@ -254,12 +283,11 @@ else
     for id in $(printf '%s' "$canceled" | tr -d ','); do fc_entries="$fc_entries$id canceled $key"$'\n'; done
     if [ "$have_registry" -eq 1 ]; then
       rstate=$(registry_row "$key")
-      if [ -n "$rstate" ]; then
-        live="ALIVE ($rstate)"
-      else
-        live="dead"
-        [ "$status" = "active" ] && died_active="$died_active $key"
-      fi
+      case "$rstate" in
+        "")   live="dead"; [ "$status" = "active" ] && died_active="$died_active $key" ;;
+        done) live="dead (ended)"; [ "$status" = "active" ] && died_active="$died_active $key" ;;
+        *)    live="ALIVE ($rstate)" ;;
+      esac
     elif session_alive "$pid" "$pid_start"; then
       live="unknown (no registry; pid live)"
     else
@@ -271,14 +299,15 @@ else
     live="unknown"
     if [ "$have_registry" -eq 1 ]; then
       rstate=$(registry_row "$k")
-      if [ -n "$rstate" ]; then live="ALIVE ($rstate)"; else live="dead"; fi
+      case "$rstate" in "") live="dead" ;; done) live="dead (ended)" ;; *) live="ALIVE ($rstate)" ;; esac
     fi
     printf '| %s | %s | %s | %s | %s | %s | %s |\n' "$k" "$live" "**no ledger**" "?" "?" "?" "?"
   done
   printf '\n'
 fi
-[ -n "$ledgerless_keys" ] && printf '_%d /auto session(s) own a worktree here but have written no `auto-state` ledger. Their shipped work is NOT counted in the cross-check below, which is built from ledgers only — /fleet-retro recovers them from transcripts. Interactive sessions holding a worktree are deliberately not listed._\n\n' "$(printf '%s' "$ledgerless_keys" | wc -w | tr -d ' ')"
-[ "$hidden" -gt 0 ] && printf '_%d prior-run ledger(s) hidden (written before the current launch); /fleet-retro reads them until the next launch clears the dead ones._\n\n' "$hidden"
+[ -n "$ledgerless_keys" ] && printf '_%d fleet session(s) have written no `auto-state` ledger (recorded at launch, or owning a worktree here). Their shipped work is NOT counted in the cross-check below, which is built from ledgers only — /fleet-retro recovers them from transcripts. Interactive sessions holding a worktree are deliberately not listed._\n\n' "$(printf '%s' "$ledgerless_keys" | wc -w | tr -d ' ')"
+[ "$hidden" -gt 0 ] && printf '_%d prior-run ledger(s) hidden (written before the current launch, or not in its recorded session set); /fleet-retro reads them until the next launch clears the dead ones._\n\n' "$hidden"
+[ "$single_hidden" -gt 0 ] && printf '_%d single-run ledger(s) not listed (`mode: single` — a targeted or one-shot /auto, not a fleet member; /fleet-retro measures it only when named with --sessions)._\n\n' "$single_hidden"
 for k in $died_active; do
   printf '⚠️  **Session %s reads `active` but its process is gone** — either it died without recording an outcome (check its last issue for a stranded In Progress claim), or it wound down cleanly and never wrote its terminal status, which strands nothing. Its transcript tells them apart: a `NO-CANDIDATES`/`AUTO-HALTED` tag or a ScheduleWakeup(stop:true) means it finished. `fleet-metrics.py` reports the second shape as `wound down but never finalized its ledger`.\n\n' "$k"
 done

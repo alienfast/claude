@@ -246,6 +246,8 @@ ck "no history on --all" "0"       "$(q "len(d['history'])")"
 ck_has "trend not recorded"  "not recorded for --all sweeps" "$MD"
 
 # ---- total-loss fixture: every ledger GC'd, transcripts intact ----
+# Opens with /loop /auto, as a fleet session does: a bare `/auto` opening turn is a SINGLE run (targeted
+# or one-shot) and is excluded from an undirected scope as a non-member — case 15.
 # The worst case of the 2026-08-04 fault, taken to its limit. Before the discovery pass this exited
 # 1 with "No auto-state files", i.e. a fleet that shipped real work reported as never having run.
 CK2="$WORK/checkout2"
@@ -255,7 +257,7 @@ git -C "$CK2" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "init"
 M2="$(git -C "$CK2" rev-parse --show-toplevel | tr / -)"
 mkdir -p "$WORK/projects/$M2"
 cat > "$WORK/projects/$M2/aaa11111-0000.jsonl" <<'EOF'
-{"type":"user","timestamp":"2026-08-04T09:00:00Z","message":{"role":"user","content":"<command-name>/auto</command-name><command-args>TT-5</command-args>"}}
+{"type":"user","timestamp":"2026-08-04T09:00:00Z","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
 {"type":"assistant","timestamp":"2026-08-04T09:40:00Z","message":{"role":"assistant","id":"msg_F","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":120},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-5 done"}]}}
 EOF
 J2="$WORK/out2.json"
@@ -1003,7 +1005,7 @@ echo '{"status":"drained","reason":"t","shipped":["TT-90"],"canceled":[],"skippe
 
 auto_txn() { # auto_txn <path> <start-secs-ago> <end-secs-ago>
   cat > "$1" <<EOF
-{"type":"user","timestamp":"$(ts_ago "$2")","message":{"role":"user","content":"<command-name>/auto</command-name>"}}
+{"type":"user","timestamp":"$(ts_ago "$2")","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
 {"type":"assistant","timestamp":"$(ts_ago "$3")","message":{"role":"assistant","id":"m_$$_$3","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-90 done"}]}}
 EOF
 }
@@ -1034,6 +1036,61 @@ rm -f "$CK14/tmp/fleet-metrics-history.jsonl"
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK14" --hours 24 > /dev/null 2> "$E14"
 ck_lacks "control: no warning without --sessions" "ledger-less" "$E14"
 ck "control: trend row written"                   "1" "$(hist14)"
+
+# ---- 15. single-run /auto sessions are not fleet members; the launch's recorded set is the default scope ----
+# A targeted `/auto <ID>` (or one-shot `/auto`) writes a ledger of the same shape as a loop session's, so
+# a time window admits it: measured 2026-08-29, --since read 21, then 11, then 26 sessions against real
+# fleets of 3 and 5. /auto stamps `mode` since 2026-08-29; an older ledger is classified from its
+# transcript's opening turn; a ledger-less single run is classified the same way in the transcript sweep.
+CK15="$WORK/ck15"; mkdir -p "$CK15/tmp"
+git -C "$CK15" init -q 2>/dev/null
+git -C "$CK15" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "TT-95: ship it"
+M15="$(git -C "$CK15" rev-parse --show-toplevel | tr / -)"
+T15="$WORK/projects/$M15"; mkdir -p "$T15"
+loop_txn() { # loop_txn <path> <start-secs-ago> <end-secs-ago>
+  cat > "$1" <<EOF
+{"type":"user","timestamp":"$(ts_ago "$2")","message":{"role":"user","content":"<command-message>loop</command-message>\n<command-name>/loop</command-name>\n<command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"$(ts_ago "$3")","message":{"role":"assistant","id":"m_$$_l$3","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-95 done"}]}}
+EOF
+}
+single_txn() { # single_txn <path> <start-secs-ago> <end-secs-ago> — a targeted /auto TT-95
+  cat > "$1" <<EOF
+{"type":"user","timestamp":"$(ts_ago "$2")","message":{"role":"user","content":"<command-message>auto</command-message>\n<command-name>/auto</command-name>\n<command-args>TT-95</command-args>"}}
+{"type":"assistant","timestamp":"$(ts_ago "$3")","message":{"role":"assistant","id":"m_$$_s$3","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-95 done"}]}}
+EOF
+}
+echo '{"status":"drained","reason":"t","mode":"loop","shipped":["TT-95"],"canceled":[],"skipped":[],"failed":[]}' > "$CK15/tmp/auto-state-loop0001.json"
+echo '{"status":"active","reason":"","mode":"single","shipped":["TT-95"],"canceled":[],"skipped":[],"failed":[]}' > "$CK15/tmp/auto-state-tgt00001.json"
+echo '{"status":"active","reason":"","shipped":["TT-95"],"canceled":[],"skipped":[],"failed":[]}' > "$CK15/tmp/auto-state-tgt00002.json"
+loop_txn   "$T15/loop0001-0000.jsonl" 3600 60
+single_txn "$T15/tgt00001-0000.jsonl" 3000 1800
+single_txn "$T15/tgt00002-0000.jsonl" 3000 1800   # legacy ledger without mode: classified by transcript
+single_txn "$T15/tgt00003-0000.jsonl" 3000 1800   # ledger-less single run: the transcript sweep's route
+
+MD15="$WORK/out15.md"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK15" --hours 24 > "$MD15" 2>&1
+ck_has "single: only the loop session measured"        "sessions: 1  ·" "$MD15"
+ck_has "single: scope named"                           "scope: --hours 24" "$MD15"
+ck_has "single: stamped ledger excluded"               "\`tgt00001\`" "$MD15"
+ck_has "single: legacy ledger classified by transcript" "\`tgt00002\`" "$MD15"
+ck_has "single: ledger-less run excluded too"          "\`tgt00003\`" "$MD15"
+ck_has "single: exclusion named as such"               "Not fleet members" "$MD15"
+ck_lacks "single: no ran-without-ledger flag for it"   "\`tgt00003\` ran without a surviving ledger" "$MD15"
+
+# Named explicitly, a single run still measures — the operator asked.
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK15" --sessions tgt00001 > "$MD15" 2>&1
+ck_has "single: --sessions measures it"               "sessions: 1  ·" "$MD15"
+ck_has "single: --sessions row present"               "| \`tgt00001\`" "$MD15"
+ck_lacks "single: no exclusion note under --sessions" "Not fleet members" "$MD15"
+
+# The launch's recorded set is the default scope when no flag scopes the run; an explicit window wins.
+jq -n '{count: 1, launch_epoch: 1, fleet_sessions: ["loop0001"]}' > "$CK15/tmp/fleet-deadline.json"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK15" > "$MD15" 2>&1
+ck_has "recorded set: scope named"                    "scope: fleet_sessions from tmp/fleet-deadline.json (1)" "$MD15"
+ck_has "recorded set: member measured"                "| \`loop0001\`" "$MD15"
+ck_lacks "recorded set: single run not swept in"      "\`tgt00003\`" "$MD15"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK15" --hours 24 > "$MD15" 2>&1
+ck_has "recorded set: explicit window overrides"      "scope: --hours 24" "$MD15"
 
 echo
 echo "$PASS passed / $FAIL failed"

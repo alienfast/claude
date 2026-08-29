@@ -28,7 +28,7 @@ files issues and ships through `/finish` exactly like a fleet session. What it d
 that skill writes one. So it presents as the very fault the flag table teaches you to hunt — work with no
 bookkeeping.
 
-Discriminate before counting it. `fleet-metrics.py`'s `is_auto_session` is the test: the transcript's
+Discriminate before counting it. `fleet-metrics.py`'s `auto_session_mode` is the test: the transcript's
 FIRST human turn carrying text must be the autonomous-loop command, and a later mention does not count.
 Read that turn yourself rather than inferring membership from a table — absence from the script's tables
 is not proof of interactivity either, since an explicitly named `--sessions` key skips the probe and a
@@ -83,8 +83,22 @@ its row provisional — never file a bookkeeping finding against it. `/fleet-sta
 for a fleet still in flight.
 
 ```bash
-~/.claude/scripts/fleet-metrics.py --checkout <repo> --since YYYY-MM-DD   # or --hours N, --all
+~/.claude/scripts/fleet-metrics.py --checkout <repo>                      # scopes to the launch's recorded session set
+~/.claude/scripts/fleet-metrics.py --checkout <repo> --sessions a,b,c     # an older fleet, or a marker without the set
+~/.claude/scripts/fleet-metrics.py --checkout <repo> --since YYYY-MM-DD   # last resort: a time window (or --hours N, --all)
 ```
+
+**A fleet is a session set, not a time window — scope by the set.** Every `/fleet-launch` since 2026-08-29
+records `fleet_sessions` in `tmp/fleet-deadline.json` (the short id each `claude --bg` prints, which is the
+ledger key), the bare invocation scopes to it, and the report header names the scope it used. `--sessions` is
+the same thing typed by hand. A window is the last resort because it scopes by *when*, never by membership: a
+targeted `/auto <ID>` run writes a ledger of exactly the same shape, and every such run in the window lands in
+the tables and every total. Measured 2026-08-29 on a `/fleet-launch 3 12h` run: `--since 2026-08-28` reported
+21 sessions, a tighter `--since 2026-08-28T18:50` reported 11, against a real fleet of 3; re-measured the same
+day, a bare `--since` read 26 against a fleet of 5. Since then `/auto` stamps `mode` on its ledger and the
+script keeps single runs (`mode: single` — targeted or one-shot) out of any undirected scope, naming them under
+*Not fleet members*; in older data the tell is the per-session table's `wakeups` column — a `/loop /auto`
+session arms one per iteration, a single run shows `0 (0 stop)`.
 
 Discovers sessions from `<repo>/tmp/auto-state-*.json`, matches each to its transcripts (main **and**
 worktree dirs, **including `subagents/`**), and emits fixed per-session, review-churn, and
@@ -92,18 +106,14 @@ token-attribution tables plus a Flags section. `--json` for machine use. Subagen
 disproportionately: a delegated reviewer that gets blocked or stalls is invisible to its parent, which
 sees only a slow `Agent` call.
 
-**Check the discovered session count against the fleet's own before reading any number.** Discovery reaches
-`<repo>/tmp/auto-state-*.json` plus a transcript sweep for ledgerless sessions — and a targeted `/auto <ID>` run
-writes a ledger of exactly the same shape, so a time window scopes by *when*, never by membership: every targeted
-run that touched this repo in the window lands in the tables and every total. Measured 2026-08-29 on a
-`/fleet-launch 3 12h` run: `--since 2026-08-28` reported 21 sessions, a tighter `--since 2026-08-28T18:50`
-reported 11, against a real fleet of 3. The tell is the per-session table's `wakeups` column — a `/loop /auto`
-session arms one per iteration, a targeted run shows `0 (0 stop)`. Compare the report header's `sessions:` count
-against `count` in `tmp/fleet-deadline.json` (absent when the launch carried no duration — then count the `/loop`
-sessions yourself), and read the direction, because the two disagreements are opposite faults. **More than
-`count`** = non-fleet sessions admitted: re-scope with `--sessions <the /loop run keys>` and re-run, since a
-mis-scoped run also appends a junk row to `tmp/fleet-metrics-history.jsonl`. **Fewer than `count`** = a fleet
-session missing from discovery, which is a finding in itself — chase it; `--sessions` would only hide it.
+**Check the discovered session count against the fleet's own before reading any number.** Compare the
+report header's `sessions:` count against `fleet_sessions | length` in `tmp/fleet-deadline.json` (`count` on a
+marker that predates the set; a marker from before 2026-08-29 is absent altogether when the launch carried no
+duration — then count the `/loop` sessions yourself), and read the direction, because the two disagreements are
+opposite faults. **More than the fleet's** = non-fleet sessions admitted: re-scope with `--sessions <the /loop
+run keys>` and re-run, since a mis-scoped run also appends a junk row to `tmp/fleet-metrics-history.jsonl`.
+**Fewer than the fleet's** = a fleet session missing from discovery, which is a finding in itself — chase it;
+`--sessions` would only hide it.
 
 Three gauges ride the same run and the retro reads all three, not just the tables:
 
