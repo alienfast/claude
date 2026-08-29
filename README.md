@@ -3,6 +3,8 @@
 Reusable agents, skills, standards, rules, and hooks for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Drop this into your `~/.claude` directory to get an opinionated, productivity-focused setup — from a single edit up to a full Linear-driven, issue-to-merge workflow.
 
 > **Not an engineer?** [Linear for stakeholders](linear-for-stakeholders.md) explains how the agents read your Linear board and how to influence what they work on next — labels, priority, cycles, and how to unblock a parked issue.
+>
+> **Want to set up your own project?** [Project setup](project-setup.md) takes a fresh Mac from nothing to a working setup — your GitHub repository, your Linear board, and this toolkit — in seven steps, most of which Claude does for you.
 
 ## Why
 
