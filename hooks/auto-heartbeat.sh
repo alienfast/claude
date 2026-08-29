@@ -14,8 +14,10 @@
 # that armed no ScheduleWakeup, block the stop and re-drive the arming.
 #
 # DELIBERATELY NOT FIRING — each is a real exit, not an oversight:
-#   - ANY ScheduleWakeup after the iteration anchor, including {stop:true}. Arming the next tick and
-#     deliberately ending the loop are both compliance; only SILENCE is the bug this catches.
+#   - ANY ScheduleWakeup in the TURN now ending, including {stop:true}. Arming the next tick and
+#     deliberately ending the loop are both compliance; only SILENCE is the bug this catches. The
+#     window is the turn, not the iteration: an arm from an earlier turn of the same iteration is
+#     superseded by the task-notification wake that started this one (decide() below, TURN ANCHOR).
 #   - A human prompt (origin.kind == "human") after the anchor. The run is under manual control and
 #     forcing a wakeup would fight the operator — this is the "discontinue the outer loop" case,
 #     where the model is mid-decision and has not yet emitted its stop call.
@@ -91,23 +93,53 @@ decide() {
 
     | if $loopidx == null then {fire: false, pending: false, reason_kind: "not-auto-loop"}
       else
-        # Any deliberate ScheduleWakeup inside the window clears the hook — armed or stopped.
-        ([ $E[] | select(.key > $loopidx) | .value
-           | select(.type == "assistant")
-           | select(.isSidechain != true)
-           | (.message.content // []) | select(type == "array") | .[]
-           | select((type == "object") and (.type == "tool_use") and (.name == "ScheduleWakeup"))
-         ] | length) as $wakeups
+        # TURN ANCHOR — the last turn that actually ended inside this iteration. An iteration spans
+        # several turns whenever delegated work is in flight: a ScheduleWakeup ends one turn, a
+        # task-notification wake starts the next, and that wake SUPERSEDES the pending arm, so an
+        # arm from an earlier turn is not a live heartbeat for the turn now ending. Measured on
+        # basefund session 6a77c517 (2026-08-29): the last arm ended a turn at 04:37:44Z, a
+        # notification restarted work at 04:45:24Z, the turn ending 04:59:50Z armed nothing, the
+        # pending 1500s arm never fired, and the session idled 7.3h of a 12h budget — while this
+        # hook counted 11 arms from a window frozen at the iteration anchor and vouched for it.
+        # Case #9 at turn granularity: an earlier turn must never vouch for the one now ending.
+        # Replayed over that fleet (3 sessions, 115 turn ends): 8 fires where the old window gave 0 —
+        # the death, plus 7 un-armed turn ends a later notification happened to rescue — and none
+        # on the session that armed every turn. That is the false-block cost, and it is benign.
+        # A stop_hook_summary is written after the hooks of a finished turn have run, so the last
+        # one marks the end of the previous turn. A BLOCKED stop (preventedContinuation true) did
+        # not end a turn and must not advance the anchor, or every nudge would reset the window and
+        # the nudge bound below could never be reached.
+        ([ $E[]
+             | select(.value.type == "system")
+             | select(.value.subtype == "stop_hook_summary")
+             | select(.value.isSidechain != true)
+             | select(.value.preventedContinuation != true)
+             | .key ] | last) as $turnidx
+        | (if ($turnidx == null) or ($turnidx < $loopidx) then $loopidx else $turnidx end) as $winidx
 
-        # A human interjection after the anchor hands control back to the operator.
+        # Any deliberate ScheduleWakeup inside the TURN clears the hook — armed or stopped.
+        | def wakeups_after($i):
+            [ $E[] | select(.key > $i) | .value
+              | select(.type == "assistant")
+              | select(.isSidechain != true)
+              | (.message.content // []) | select(type == "array") | .[]
+              | select((type == "object") and (.type == "tool_use") and (.name == "ScheduleWakeup"))
+            ] | length;
+        wakeups_after($winidx) as $wakeups
+        | wakeups_after($loopidx) as $iteration_wakeups
+
+        # A human interjection after the ITERATION anchor hands control back to the operator for
+        # the rest of the iteration; a later loop delivery re-anchors (case #11).
         | ([ $E[] | select(.key > $loopidx) | .value
              | select(.type == "user")
              | select(.origin.kind == "human")
            ] | length) as $humans
 
-        # Prior nudges from THIS hook, counted off the marker phrase carried in both block reasons.
-        # Keep that phrase in sync with main() below or the bound silently stops working.
-        | ([ $E[] | select(.key > $loopidx) | .value
+        # Prior nudges from THIS hook within the turn, counted off the marker phrase carried in
+        # both block reasons. Keep that phrase in sync with main() below or the bound silently
+        # stops working. Turn-scoped like $wakeups: each turn gets the full bound, and because a
+        # blocked stop never advances the anchor, the nudge being counted cannot reset the count.
+        | ([ $E[] | select(.key > $winidx) | .value
              | select(.type == "user")
              | utext(.message.content // "")
              | select(test("self-paced /loop /auto iteration"))
@@ -115,9 +147,11 @@ decide() {
 
         | { fire: (($wakeups == 0) and ($humans == 0)),
             pending: ($wakeups == 0),
-            wakeups: $wakeups, humans: $humans, attempts: $attempts,
+            wakeups: $wakeups, iteration_wakeups: $iteration_wakeups,
+            humans: $humans, attempts: $attempts,
             reason_kind: (if $humans > 0 then "human-override"
                           elif $wakeups > 0 then "armed"
+                          elif $iteration_wakeups > 0 then "stale-arm"
                           else "unarmed" end) }
       end
   ' "$TRANSCRIPT_PATH" 2>/dev/null
@@ -168,7 +202,9 @@ if [[ "${BASH_SOURCE[0]:-}" == "${0}" ]]; then
   # prior nudges by matching it.
   REASON="You are ending a turn inside a self-paced /loop /auto iteration without arming the next \
 ScheduleWakeup. Under self-paced /loop that kills the run silently — no NO-CANDIDATES, no AUTO-HALTED, \
-no recorded outcome (skills/auto/SKILL.md, Self-paced loop pacing). Do NOT stop. Do exactly one of these \
+no recorded outcome (skills/auto/SKILL.md, Self-paced loop pacing). A wakeup armed in an EARLIER turn of \
+this iteration does not carry over: the task-notification wake that started this turn superseded it, so \
+every turn end needs its own arm. Do NOT stop. Do exactly one of these \
 now, then continue: (1) if this iteration is still in flight or the backlog still has candidates, call \
 ScheduleWakeup with prompt \"/loop /auto\" — delaySeconds 1800 for the mid-iteration fallback heartbeat, \
 or 60 if you have already emitted AUTO-CONTINUE and are ticking into the next issue; or (2) if the run is \

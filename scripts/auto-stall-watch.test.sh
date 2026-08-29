@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # Regression suite for auto-stall-watch.sh.
 #
-# Fixtures carry the REAL transcript shapes from the 2026-08-14 basefund fleet — in particular the
-# quota-cutoff tail (an assistant turn whose text is the limit message, with NO stop_hook_summary after
-# it), which is what makes the stall invisible to every Stop hook. A synthetic "silent session" fixture
-# would pass against a check that only looked at mtime and would not pin that distinction.
+# Fixtures carry the REAL transcript shapes from two fleets. From 2026-08-14: the quota-cutoff tail (an
+# assistant turn whose text is the limit message, with NO stop_hook_summary after it), which is what
+# makes the stall invisible to every Stop hook — a synthetic "silent session" fixture would pass against
+# a check that only looked at mtime and would not pin that distinction. From 2026-08-29 (session
+# 6a77c517): a turn started by a task notification that ended un-armed, with the re-injected skill
+# listing in the tail and the harness's untimestamped bookkeeping records after the last real entry.
+#
+# Timestamps are generated relative to NOW: silence is measured from the last timestamped record, so a
+# fixture carrying a fixed date would read as days silent whatever its case intends.
 #
 # The agent-list fixture is the LIVE `claude agents --json` schema, re-snapshotted 2026-08-17: rows carry
 # pid/cwd/kind/startedAt/sessionId/name — NO `id` field — and every session reports kind:"interactive",
@@ -26,6 +31,15 @@ export HOME="$TMP"
 PROJ="$TMP/.claude/projects/-tmp-repo"
 mkdir -p "$PROJ" "$TMP/repo/tmp"
 
+iso_ago() { # <seconds before NOW> -> the harness's ISO-8601 form, millisecond suffix included
+  local s=$(( NOW - $1 ))
+  date -u -r "$s" +%Y-%m-%dT%H:%M:%S.000Z 2>/dev/null || date -u -d "@$s" +%Y-%m-%dT%H:%M:%S.000Z
+}
+touch_ago() { # <seconds before NOW> <file>
+  local s=$(( NOW - $1 ))
+  touch -t "$(date -r "$s" +%Y%m%d%H%M.%S 2>/dev/null || date -d "@$s" +%Y%m%d%H%M.%S)" "$2"
+}
+
 mk_agents() { # <file> <id-unused> <sessionId> — live 2026-08-17 schema: no id, kind interactive
   cat > "$1" <<EOF
 [{"pid":1,"cwd":"$TMP/repo","kind":"interactive","startedAt":1,"sessionId":"$3","name":"claude-59"}]
@@ -40,38 +54,57 @@ EOF
 
 mk_state() { printf '{"status":"%s","reason":"","shipped":[]}\n' "$2" > "$TMP/repo/tmp/auto-state-$1.json"; }
 
+# Every tail builder takes the age (seconds before NOW) of its LAST timestamped record.
+
 # The observed cutoff tail: the limit message IS the final assistant turn. Nothing follows it.
 tail_quota() {
-  cat <<'EOF'
-{"type":"assistant","timestamp":"2026-08-14T10:05:38.000Z","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"./start-wt-setup.sh"}}]}}
-{"type":"user","timestamp":"2026-08-14T10:05:58.000Z","message":{"role":"user","content":[{"type":"tool_result","content":"ok"}]}}
-{"type":"assistant","timestamp":"2026-08-14T10:05:59.000Z","message":{"role":"assistant","content":[{"type":"text","text":"You've hit your session limit · resets 5:10am (America/Chicago)"}]}}
+  local a="$1"; cat <<EOF
+{"type":"assistant","timestamp":"$(iso_ago $((a+21)))","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"./start-wt-setup.sh"}}]}}
+{"type":"user","timestamp":"$(iso_ago $((a+1)))","message":{"role":"user","content":[{"type":"tool_result","content":"ok"}]}}
+{"type":"assistant","timestamp":"$(iso_ago "$a")","message":{"role":"assistant","content":[{"type":"text","text":"You've hit your session limit · resets 5:10am (America/Chicago)"}]}}
 EOF
 }
 
 # A healthy mid-iteration turn end: work, then an armed fallback wakeup (stop is absent/false).
 tail_armed() {
-  cat <<'EOF'
-{"type":"assistant","timestamp":"2026-08-14T09:50:56.000Z","message":{"role":"assistant","content":[{"type":"text","text":"BF-988: verifiers running."}]}}
-{"type":"assistant","timestamp":"2026-08-14T09:50:57.000Z","message":{"role":"assistant","content":[{"type":"tool_use","name":"ScheduleWakeup","input":{"delaySeconds":1800,"noop":false,"prompt":"/loop /auto","reason":"fallback heartbeat"}}]}}
-{"type":"system","subtype":"stop_hook_summary","timestamp":"2026-08-14T09:51:05.000Z","preventedContinuation":false}
+  local a="$1"; cat <<EOF
+{"type":"assistant","timestamp":"$(iso_ago $((a+9)))","message":{"role":"assistant","content":[{"type":"text","text":"BF-988: verifiers running."}]}}
+{"type":"assistant","timestamp":"$(iso_ago $((a+8)))","message":{"role":"assistant","content":[{"type":"tool_use","name":"ScheduleWakeup","input":{"delaySeconds":1800,"noop":false,"prompt":"/loop /auto","reason":"fallback heartbeat"}}]}}
+{"type":"system","subtype":"stop_hook_summary","timestamp":"$(iso_ago "$a")","preventedContinuation":false}
 EOF
 }
 
 # A deliberate loop end. Goes quiet forever by contract — must never be flagged, however long.
 tail_stopped() {
-  cat <<'EOF'
-{"type":"assistant","timestamp":"2026-08-14T12:19:00.000Z","message":{"role":"assistant","content":[{"type":"text","text":"NO-CANDIDATES: fleet deadline reached (2026-08-14 07:19 CDT) — 5/0/0/0 this run."}]}}
-{"type":"assistant","timestamp":"2026-08-14T12:19:02.000Z","message":{"role":"assistant","content":[{"type":"tool_use","name":"ScheduleWakeup","input":{"stop":true}}]}}
+  local a="$1"; cat <<EOF
+{"type":"assistant","timestamp":"$(iso_ago $((a+2)))","message":{"role":"assistant","content":[{"type":"text","text":"NO-CANDIDATES: fleet deadline reached (2026-08-14 07:19 CDT) — 5/0/0/0 this run."}]}}
+{"type":"assistant","timestamp":"$(iso_ago "$a")","message":{"role":"assistant","content":[{"type":"tool_use","name":"ScheduleWakeup","input":{"stop":true}}]}}
 EOF
 }
 
-run_case() { # <name> <tail-fn> <status> <age-seconds> <expected-verdict-or-none>
-  local name="$1" tailfn="$2" status="$3" age="$4" want="$5"
+# THE 6a77c517 DEATH (2026-08-29): an arm ended one turn, a task notification started the next, the
+# skill listing was re-injected as an attachment (its /auto entry names both terminal tags in prose),
+# and the turn ended un-armed. The two trailing records are the harness's bookkeeping — untimestamped,
+# rewritten after the session is dead — which is what dragged the file mtime 8h past the last entry.
+tail_dead() {
+  local a="$1"; cat <<EOF
+{"type":"assistant","timestamp":"$(iso_ago $((a+1400)))","message":{"role":"assistant","content":[{"type":"tool_use","name":"ScheduleWakeup","input":{"delaySeconds":1500,"noop":false,"prompt":"/auto","reason":"cycle-3 verifier in flight"}}]}}
+{"type":"system","subtype":"stop_hook_summary","timestamp":"$(iso_ago $((a+1393)))","preventedContinuation":false}
+{"type":"user","timestamp":"$(iso_ago $((a+933)))","origin":{"kind":"task-notification"},"message":{"role":"user","content":"<task-notification>\n<task-id>a391ddadb2c484551</task-id>\n<status>completed</status>\n</task-notification>"}}
+{"type":"attachment","timestamp":"$(iso_ago $((a+17)))","attachment":{"type":"skill_listing","content":"- auto: Autonomous Linear-backlog iteration — ships exactly ONE issue per invocation. Run continuously via /loop /auto; the loop ends itself on NO-CANDIDATES or AUTO-HALTED. Invoking /auto IS the run-scoped commit/push grant."}}
+{"type":"assistant","timestamp":"$(iso_ago $((a+1)))","message":{"role":"assistant","content":[{"type":"text","text":"BF-1616: merged into nextjs-descope-user; Ready For Release."}]}}
+{"type":"system","subtype":"stop_hook_summary","timestamp":"$(iso_ago "$a")","preventedContinuation":false}
+{"type":"last-prompt","lastPrompt":"/loop /auto","sessionId":"6a77c517-3f3e-44c7-8215-d017fca55b5e"}
+{"type":"cost-state","totalCostUSD":12.5,"sessionId":"6a77c517-3f3e-44c7-8215-d017fca55b5e"}
+EOF
+}
+
+run_case() { # <name> <tail-fn> <status> <age-seconds> <expected-verdict-or-none> [mtime-age-seconds]
+  local name="$1" tailfn="$2" status="$3" age="$4" want="$5" mage="${6:-$4}"
   local id="aaaaaaaa" sid="aaaaaaaa-0000-0000-0000-000000000000"
   rm -f "$PROJ"/*.jsonl "$TMP/repo/tmp"/auto-state-*.json
-  $tailfn > "$PROJ/$sid.jsonl"
-  touch -t "$(date -r $(( NOW - age )) +%Y%m%d%H%M.%S 2>/dev/null || echo 202608140000.00)" "$PROJ/$sid.jsonl"
+  $tailfn "$age" > "$PROJ/$sid.jsonl"
+  touch_ago "$mage" "$PROJ/$sid.jsonl"
   [ "$status" = "-" ] || mk_state "$id" "$status"
   [ "$status" = "-" ] && mk_state "$id" "active"
   mk_agents "$TMP/agents.json" "$id" "$sid"
@@ -105,11 +138,23 @@ run_case "loop ended by tag, 300m silent     -> none"          tail_stopped acti
 run_case "state drained, quota tail, 300m    -> none"          tail_quota   drained 18000 "none"
 run_case "state halted, no tag, 300m         -> none"          tail_armed   halted 18000 "none"
 
+# THE 6a77c517 MODE (2026-08-29): a notification-started turn ended un-armed and the loop died, while
+# the skill listing in the tail named both terminal tags. A raw grep over the tail read that as the
+# loop ending, and the watcher cleared a dead session as `terminal` for 7.3h ("1 in scope, 0 flagged").
+run_case "dead after notification, listing in tail, 60m -> stalled" tail_dead active 3600 "stalled"
+
+# ...and its mtime sat 8h past the last real entry, dragged forward by the harness's untimestamped
+# bookkeeping rewrites. Silence comes from the last TIMESTAMPED record, so a fresh mtime changes nothing.
+run_case "same, mtime fresh (bookkeeping rewrite)         -> stalled" tail_dead active 3600 "stalled" 0
+
+# The reverse: fresh entries under a stale mtime are a session at work, not a stall.
+run_case "no tag, entries 10m old, mtime 2h old            -> none"    tail_armed active 600 "none" 7200
+
 # A session with no /auto run-state file is somebody else's session, not fleet work. The state file is
 # the ONLY scope filter — kind must play no part (the live schema reports every session interactive).
 echo -n "  "
 rm -f "$PROJ"/*.jsonl "$TMP/repo/tmp"/auto-state-*.json
-tail_quota > "$PROJ/bbbbbbbb-0000-0000-0000-000000000000.jsonl"
+tail_quota 8940 > "$PROJ/bbbbbbbb-0000-0000-0000-000000000000.jsonl"
 mk_agents "$TMP/agents.json" "bbbbbbbb" "bbbbbbbb-0000-0000-0000-000000000000"
 got=$("$SCRIPT" --agents-json "$TMP/agents.json" --now "$NOW" --json 2>/dev/null | jq -r '"\(.stalled | length)/\(.in_scope)"')
 if [ "$got" = "0/0" ]; then echo "PASS  non-/auto session (no state file) ignored, in_scope 0"; PASS=$((PASS+1));
@@ -119,8 +164,8 @@ else echo "FAIL  non-/auto session (no state file) ignored — expected 0/0, got
 # field, state file joined via the sessionId prefix. The original watcher's kind/background filter and
 # .id join each independently dropped this row; three sessions sat dead 8.4h overnight at 0 flags.
 rm -f "$PROJ"/*.jsonl "$TMP/repo/tmp"/auto-state-*.json
-tail_quota > "$PROJ/cccccccc-0000-0000-0000-000000000000.jsonl"
-touch -t "$(date -r $(( NOW - 8940 )) +%Y%m%d%H%M.%S 2>/dev/null || echo 202608140000.00)" "$PROJ/cccccccc-0000-0000-0000-000000000000.jsonl"
+tail_quota 8940 > "$PROJ/cccccccc-0000-0000-0000-000000000000.jsonl"
+touch_ago 8940 "$PROJ/cccccccc-0000-0000-0000-000000000000.jsonl"
 mk_state "cccccccc" "active"
 cat > "$TMP/agents.json" <<EOF
 [{"pid":1,"cwd":"$TMP/repo","kind":"interactive","startedAt":1,"sessionId":"cccccccc-0000-0000-0000-000000000000","name":"claude-61"}]
@@ -131,8 +176,8 @@ else echo "  FAIL  live-schema fleet stall flagged — expected stalled-quota/1,
 
 # Legacy schema (id present, kind background) still joins through the .id fallback.
 rm -f "$PROJ"/*.jsonl "$TMP/repo/tmp"/auto-state-*.json
-tail_quota > "$PROJ/dddddddd-0000-0000-0000-000000000000.jsonl"
-touch -t "$(date -r $(( NOW - 8940 )) +%Y%m%d%H%M.%S 2>/dev/null || echo 202608140000.00)" "$PROJ/dddddddd-0000-0000-0000-000000000000.jsonl"
+tail_quota 8940 > "$PROJ/dddddddd-0000-0000-0000-000000000000.jsonl"
+touch_ago 8940 "$PROJ/dddddddd-0000-0000-0000-000000000000.jsonl"
 mk_state "dddddddd" "active"
 mk_agents_legacy "$TMP/agents.json" "dddddddd" "dddddddd-0000-0000-0000-000000000000"
 got=$("$SCRIPT" --agents-json "$TMP/agents.json" --now "$NOW" --json 2>/dev/null | jq -r 'if (.stalled | length) == 0 then "none" else .stalled[0].verdict end')

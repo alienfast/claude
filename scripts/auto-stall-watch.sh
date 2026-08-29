@@ -27,6 +27,15 @@
 # The state-file join derives the runKey from the sessionId's first segment (auto-state-<prefix>.json),
 # with the legacy `.id` and full-uuid forms kept as fallbacks.
 #
+# TWO READS THAT LIE, both measured 2026-08-29 on basefund session 6a77c517 (dead 7.3h of a 12h budget,
+# reported "1 in scope, 0 flagged" the whole time):
+#   - Silence is NOT the transcript mtime. The harness keeps rewriting untimestamped bookkeeping records
+#     (last-prompt, cost-state) at the tail of a finished session, so mtime tracks the harness — 12:59:51Z
+#     against a last real entry at 04:59:50Z. Silence is measured from the last TIMESTAMPED record.
+#   - A terminal tag is read from ASSISTANT records only. The tail also carries attachments, and the
+#     re-injected skill listing's /auto entry contains the literal text "NO-CANDIDATES or AUTO-HALTED";
+#     a raw grep over the tail read that as the loop ending and cleared the dead session as `terminal`.
+#
 # Exit 0 = ran (whether or not anything was flagged); 1 = a hard dependency is missing.
 # Run ./auto-stall-watch.test.sh after ANY change to classify().
 
@@ -69,6 +78,16 @@ mtime_of() {
   stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null
 }
 
+# Epoch seconds of the transcript's last TIMESTAMPED record (see the header for why not mtime). Empty
+# when the tail carries none, and the caller falls back to mtime. `fromjson?` tolerates the half-flushed
+# final line of a live session; the millisecond suffix is stripped because fromdateiso8601 rejects it.
+last_entry_epoch() {
+  tail -n 200 "$1" 2>/dev/null \
+    | jq -rR 'fromjson? | select(type == "object") | .timestamp // empty | strings
+              | sub("\\.[0-9]+"; "") | try fromdateiso8601 catch empty' 2>/dev/null \
+    | tail -1
+}
+
 # Resolve the /auto run-state file for a background session. /auto names it after the runKey, which is
 # the session-id prefix the harness also reports as the agent `id` — so the agent list joins to the
 # ledger with no guessing. Older runs used the full uuid; try both.
@@ -90,7 +109,7 @@ state_file_for() {
 # one (which is exactly the shape this script exists to catch, so it must not be the only check).
 classify() {
   local transcript="$1" state="$2" silence="$3" threshold="$4"
-  local status="" tail_txt=""
+  local status="" asst_txt=""
 
   if [ -n "$state" ]; then
     status=$(jq -r '.status // ""' "$state" 2>/dev/null)
@@ -101,11 +120,23 @@ classify() {
   fi
 
   # 200 lines covers the closing turn comfortably; reading the whole file is not viable at 15MB+.
-  tail_txt=$(tail -200 "$transcript" 2>/dev/null)
+  # ASSISTANT records only, flattened to what the model said: its text blocks, plus one fixed marker
+  # for a ScheduleWakeup(stop:true) call. Attachments and user records are excluded on purpose — the
+  # skill listing re-injected there names both terminal tags in prose (header).
+  asst_txt=$(tail -n 200 "$transcript" 2>/dev/null | jq -rR '
+    fromjson? | select(type == "object" and .type == "assistant")
+    | (.message.content // "")
+    | if type == "string" then .
+      else [ .[]? | select(type == "object")
+             | if .type == "text" then (.text // "")
+               elif .type == "tool_use" and .name == "ScheduleWakeup" and (.input.stop == true)
+                 then "ScheduleWakeup(stop:true)"
+               else "" end ] | join("\n") end' 2>/dev/null)
 
   # An explicit loop-end. ScheduleWakeup(stop:true) and the two terminal tags each mean "no wakeup is
-  # pending and that is intended" — the exact state that otherwise looks identical to a stall.
-  if printf '%s' "$tail_txt" | grep -qE '"stop":[[:space:]]*true|NO-CANDIDATES|AUTO-HALTED'; then
+  # pending and that is intended" — the exact state that otherwise looks identical to a stall. The tags
+  # are matched the way fleet-metrics.py matches them: at line start, with their colon.
+  if printf '%s' "$asst_txt" | grep -qE '^ScheduleWakeup\(stop:true\)$|^[[:space:]]*(NO-CANDIDATES|AUTO-HALTED):'; then
     printf 'terminal\ttag'; return 0
   fi
 
@@ -113,9 +144,9 @@ classify() {
 
   # A quota cutoff is the diagnosable case: name it separately so the operator knows the session is
   # waiting on nothing and will never self-resume, as against a merely slow turn.
-  if printf '%s' "$tail_txt" | grep -qiE "hit your [a-z0-9 -]{0,20}limit"; then
+  if printf '%s' "$asst_txt" | grep -qiE "hit your [a-z0-9 -]{0,20}limit"; then
     local resets
-    resets=$(printf '%s' "$tail_txt" | grep -oiE "hit your [a-z0-9 -]{0,20}limit[^\"]{0,40}" | tail -1)
+    resets=$(printf '%s' "$asst_txt" | grep -oiE "hit your [a-z0-9 -]{0,20}limit[^\"]{0,40}" | tail -1)
     printf 'stalled-quota\t%s' "${resets:-quota limit}"; return 0
   fi
 
@@ -145,7 +176,8 @@ while IFS=$'\t' read -r id sid cwd name; do
 
   mt=$(mtime_of "$transcript")
   [ -n "$mt" ] || continue
-  silence=$(( NOW - mt ))
+  last=$(last_entry_epoch "$transcript")
+  silence=$(( NOW - ${last:-$mt} ))
   result=$(classify "$transcript" "$state" "$silence" $(( THRESHOLD_MIN * 60 )))
   verdict=${result%%$'\t'*}
   detail=${result#*$'\t'}

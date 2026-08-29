@@ -8,7 +8,9 @@
 # 2026-08-01 with no failure signal anywhere — no NO-CANDIDATES, no AUTO-HALTED, and a state file
 # still reading shipped: []. Case #9 is its sibling and the reason the anchor is the LAST /loop
 # delivery rather than the first: an iteration that armed correctly must never vouch for a later one
-# that did not.
+# that did not. Case #17 is the same principle one level down: an iteration is several TURNS when
+# delegated work is in flight, and a turn that armed correctly must never vouch for a later turn of the
+# same iteration that did not — the 6a77c517 death (2026-08-29).
 #
 # GROW THIS SUITE, NEVER PRUNE IT — same contract as full-continue.test.sh. Every newly-observed real
 # loop-death shape becomes a numbered case here, added WITH its fix. A mode with no live guard is a
@@ -40,6 +42,14 @@ WAKE_SIDECHAIN='{"type":"assistant","isSidechain":true,"message":{"role":"assist
 AUTO_BARE='{"type":"user","isSidechain":false,"message":{"role":"user","content":"<command-message>auto</command-message>\n<command-name>/auto</command-name>"}}'
 # The same block typed by a human: a one-shot targeted run, which correctly arms nothing.
 AUTO_HUMAN='{"type":"user","isSidechain":false,"origin":{"kind":"human"},"message":{"role":"user","content":"<command-message>auto</command-message>\n<command-name>/auto</command-name>\n<command-args>BF-123</command-args>"}}'
+# A completed turn: the summary the harness writes AFTER a turn's Stop hooks have run and allowed the
+# stop. Shape from basefund session 6a77c517, 2026-08-29T04:37:44Z.
+STOPSUM='{"type":"system","subtype":"stop_hook_summary","isSidechain":false,"preventedContinuation":false,"hookCount":3}'
+# A BLOCKED stop: the hooks prevented continuation, so the turn did NOT end.
+STOPSUM_BLOCKED='{"type":"system","subtype":"stop_hook_summary","isSidechain":false,"preventedContinuation":true,"hookCount":3}'
+# The wake that starts the next turn of the same iteration when a background task finishes. Not a
+# human prompt (origin.kind is task-notification) and not a /loop delivery, so it never re-anchors.
+NOTIF='{"type":"user","isSidechain":false,"origin":{"kind":"task-notification"},"message":{"role":"user","content":"<task-notification>\n<task-id>a391ddadb2c484551</task-id>\n<status>completed</status>\n</task-notification>"}}'
 
 check() { # name expected_field expected_value records...
   local name="$1" field="$2" want="$3"; shift 3
@@ -113,6 +123,33 @@ check "15 human /auto one-shot does not fire" fire false "$LOOP" "$WORK" "$WAKE"
 
 # 16. Nudge accounting must survive the new anchor: counted from the bare-/auto anchor, not the /loop.
 check "16 attempts counted from bare anchor" attempts 1 "$LOOP" "$NUDGE" "$WORK" "$AUTO_BARE" "$NUDGE" "$WORK"
+
+# 17. THE 6a77c517 MODE (2026-08-29): the iteration armed correctly, the turn ended, a task-notification
+# started the next turn, and THAT turn ended un-armed. The pending arm is superseded by the wake, so
+# the loop is dead — yet an iteration-scoped count saw 11 arms and vouched for it (7.3h idle of a 12h
+# budget). Case #9 at turn granularity: an earlier turn must never vouch for the one now ending.
+check "17 arm in a prior turn does not clear (6a77c517)" fire true "$LOOP" "$WORK" "$WAKE" "$STOPSUM" "$NOTIF" "$WORK"
+
+# 18. ...and an arm in the current turn still clears.
+check "18 arm in the current turn clears" fire false "$LOOP" "$WORK" "$WAKE" "$STOPSUM" "$NOTIF" "$WORK" "$WAKE"
+
+# 19. ...as does a deliberate stop in the current turn.
+check "19 stop:true in the current turn clears" fire false "$LOOP" "$WORK" "$WAKE" "$STOPSUM" "$NOTIF" "$WORK" "$WAKE_STOP"
+
+# 20. The stale arm is named, so a replay can tell this mode from a never-armed iteration.
+check "20 stale arm is named" reason_kind stale-arm "$LOOP" "$WORK" "$WAKE" "$STOPSUM" "$NOTIF" "$WORK"
+
+# 21. A BLOCKED stop did not end the turn and must not advance the turn anchor — otherwise every nudge
+# resets the window, the nudge count restarts at 0, and the give-up bound in main() is unreachable.
+check "21 blocked stop keeps the nudge count" attempts 1 "$LOOP" "$WORK" "$STOPSUM_BLOCKED" "$NUDGE" "$WORK"
+check "21b arm after a blocked stop clears" fire false "$LOOP" "$WORK" "$WAKE" "$STOPSUM" "$NOTIF" "$WORK" "$STOPSUM_BLOCKED" "$NUDGE" "$WORK" "$WAKE"
+
+# 22. A turn end BEFORE the iteration anchor is stale: the window starts at the anchor, as before.
+check "22 turn end before the anchor is stale" fire false "$STOPSUM" "$LOOP" "$WORK" "$WAKE"
+
+# 23. Nudges are counted per turn, like arms: a nudge in an earlier turn of this iteration does not
+# spend the current turn's bound.
+check "23 attempts scoped to the turn" attempts 0 "$LOOP" "$NUDGE" "$WORK" "$WAKE" "$STOPSUM" "$NOTIF" "$WORK"
 
 echo
 echo "passed: $PASS   failed: $FAIL"
