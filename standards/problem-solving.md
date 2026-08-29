@@ -144,6 +144,14 @@ Before keying on such a signal, enumerate the ways your condition can hold and c
 
 Worked case: `react-dropzone` v20 emits `too-many-files` only when the count of *accepted* files exceeds the limit, and a file already rejected for its type (or its size, or a custom validator) never becomes accepted. A single-file dropzone given one valid file plus one wrong-type file therefore saw no `too-many-files` at all, and a suppression guard keyed on that code uploaded the valid file. The callback already received both arrays; `accepted.length + rejections.length > 1` is the condition, and it rests on no coverage decision of the library's.
 
+### Don't build reliability against a stub
+
+When the dependency a reliability layer protects is still a stub — a no-op transport, a seam that always succeeds, an integration deferred to a later pass — its failure modes are not merely unknown, they are **unobservable**: nothing it does can falsify a guess about them. Retry policy, at-least-once delivery, idempotency claims and redelivery handling built against it therefore rest on assumptions no test and no reviewer can check, and each review cycle trades one guess for another instead of converging. The tell is that every justification is written in the future tense — about what the dependency *will* do once it is real.
+
+Ship honest best-effort now — attempt, log the outcome, and let the caller see whether it succeeded — and file the reliability layer as follow-up work to be built against the real dependency. Nothing is lost by waiting: a best-effort call against a stub and one against a live service behave identically, while the speculative version has to be unbuilt before the real one can be written. This is the opposite failure from the workaround anti-patterns above — those are shortcuts *around* a problem, this is building past what the evidence can support — and it is distinct from [technical-debt-prevention.md](technical-debt-prevention.md) § 4, which is about retaining a superseded implementation rather than writing a speculative one.
+
+Worked case: roughly four adversarial-review cycles went into retry, at-least-once and redelivery machinery for an alert transport that was still a logging no-op and could not fail. Each cycle rested on a different unverified premise about the eventual platform — including one, later disproven against the real scheduler, that a failed invocation would be redelivered — so review kept finding real defects in reasoning that could not be made sound. It resolved only by deleting the speculative layer, shipping best-effort, and filing the reliability work for when the transport existed.
+
 ### Complexity Response Pattern
 
 When two or more attempts have failed, stop and hand the decision over with everything needed to make
