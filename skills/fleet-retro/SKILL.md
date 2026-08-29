@@ -19,6 +19,30 @@ Interactive by design. Report the findings, get approval, then apply. Never run 
 
 ## Step 1 — Measure
 
+### A worktree or transcript in the checkout is not evidence of fleet membership
+
+The operator routinely works interactively in the same checkout while a fleet runs — two such sessions
+sat beside the three-session fleet on 2026-08-25 — and one of them claims issues, creates worktrees,
+files issues and ships through `/finish` exactly like a fleet session. What it does not do is write a
+`tmp/auto-state-*.json` ledger: that file is the autonomous loop's own run state, and nothing outside
+that skill writes one. So it presents as the very fault the flag table teaches you to hunt — work with no
+bookkeeping.
+
+Discriminate before counting it. `fleet-metrics.py`'s `is_auto_session` is the test: the transcript's
+FIRST human turn carrying text must be the autonomous-loop command, and a later mention does not count.
+Read that turn yourself rather than inferring membership from a table — absence from the script's tables
+is not proof of interactivity either, since an explicitly named `--sessions` key skips the probe and a
+genuinely ledger-less in-fleet session inside the run's own span is excluded outright (the script's
+`--allow-partial` WARNING is what surfaces that case). A status readout's In-flight section prints each
+live worktree's owning session id straight from the identity sidecar with no session-type filter at all —
+only its Sessions table applies one — so an owner id read from there is not a fleet member until the
+transcript says so.
+
+Measured 2026-08-25: a retro counted one such owner as a fourth fleet session and reported 22.1
+session-hours, 10 shipped and ~$81 per issue against the true 18.1 / 9 / $62.17, and a filed-per-shipped
+ratio of 1.70 against 1.11 — the whole headline, plus a fix plan resting on it, from one unchecked
+assumption.
+
 ### Confirm the fleet has finished before reporting — a live session mimics a fault
 
 Every signal that rests on bookkeeping *not yet written* reads identically for a session mid-run and one
