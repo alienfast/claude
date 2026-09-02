@@ -395,7 +395,11 @@ plain-language block the user can copy out whole and share with the business tea
 It precedes the technical `## Summary` (the two serve different audiences: Executive
 Summary = business outcome; Summary = technical TL;DR for reviewers).
 
-Rules for the Executive Summary:
+Rules for the Executive Summary — voice and concision follow the
+[exec-summary skill](../exec-summary/SKILL.md) (problem first, then the fix; ruthlessly
+concise; backticks for user-visible strings; no deferments or process detail). This block
+is that skill's PR-description variant: it keeps the `## Executive Summary` heading and
+the trailing PR link in place of the Slack-style underlined title. Plus:
 
 - **Business language only.** Translate the change into its outcome. No file paths, no
   code, no line-count tables, minimal jargon.
@@ -418,8 +422,11 @@ Use this general template structure:
 ```markdown
 ## Executive Summary
 
-[2–4 plain sentences for a business audience: the user-facing or business outcome and
-why it matters. No file paths, no code, minimal jargon. Lead with impact.]
+**Problem:** [1–2 plain sentences: what users or the business hit, and why it matters
+now. Concrete numbers where real. No file paths, no code, minimal jargon.]
+
+**Solution:** [1–2 plain sentences: what changed, in outcome terms. Verbatim
+user-visible strings in backticks where the change IS the copy.]
 
 [Optional one-liners — include only those that genuinely apply, omit the rest:]
 - **For users:** [what changes in their experience]

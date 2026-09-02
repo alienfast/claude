@@ -204,6 +204,7 @@ In workflow order — seed, certify, fleet, then the per-issue tiers and upkeep:
 |-------|-------------|
 | [update](skills/update/) | Bring the machine current — pull the latest project code and `~/.claude`, then run the update script (the project's `.claude/update.sh`, or `~/.claude/update.sh`) |
 | [pr-update](skills/pr-update/) | Generate PR titles and descriptions from actual code changes |
+| [exec-summary](skills/exec-summary/) | Slack-ready executive summary of a change — problem first, then the fix — delivered as rich text on the clipboard |
 | [dependency-updater](skills/dependency-updater/) | Orchestrate dependency updates with research and validation |
 | [deprecation-handler](skills/deprecation-handler/) | Migrate deprecated APIs with safe patterns |
 | [semver-advisor](skills/semver-advisor/) | Classify version changes as MAJOR/MINOR/PATCH |
