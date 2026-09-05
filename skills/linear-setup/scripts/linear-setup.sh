@@ -10,8 +10,11 @@
 # The model (default: ../assets/model.json, exported from basefund/BF) is portable: the source team's id is stored as
 # ${TEAM_ID} and its name as ${TEAM_NAME}; both are substituted for the target team at check/apply time. Views whose
 # filters reference any OTHER workspace-specific id (assignees, projects, other teams) are skipped at export because
-# nothing could translate them. `apply` only creates and updates — it never deletes, archives, or renames on its own —
-# and converges: a second run plans zero mutations. plan.jq beside this script owns the diff.
+# nothing could translate them. Every model view is applied as a WORKSPACE-level shared view (a team-scoped match is
+# moved there), carries the view's shared display preferences (layout, grouping, ordering, shown fields), and is
+# favorited for the authenticated user when the exporting user had it favorited. `apply` only creates and updates — it
+# never deletes, archives, or renames on its own — and converges: a second run plans zero mutations. plan.jq beside
+# this script owns the diff.
 #
 # --profile is passed through to linear-cli; without it linear-cli's own selection applies (LINEAR_CLI_PROFILE, then the
 # config's `current`). The header line prints the organization the API actually answered for — read it before `apply`.
@@ -31,8 +34,12 @@ DEFAULT_MODEL="$HERE/../assets/model.json"
 REQUIRED_LABELS=("specified" "needs decision" "human" "solo" "simple" "epic" "reflection" "stalled" "security" "bug" "keeper")
 # States the skills write by literal name (Planned, Ready for Release) or key ranking on (the rest).
 REQUIRED_STATES=("Triage" "Backlog" "Planned" "In Progress" "Ready for Release" "Done" "Canceled" "Duplicate")
+# Shared display preferences carried per view. Only the portable keys: the id-bearing ones (issueGroupingLabelGroupId,
+# hiddenColumns, columnOrderBoard/List, hiddenRows, hiddenGroupsList) name workflow states or label groups of the source
+# workspace, so they are left out.
+PREF_FIELDS="layout viewOrdering viewOrderingDirection issueGrouping issueSubGrouping issueNesting showCompletedIssues showParents showSubIssues showSubTeamIssues showTriageIssues showEmptyGroups showEmptyGroupsBoard showEmptyGroupsList showEmptySubGroups showEmptySubGroupsBoard showEmptySubGroupsList closedIssuesOrderedByRecency fieldId fieldStatus fieldPriority fieldDateCreated fieldDateUpdated fieldAssignee fieldEstimate fieldPullRequests fieldDueDate fieldLabels fieldProject fieldCycle fieldMilestone"
 
-usage() { sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,22p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 die() { echo "ERROR: $*" >&2; exit 2; }
 
 SUB="${1:-}"
@@ -85,24 +92,29 @@ gql() {
   printf '%s' "$out"
 }
 
-# Live snapshot of one team: org, team (+states), every issue label in the workspace, the team's Issue views.
+# Live snapshot of one team: org + viewer, team (+states), every issue label in the workspace, the Issue views about the
+# team (owned by it, or workspace-level with a filter naming it — any other workspace view is never reported), and the
+# ids of the views the authenticated user has favorited.
 fetch_snapshot() {
-  local team_json labels_json views_json
-  team_json=$(gql query 'query($key: String!) { organization { name urlKey } teams(filter: { key: { eq: $key } }) { nodes { id key name triageEnabled defaultIssueState { id name } states { nodes { id name type color position description } } } } }' -v "key=\"$TEAM\"")
+  local team_json labels_json views_json favs_json
+  team_json=$(gql query 'query($key: String!) { organization { name urlKey } viewer { name email } teams(filter: { key: { eq: $key } }) { nodes { id key name triageEnabled defaultIssueState { id name } states { nodes { id name type color position description } } } } }' -v "key=\"$TEAM\"")
   jq -e '.data.teams.nodes | length == 1' <<<"$team_json" >/dev/null \
     || die "team '$TEAM' not found in workspace '$(jq -r '.data.organization.urlKey' <<<"$team_json")'"
   labels_json=$(gql query 'query { issueLabels(first: 250) { nodes { id name color description isGroup team { key } parent { name } } } }')
-  views_json=$(gql query 'query { customViews(first: 250) { nodes { id name description icon color shared modelName filterData createdAt team { id } owner { name } } } }')
-  jq -n --argjson t "$team_json" --argjson l "$labels_json" --argjson v "$views_json" '
+  views_json=$(gql query "query { customViews(first: 250) { nodes { id name description icon color shared modelName filterData createdAt team { id } owner { name } organizationViewPreferences { id preferences { $PREF_FIELDS } } } } }")
+  favs_json=$(gql query 'query { favorites(first: 250) { nodes { id customView { id } } } }')
+  jq -n --argjson t "$team_json" --argjson l "$labels_json" --argjson v "$views_json" --argjson f "$favs_json" '
     ($t.data.teams.nodes[0]) as $team
-    | { org: $t.data.organization,
+    | { org: $t.data.organization, viewer: ($t.data.viewer // {}),
         team: ($team | {id, key, name, triageEnabled, defaultIssueState, states: .states.nodes}),
         labels: $l.data.issueLabels.nodes,
-        views: [ $v.data.customViews.nodes[] | select(.modelName == "Issue" and .team.id == $team.id) ] }'
+        views: [ $v.data.customViews.nodes[]
+                 | select(.modelName == "Issue" and ((.team.id == $team.id) or (.team == null and ((.filterData | tojson) | contains($team.id))))) ],
+        favorites: [ $f.data.favorites.nodes[] | .customView.id // empty ] }'
 }
 
 header() { # $1 snapshot
-  jq -r --arg model "$MODEL" '"linear-setup: workspace \(.org.name) (\(.org.urlKey)) · team \(.team.key) \"\(.team.name)\" · \(.team.states|length) states, \(.labels|length) labels, \(.views|length) team views"' <<<"$1"
+  jq -r '"linear-setup: workspace \(.org.name) (\(.org.urlKey)) · team \(.team.key) \"\(.team.name)\" · \(.team.states|length) states, \(.labels|length) labels, \(.views|length) team views · favorites for \(.viewer.email // "?")"' <<<"$1"
   if [ "$SUB" != "export" ]; then
     jq -r --arg model "$MODEL" '"model: \($model) — exported from \(.source.organization)/\(.source.team) at \(.source.exportedAt)"' "$MODEL"
     if jq -e --argjson s "$1" '.source.organization == $s.org.urlKey and .source.team == $s.team.key' "$MODEL" >/dev/null; then
@@ -117,7 +129,7 @@ plan() { # $1 snapshot → action array
 }
 
 print_plan() { # $1 actions
-  jq -r '.[] | "  \(((.kind | ascii_upcase) + "      ")[0:6]) \((.op + "         ")[0:9]) \(if .required == true then "*" else " " end) \(.name)\(if (.detail // "") != "" then "  — " + .detail else "" end)"' <<<"$1"
+  jq -r '.[] | "  \(((.kind | ascii_upcase) + "        ")[0:8]) \((.op + "         ")[0:9]) \(if .required == true then "*" else " " end) \(.name)\(if (.detail // "") != "" then "  — " + .detail else "" end)"' <<<"$1"
 }
 
 summary() { # $1 actions → prints counts; returns 0 when nothing is missing/drifted/conflicting
@@ -134,9 +146,30 @@ resolve_id() {
   jq -r --arg n "$3" --arg k "$2" '(if $k == "states" then .team.states else .labels | map(select(.team == null)) end) | map(select((.name|ascii_downcase) == ($n|ascii_downcase))) | first | .id // empty' <<<"$1"
 }
 
+# resolve_view_id <snapshot> <name> — id of the exact-named view about this team, a workspace-level one first, or empty
+resolve_view_id() {
+  jq -r --arg n "$2" '[.views[] | select(.name == $n)] | sort_by(if .team == null then 0 else 1 end) | first | .id // empty' <<<"$1"
+}
+
+# set_view_prefs <view-id> <existing-prefs-id|""> <prefs-json> <name> — the view's shared (organization) display preferences.
+# viewPreferencesUpdate REPLACES the whole object (measured 2026-09-04 on bfpnext: an update carrying only `layout` nulled
+# `showTriageIssues`), so the full model object is always sent.
+set_view_prefs() {
+  local vid="$1" pid="$2" prefs="$3" name="$4" res
+  [ "$(jq 'length' <<<"$prefs")" != 0 ] || return 0
+  if [ -z "$pid" ]; then
+    res=$(gql mutate 'mutation($input: ViewPreferencesCreateInput!) { viewPreferencesCreate(input: $input) { success } }' -v "input=$(jq -cn --arg id "$vid" --argjson p "$prefs" '{type: "organization", viewType: "customView", customViewId: $id, preferences: $p}')")
+    mutate_ok "$res" viewPreferencesCreate
+  else
+    res=$(gql mutate 'mutation($id: String!, $input: ViewPreferencesUpdateInput!) { viewPreferencesUpdate(id: $id, input: $input) { success } }' -v "id=\"$pid\"" -v "input=$(jq -cn --argjson p "$prefs" '{preferences: $p}')")
+    mutate_ok "$res" viewPreferencesUpdate
+  fi
+  echo "  view    prefs    $name"
+}
+
 # run_actions <snapshot> <actions> <jq select filter> — executes the selected create/update actions in order
 run_actions() {
-  local snap="$1" actions="$2" filter="$3" a kind op name input id res
+  local snap="$1" actions="$2" filter="$3" a kind op name input id res vid
   while IFS= read -r a; do
     [ -n "$a" ] || continue
     kind=$(jq -r .kind <<<"$a"); op=$(jq -r .op <<<"$a"); name=$(jq -r .name <<<"$a")
@@ -173,10 +206,23 @@ run_actions() {
         fi ;;
       view/create)
         res=$(gql mutate 'mutation($input: CustomViewCreateInput!) { customViewCreate(input: $input) { success customView { id name } } }' -v "input=$input")
-        mutate_ok "$res" customViewCreate; echo "  view    created  $name" ;;
+        mutate_ok "$res" customViewCreate; echo "  view    created  $name"
+        vid=$(jq -r '.data.customViewCreate.customView.id // empty' <<<"$res")
+        [ -n "$vid" ] || die "customViewCreate returned no id for '$name'"
+        set_view_prefs "$vid" "" "$(jq -c '.prefs // {}' <<<"$a")" "$name" ;;
       view/update)
-        res=$(gql mutate 'mutation($id: String!, $input: CustomViewUpdateInput!) { customViewUpdate(id: $id, input: $input) { success } }' -v "id=\"$id\"" -v "input=$input")
-        mutate_ok "$res" customViewUpdate; echo "  view    updated  $name" ;;
+        if [ "$(jq -r '[.drift[] | select(. != "preferences")] | length' <<<"$a")" != 0 ]; then
+          res=$(gql mutate 'mutation($id: String!, $input: CustomViewUpdateInput!) { customViewUpdate(id: $id, input: $input) { success } }' -v "id=\"$id\"" -v "input=$input")
+          mutate_ok "$res" customViewUpdate; echo "  view    updated  $name"
+        fi
+        if jq -e '.drift | index("preferences")' <<<"$a" >/dev/null; then
+          set_view_prefs "$id" "$(jq -r '.prefsId // empty' <<<"$a")" "$(jq -c '.prefs // {}' <<<"$a")" "$name"
+        fi ;;
+      favorite/create)
+        vid=$(resolve_view_id "$snap" "$name")
+        [ -n "$vid" ] || { echo "  SKIP  favorite $name — view not present yet" >&2; continue; }
+        res=$(gql mutate 'mutation($input: FavoriteCreateInput!) { favoriteCreate(input: $input) { success } }' -v "input=$(jq -cn --arg id "$vid" '{customViewId: $id}')")
+        mutate_ok "$res" favoriteCreate; echo "  fav     created  $name" ;;
       *) die "internal: unexpected action $kind/$op" ;;
     esac
   done < <(jq -c ".[] | $filter" <<<"$actions")
@@ -189,7 +235,7 @@ cmd_export() {
   jq --arg exported_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson req_labels "$req_l" --argjson req_states "$req_s" '
     def lc: ascii_downcase;
     def uuid_re: "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
-    .team.id as $tid | .team.name as $tname
+    .team.id as $tid | .team.name as $tname | .favorites as $favs
     # Literal (not regex) substitution of the team name in view names/descriptions; skipped for very short names,
     # where a substring hit would be noise rather than a reference to the team.
     | def ph_name: if ($tname | length) >= 3 then split($tname) | join("${TEAM_NAME}") else . end;
@@ -206,10 +252,12 @@ cmd_export() {
         team: {triageEnabled: .team.triageEnabled, defaultIssueState: .team.defaultIssueState.name},
         states: ([ .team.states[] | {name, type, color, position, description: (.description // null), required: is_req($req_states)} ] | sort_by(.position, .name)),
         labels: ([ .labels[] | select(.team == null) | {name, color, description: (.description // null), isGroup: (.isGroup // false), parent: (.parent.name // null), required: is_req($req_labels)} ] | sort_by(.name | lc)),
-        views:  ([ $groups[] | .[0] | {name, description, icon: (.icon // null), color: (.color // null), filterData: (.filterText | fromjson)} ] | sort_by(.name)),
+        views:  ([ $groups[] | .[0] | {name, description, icon: (.icon // null), color: (.color // null), filterData: (.filterText | fromjson),
+                                       preferences: ((.organizationViewPreferences.preferences // {}) | with_entries(select(.value != null))),
+                                       favorite: (.id as $id | any($favs[]; . == $id))} ] | sort_by(.name)),
         skipped: {views: ($skipped_ids + $skipped_dups)}
       }' <<<"$snap" > "$out"
-  jq -r --arg out "$out" '"wrote \($out): \(.states|length) states, \(.labels|length) labels (\([.labels[]|select(.required)]|length) required), \(.views|length) views" + (if (.skipped.views|length) > 0 then "\n  skipped views:\n" + ([.skipped.views[] | "    - \(.name): \(.reason)"] | join("\n")) else "" end)' "$out"
+  jq -r --arg out "$out" '"wrote \($out): \(.states|length) states, \(.labels|length) labels (\([.labels[]|select(.required)]|length) required), \(.views|length) views (\([.views[]|select(.favorite)]|length) favorited)" + (if (.skipped.views|length) > 0 then "\n  skipped views:\n" + ([.skipped.views[] | "    - \(.name): \(.reason)"] | join("\n")) else "" end)' "$out"
 }
 
 cmd_check() {
@@ -227,8 +275,8 @@ cmd_apply() {
   if [ "$n" = 0 ]; then summary "$actions" && { echo "converged: nothing to do"; exit 0; } || { echo "nothing to apply, but conflicts remain (fix in Linear, then re-run check)"; exit 1; }; fi
   echo "applying:"
   # Phase 1 — triage on (Linear mints the Triage state itself). Phase 2 — states. Phase 3 — everything that depends on
-  # states existing (default state) or on other labels existing (groups before children), then views. Re-snapshot between
-  # phases so each phase resolves ids the previous one just created.
+  # states existing (default state) or on other labels existing (groups before children), then views. Phase 4 — favorites,
+  # once every view exists. Re-snapshot between phases so each phase resolves ids the previous one just created.
   run_actions "$snap" "$actions" 'select(.kind == "team" and .name == "triageEnabled")'
   snap=$(fetch_snapshot); actions=$(plan "$snap")
   run_actions "$snap" "$actions" 'select(.kind == "state" and (.op == "create" or .op == "update"))'
@@ -238,6 +286,8 @@ cmd_apply() {
   snap=$(fetch_snapshot); actions=$(plan "$snap")
   run_actions "$snap" "$actions" 'select(.kind == "label" and (.op == "create" or .op == "update"))'
   run_actions "$snap" "$actions" 'select(.kind == "view" and (.op == "create" or .op == "update"))'
+  snap=$(fetch_snapshot); actions=$(plan "$snap")
+  run_actions "$snap" "$actions" 'select(.kind == "favorite" and .op == "create")'
   # Other scripts resolve states through linear-cli's Statuses cache (linear skill gotcha #23) — a state minted seconds
   # ago is invisible to them until it expires or is cleared.
   lc cache clear >/dev/null 2>&1 || true

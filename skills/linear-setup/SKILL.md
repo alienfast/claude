@@ -1,6 +1,6 @@
 ---
 name: linear-setup
-description: Bring a Linear team's issue statuses, issue labels, and saved views to the house model — the exact set the basefund `BF` team runs on, exported into this skill. Checks a team for gaps, applies the missing or drifted pieces idempotently through the Linear API (never deletes), renames Linear's default `Todo` to `Planned`, wires the project's `LINEAR_TEAM`/`LINEAR_CLI_PROFILE`, and re-exports the model when BF changes. Use when the user says 'linear setup', 'set up Linear for this project/workspace/team', 'replicate BF's statuses/labels/views', 'check the Linear config', 'new Linear workspace', 'bootstrap a Linear team', or invokes /linear-setup.
+description: Bring a Linear team's issue statuses, issue labels, and saved views to the house model — the exact set the basefund `BF` team runs on, exported into this skill. Checks a team for gaps, applies the missing or drifted pieces idempotently through the Linear API (never deletes) — views land as workspace-level shared views with their board layout and other display preferences, favorited for the running user — renames Linear's default `Todo` to `Planned`, wires the project's `LINEAR_TEAM`/`LINEAR_CLI_PROFILE`, and re-exports the model when BF changes. Use when the user says 'linear setup', 'set up Linear for this project/workspace/team', 'replicate BF's statuses/labels/views', 'check the Linear config', 'new Linear workspace', 'bootstrap a Linear team', or invokes /linear-setup.
 ---
 
 # Linear Setup
@@ -19,7 +19,7 @@ target at check/apply time — so BF's `Product: Simple` becomes `Ops: Simple` o
 | --- | --- | --- |
 | Statuses | every workflow state (name, type, color, position, description), the team's triage toggle, its default issue state | extra states the target has (never deleted — `rename` or archive by hand); a state whose **type** differs (immutable — archive and re-run) |
 | Labels | every workspace-level issue label (name, color, description, groups + parents); `required: true` marks the load-bearing ones | team-scoped labels (BF has none; a same-named one on the target is reported as a conflict) |
-| Views | the team's **shared** Issue views whose filters reference only the team and label names | views filtering on assignees, projects, or other teams (workspace-specific ids — skipped at export); personal/unshared views; workspace-level views; Project views |
+| Views | every **shared** Issue view about the team — owned by it, or workspace-level with a filter naming it — whose filter references only the team and label names; each with its shared display preferences (layout, grouping, ordering, shown fields) and whether the exporting user has it favorited. Applied as **workspace-level** shared views (a team-scoped match is moved there) and favorited for the authenticated user | views filtering on assignees, projects, or other teams (workspace-specific ids — skipped at export); personal/unshared views; workspace views whose filter does not name the team; Project views; per-user display preferences; id-bearing preference keys (hidden columns, column order, label-group grouping); favorite ordering |
 | Team | `triageEnabled`, `defaultIssueState` | cycles, estimates, templates, members, auto-archive |
 
 All logic lives in [scripts/linear-setup.sh](scripts/linear-setup.sh) (the diff itself in [scripts/plan.jq](scripts/plan.jq)); this
@@ -61,7 +61,8 @@ selection (`LINEAR_CLI_PROFILE`, then the config's `current`).
    ```
 
    Exit 0 is converged; 1 means gaps; 2 is an error. Read the **header line** — it prints the workspace the API actually
-   answered for. On a triage-off team expect both `TEAM update triageEnabled` and `STATE create Triage`: apply flips
+   answered for and the user whose favorites are being checked (`favorites for <email>`; favorites are per user, so a
+   teammate running the same check sees their own `FAVORITE` gaps). On a triage-off team expect both `TEAM update triageEnabled` and `STATE create Triage`: apply flips
    the toggle first and Linear mints the state, so the create resolves to an update on the re-plan.
 
 3. **Resolve what apply will not do for you**, before applying:
@@ -78,7 +79,7 @@ selection (`LINEAR_CLI_PROFILE`, then the config's `current`).
    ~/.claude/skills/linear-setup/scripts/linear-setup.sh apply --team <KEY> --profile <P>
    ```
 
-   It re-snapshots between phases (triage → states → default state → label groups → labels + views), prints each
+   It re-snapshots between phases (triage → states → default state → label groups → labels + views → favorites), prints each
    mutation, clears linear-cli's statuses cache (linear skill gotcha #23: a state minted seconds ago is otherwise
    invisible to `mark-ready-for-release.sh` and friends), and ends with the post-apply table. Exit 0 = converged.
 
@@ -100,7 +101,9 @@ the check against BF itself doubles as a drift detector (the header says `this t
 git -C ~/.claude diff -- skills/linear-setup/assets/model.json
 ```
 
-Export rules: shared Issue views on the team only; a view whose filter still contains any UUID after the team-id
+Export rules: shared Issue views about the team only — owned by it, or workspace-level with a filter naming it (the
+base `${TEAM_NAME}` board is the latter) — each with its shared display preferences and a `favorite` flag saying whether
+the exporting user had it favorited; a view whose filter still contains any UUID after the team-id
 substitution is skipped and listed under `skipped.views` with its reason; two views sharing a name keep the oldest;
 labels are the workspace-level set with `required` stamped from the roster in the script (`REQUIRED_LABELS` — the
 names `linear-for-stakeholders.md` says never to rename, plus `epic`). Team-name substitution is a literal replace of
@@ -113,6 +116,14 @@ through the keeper flow like any other `~/.claude` change; other machines pick i
 - **Order matters once: rename before apply.** Everything else converges in any order.
 - **Triage may need a paid plan.** If `teamUpdate {triageEnabled}` is refused, the `Triage` state cannot exist either;
   apply reports the error and stops — tell the user, do not retry.
+- **Every model view is a workspace-level view.** A team-scoped view carrying a model name is `scope` drift, and apply
+  moves it — `customViewUpdate` with `teamId: null`, measured 2026-09-04 on bfpnext. That puts the base `${TEAM_NAME}`
+  board and the label views in everyone's workspace Views, not under one team.
+- **A preferences write replaces the whole object.** Measured 2026-09-04 on bfpnext: `viewPreferencesUpdate` carrying
+  only `layout` nulled `showTriageIssues`. The script always sends the full model object; the check compares only the
+  keys the model names, so a key Linear adds on its own is not drift.
+- **Favorites are per user.** Apply favorites for whoever the profile's API key belongs to — the header names them.
+  Nothing un-favorites, and sidebar order is not managed.
 - **View match is by exact substituted name.** Renaming a view in Linear makes the model re-create it under the model
   name and flag the renamed one as `extra`; rename it back or delete the extra.
 - **`filterData` is stored verbatim** (measured: byte-identical round-trip on basefund), so a `filterData` drift row is a

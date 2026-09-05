@@ -3,7 +3,7 @@
     "organization": "basefund",
     "team": "BF",
     "teamName": "Product",
-    "exportedAt": "2026-09-05T00:58:25Z"
+    "exportedAt": "2026-09-05T01:45:27Z"
   },
   "team": {
     "triageEnabled": true,
@@ -247,6 +247,30 @@
   ],
   "views": [
     {
+      "name": "${TEAM_NAME}",
+      "description": "Issues assigned to the ${TEAM_NAME} team",
+      "icon": "Users",
+      "color": "#bec2c8",
+      "filterData": {
+        "and": [
+          {
+            "team": {
+              "id": {
+                "in": [
+                  "${TEAM_ID}"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "preferences": {
+        "layout": "board",
+        "showTriageIssues": true
+      },
+      "favorite": true
+    },
+    {
       "name": "${TEAM_NAME}: Bug",
       "description": "Issues for the ${TEAM_NAME} team related to security or bugs, excluding specified labels",
       "icon": "Bug",
@@ -289,7 +313,12 @@
             ]
           }
         ]
-      }
+      },
+      "preferences": {
+        "layout": "board",
+        "showTriageIssues": true
+      },
+      "favorite": true
     },
     {
       "name": "${TEAM_NAME}: Fleet Workable",
@@ -447,7 +476,12 @@
             }
           }
         ]
-      }
+      },
+      "preferences": {
+        "layout": "board",
+        "showTriageIssues": true
+      },
+      "favorite": true
     },
     {
       "name": "${TEAM_NAME}: Human",
@@ -488,7 +522,12 @@
             }
           }
         ]
-      }
+      },
+      "preferences": {
+        "layout": "board",
+        "showTriageIssues": true
+      },
+      "favorite": true
     },
     {
       "name": "${TEAM_NAME}: Keeper",
@@ -529,7 +568,12 @@
             }
           }
         ]
-      }
+      },
+      "preferences": {
+        "layout": "board",
+        "showTriageIssues": true
+      },
+      "favorite": true
     },
     {
       "name": "${TEAM_NAME}: Needs Decision",
@@ -570,7 +614,12 @@
             }
           }
         ]
-      }
+      },
+      "preferences": {
+        "layout": "board",
+        "showTriageIssues": true
+      },
+      "favorite": true
     },
     {
       "name": "${TEAM_NAME}: Not Specified",
@@ -625,7 +674,12 @@
             }
           }
         ]
-      }
+      },
+      "preferences": {
+        "layout": "board",
+        "showTriageIssues": true
+      },
+      "favorite": true
     },
     {
       "name": "${TEAM_NAME}: Security",
@@ -670,7 +724,12 @@
             ]
           }
         ]
-      }
+      },
+      "preferences": {
+        "layout": "board",
+        "showTriageIssues": true
+      },
+      "favorite": true
     },
     {
       "name": "${TEAM_NAME}: Simple",
@@ -711,7 +770,12 @@
             }
           }
         ]
-      }
+      },
+      "preferences": {
+        "layout": "board",
+        "showTriageIssues": true
+      },
+      "favorite": true
     },
     {
       "name": "${TEAM_NAME}: Solo",
@@ -752,11 +816,20 @@
             }
           }
         ]
-      }
+      },
+      "preferences": {
+        "layout": "board",
+        "showTriageIssues": true
+      },
+      "favorite": true
     }
   ],
   "skipped": {
     "views": [
+      {
+        "name": "Engineering",
+        "reason": "filter references workspace-specific ids (assignee/project/other team) — not portable"
+      },
       {
         "name": "Assigned to Blake",
         "reason": "filter references workspace-specific ids (assignee/project/other team) — not portable"
