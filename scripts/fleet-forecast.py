@@ -20,7 +20,8 @@ Usage:
 
   --sessions / --horizon-h default from tmp/fleet-recommendation.json (sessions / duration_h);
   horizon falls back to 12. --hours-per-issue overrides the calibration from
-  tmp/fleet-metrics-history.jsonl (mean session_hours/shipped over recent runs; default 2.0).
+  tmp/fleet-metrics-history.jsonl (mean session_hours/shipped over recent runs, rows above
+  MAX_PLAUSIBLE_HOURS_PER_ISSUE ignored with a NOTE on stderr; default 2.0).
   --flat disables estimate-point weighting of per-issue duration. --fixture bypasses the Linear
   fetch with a JSON array of issue nodes (test seam); --me sets the viewer email for claim checks.
 
@@ -145,10 +146,16 @@ class Issue:
                 num)
 
 
+# A history row above this is a non-fleet session set recorded as a fleet, not a slow fleet. Measured 2026-09-04: /auto-prep's
+# sizing step wrote a month-long interactive session (1 session, 706 h, 10 shipped) to the history, and 70.6 h/issue turned a
+# 15-ship forecast into 3 ships, all past the deadline.
+MAX_PLAUSIBLE_HOURS_PER_ISSUE = 12.0
+
+
 def calibrate(history_path, override):
     if override is not None:
         return override, "--hours-per-issue"
-    rows = []
+    rows, implausible = [], []
     try:
         for line in Path(history_path).read_text().splitlines():
             try:
@@ -156,9 +163,13 @@ def calibrate(history_path, override):
             except json.JSONDecodeError:
                 continue
             if (r.get("shipped") or 0) > 0 and (r.get("session_hours") or 0) > 0:
-                rows.append(r["session_hours"] / r["shipped"])
+                per_issue = r["session_hours"] / r["shipped"]
+                (rows if per_issue <= MAX_PLAUSIBLE_HOURS_PER_ISSUE else implausible).append(per_issue)
     except OSError:
         pass
+    for per_issue in implausible:
+        print(f"NOTE: ignored a history row at {per_issue:.1f} h/issue — above {MAX_PLAUSIBLE_HOURS_PER_ISSUE:.0f}h it is a"
+              f" non-fleet session set recorded as a fleet, not a calibration; check {history_path}", file=sys.stderr)
     if rows:
         recent = rows[-6:]
         return round(sum(recent) / len(recent), 2), f"calibrated from {len(recent)} fleet runs in {history_path}"

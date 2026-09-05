@@ -33,7 +33,9 @@ the output anywhere `/auto` or a fleet session might read it as instructions.
 
 Defaults: sessions and horizon from `tmp/fleet-recommendation.json` (horizon falls back to 12h); no
 count from either source is a hard error — point at `/auto-prep` or ask for one. Useful overrides:
-`--hours-per-issue X` (replace the history calibration; default 2.0 when no history),
+`--hours-per-issue X` (replace the history calibration; default 2.0 when no history — a history row above
+12 h/issue is ignored with a `NOTE:` on stderr, because a non-fleet session set recorded as a fleet reads as a
+70-hour issue, not a slow fleet; surface the note, it means the history needs cleaning),
 `--flat` (disable estimate-point weighting of per-issue duration). `-h` documents the rest.
 
 The script fetches once (states, labels, estimates, relations), classifies fleet-eligibility with the
