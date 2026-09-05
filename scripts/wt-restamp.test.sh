@@ -410,7 +410,14 @@ rm -f "$REPO/.claude/worktree-identity/wt-identity-test-1.env"
 ( cd "$WT" && $G rebase -q main ) >/dev/null 2>&1
 OUT=$(env "CLAUDE_SESSION_ID=sess-A" "CLAUDE_JOB_DIR=$JOBDIR" "$RESTAMP" "$WT" 2>"$TMP/stderr.txt"); RC=$?
 ck "0" "$RC" "restamp succeeds against a rejected stale sidecar"
-ck "$(cd "$WT" && pwd -P)" "$(sed -n 's/^WT_IDENTITY_WT_DIR=//p' "$JOBDIR/wt-identity-test-1.env" | head -1)" "stamp records the live worktree, not the rejected sidecar's path"
+# Expected value normalized the same way the stamp writes it (wt-path.sh). A bare `pwd -P` pins the MSYS
+# spelling, and on Windows that is a different string for the same directory — `/tmp/...` and
+# `C:/Users/<user>/AppData/Local/Temp/...` are one path — so asserting it would fail on a correct stamp and,
+# worse, encode the spelling that git.exe rejects. Off Windows the helper reduces to `pwd -P` and this is a
+# no-op. The assertion still proves what it is here for: the LIVE worktree, not the rejected sidecar's path.
+# shellcheck source=/dev/null
+. "$DIR/wt-path.sh"
+ck "$(wt_path_canon "$WT")" "$(sed -n 's/^WT_IDENTITY_WT_DIR=//p' "$JOBDIR/wt-identity-test-1.env" | head -1)" "stamp records the live worktree, not the rejected sidecar's path"
 
 # --- Part 10: an unresolvable harness pid degrades, it does not kill the stamp ---
 # 999999 is above every platform's pid ceiling, so `ps` returns nothing for it. wtid_pid_start's
