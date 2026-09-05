@@ -228,16 +228,28 @@ if [ -z "$wt_abs" ]; then
   exit 1
 fi
 
-# Copy files listed in .worktreeinclude from the main checkout into the new
-# worktree. `git worktree add` only copies *tracked* files; anything gitignored
-# (typically .env.local and other dev secrets) is left behind. The user
-# maintains .worktreeinclude (one path per line, # comments allowed) to mark
-# which untracked files should be carried into every worktree.
+# Copy gitignored local files from the main checkout into the new worktree.
+# `git worktree add` only copies *tracked* files; anything gitignored
+# (typically .env.local and other dev secrets) is left behind. The project
+# lists what to carry in .worktreeinclude (one path per line, # comments
+# allowed). Without that file, every gitignored .env / .env.* file is carried
+# instead — a worktree with no env file fails the first command that loads
+# one, and nothing in that failure says why. Templates are tracked, so the
+# ignored listing never returns them; the grep excludes them anyway.
 #
 # Skip on reuse — the existing worktree may have user-edited values that we
 # shouldn't clobber. Only runs when we just created (CREATED_WT=1).
-if [ "${CREATED_WT:-0}" = "1" ] && [ -f ".worktreeinclude" ]; then
-  while IFS= read -r line || [ -n "$line" ]; do
+if [ "${CREATED_WT:-0}" = "1" ]; then
+  if [ -f ".worktreeinclude" ]; then
+    include_list=$(cat ".worktreeinclude")
+  else
+    include_list=$(git ls-files --others --ignored --exclude-standard --directory \
+      | grep -E '(^|/)\.env(\.[^/]+)?$' | grep -v -E '\.env\.(example|sample|template)$' || true)
+    if [ -n "$include_list" ]; then
+      echo "NOTE: no .worktreeinclude; carrying discovered env files — list them in .worktreeinclude to make it explicit" >&2
+    fi
+  fi
+  printf '%s\n' "$include_list" | while IFS= read -r line || [ -n "$line" ]; do
     # Strip leading/trailing whitespace; skip blanks and # comments.
     entry=$(printf '%s' "$line" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
     case "$entry" in
@@ -257,7 +269,7 @@ if [ "${CREATED_WT:-0}" = "1" ] && [ -f ".worktreeinclude" ]; then
     else
       echo "WARN: failed to copy .worktreeinclude entry '$entry' → $dst; continuing." >&2
     fi
-  done < ".worktreeinclude"
+  done
 fi
 
 # Capture the session-start dirty baseline of the main checkout (wt-baseline.sh capture — the
