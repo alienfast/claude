@@ -1,4 +1,7 @@
-#!/usr/bin/env python3
+#!/bin/sh
+''''exec "$(command -v python3 || command -v python)" "$0" "$@" # '''
+# sh + Python polyglot — see with-repo-lock.py for why. `#!/usr/bin/env python3` fails where the interpreter
+# is installed as `python` only (Git Bash on Windows).
 """Per-session metrics for a finished fleet of `/loop /auto` runs, so a retro measures instead of
 recalling.
 

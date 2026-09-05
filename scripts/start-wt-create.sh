@@ -66,6 +66,10 @@ wt_dir="$5"
 # available to the create-failure trap below, which fires before the stamp.
 # shellcheck source=/dev/null
 . "$(dirname "$0")/wt-identity.sh"
+# Path-normalization boundary — this script emits WT_ABS, which every downstream consumer inherits, so the
+# form is decided here or nowhere. See wt-path.sh.
+# shellcheck source=/dev/null
+. "$(dirname "$0")/wt-path.sh"
 
 # Defensive re-check: we must be inside a work tree (the parent verified this, but
 # this script can be invoked directly under the lock, so don't assume).
@@ -252,7 +256,10 @@ if [ -z "$baseline_sha" ]; then
   fi
 fi
 
-wt_abs=$(cd "$wt_dir" && pwd)
+# The single most consequential path in the worktree family: it is stamped into the identity, printed as
+# WT_ABS, and inherited by every consumer (wt-baseline, start-wt-verify, /finish). A shell `pwd` here yields
+# the MSYS form, which git.exe and pnpm reject on a path containing a `~` segment — silently, one layer down.
+wt_abs=$(wt_path_canon "$wt_dir") || { echo "ERROR: could not canonicalize worktree path '$wt_dir'." >&2; exit 1; }
 
 # Stamp the tamper-evident identity via the shared library — the SAME code path
 # /finish reads back (wt_identity_load/verify) and finish-recover.sh re-stamps a

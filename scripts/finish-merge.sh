@@ -65,6 +65,12 @@
 
 set -eo pipefail
 
+# Path-normalization boundary, sourced unconditionally. wt-identity.sh (which also pulls this in) is sourced
+# further down behind `_WT_SKIP_IDENTITY_CHECK`, so relying on that path would leave wt_path_native undefined
+# in exactly the recovery re-invocation that skips it. See wt-path.sh.
+# shellcheck source=/dev/null
+. "$HOME/.claude/scripts/wt-path.sh"
+
 # Self-serialize against the parent repo. The lock helper re-execs this script
 # with the OS holding an exclusive flock on $repo_key. The sentinel is PID-tied
 # (exec preserves PID, so the post-exec check matches; a stray exported
@@ -340,8 +346,12 @@ if [ -n "$main_worktree" ] && [ "$main_worktree" != "$invoked_from" ]; then
   echo "      Relocating to '$main_worktree'. Callers should cd there first (/finish Step 9)." >&2
   # Both may be relative to the OLD cwd; absolutize before moving. Each is already known to
   # exist (preconditions 2 and the message-file check), so the dirname cd cannot fail.
-  case "$wt_dir" in /*) ;; *) wt_dir="$(cd "$(dirname "$wt_dir")" && pwd)/$(basename "$wt_dir")" ;; esac
-  case "$message_file" in /*) ;; *) message_file="$(cd "$(dirname "$message_file")" && pwd)/$(basename "$message_file")" ;; esac
+  # The absolute-path test admits a Windows drive-letter path as well as a POSIX one: `/*` alone treats an
+  # already-absolute `C:/…` as relative and rebuilds it through `cd`+`pwd`, which silently converts it to the
+  # MSYS form that git.exe then rejects on a path containing a `~` segment (see wt-path.sh).
+  case "$wt_dir" in /*|?:/*|?:\\*) ;; *) wt_dir="$(cd "$(dirname "$wt_dir")" && pwd)/$(basename "$wt_dir")" ;; esac
+  case "$message_file" in /*|?:/*|?:\\*) ;; *) message_file="$(cd "$(dirname "$message_file")" && pwd)/$(basename "$message_file")" ;; esac
+  wt_dir=$(wt_path_native "$wt_dir" 2>/dev/null || printf '%s' "$wt_dir")
   cd "$main_worktree"
 fi
 

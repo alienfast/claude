@@ -1,4 +1,7 @@
-#!/usr/bin/env python3
+#!/bin/sh
+''''exec "$(command -v python3 || command -v python)" "$0" "$@" # '''
+# sh + Python polyglot — see with-repo-lock.py for why. `#!/usr/bin/env python3` fails where the interpreter
+# is installed as `python` only (Git Bash on Windows).
 """Aggregate /quality-review reviewer-dispatch counts per issue across session transcripts,
 split by auto vs interactive, to answer "are auto runs burning more review cycles?".
 

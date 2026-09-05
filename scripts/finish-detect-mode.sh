@@ -33,6 +33,10 @@
 
 set -eo pipefail
 
+# Path-normalization boundary — WT_DIR and REPO_ROOT are both consumed as `git -C` arguments by callers.
+# shellcheck source=/dev/null
+. "$(dirname "$0")/wt-path.sh"
+
 action=""
 no_push=0
 
@@ -75,9 +79,12 @@ fi
 source_branch=$(git config --worktree --get start.source-branch 2>/dev/null || true)
 worktree_branch=$(git branch --show-current 2>/dev/null || true)
 wt_dir=$(git rev-parse --show-toplevel 2>/dev/null || true)
-common_dir=$(git rev-parse --git-common-dir 2>/dev/null || true)
+# `--path-format=absolute` plus wt_path_canon so REPO_ROOT is emitted in the same native form as WT_DIR.
+# Callers feed REPO_ROOT straight to `git -C`, and a bare `cd`+`pwd` yields the MSYS spelling, which git.exe
+# rejects on a path containing a `~` segment (see wt-path.sh) — the two keys of one contract must agree.
+common_dir=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
 if [ -n "$common_dir" ]; then
-  repo_root=$(cd "$common_dir/.." && pwd)
+  repo_root=$(wt_path_canon "$common_dir/.." 2>/dev/null || (cd "$common_dir/.." && pwd))
 else
   repo_root=""
 fi
