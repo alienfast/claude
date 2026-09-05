@@ -49,6 +49,11 @@ usage() {
   fail "FAILED-USAGE: $1"
 }
 
+# Path-normalization boundary. The cwd-confirm below compares two paths, and a form mismatch between them
+# would report FAILED-CWD on a perfectly registered worktree. See wt-path.sh.
+# shellcheck source=/dev/null
+. "$(dirname "$0")/wt-path.sh"
+
 [ $# -ge 3 ] || usage "usage: start-wt-verify.sh <wt-abs-path> <ISSUE-ID> (--claim|--no-claim) [--baseline-file <path>]"
 
 wt_arg=$1
@@ -85,7 +90,7 @@ done
 # Canonicalize before comparing (stage 2 reuses this) — a symlinked path component would otherwise
 # make an identical directory compare unequal.
 [ -n "$wt_arg" ] && [ -d "$wt_arg" ] || usage "wt-abs path '$wt_arg' unset or not a directory"
-WT_ABS=$(cd "$wt_arg" && pwd -P) || usage "could not canonicalize '$wt_arg'"
+WT_ABS=$(wt_path_canon "$wt_arg") || usage "could not canonicalize '$wt_arg'"
 
 # Normalize issue ID exactly like start-wt-setup.sh: strip whitespace, uppercase, validate.
 issue_input=$(printf '%s' "$issue_arg" | tr -d '[:space:]')
@@ -99,13 +104,15 @@ echo "== cwd confirm ==" >&2
 # The script inherits the Bash session's cwd — there is no direct way to query harness-level
 # registration state, so comparing cwd against the canonicalized worktree root is the only proxy
 # available for confirming EnterWorktree's registration actually took.
-[ "$(pwd -P)" = "$WT_ABS" ] || fail "FAILED-CWD: cwd is not the worktree — EnterWorktree registration did not take"
+# Both sides through the same helper: cwd via `pwd -P` alone is the MSYS form while WT_ABS is native, and a
+# raw comparison of the two spellings of one directory would report a registration failure that never happened.
+[ "$(wt_path_canon .)" = "$WT_ABS" ] || fail "FAILED-CWD: cwd is not the worktree — EnterWorktree registration did not take"
 
 echo "== baseline verify ==" >&2
 if [ -n "$baseline_file" ]; then
   [ -r "$baseline_file" ] || fail "FAILED-BASELINE: baseline file '$baseline_file' missing/unreadable"
 else
-  if ! capture_out=$("$SCRIPT_DIR/wt-baseline.sh" capture "$(pwd -P)" "$issue_lower"); then
+  if ! capture_out=$("$SCRIPT_DIR/wt-baseline.sh" capture "$WT_ABS" "$issue_lower"); then
     fail "FAILED-BASELINE: baseline re-capture failed"
   fi
   case "$capture_out" in

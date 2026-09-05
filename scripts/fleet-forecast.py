@@ -1,4 +1,7 @@
-#!/usr/bin/env python3
+#!/bin/sh
+''''exec "$(command -v python3 || command -v python)" "$0" "$@" # '''
+# sh + Python polyglot — see with-repo-lock.py for why. `#!/usr/bin/env python3` fails where the interpreter
+# is installed as `python` only (Git Bash on Windows).
 """fleet-forecast.py — project what a fleet of /loop /auto sessions would ship over a time horizon,
 as an ESTIMATE of the drain's shape, never a plan: pick order is decided at pick time by
 next-candidates.sh against live state, and collisions, review churn, failures, and headroom parking

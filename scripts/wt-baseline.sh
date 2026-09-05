@@ -48,6 +48,12 @@
 
 set -uo pipefail
 
+# Path-normalization boundary. Every path below is handed to git.exe, so it has to be in the form a
+# Windows-native binary accepts — which the shell's own `pwd` is not when a segment begins with `~`. See
+# wt-path.sh; off Windows both helpers reduce to the `pwd -P` this script used before.
+# shellcheck source=/dev/null
+. "$(dirname "$0")/wt-path.sh"
+
 fail() {
   echo "FAILED: $1"
   echo "FAILED: $1" >&2
@@ -76,7 +82,7 @@ esac
 # Canonicalize before comparing — a symlinked path component would otherwise make identical directories
 # compare unequal (or a registered worktree look wrong).
 [ -n "$wt_arg" ] && [ -d "$wt_arg" ] || fail "wt-abs path '$wt_arg' unset or not a directory"
-WT_ABS=$(cd "$wt_arg" && pwd -P) || fail "could not canonicalize '$wt_arg'"
+WT_ABS=$(wt_path_canon "$wt_arg") || fail "could not canonicalize '$wt_arg'"
 
 # `git -C ""` is a documented no-op (leaves cwd unchanged, exits 0), so an empty/wrong path would silently
 # measure the WRONG tree instead of failing loudly — these guards are the only thing standing between a
@@ -89,7 +95,10 @@ common_dir=$(git -C "$WT_ABS" rev-parse --path-format=absolute --git-common-dir)
 [ -n "$common_dir" ] || fail "git common dir came back empty for '$WT_ABS'"
 MAIN_CHECKOUT=$(dirname "$common_dir")
 [ -n "$MAIN_CHECKOUT" ] && [ -d "$MAIN_CHECKOUT" ] || fail "MAIN_CHECKOUT '$MAIN_CHECKOUT' unset or not a directory"
-MAIN_CHECKOUT=$(cd "$MAIN_CHECKOUT" && pwd -P) || fail "could not canonicalize '$MAIN_CHECKOUT'"
+# Canonicalized through the same helper as WT_ABS so the inequality guard below compares two paths in ONE
+# form. Mixing forms here would make a worktree and its own main checkout always compare unequal, silently
+# passing a guard whose entire job is to catch a WT_ABS that is not really a worktree.
+MAIN_CHECKOUT=$(wt_path_canon "$MAIN_CHECKOUT") || fail "could not canonicalize '$MAIN_CHECKOUT'"
 [ "$WT_ABS" != "$MAIN_CHECKOUT" ] || fail "WT_ABS == MAIN_CHECKOUT ('$WT_ABS') — not a worktree with a separate main checkout"
 
 if command -v shasum >/dev/null 2>&1; then HASH_CMD=(shasum -a 256)

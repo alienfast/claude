@@ -1320,7 +1320,14 @@ mkrepo_nowt pipeline
 real_start sess-A
 ck_rc "0" "$RC" "the real /start create stamps a fresh worktree"
 ck "1" "$(kv CREATED_WT)" "/start reports that it created the worktree rather than reusing one"
-ck "$WT" "$(kv WT_ABS)" "/start reports the worktree it created"
+# Compare the two spellings of one directory, not two strings. WT_ABS is emitted in native form (wt-path.sh)
+# while the fixture builds $WT from mktemp in the shell's own form; on Windows those differ for the same
+# directory, and asserting the raw fixture value would pin the MSYS spelling this library exists to stop
+# being handed to git.exe. `wt_path_canon` is what start-wt-create.sh itself applies, so this asserts the
+# contract rather than a platform accident. Off Windows both sides reduce to `pwd -P` and nothing changes.
+# shellcheck source=/dev/null
+. "$DIR/wt-path.sh"
+ck "$(wt_path_canon "$WT")" "$(kv WT_ABS)" "/start reports the worktree it created"
 ck "issue-branch" "$(kv BRANCH)" "/start reports the branch"
 ck "main" "$(kv SOURCE_BRANCH)" "/start reports the source branch"
 ck "$(git -C "$WT" rev-parse HEAD)" "$(kv BASELINE_SHA)" "/start reports the fork point as the baseline"

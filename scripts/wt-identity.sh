@@ -53,6 +53,11 @@
 # sessions can distinguish a worktree whose owning session DIED (safe to resume) from
 # one another live session is working RIGHT NOW (hands off) — see that section below.
 
+# Path-normalization boundary, used by _wtid_sidecar_matches. Sourced by BASH_SOURCE rather than $0 because
+# this file is itself SOURCED — $0 would be whichever script pulled it in. Re-sourcing is a no-op.
+# shellcheck source=/dev/null
+. "$(dirname "${BASH_SOURCE[0]}")/wt-path.sh"
+
 # Read the known keys out of a sidecar .env without eval/source (values may contain slashes; they never
 # contain newlines). Errors are swallowed: an unreadable sidecar is judged by _wtid_tier_readable on the
 # all-empty result it leaves, and without the redirect it would also print eleven permission-denied lines
@@ -200,8 +205,12 @@ _wtid_sidecar_matches() {
   # `git rev-parse --show-toplevel` (physical) — comparing raw strings would
   # false-reject a healthy sidecar on a symlinked repo path, which in the config-wiped
   # corruption case would silently MISS the hijack. Resolving both is symlink-robust.
-  abs=$(cd "$wt_dir" 2>/dev/null && pwd -P) || return 0
-  stored=$(cd "$WTID_WT_DIR" 2>/dev/null && pwd -P) || stored="$WTID_WT_DIR"
+  # Both sides go through wt_path_canon so the comparison is in ONE form. The success path was already
+  # self-consistent (each side took the same cd+pwd transform), but the fallback returns the STORED string
+  # verbatim — and stamps are written in native form, so a raw fallback compares native against MSYS and
+  # reads a healthy sidecar as a hijack. This check's false answers are expensive in both directions.
+  abs=$(wt_path_canon "$wt_dir") || return 0
+  stored=$(wt_path_canon "$WTID_WT_DIR") || stored=$(wt_path_native "$WTID_WT_DIR" 2>/dev/null) || stored="$WTID_WT_DIR"
   [ "$abs" = "$stored" ]
 }
 
@@ -210,13 +219,16 @@ _wtid_sidecar_matches() {
 # worktree's own toplevel.
 _wtid_main_root() {
   local wt_dir="$1" cdir
-  cdir=$(git -C "$wt_dir" rev-parse --git-common-dir 2>/dev/null) || return 1
+  # `--path-format=absolute` so no "is this relative?" test is needed. The test this replaced was `case $cdir
+  # in /*)` — a POSIX absolute-path glob that does NOT match a Windows drive-letter path, so on Git Bash git's
+  # already-absolute `C:/…/.git` fell to the relative branch, was prefixed with the worktree path, and yielded
+  # a path that cannot exist. `_wtid_main_root` then returned 1 and the repo-level identity sidecar was never
+  # written — silently, because that tier is best-effort. Measured 2026-09-05: every stamp on Windows landed
+  # in git config alone, leaving /finish's hijack detection with a single tier that a config wipe erases.
+  # The same flag is already the convention in start-wt-setup.sh and wt-baseline.sh.
+  cdir=$(git -C "$wt_dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
   [ -z "$cdir" ] && return 1
-  case "$cdir" in
-    /*) : ;;
-    *)  cdir="$wt_dir/$cdir" ;;
-  esac
-  (cd "$cdir/.." 2>/dev/null && pwd) || return 1
+  wt_path_canon "$cdir/.." || return 1
 }
 
 _wtid_now() {

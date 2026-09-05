@@ -1,4 +1,13 @@
-#!/usr/bin/env python3
+#!/bin/sh
+''''exec "$(command -v python3 || command -v python)" "$0" "$@" # '''
+# The two lines above are a /bin/sh + Python polyglot, not a stray string. `#!/usr/bin/env python3` alone
+# fails on any machine where the interpreter is installed as `python` only — Git Bash on Windows is the
+# measured case (2026-09-05: exit 127, `env: 'python3': No such file or directory`), which took down every
+# caller of this helper and so every /start wt worktree create and /finish merge. sh reads line 2 as `exec`
+# (quote removal collapses `''''` to nothing) and hands off to whichever interpreter exists; Python reads the
+# same line as a triple-quoted string expression and ignores it. Prefer fixing it here over a machine-local
+# `python3` shim: this file is the shared dependency, and a shim only ever fixes one machine.
+#
 # with-repo-lock.py — Run a command while holding an exclusive lock keyed
 # by a path (sha256 of realpath → ~/.claude/locks/repo-<sha>.lock). The OS
 # releases the lock on process exit, including SIGKILL.

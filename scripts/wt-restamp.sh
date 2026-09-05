@@ -147,7 +147,10 @@ tiers_consistent() {
 git_path() {
   local p
   p=$(git -C "$wt_dir" rev-parse --git-path "$1" 2>/dev/null || true)
-  case "$p" in /*) printf '%s' "$p" ;; ?*) printf '%s/%s' "$wt_dir" "$p" ;; esac
+  # Drive-letter paths are absolute too: with `/*` alone, git's `C:/…` answer falls to the relative branch and
+  # is prefixed with the worktree path, producing a path that cannot exist — so every mid-rebase probe below
+  # reads "absent" and a detached or mid-rebase worktree is misreported as healthy (see wt-path.sh).
+  case "$p" in /*|?:/*|?:\\*) printf '%s' "$p" ;; ?*) printf '%s/%s' "$wt_dir" "$p" ;; esac
 }
 cur_branch=$(git -C "$wt_dir" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
 if [ -d "$(git_path rebase-merge)" ] || [ -d "$(git_path rebase-apply)" ] \
