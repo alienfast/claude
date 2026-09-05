@@ -23,8 +23,9 @@
 # The canonical form is what `cygpath -m` produces (`C:/Users/...`, forward slashes): Windows-native binaries
 # accept it, MSYS never tilde-expands it, `cd`/`[ -d ]` in Git Bash accept it, and it is what git itself
 # already returns from `rev-parse --path-format=absolute` — a convention several of these scripts had already
-# reached for piecemeal. Off Windows there is no `cygpath` and both helpers reduce to plain `pwd -P`, so
-# behaviour on macOS/Linux is byte-identical to before.
+# reached for piecemeal. Off Windows there is no `cygpath`, so `wt_path_canon` reduces to plain `pwd -P`: unchanged for
+# the callers that already used it, while the ones that used a logical `cd && pwd` now emit the physical path — a difference
+# only under a symlinked component, which macOS mktemp fixtures (`/var` → `/private/var`) hit on every test run.
 #
 # Usage — source it, do not execute:
 #   . "$(dirname "$0")/wt-path.sh"       # or "$HOME/.claude/scripts/wt-path.sh"

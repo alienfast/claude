@@ -1320,11 +1320,12 @@ mkrepo_nowt pipeline
 real_start sess-A
 ck_rc "0" "$RC" "the real /start create stamps a fresh worktree"
 ck "1" "$(kv CREATED_WT)" "/start reports that it created the worktree rather than reusing one"
-# Compare the two spellings of one directory, not two strings. WT_ABS is emitted in native form (wt-path.sh)
-# while the fixture builds $WT from mktemp in the shell's own form; on Windows those differ for the same
-# directory, and asserting the raw fixture value would pin the MSYS spelling this library exists to stop
-# being handed to git.exe. `wt_path_canon` is what start-wt-create.sh itself applies, so this asserts the
-# contract rather than a platform accident. Off Windows both sides reduce to `pwd -P` and nothing changes.
+# Compare the two spellings of one directory, not two strings. WT_ABS is emitted in native, physical form
+# (wt-path.sh) while the fixture builds $WT from mktemp in the shell's own form; on Windows those differ for the
+# same directory, and asserting the raw fixture value would pin the MSYS spelling this library exists to stop
+# being handed to git.exe. Off Windows they differ too whenever a component is a symlink — macOS mktemp's
+# `/var` → `/private/var` on every run — so the helper is load-bearing here, not a no-op. `wt_path_canon` is what
+# start-wt-create.sh itself applies, so this asserts the contract rather than a platform accident.
 # shellcheck source=/dev/null
 . "$DIR/wt-path.sh"
 ck "$(wt_path_canon "$WT")" "$(kv WT_ABS)" "/start reports the worktree it created"
