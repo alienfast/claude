@@ -62,22 +62,13 @@ e.g. `ACME-1`. That key is `<TEAM>` in the rest of this guide. Then make the two
 Triage is the inbox for anything that has not been accepted for work yet — an idea you dropped in, a bug someone reported. Agents never pick anything up from
 it; `/spec` is what drains it, moving each issue into `Planned` as it certifies it. Without Triage, every raw idea lands directly in the working backlog.
 
-### Match the issue statuses
+### Statuses, labels, and views come later
 
-**Issue statuses** → edit them to match this:
-
-![Linear issue statuses](pics/linear-issue-statuses.png)
-
-That is Linear's default workflow with two changes:
-
-| Change | Group | Why |
-| --- | --- | --- |
-| Rename `Todo` to `Planned` (deleting `Todo` and adding `Planned` does the same thing) | Unstarted | `/spec`, `/start`, and `/auto` all write the literal status `Planned` — it is where an agent moves an issue it accepts out of Triage, and where it parks one that turns out to need your decision. A team that only has `Todo` fails those writes |
-| Add `Ready for Release`, positioned **above** `Done` | Completed | Where an agent leaves an issue once the code is written, reviewed, and merged but not yet released. Without it, finished work has nowhere to go and every issue stalls at the last step |
-
-Everything else is Linear's default and stays as it is: `Backlog`, `In Progress`, `In Review`, `Done`, `Canceled`, `Duplicate`.
-
-The labels the agents match on get created for you in Step 6, which also checks both of these statuses and tells you if either is missing.
+Do not hand-edit the team's issue statuses, labels, or views. Step 6 has Claude bring all three to the house model — the exact set the
+`BF` team runs on, applied through the Linear API by the `linear-setup` skill — and it shows you what it changed. The one thing worth
+knowing now: Linear's default `Todo` status becomes `Planned`, which is where an agent moves an issue it accepts out of Triage, and a
+`Ready for Release` status is added above `Done` for work that is merged but not yet released. If you skipped **Turn on Triage** above,
+Step 6 turns it on for you (Linear may refuse on a free plan — then it tells you).
 
 ## Step 3 — Install the tools
 
@@ -171,20 +162,16 @@ exact thing to do and wait until I say it's done.
    confirmation, then re-run the script. Repeat until it ends with "Done!".
 5. Verify Linear: linear-cli teams list — it should list my team, <TEAM>. If it doesn't, run
    linear-cli auth oauth (a browser window opens for me to approve) and check again.
-6. Create the issue labels the workflow matches on. For each of: specified, needs decision, human,
-   solo, simple, epic, reflection, stalled, security, bug — check `linear-cli labels list -t issue`
-   first and create only the missing ones with `linear-cli labels create "<name>" -t issue`.
-7. Confirm my team has both of the workflow statuses the skills write by name:
-   linear-cli statuses list -t <TEAM> should show "Planned" (type unstarted) and "Ready for Release"
-   (type completed, positioned before Done). If either is missing, create it through the Linear API
-   (a workflowStateCreate mutation) — or, if that doesn't work, tell me exactly where to add it in
-   Linear's team settings.
-8. Pin the team scope for this project: in this repository, create or edit .claude/settings.json so it
+6. Bring my Linear team's issue statuses, labels, and saved views to the house model with the
+   linear-setup skill (~/.claude/skills/linear-setup/SKILL.md): if the team still has Linear's default
+   "Todo" status, rename it to "Planned" first; then run the skill's check for team <TEAM>, show me what
+   it will create, apply it, and confirm the re-check comes back converged.
+7. Pin the team scope for this project: in this repository, create or edit .claude/settings.json so it
    sets the env variable LINEAR_TEAM to <TEAM>. Commit that file.
-9. Verify GitHub: gh auth status — it should show me signed in to github.com.
-10. Do NOT set up a local application stack — no Docker, no database, no dev server. I only need the
-    repository, Linear, and the agent tooling.
-11. Finish with a short checklist: everything that's verified working, and anything that still needs my
+8. Verify GitHub: gh auth status — it should show me signed in to github.com.
+9. Do NOT set up a local application stack — no Docker, no database, no dev server. I only need the
+   repository, Linear, and the agent tooling.
+10. Finish with a short checklist: everything that's verified working, and anything that still needs my
     attention.
 ```
 

@@ -177,6 +177,7 @@ In workflow order — seed, certify, fleet, then the per-issue tiers and upkeep:
 | Skill | Description |
 |-------|-------------|
 | [linear](skills/linear/) | `linear-cli` quick-reference — the gotchas (anchored comments, dependency graph, parent-linked create) + helper scripts |
+| [linear-setup](skills/linear-setup/) | Bring a team's issue statuses, labels, and saved views to the house model (exported from `BF`) — `check` the gaps, `apply` them idempotently, `rename` Todo → Planned, re-`export` when BF changes |
 | [prd](skills/prd/) | Create agent-friendly tickets with PRDs and success criteria |
 | [spec](skills/spec/) | Groom and certify an issue into a `specified` spec — the certification gate `/auto` requires |
 | [triage](skills/triage/) | Analyze backlog for staleness, blockers, and priority suggestions |

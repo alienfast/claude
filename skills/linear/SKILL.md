@@ -37,7 +37,7 @@ Auth: `linear-cli auth oauth` (browser) or `LINEAR_API_KEY`; check with `linear-
 
 4. **Unassign** = `linear-cli issues assign <ID>` with the user omitted.
 
-5. **Workflow states** = `linear-cli statuses list -t <TEAM>` (there is no `teams states`).
+5. **Workflow states** = `linear-cli statuses list -t <TEAM>` (there is no `teams states`). Provisioning a team's states, labels, and views is `/linear-setup` (`skills/linear-setup/`), which applies the BF model idempotently — never hand-roll `workflowStateCreate`/`customViewCreate` calls.
 
 6. **Escape hatch — and its responses carry the `data` envelope.** Anything the dedicated commands can't do: `linear-cli api query`/`api mutate` run raw GraphQL against the Linear API (this is why we use linear-cli — the previous CLI had no such hatch). Unlike every dedicated command, these return the **raw GraphQL envelope**, so jq filters need a `.data.` prefix — `jq '.data.issues.nodes[]'`, not `.issues.nodes[]` (`linear-context.sh`, `linear-deps-graph.sh` and `next-candidates.sh` all do this). Copying the path straight out of your own query text is the trap, and it fails two ways: iterating the missing path errors loudly (`Cannot iterate over null`), but `length`, `//` defaults and most aggregations **succeed on `null`** — `jq '.issues.nodes | length'` prints `0` and exits **0**, no default required, so a summary line reads `TOTAL: 0` and a full pool is indistinguishable from an empty team.
 

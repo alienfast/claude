@@ -1,0 +1,770 @@
+{
+  "source": {
+    "organization": "basefund",
+    "team": "BF",
+    "teamName": "Product",
+    "exportedAt": "2026-09-05T00:58:25Z"
+  },
+  "team": {
+    "triageEnabled": true,
+    "defaultIssueState": "Backlog"
+  },
+  "states": [
+    {
+      "name": "Backlog",
+      "type": "backlog",
+      "color": "#bec2c8",
+      "position": 0,
+      "description": null,
+      "required": true
+    },
+    {
+      "name": "Triage",
+      "type": "triage",
+      "color": "#FC7840",
+      "position": 0,
+      "description": "Issue needs to be triaged",
+      "required": true
+    },
+    {
+      "name": "Planned",
+      "type": "unstarted",
+      "color": "#e2e2e2",
+      "position": 1,
+      "description": "",
+      "required": true
+    },
+    {
+      "name": "In Progress",
+      "type": "started",
+      "color": "#f2c94c",
+      "position": 2,
+      "description": null,
+      "required": true
+    },
+    {
+      "name": "Ready for Release",
+      "type": "completed",
+      "color": "#4cb782",
+      "position": 2.5,
+      "description": "Merged to main — deployed to staging, not yet in production",
+      "required": true
+    },
+    {
+      "name": "Done",
+      "type": "completed",
+      "color": "#5e6ad2",
+      "position": 3,
+      "description": null,
+      "required": true
+    },
+    {
+      "name": "Canceled",
+      "type": "canceled",
+      "color": "#95a2b3",
+      "position": 4,
+      "description": null,
+      "required": true
+    },
+    {
+      "name": "Duplicate",
+      "type": "duplicate",
+      "color": "#95a2b3",
+      "position": 5,
+      "description": null,
+      "required": true
+    },
+    {
+      "name": "In Review",
+      "type": "started",
+      "color": "#0f783c",
+      "position": 1002,
+      "description": "Pull request is being reviewed",
+      "required": false
+    }
+  ],
+  "labels": [
+    {
+      "name": "bug",
+      "color": "#EB5757",
+      "description": null,
+      "isGroup": false,
+      "parent": null,
+      "required": true
+    },
+    {
+      "name": "design",
+      "color": "#4cb782",
+      "description": null,
+      "isGroup": false,
+      "parent": null,
+      "required": false
+    },
+    {
+      "name": "enhancement",
+      "color": "#4EA7FC",
+      "description": null,
+      "isGroup": false,
+      "parent": null,
+      "required": false
+    },
+    {
+      "name": "epic",
+      "color": "#26b5ce",
+      "description": null,
+      "isGroup": false,
+      "parent": null,
+      "required": true
+    },
+    {
+      "name": "feature",
+      "color": "#26b5ce",
+      "description": null,
+      "isGroup": false,
+      "parent": null,
+      "required": false
+    },
+    {
+      "name": "function",
+      "color": "#F2C94C",
+      "description": null,
+      "isGroup": false,
+      "parent": null,
+      "required": false
+    },
+    {
+      "name": "human",
+      "color": "#6B7280",
+      "description": null,
+      "isGroup": false,
+      "parent": null,
+      "required": true
+    },
+    {
+      "name": "keeper",
+      "color": "#f2c94c",
+      "description": null,
+      "isGroup": false,
+      "parent": null,
+      "required": true
+    },
+    {
+      "name": "needs decision",
+      "color": "#eb5757",
+      "description": null,
+      "isGroup": false,
+      "parent": null,
+      "required": true
+    },
+    {
+      "name": "reflection",
+      "color": "#95a2b3",
+      "description": null,
+      "isGroup": false,
+      "parent": null,
+      "required": true
+    },
+    {
+      "name": "release",
+      "color": "#4cb782",
+      "description": null,
+      "isGroup": false,
+      "parent": null,
+      "required": false
+    },
+    {
+      "name": "security",
+      "color": "#26b5ce",
+      "description": null,
+      "isGroup": false,
+      "parent": null,
+      "required": true
+    },
+    {
+      "name": "sentry",
+      "color": "#5e6ad2",
+      "description": null,
+      "isGroup": false,
+      "parent": null,
+      "required": false
+    },
+    {
+      "name": "simple",
+      "color": "#6B7280",
+      "description": null,
+      "isGroup": false,
+      "parent": null,
+      "required": true
+    },
+    {
+      "name": "solo",
+      "color": "#6B7280",
+      "description": null,
+      "isGroup": false,
+      "parent": null,
+      "required": true
+    },
+    {
+      "name": "specified",
+      "color": "#10B981",
+      "description": null,
+      "isGroup": false,
+      "parent": null,
+      "required": true
+    },
+    {
+      "name": "stalled",
+      "color": "#eb5757",
+      "description": null,
+      "isGroup": false,
+      "parent": null,
+      "required": true
+    },
+    {
+      "name": "suggested",
+      "color": "#bec2c8",
+      "description": null,
+      "isGroup": false,
+      "parent": null,
+      "required": false
+    },
+    {
+      "name": "technical debt",
+      "color": "#f2994a",
+      "description": null,
+      "isGroup": false,
+      "parent": null,
+      "required": false
+    },
+    {
+      "name": "ux",
+      "color": "#00B8D9",
+      "description": null,
+      "isGroup": false,
+      "parent": null,
+      "required": false
+    }
+  ],
+  "views": [
+    {
+      "name": "${TEAM_NAME}: Bug",
+      "description": "Issues for the ${TEAM_NAME} team related to security or bugs, excluding specified labels",
+      "icon": "Bug",
+      "color": "#bec2c8",
+      "filterData": {
+        "and": [
+          {
+            "team": {
+              "id": {
+                "in": [
+                  "${TEAM_ID}"
+                ]
+              }
+            }
+          },
+          {
+            "or": [
+              {
+                "labels": {
+                  "and": [
+                    {
+                      "or": [
+                        {
+                          "name": {
+                            "eq": "bug"
+                          }
+                        },
+                        {
+                          "parent": {
+                            "name": {
+                              "eq": "bug"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "${TEAM_NAME}: Fleet Workable",
+      "description": "Issues for the ${TEAM_NAME} team that are not labeled as specified, human, solo, or keeper, and unassigned.",
+      "icon": "Users",
+      "color": "#bec2c8",
+      "filterData": {
+        "and": [
+          {
+            "team": {
+              "id": {
+                "in": [
+                  "${TEAM_ID}"
+                ]
+              }
+            }
+          },
+          {
+            "labels": {
+              "and": [
+                {
+                  "or": [
+                    {
+                      "name": {
+                        "eq": "specified"
+                      }
+                    },
+                    {
+                      "parent": {
+                        "name": {
+                          "eq": "specified"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "labels": {
+              "or": [
+                {
+                  "every": {
+                    "and": [
+                      {
+                        "name": {
+                          "nin": [
+                            "human"
+                          ]
+                        }
+                      },
+                      {
+                        "parent": {
+                          "name": {
+                            "nin": [
+                              "human"
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "length": {
+                    "eq": 0
+                  }
+                },
+                {
+                  "null": true
+                }
+              ]
+            }
+          },
+          {
+            "labels": {
+              "or": [
+                {
+                  "every": {
+                    "and": [
+                      {
+                        "name": {
+                          "nin": [
+                            "solo"
+                          ]
+                        }
+                      },
+                      {
+                        "parent": {
+                          "name": {
+                            "nin": [
+                              "solo"
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "length": {
+                    "eq": 0
+                  }
+                },
+                {
+                  "null": true
+                }
+              ]
+            }
+          },
+          {
+            "labels": {
+              "or": [
+                {
+                  "every": {
+                    "and": [
+                      {
+                        "name": {
+                          "nin": [
+                            "keeper"
+                          ]
+                        }
+                      },
+                      {
+                        "parent": {
+                          "name": {
+                            "nin": [
+                              "keeper"
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "length": {
+                    "eq": 0
+                  }
+                },
+                {
+                  "null": true
+                }
+              ]
+            }
+          },
+          {
+            "assignee": {
+              "or": [
+                {
+                  "null": true
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "${TEAM_NAME}: Human",
+      "description": "Issues in the ${TEAM_NAME} team that do not have human labels",
+      "icon": "Users",
+      "color": "#bec2c8",
+      "filterData": {
+        "and": [
+          {
+            "team": {
+              "id": {
+                "in": [
+                  "${TEAM_ID}"
+                ]
+              }
+            }
+          },
+          {
+            "labels": {
+              "and": [
+                {
+                  "or": [
+                    {
+                      "name": {
+                        "eq": "human"
+                      }
+                    },
+                    {
+                      "parent": {
+                        "name": {
+                          "eq": "human"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "${TEAM_NAME}: Keeper",
+      "description": "Issues related to the ${TEAM_NAME} team tagged with the keeper label",
+      "icon": "Label",
+      "color": "#bec2c8",
+      "filterData": {
+        "and": [
+          {
+            "team": {
+              "id": {
+                "in": [
+                  "${TEAM_ID}"
+                ]
+              }
+            }
+          },
+          {
+            "labels": {
+              "and": [
+                {
+                  "or": [
+                    {
+                      "name": {
+                        "eq": "keeper"
+                      }
+                    },
+                    {
+                      "parent": {
+                        "name": {
+                          "eq": "keeper"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "${TEAM_NAME}: Needs Decision",
+      "description": "Issues in the ${TEAM_NAME} team that need a decision",
+      "icon": null,
+      "color": "#bec2c8",
+      "filterData": {
+        "and": [
+          {
+            "team": {
+              "id": {
+                "in": [
+                  "${TEAM_ID}"
+                ]
+              }
+            }
+          },
+          {
+            "labels": {
+              "and": [
+                {
+                  "or": [
+                    {
+                      "name": {
+                        "eq": "needs decision"
+                      }
+                    },
+                    {
+                      "parent": {
+                        "name": {
+                          "eq": "needs decision"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "${TEAM_NAME}: Not Specified",
+      "description": "Issues for the ${TEAM_NAME} team that do not have specified labels",
+      "icon": "Label",
+      "color": "#bec2c8",
+      "filterData": {
+        "and": [
+          {
+            "team": {
+              "id": {
+                "in": [
+                  "${TEAM_ID}"
+                ]
+              }
+            }
+          },
+          {
+            "labels": {
+              "or": [
+                {
+                  "every": {
+                    "and": [
+                      {
+                        "name": {
+                          "nin": [
+                            "specified"
+                          ]
+                        }
+                      },
+                      {
+                        "parent": {
+                          "name": {
+                            "nin": [
+                              "specified"
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "length": {
+                    "eq": 0
+                  }
+                },
+                {
+                  "null": true
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "${TEAM_NAME}: Security",
+      "description": "Issues for the ${TEAM_NAME} team related to security or bugs, excluding specified labels",
+      "icon": "Shield",
+      "color": "#bec2c8",
+      "filterData": {
+        "and": [
+          {
+            "team": {
+              "id": {
+                "in": [
+                  "${TEAM_ID}"
+                ]
+              }
+            }
+          },
+          {
+            "or": [
+              {
+                "labels": {
+                  "and": [
+                    {
+                      "or": [
+                        {
+                          "name": {
+                            "eq": "security"
+                          }
+                        },
+                        {
+                          "parent": {
+                            "name": {
+                              "eq": "security"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "${TEAM_NAME}: Simple",
+      "description": "Issues from the ${TEAM_NAME} team tagged with simple labels",
+      "icon": "Label",
+      "color": "#bec2c8",
+      "filterData": {
+        "and": [
+          {
+            "team": {
+              "id": {
+                "in": [
+                  "${TEAM_ID}"
+                ]
+              }
+            }
+          },
+          {
+            "labels": {
+              "and": [
+                {
+                  "or": [
+                    {
+                      "name": {
+                        "eq": "simple"
+                      }
+                    },
+                    {
+                      "parent": {
+                        "name": {
+                          "eq": "simple"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "${TEAM_NAME}: Solo",
+      "description": "Issues from the ${TEAM_NAME} team tagged as solo",
+      "icon": "Users",
+      "color": "#bec2c8",
+      "filterData": {
+        "and": [
+          {
+            "team": {
+              "id": {
+                "in": [
+                  "${TEAM_ID}"
+                ]
+              }
+            }
+          },
+          {
+            "labels": {
+              "and": [
+                {
+                  "or": [
+                    {
+                      "name": {
+                        "eq": "solo"
+                      }
+                    },
+                    {
+                      "parent": {
+                        "name": {
+                          "eq": "solo"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "skipped": {
+    "views": [
+      {
+        "name": "Assigned to Blake",
+        "reason": "filter references workspace-specific ids (assignee/project/other team) — not portable"
+      },
+      {
+        "name": "${TEAM_NAME}: Needs Decision",
+        "reason": "duplicate name — kept the oldest"
+      }
+    ]
+  }
+}
