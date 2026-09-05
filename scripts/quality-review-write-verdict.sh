@@ -167,13 +167,25 @@ fi
 # Origin-class WARNs (exit-0, publish-then-warn like the edges WARN above) — keep the pattern in sync
 # with fleet-metrics.py's V_ORIGIN, the consumer whose aggregate /fleet-retro tunes the fleet on.
 # Retro is too late to repair a verdict (the worktree and finding text are gone by then — BF-1248),
-# and the two modes are distinct: a verdict with findings and no parseable tag at all, and an
-# off-enum origin word (BF-611's HIGH/implementation — V_ORIGIN's trailing \b rejects it, so the
-# finding silently vanishes from the aggregate while the verdict looks tagged to its author).
+# and the modes are distinct: a verdict with findings and no parseable tag at all; tags that exist but
+# sit OUTSIDE the `Findings resolved:` block; and an off-enum origin word (BF-611's HIGH/implementation
+# — V_ORIGIN's trailing \b rejects it, so the finding silently vanishes from the aggregate while the
+# verdict looks tagged to its author).
+#
+# The zero-tag check is scoped to the `Findings resolved:` line plus its indented or blank continuation
+# because that is the only region fleet-metrics.py reads (V_RESOLVED_BLOCK). A whole-file grep passed
+# 7 of the 2026-09-05 BFP fleet's 24 verdicts whose tags lived in a later prose section, so 170 of that
+# fleet's 354 findings — its four largest reviews, BFP-37's four Criticals among them — aggregated as
+# 0/0/0 with no origin, and the cross-run trend ledger recorded them that way.
 origin_re='\b(CRIT(ICAL)?|HIGH|MED(IUM)?|NICE-TO-HAVE)/(plan|impl|spec|test|latent)\b'
 resolved_count=$(grep -Eo '^Findings resolved:[[:space:]]*[0-9]+' "$body_file" | grep -Eo '[0-9]+' | head -1 || true)
-if [ -n "$resolved_count" ] && [ "$resolved_count" -gt 0 ] && ! grep -Eq "$origin_re" "$body_file"; then
-  echo "WARN: $resolved_count findings resolved but no severity tag carries a parseable origin class — every severity tag is SEVERITY/origin (e.g. HIGH/plan; classes plan|impl|spec|test|latent) or fleet-retro's origin aggregation reads zero from this verdict; see quality-review/SKILL.md Output" >&2
+resolved_block=$(awk '/^Findings resolved:/{p=1; print; next} p && /^([[:space:]]|$)/{print; next} p{exit}' "$body_file")
+if [ -n "$resolved_count" ] && [ "$resolved_count" -gt 0 ] && ! printf '%s\n' "$resolved_block" | grep -Eq "$origin_re"; then
+  if grep -Eq "$origin_re" "$body_file"; then
+    echo "WARN: $resolved_count findings resolved and SEVERITY/origin tags exist, but none sits inside the 'Findings resolved:' block — fleet-metrics.py reads severity and origin from that line and its indented continuation ONLY, so this verdict aggregates as 0/0/0 with no origin; carry the tagged inventory on the line itself, 'Findings resolved: N (HIGH/plan: …; MED/impl: …)'; see quality-review/SKILL.md Output" >&2
+  else
+    echo "WARN: $resolved_count findings resolved but no severity tag carries a parseable origin class — every severity tag is SEVERITY/origin (e.g. HIGH/plan; classes plan|impl|spec|test|latent) or fleet-retro's origin aggregation reads zero from this verdict; see quality-review/SKILL.md Output" >&2
+  fi
 fi
 off_enum=$(grep -Eo '\b(CRIT(ICAL)?|HIGH|MED(IUM)?|NICE-TO-HAVE)/[A-Za-z][A-Za-z-]*' "$body_file" \
   | grep -Ev '/(plan|impl|spec|test|latent)$' | sort -u || true)

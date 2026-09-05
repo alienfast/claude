@@ -97,6 +97,18 @@
 # Planned gate made insufficient — with Backlog withheld, an all-children-shipped Planned epic
 # sat one pick behind the workable Planned set instead of behind the whole Backlog.
 #
+# Issues behind an UNRESOLVED BLOCKER are dropped from the ranking (restored by --include-blocked)
+# and, like every other exclusion, counted in a trailing note — one that classifies them the way the
+# PLANNED-HOLD note does: releasing on their own (every blocker in the chain is in flight or
+# fleet-eligible) or the keeper's. When the pick list is EMPTY, the Planned gate is open, and at least
+# one hidden issue will release on its own, the headline is the BLOCKED-HOLD wait text rather than the
+# drained text, and /auto keys on it to park instead of latching `drained`. Before this note existed
+# the two cases printed byte-identical output: on the 2026-09-05 BFP fleet a session read a certified
+# pool chained entirely behind a sibling's in-flight issue (BFP-8 → BFP-18 → BFP-19 → five more) as
+# drained, confirmed it on the double-run, and quit with 10.4 of the fleet's 48 budgeted session-hours
+# unspent while its siblings shipped all thirteen of those issues. Suppressed under a closed Planned
+# gate, where PLANNED-HOLD is the one hold the caller waits on.
+#
 # Exit codes: 0 success (incl. "no workable issues"), 1 arg error,
 # 2 Linear/network failure, 3 missing dependency.
 #
@@ -606,21 +618,14 @@ fi
 gate_closed=0
 withheld=0
 hold_line=""
-if [ "$gate_on" -eq 1 ]; then
-  eligible_map_file="$tmpdir/eligible_map.json"
-  printf '%s' "$eligible_json" | jq -c 'map({key: .id, value: .unresolved_count}) | from_entries' > "$eligible_map_file"
-  pickable_file="$tmpdir/pickable.json"
-  printf '%s' "$candidates_json" | jq -c 'map(.id)' > "$pickable_file"
-  held_json=$(jq -c \
-    --argjson terminal "$TERMINAL_STATES" \
-    --slurpfile sm_doc "$state_map_file" \
-    --slurpfile bm_doc "$blocker_map_file" \
-    --slurpfile el_doc "$eligible_map_file" \
-    --slurpfile pk_doc "$pickable_file" \
-    --arg me "${me_email:-}" --arg claimed "$include_claimed" --arg label "$label" --arg iskeeper "$is_keeper" '
-    ($sm_doc[0]) as $sm | ($bm_doc[0]) as $bm | ($el_doc[0]) as $el | ($pk_doc[0]) as $pk
-    | (map({key: .identifier, value: .}) | from_entries) as $m
-    | def is_terminal($x): ((($terminal | map(ascii_downcase)) | index((($sm[$x] // "Unknown") | ascii_downcase))) != null);
+# Eligible-issue map (id → unresolved blocker count): the Planned gate and the blocked note below both
+# classify a hidden issue by walking its blocker chain through it.
+eligible_map_file="$tmpdir/eligible_map.json"
+printf '%s' "$eligible_json" | jq -c 'map({key: .id, value: .unresolved_count}) | from_entries' > "$eligible_map_file"
+# jq defs shared by both classifiers, spliced into their single-quoted programs — so no apostrophe may
+# appear in here. Names the caller binds first: $sm state map, $bm blocker map, $el eligible map, $m the
+# fetched list by identifier, $terminal, $me, $label, $iskeeper.
+CHAIN_DEFS='def is_terminal($x): ((($terminal | map(ascii_downcase)) | index((($sm[$x] // "Unknown") | ascii_downcase))) != null);
       def claimed_other($i): ((($i.assignee // "") != "") and (($me == "") or ($i.assignee != $me)));
       def unstarted($i): (($i.state_type == "unstarted") or ((($i.state // "") | ascii_downcase) | IN("planned", "todo")));
       def lbl($i; $n): (any(($i.labels // [])[]; ascii_downcase == $n));
@@ -645,6 +650,20 @@ if [ "$gate_on" -eq 1 ]; then
              else "blocked by \($b) [\(self_reason($bi) | if . == "" then ($bi.state // "?") else . end)]" end) as $r
           | if $r != "" then $r else chain_reason($ids[1:]; $seen + [$b]) end
         end;
+'
+if [ "$gate_on" -eq 1 ]; then
+  pickable_file="$tmpdir/pickable.json"
+  printf '%s' "$candidates_json" | jq -c 'map(.id)' > "$pickable_file"
+  held_json=$(jq -c \
+    --argjson terminal "$TERMINAL_STATES" \
+    --slurpfile sm_doc "$state_map_file" \
+    --slurpfile bm_doc "$blocker_map_file" \
+    --slurpfile el_doc "$eligible_map_file" \
+    --slurpfile pk_doc "$pickable_file" \
+    --arg me "${me_email:-}" --arg claimed "$include_claimed" --arg label "$label" --arg iskeeper "$is_keeper" '
+    ($sm_doc[0]) as $sm | ($bm_doc[0]) as $bm | ($el_doc[0]) as $el | ($pk_doc[0]) as $pk
+    | (map({key: .identifier, value: .}) | from_entries) as $m
+    | '"$CHAIN_DEFS"'
       [ .[] | select(unstarted(.)) | select(($claimed == "1") or (claimed_other(.) | not)) | . as $i
         | self_reason($i) as $sr
         # $i.identifier throughout: inside `$pk | index(…)` the pipe rebinds `.` to the array.
@@ -749,6 +768,56 @@ epic_note() {
 }
 
 candidate_count=$(printf '%s' "$candidates_json" | jq 'length')
+
+# ---------- Blocked note: the last silent exclusion (see the header) ----------
+#
+# Every eligible issue with an unresolved blocker, classified by the chain walk the Planned gate uses.
+# Suppressed under --include-blocked (the listing shows them) and under a closed Planned gate (the
+# PLANNED-HOLD note is the one hold the caller waits on; a second hold headline would fight it).
+# BLOCKED-HOLD — the wait headline — needs an empty pick list AND at least one releasing issue: a pool
+# blocked only behind keeper-owned work is genuinely drained for the fleet, and says so.
+blocked_hidden=0
+blocked_releasing=0
+blocked_hold=0
+blocked_line=""
+if [ "$include_blocked" -eq 0 ] && [ "$gate_closed" -eq 0 ]; then
+  blocked_json=$(jq -c \
+    --argjson terminal "$TERMINAL_STATES" \
+    --slurpfile sm_doc "$state_map_file" \
+    --slurpfile bm_doc "$blocker_map_file" \
+    --slurpfile el_doc "$eligible_map_file" \
+    --arg me "${me_email:-}" --arg label "$label" --arg iskeeper "$is_keeper" '
+    ($sm_doc[0]) as $sm | ($bm_doc[0]) as $bm | ($el_doc[0]) as $el
+    | (map({key: .identifier, value: .}) | from_entries) as $m
+    | '"$CHAIN_DEFS"'
+      [ .[] | select(($el[.identifier] // 0) > 0) | . as $i
+        | (chain_reason(($bm[$i.identifier] // []); [$i.identifier])) as $cr
+        # The direct open blockers, each with its state, so a releasing entry says what it waits on.
+        | (($bm[$i.identifier] // []) | map(select(is_terminal(.) | not)) | map("\(.) [\($sm[.] // "?")]") | join(", ")) as $on
+        | (if $cr == "" then {id: $i.identifier, kind: "releasing", reason: $on}
+           else {id: $i.identifier, kind: "keeper", reason: $cr} end) ]
+      | sort_by(.id)
+  ' "$list_file")
+  blocked_hidden=$(printf '%s' "$blocked_json" | jq 'length')
+  blocked_releasing=$(printf '%s' "$blocked_json" | jq '[.[] | select(.kind == "releasing")] | length')
+  if [ "$candidate_count" -eq 0 ] && [ "$blocked_releasing" -gt 0 ]; then
+    blocked_hold=1
+  fi
+  if [ "$blocked_hidden" -gt 0 ]; then
+    blocked_line=$(printf '%s' "$blocked_json" | jq -r --arg hold "$blocked_hold" '
+      [.[] | select(.kind == "releasing") | "\(.id) behind \(.reason)"] as $r
+      | [.[] | select(.kind == "keeper") | "\(.id) [\(.reason)]"] as $k
+      | ([ (if ($r | length) > 0 then "\($r | length) will release on their own (\($r | join(", ")))" else empty end),
+           (if ($k | length) > 0 then "\($k | length) need the keeper (\($k | join(", ")))" else empty end) ] | join("; ")) as $clauses
+      | "_" + (if $hold == "1" then "BLOCKED-HOLD: " else "" end)
+        + "\(length) issue(s) hidden behind unresolved blockers — \($clauses). Pass --include-blocked to list them._"')
+  fi
+fi
+blocked_note() {
+  [ -n "$blocked_line" ] && printf '\n%s\n' "$blocked_line"
+  return 0
+}
+
 if [ "$candidate_count" -eq 0 ]; then
   filter_desc=""
   [ -n "$label" ] && filter_desc=" with label '$label'"
@@ -758,10 +827,14 @@ if [ "$candidate_count" -eq 0 ]; then
   if [ "$gate_closed" -eq 1 ]; then
     # Deliberately not the drained text: /auto keys on this headline to wait instead of latching drained.
     printf '## Suggested next\n\n_Nothing pickable right now%s in %s %s — the Planned/Todo column is not drained, so Backlog is withheld (PLANNED-HOLD below). Wait for a release or act on the held issues; do not pick Backlog._\n' "$filter_desc" "$team_word" "$teams_label"
+  elif [ "$blocked_hold" -eq 1 ]; then
+    # Same contract as the Planned hold: chained behind in-flight work is not drained, and the note names the chain.
+    printf '## Suggested next\n\n_Nothing pickable right now%s in %s %s — every remaining candidate waits behind an unresolved blocker, and %s will release on their own (BLOCKED-HOLD below). Wait for a sibling to ship; do not latch drained._\n' "$filter_desc" "$team_word" "$teams_label" "$blocked_releasing"
   else
     printf '## Suggested next\n\n_No workable issues%s in %s %s._\n' "$filter_desc" "$team_word" "$teams_label"
   fi
   hold_note
+  blocked_note
   keeper_note
   nd_note
   claimed_note
@@ -1008,6 +1081,7 @@ printf '%s' "$ranked_json" | jq -r --argjson lim "$limit" '
       (if .value.unresolved_count > 0 then " | Blocked: \(.value.unresolved_count) unresolved blocker(s)" else "" end))
   end'
 hold_note
+blocked_note
 keeper_note
 nd_note
 claimed_note

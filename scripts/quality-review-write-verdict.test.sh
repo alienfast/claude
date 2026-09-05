@@ -169,6 +169,22 @@ ck "  off-enum tag -> exit 0" 0 $rc
 ck "  no zero-token WARN (a legal tag exists)" "no" "$(printf '%s' "$err" | grep -q 'no severity tag carries a parseable origin class' && echo yes || echo no)"
 ck "  off-enum WARN names the token" "yes" "$(printf '%s' "$err" | grep -q 'off-enum origin class: HIGH/implementation' && echo yes || echo no)"
 
+# tags present but OUTSIDE the `Findings resolved:` block — 7 of the 2026-09-05 BFP fleet's 24 verdicts,
+# 170 of its 354 findings. The aggregator reads only that block, so a whole-file grep stayed silent on
+# exactly the shape that zeroed the retro; the WARN must name the block and not fire the zero-tag text.
+err=$(printf '# BF-333\n\nVerdict: passed-after-fixes\nCycles: 2 (initial + 1 re-review)\nFindings resolved: 2\nDeferred fixed in-session: none\nDeferred filed as issues: none\nDeferred dropped: none\nOpen items: none\n\n## What the review found\n\nHIGH/impl — a race in the retry loop.\nMED/test — an unchecked cast, unpinned.\n' \
+  | (cd "$wt" && "$SCRIPT" BF-333 -) 2>&1 >/dev/null); rc=$?
+ck "  tags outside the block -> exit 0" 0 $rc
+ck "  block-scoped WARN fires" "yes" "$(printf '%s' "$err" | grep -q "none sits inside the 'Findings resolved:' block" && echo yes || echo no)"
+ck "  no zero-token WARN (tags do exist)" "no" "$(printf '%s' "$err" | grep -q 'no severity tag carries a parseable origin class' && echo yes || echo no)"
+
+# the same tags on an indented continuation of the block are in the aggregator's scope
+# (V_RESOLVED_BLOCK runs to the next unindented line) — quiet.
+err=$(printf '# BF-344\n\nVerdict: passed-after-fixes\nCycles: 2 (initial + 1 re-review)\nFindings resolved: 2\n  HIGH/impl: a race in the retry loop\n  MED/test: an unchecked cast\nDeferred fixed in-session: none\nDeferred filed as issues: none\nDeferred dropped: none\nOpen items: none\n' \
+  | (cd "$wt" && "$SCRIPT" BF-344 -) 2>&1 >/dev/null); rc=$?
+ck "  continuation-line tags -> exit 0" 0 $rc
+ck "  quiet" "no" "$(printf '%s' "$err" | grep -Eq "origin class|Findings resolved:' block" && echo yes || echo no)"
+
 # NICE-TO-HAVE/<legal-class> is compliant (the mandate covers wherever a severity tag renders;
 # fleet-metrics.py's widened V_ORIGIN counts it) — neither WARN may fire.
 err=$(printf '# BF-355\n\nVerdict: passed-after-fixes\nCycles: 2 (initial + 1 re-review)\nFindings resolved: 1 (NICE-TO-HAVE/plan: cosmetic rename)\nDeferred fixed in-session: none\nDeferred filed as issues: none\nDeferred dropped: none\nOpen items: none\n' \

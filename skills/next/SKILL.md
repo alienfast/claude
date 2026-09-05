@@ -67,6 +67,8 @@ A `<COMPLETED-ID>` or branch prefix feeds `--completed` only — it does **not**
 
 The script emits a markdown-formatted ranked list with tier, parent chain, and reasoning per candidate. It exits 0 even when no workable candidates exist — printing `_No workable issues in team <KEY>._` (single team) or `_No workable issues in teams <KEY, KEY>._` (multi), with the label named when a filter was active. Under the Planned gate (below) the empty case reads differently on purpose — `_Nothing pickable right now … the Planned/Todo column is not drained, so Backlog is withheld (PLANNED-HOLD below) …_` — and that difference is what `/auto` keys on to wait rather than end its run.
 
+The same wait-not-drained distinction holds when the gate is open but every remaining candidate sits behind an unresolved blocker: if at least one of them will release on its own (its chain runs through in-flight or fleet-eligible work), the empty case prints `_Nothing pickable right now … every remaining candidate waits behind an unresolved blocker, and N will release on their own (BLOCKED-HOLD below)._` with a `_BLOCKED-HOLD: …_` note naming what each hidden issue waits on — the pool is chained, not drained, and `/auto` parks on it. Blocked issues are otherwise counted on every path in a plain `_N issue(s) hidden behind unresolved blockers — …_` note, like every other exclusion; a pool blocked only behind keeper-owned work keeps the drained headline, since nothing in it releases without a human.
+
 ### Step 3: Present the result
 
 Read the script's stdout and narrate it naturally — and **definitively**:
@@ -75,6 +77,7 @@ Read the script's stdout and narrate it naturally — and **definitively**:
 - Name the scope searched in one clause (e.g. "across PL, BF, and MAR" or "in PL, per $LINEAR_TEAM") so an empty or surprising result is self-explaining.
 - If there's a runner-up that's qualitatively different from the top pick (different tier, different parent epic, different team), mention it as "also consider."
 - Surface a `_PLANNED-HOLD: …_` note **verbatim** — it is the answer to "why is nothing from Backlog here" and, for the keeper, the list of what to decide, certify, or close so the column drains. When the script reported *nothing pickable* under a hold, say that the fleet is waiting on the Planned/Todo column (name the releasing and keeper-owned entries) — never suggest Backlog work or `/spec`-for-Backlog around it.
+- Surface a `_BLOCKED-HOLD: …_` note **verbatim** the same way — it names the in-flight issue each hidden candidate waits on, so the narration is "waiting on a sibling to ship `<ID>`", never a `/spec` or Backlog suggestion.
 - If the script reported no workable issues (the column drained and nothing remains), say so plainly — do not invent a suggestion. When the filter was `--label specified`, suggest running `/spec` to certify backlog issues (or `/prd` to seed new certified ones).
 
 The script's tier reasons (e.g. "newly unblocked", "sibling under completed parent") already explain the *why* — surface them rather than rephrasing.

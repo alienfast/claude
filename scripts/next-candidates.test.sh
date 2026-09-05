@@ -10,6 +10,9 @@
 # another person, every Backlog candidate is withheld behind a PLANNED-HOLD note that classifies
 # the held issues (pickable / releasing on their own / need the keeper); discovery listings are
 # exempt; --no-stage-gate lifts it; with nothing pickable the headline says wait, not drained.
+# BLOCKED-HOLD (2026-09-05): with the Planned column drained, a pick list emptied only by blocked
+# issues that will release on their own says wait too, never drained; blocked issues are counted in a
+# note on every path (releasing vs keeper), and a pool blocked only behind keeper-owned work stays drained.
 #
 # Isolation: linear-cli is a PATH shim dispatching on query text; HOME points at an empty dir so
 # both scripts' `export PATH="$HOME/.cargo/bin:$PATH"` prepend cannot resurrect the real CLI, and
@@ -265,6 +268,67 @@ ck "hold lists nothing" "" "$(order_of "$OUT9")"
 ck_has  "hold headline"  "_Nothing pickable right now in team TT — the Planned/Todo column is not drained, so Backlog is withheld (PLANNED-HOLD below). Wait for a release or act on the held issues; do not pick Backlog._" "$OUT9"
 ck_lacks "hold is not drained" "No workable issues" "$OUT9"
 ck_has  "hold note splits releasing from keeper" "(2 issue(s) hold the gate: 0 pickable now; 1 will release on their own — TT-9; 1 need the keeper — TT-11 [needs decision]). 1 Backlog candidate(s) wait behind the gate" "$OUT9"
+cp "$FIX/issues-main.json" "$FIX/issues-page.json"; cp "$FIX/deps-main.json" "$FIX/deps-page.json"
+
+# ---- BLOCKED-HOLD: the Planned column is drained and every certified Backlog issue is chained behind a
+# ---- sibling's in-flight work — the 2026-09-05 BFP shape (BFP-8 → BFP-18 → BFP-19 → five more), which
+# ---- printed the drained text and cost a session 10.4 of the fleet's session-hours. The headline must
+# ---- say wait, and the note must split what releases on its own from what needs the keeper.
+cat > "$FIX/issues-blocked.json" <<'EOF'
+{"data":{"issues":{"nodes":[
+ {"identifier":"TT-10","title":"open blocker","estimate":null,"priority":0,"state":{"name":"In Progress","type":"started"},"assignee":null,"labels":{"nodes":[]},"parent":null},
+ {"identifier":"TT-30","title":"certified behind in-flight","estimate":null,"priority":3,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[{"name":"specified"}]},"parent":null},
+ {"identifier":"TT-31","title":"certified behind TT-30","estimate":null,"priority":3,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[{"name":"specified"}]},"parent":null},
+ {"identifier":"TT-32","title":"certified behind uncertified","estimate":null,"priority":3,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[{"name":"specified"}]},"parent":null},
+ {"identifier":"TT-33","title":"uncertified blocker","estimate":null,"priority":0,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[]},"parent":null}
+],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
+EOF
+cat > "$FIX/deps-blocked.json" <<'EOF'
+{"data":{"issues":{"nodes":[
+ {"identifier":"TT-10","title":"open blocker","state":{"name":"In Progress","type":"started"},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-30"}}]}},
+ {"identifier":"TT-30","title":"certified behind in-flight","state":{"name":"Backlog","type":"backlog"},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-31"}}]}},
+ {"identifier":"TT-33","title":"uncertified blocker","state":{"name":"Backlog","type":"backlog"},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-32"}}]}}
+],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
+EOF
+cp "$FIX/issues-blocked.json" "$FIX/issues-page.json"; cp "$FIX/deps-blocked.json" "$FIX/deps-page.json"
+OUT10="$WORK/out10.md"
+run "$OUT10" --limit 20 --label specified || { echo "FAIL: blocked-hold run exited $?"; cat "$OUT10.err"; exit 1; }
+ck "blocked hold lists nothing" "" "$(order_of "$OUT10")"
+ck_has  "blocked hold headline" "_Nothing pickable right now with label 'specified' in team TT — every remaining candidate waits behind an unresolved blocker, and 2 will release on their own (BLOCKED-HOLD below). Wait for a sibling to ship; do not latch drained._" "$OUT10"
+ck_lacks "blocked hold is not drained" "No workable issues" "$OUT10"
+ck_has  "blocked note splits releasing from keeper" "_BLOCKED-HOLD: 3 issue(s) hidden behind unresolved blockers — 2 will release on their own (TT-30 behind TT-10 [In Progress], TT-31 behind TT-30 [Backlog]); 1 need the keeper (TT-32 [blocked by TT-33 [lacks label specified]]). Pass --include-blocked to list them._" "$OUT10"
+
+# Without the label filter TT-33 is pickable: candidates exist, so the note counts but never holds.
+OUT11="$WORK/out11.md"
+run "$OUT11" --limit 20 || { echo "FAIL: blocked-count run exited $?"; cat "$OUT11.err"; exit 1; }
+ck "blocked count order" "TT-33" "$(order_of "$OUT11")"
+ck_lacks "no hold while something is pickable" "BLOCKED-HOLD" "$OUT11"
+ck_has  "blocked count note" "_3 issue(s) hidden behind unresolved blockers — 3 will release on their own (TT-30 behind TT-10 [In Progress], TT-31 behind TT-30 [Backlog], TT-32 behind TT-33 [Backlog]). Pass --include-blocked to list them._" "$OUT11"
+
+# The discovery listing shows the blocked issues itself — no note.
+OUT12="$WORK/out12.md"
+run "$OUT12" --limit 20 --include-blocked || { echo "FAIL: blocked listing run exited $?"; cat "$OUT12.err"; exit 1; }
+ck_lacks "listing has no blocked note" "hidden behind unresolved blockers" "$OUT12"
+
+# Blocked only behind keeper-owned work: nothing releases on its own, so the pool IS drained for the
+# fleet — the drained headline stands and the note carries no BLOCKED-HOLD prefix.
+cat > "$FIX/issues-keeper.json" <<'EOF'
+{"data":{"issues":{"nodes":[
+ {"identifier":"TT-32","title":"certified behind uncertified","estimate":null,"priority":3,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[{"name":"specified"}]},"parent":null},
+ {"identifier":"TT-33","title":"uncertified blocker","estimate":null,"priority":0,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[]},"parent":null}
+],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
+EOF
+cat > "$FIX/deps-keeper.json" <<'EOF'
+{"data":{"issues":{"nodes":[
+ {"identifier":"TT-33","title":"uncertified blocker","state":{"name":"Backlog","type":"backlog"},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-32"}}]}}
+],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
+EOF
+cp "$FIX/issues-keeper.json" "$FIX/issues-page.json"; cp "$FIX/deps-keeper.json" "$FIX/deps-page.json"
+OUT13="$WORK/out13.md"
+run "$OUT13" --limit 20 --label specified || { echo "FAIL: keeper-blocked run exited $?"; cat "$OUT13.err"; exit 1; }
+ck_has  "keeper-only blocked pool is drained" "_No workable issues with label 'specified' in team TT._" "$OUT13"
+ck_lacks "no hold when nothing releases" "BLOCKED-HOLD" "$OUT13"
+ck_has  "keeper-only note" "_1 issue(s) hidden behind unresolved blockers — 1 need the keeper (TT-32 [blocked by TT-33 [lacks label specified]]). Pass --include-blocked to list them._" "$OUT13"
 cp "$FIX/issues-main.json" "$FIX/issues-page.json"; cp "$FIX/deps-main.json" "$FIX/deps-page.json"
 
 echo

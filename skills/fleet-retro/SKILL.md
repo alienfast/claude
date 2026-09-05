@@ -127,7 +127,7 @@ Three gauges ride the same run and the retro reads all three, not just the table
   spacing; spacing collapsing to minutes is the orbit signature). A falling ctx share with RISING churn
   gauges means the threshold is too aggressive — raise it rather than reverting.
 - **Shipped-issue provenance** — joins the shipped set against the Step 3 Linear exports; the fresh
-  share (created during or <=7 days before the run) is the treadmill gauge, read alongside R.
+  share (created during or <=7 days before the run) is the treadmill gauge, read alongside R. It cannot tell a human seeding the backlog inside the window from the pipeline minting for itself, so on a team whose backlog is younger than the window it reads 100% by construction and says nothing about treadmill — the first BFP fleet (2026-09-05) read 96% with 19 of 24 ships seeded the day before launch, 4 filed during the run and 1 older. Treat it as a treadmill gauge only once the section's `older` count is material; until then the during-run count is the one bucket that still carries the signal, say so in the report, and discount the fresh% row it leaves in the trend ledger.
 - **Cross-run trend** — every windowed run appends its headline row to
   `tmp/fleet-metrics-history.jsonl` (keyed by session set, so a re-run replaces its row only when it yields the
   identical set — a differently-scoped re-run APPENDS) and the report's tail
