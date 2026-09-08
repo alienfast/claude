@@ -460,6 +460,17 @@ description: "I help you update your dependencies"
 - Move scripts to `scripts/`
 - Link to supporting files from main SKILL.md
 
+### Never Write a Literal Positional Token in SKILL.md
+
+The Skill tool substitutes the invocation arguments into every dollar-digit token of a SKILL.md body at load
+time — prose and fenced code alike; named variables such as `$BASE` are untouched. Measured 2026-09-08 on
+pr-update: invoked with `A1 B2 C3 D4 E5`, its inline awk sum of the first two fields rendered as `s+=B2+C3`,
+and under `update existing PR #485 …` as `s+=existing+PR`. The file on disk was correct throughout, so the
+corruption is invisible to every grep and lint and exists only in what the model reads; an unfilled token is
+left literal, so an argument-free invocation hides it. Anything that needs awk fields or shell positional
+parameters goes in `scripts/` and is called by path; prose about positional parameters says "the first
+positional parameter", never the token.
+
 ### Use Progressive Disclosure
 
 Don't load everything upfront:

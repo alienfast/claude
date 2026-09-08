@@ -226,26 +226,24 @@ git diff --shortstat -M -l0 "$BASE"...HEAD
 
 **Step 2: Categorize by purpose** using `git diff --numstat`.
 
-The categorization program lives in [`scripts/code-impact.awk`](scripts/code-impact.awk) and is run with
-`awk -f` — **do not paste the program inline.** Keeping it in a file is what removes the old shell-quoting
-hazard: transcribed into a Bash one-liner, awk's `$1`/`$2`/`$3` get expanded away by the shell and the
-counts silently corrupt. `awk -f` never passes the program through the shell, so the fields are safe. The
-block below captures the table, reconciles its `TOTAL` against the same numstat (filtered by the *same*
-`$3` test, so renames like `{a => b}/pnpm-lock.yaml` are handled identically on both sides), and on a
-mismatch prints an error and **exits without emitting the table** — cheap insurance that the awk file
-resolved and ran. It is a total-reconciliation check, not a per-category validator:
+The categorization program lives in [`scripts/code-impact.awk`](scripts/code-impact.awk), and
+[`scripts/code-impact.sh`](scripts/code-impact.sh) runs it: one `git diff --numstat -M -l0` fed through the
+awk, its `TOTAL` reconciled against the same numstat (filtered by the same lock-file test, so renames like
+`{a => b}/pnpm-lock.yaml` are handled identically on both sides), and on a mismatch an error and **exit 1
+without emitting the table** — cheap insurance that the awk file resolved and ran. It is a
+total-reconciliation check, not a per-category validator. **Do not paste either program inline here.** Two
+hazards, one fix: transcribed into a Bash one-liner, awk's positional field references get expanded away by
+the shell; and written into this file at all, they are rewritten by the Skill tool, which substitutes the
+invocation arguments into every literal dollar-digit token of a SKILL.md body at load time (measured: the
+former inline block rendered as `s+=existing+PR` under `/pr-update update existing PR …`). A script called
+by path is subject to neither:
 
 ```bash
-AWK="$HOME/.claude/skills/pr-update/scripts/code-impact.awk"
-impact=$(git diff --numstat -M -l0 "$BASE"...HEAD | awk -f "$AWK")
-expected=$(git diff --numstat -M -l0 "$BASE"...HEAD | awk '$3 ~ /lock\.yaml$|lock\.json$|\.lock$/ {next} {s+=$1+$2} END{print s+0}')
-got=$(echo "$impact" | awk '/^TOTAL/{print $2+$3}')
-if [[ "${expected:-0}" -gt 0 && "${got:-0}" -ne "${expected:-0}" ]]; then
-  echo "ERROR: Code Impact total ($got) does not reconcile with the diff ($expected) — check that $AWK exists and ran." >&2
-  exit 1
-fi
-echo "$impact"
+"$HOME/.claude/skills/pr-update/scripts/code-impact.sh" "$BASE"
 ```
+
+A second argument diffs against something other than `HEAD` — `code-impact.sh origin/main origin/hotfixes`
+when analyzing a PR from outside its checkout.
 
 **Notes:**
 

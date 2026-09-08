@@ -142,7 +142,7 @@ echo "📈 Code Impact Summary:"
 git diff --shortstat -M -l0 "$BASE"...HEAD
 echo ""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-git diff --numstat -M -l0 "$BASE"...HEAD | awk -f "$SCRIPT_DIR/code-impact.awk"
+"$SCRIPT_DIR/code-impact.sh" "$BASE"
 echo ""
 
 echo "========================================"
