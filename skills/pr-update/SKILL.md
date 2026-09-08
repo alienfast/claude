@@ -367,6 +367,7 @@ Before finalizing the description, verify:
 - [ ] Code snippets are from actual files in HEAD, not from memory
 - [ ] No issue ID other than this PR's own is preceded by a Linear close keyword ([standards/git.md](../../standards/git.md) § Linear auto-close keywords)
 - [ ] Every shipped Linear ID from the census appears in the Executive Summary exactly once — a roster bullet or the internal line — and no referenced-only ID appears at all
+- [ ] Every Executive Summary roster item goes live on merge — nothing under a mirror of an externally managed system (Descope snapshots, vendor-console exports) is claimed as in this release
 
 ## PR Title Formats
 
@@ -408,14 +409,23 @@ the trailing PR link in place of the Slack-style underlined title. Plus:
 - **Census first, roster on a multi-issue PR.** Run the
   [exec-summary skill](../exec-summary/SKILL.md)'s census — every Linear ID in the commit
   subjects and bodies, the head branch name, and the existing body — and sort each ID:
-  shipped-and-customer-visible, shipped-and-internal, or referenced-only (a follow-up or
-  sibling the commit body cites; §4's diff check is the arbiter when an ID appears only in
-  prose). On a hotfix or release bundle the **Solution** is a roster — one bullet per shipped
+  shipped-and-customer-visible, shipped-and-internal, or referenced-only. "Shipped" is two
+  tests, and a commit subject satisfies neither on its own: the change is in the
+  `$BASE...HEAD` diff (§4 — an issue whose content already reached `$BASE` through another
+  PR nets to zero and is referenced-only, however many of its commits the branch carries),
+  and merging makes it live (a file mirroring an externally managed system — a Descope
+  snapshot, a vendor-console export — ships nothing on merge: a production mirror changed by
+  export was live before the PR, a dev/staging-only change ships on a later promote; neither
+  is release content, so leave it out or state it as already live). An ID Linear marks
+  `Duplicate` or `Canceled` is referenced-only; credit its work to the absorbing issue. On a
+  hotfix or release bundle the **Solution** is a roster — one bullet per shipped
   customer-visible issue, `BF-1763: one plain sentence` — complete over the census, with
   shipped internal-only issues on one trailing `Also in this release, with no customer-visible
   change:` line as bare IDs, and referenced-only IDs nowhere. Every shipped ID appears exactly
   once. Concision cuts within a bullet, never a bullet. Measured before this rule: three
-  bundled hotfix PRs shipping 2, 5, and 6 issues, and the Executive Summary named zero.
+  bundled hotfix PRs shipping 2, 5, and 6 issues, and the Executive Summary named zero;
+  measured after its first draft: a hotfix bundle whose roster listed three Descope console
+  changes already live in production, each commit body saying so.
 - **ID first, colon after, never a close verb before it.** The PR body is a surface Linear
   scans — `Fixed BF-1763` in a roster line moves that issue on merge
   ([standards/git.md](../../standards/git.md) § Linear auto-close keywords; the checklist

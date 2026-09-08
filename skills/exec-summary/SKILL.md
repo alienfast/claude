@@ -20,13 +20,18 @@ A summary written from memory names what the session discussed and nothing else 
 gh pr view <n> --json body,headRefName,commits --jq '.body, .headRefName, (.commits[] | .messageHeadline, .messageBody)' | grep -o -i -E '<KEY>-[0-9]+' | tr 'a-z' 'A-Z' | sort -u
 ```
 
-`<KEY>` is the team's Linear key (`$LINEAR_TEAM` where the project exports it). The scan over-collects by design — commit bodies cite the follow-ups `/quality-review` filed and the siblings a fix supersedes (21 IDs on a PR that shipped 6) — so sort every ID into one of three buckets:
+`<KEY>` is the team's Linear key (`$LINEAR_TEAM` where the project exports it). The scan over-collects by design — commit bodies cite the follow-ups `/quality-review` filed and the siblings a fix supersedes (21 IDs on a PR that shipped 6), and the commit list itself over-reports on a long-lived branch with duplicated history (a hotfix bundle's list carried two prior releases' version bumps and an issue merged to `main` five days earlier) — so every ID is a candidate, never a conclusion. Sort each into one of three buckets:
 
-- **Shipped, customer-visible** — its change is in this PR's diff, and a user, a customer, or the support team can see the difference. Gets a Solution bullet.
-- **Shipped, internal** — in the diff, but nobody outside engineering can tell (collation, alert routing, test coverage, refactors). Goes on the trailing internal line.
-- **Referenced only** — a follow-up, a superseded issue, a "see also". Appears nowhere: tracked work stays in the tracker.
+- **Shipped, customer-visible** — passes both tests below, and a user, a customer, or the support team can see the difference. Gets a Solution bullet.
+- **Shipped, internal** — passes both tests, but nobody outside engineering can tell (collation, alert routing, test coverage, refactors). Goes on the trailing internal line.
+- **Referenced only** — fails either test: a follow-up, a superseded issue, a "see also", an issue whose content is already on the base, or one Linear marks `Duplicate` or `Canceled` (credit its work to the issue that absorbed it). Appears nowhere: tracked work stays in the tracker.
 
-An ID in a commit subject or a branch name is shipped. An ID seen only in prose is shipped only when you can point at its change in the diff — the same bar pr-update's §4 applies to every "fixes" claim. A customer-visible change that rode along without an issue (a copy tweak, a screen reorder) is still shipped and still gets its bullet. Every shipped ID lands in exactly one place; a shipped ID in neither is a defect, never a concision win.
+"Shipped" is two tests, and a commit subject or branch name satisfies neither on its own:
+
+1. **In the diff against the base.** `git diff origin/<base>...HEAD` carries the change — the same bar pr-update's §4 applies to every "fixes" claim. An ID whose commits sit in the PR's history but whose content already reached the base through another PR nets to zero here and is referenced-only (measured: three such issues on one hotfix bundle, all `Done` in Linear).
+2. **Goes live on merge.** A file that mirrors an externally managed system — a Descope snapshot, a vendor-console export, any config that reaches production through a tool or a console rather than the deploy — changes nothing when merged. A production mirror changed by export records a fix that was live *before* the PR; a dev- or staging-only change ships on a later promote. Neither is release content: leave it out, or state it as already live. Measured on a hotfix bundle: three of eleven roster bullets were Descope snapshot changes, and two of their commit bodies said "fixed in the console; this is its export".
+
+A customer-visible change that rode along without an issue (a copy tweak, a screen reorder) is subject to both tests and, passing them, still gets its bullet. Every shipped ID lands in exactly one place; a shipped ID in neither is a defect, never a concision win.
 
 ## Delivery: rich-text clipboard, not chat
 
