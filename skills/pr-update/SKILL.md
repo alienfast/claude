@@ -366,6 +366,7 @@ Before finalizing the description, verify:
 - [ ] Testing sections describe actual tests that currently pass
 - [ ] Code snippets are from actual files in HEAD, not from memory
 - [ ] No issue ID other than this PR's own is preceded by a Linear close keyword ([standards/git.md](../../standards/git.md) § Linear auto-close keywords)
+- [ ] Every shipped Linear ID from the census appears in the Executive Summary exactly once — a roster bullet or the internal line — and no referenced-only ID appears at all
 
 ## PR Title Formats
 
@@ -396,17 +397,35 @@ It precedes the technical `## Summary` (the two serve different audiences: Execu
 Summary = business outcome; Summary = technical TL;DR for reviewers).
 
 Rules for the Executive Summary — voice and concision follow the
-[exec-summary skill](../exec-summary/SKILL.md) (problem first, then the fix; ruthlessly
-concise; backticks for user-visible strings; no deferments or process detail). This block
-is that skill's PR-description variant: it keeps the `## Executive Summary` heading and
+[exec-summary skill](../exec-summary/SKILL.md) (problem first, then the fix; concise per item,
+complete per shipped issue; backticks for user-visible strings; no deferments or process
+detail). This block is that skill's PR-description variant: it keeps the `## Executive Summary` heading and
 the trailing PR link in place of the Slack-style underlined title. Plus:
 
 - **Business language only.** Translate the change into its outcome. No file paths, no
-  code, no line-count tables, minimal jargon.
+  code, no line-count tables, minimal jargon. Issue IDs are the one identifier that stays —
+  they are the business's handle for "did our customer's issue ship?".
+- **Census first, roster on a multi-issue PR.** Run the
+  [exec-summary skill](../exec-summary/SKILL.md)'s census — every Linear ID in the commit
+  subjects and bodies, the head branch name, and the existing body — and sort each ID:
+  shipped-and-customer-visible, shipped-and-internal, or referenced-only (a follow-up or
+  sibling the commit body cites; §4's diff check is the arbiter when an ID appears only in
+  prose). On a hotfix or release bundle the **Solution** is a roster — one bullet per shipped
+  customer-visible issue, `BF-1763: one plain sentence` — complete over the census, with
+  shipped internal-only issues on one trailing `Also in this release, with no customer-visible
+  change:` line as bare IDs, and referenced-only IDs nowhere. Every shipped ID appears exactly
+  once. Concision cuts within a bullet, never a bullet. Measured before this rule: three
+  bundled hotfix PRs shipping 2, 5, and 6 issues, and the Executive Summary named zero.
+- **ID first, colon after, never a close verb before it.** The PR body is a surface Linear
+  scans — `Fixed BF-1763` in a roster line moves that issue on merge
+  ([standards/git.md](../../standards/git.md) § Linear auto-close keywords; the checklist
+  above gates it).
 - **Lead with impact** — what is better for users or the business now.
 - The **For users / Business impact / Security & quality** lines are *suggestions, not
   required sections*. Include only those that genuinely apply; keep each to one line;
-  omit the rest. A simple change may be 2–3 sentences with no bullets at all.
+  omit the rest. A simple change may be 2–3 sentences with no bullets at all. On a
+  multi-issue PR the roster already says what changed for users — drop **For users**
+  rather than restate it.
 - **Accuracy is paramount here.** This is the most-shared, highest-visibility text, so
   over-claiming is the worst case — every impact / "fixes" statement must pass the same
   baseline check from §4 before it's written.
@@ -425,8 +444,14 @@ Use this general template structure:
 **Problem:** [1–2 plain sentences: what users or the business hit, and why it matters
 now. Concrete numbers where real. No file paths, no code, minimal jargon.]
 
-**Solution:** [1–2 plain sentences: what changed, in outcome terms. Verbatim
-user-visible strings in backticks where the change IS the copy.]
+**Solution:** [Single-issue PR: 1–2 plain sentences, what changed in outcome terms,
+verbatim user-visible strings in backticks where the change IS the copy. Multi-issue PR:
+the roster below instead — one bullet per shipped customer-visible issue, complete over
+the census; a rode-along change with no issue still gets its bullet.]
+- BF-1763: [one plain sentence — what the customer or support can now see]
+- BF-1716: [one plain sentence — the verbatim new string in backticks where the change is the copy]
+
+Also in this release, with no customer-visible change: BF-1703, BF-1698.
 
 [Optional one-liners — include only those that genuinely apply, omit the rest:]
 - **For users:** [what changes in their experience]

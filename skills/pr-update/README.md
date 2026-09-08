@@ -21,7 +21,7 @@ Always verify features exist in `HEAD` before documenting them. If a feature was
 
 **Verify the baseline before claiming a fix.** The "before" you describe is what the base branch shipped (`origin/$BASE`), never an intermediate branch commit. A bug introduced and fixed within the same branch never shipped — confirm broken behavior with `git show "origin/$BASE":path` (the fetched remote tip; SKILL.md §4 falls back to a local ref when the base isn't on origin) before describing production impact.
 
-**Every description leads with an Executive Summary** — a self-contained, plain-language block (business outcome first, ending with a link to the PR) that can be copied out whole and shared with non-engineering stakeholders. It precedes the technical `## Summary`.
+**Every description leads with an Executive Summary** — a self-contained, plain-language block (business outcome first, ending with a link to the PR) that can be copied out whole and shared with non-engineering stakeholders. It precedes the technical `## Summary`. On a multi-issue PR (a hotfix or release bundle) it carries a complete per-issue roster — one ID-tagged line per shipped customer-visible issue — so the business can answer "did our customer's issue ship?" from the block alone.
 
 ## Structure
 
@@ -151,5 +151,6 @@ To update this skill:
 
 ## Version History
 
+- **1.2.0** (2026-09-08): Census-then-roster for multi-issue PRs — the Executive Summary enumerates every shipped Linear ID and lists each customer-visible one on its own line (concision cuts within a line, never a line); the ID-first form keeps roster lines clear of Linear's close-keyword scan
 - **1.1.0** (2026-06-02): Add baseline-verification discipline (the "before"/"was broken" narrative must be verified against `$BASE`, not inferred from the diff) and a business-shareable Executive Summary that leads every description
 - **1.0.0** (2025-10-22): Initial structured release with resources, templates, and scripts

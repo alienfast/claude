@@ -19,6 +19,12 @@ business, and what is now resolved. No file paths, no code, minimal jargon. Only
 production impact if the broken behavior is confirmed in the base branch's shipped
 state (§4 baseline check).]
 
+[Multi-issue PR (hotfix or release bundle): the sentences carry the headline problem, then a
+roster — one bullet per shipped customer-visible issue, `BF-1763: one plain sentence`,
+complete over the census; shipped internal-only issues on one trailing `Also in this release,
+with no customer-visible change:` line as bare IDs. Concision cuts within a bullet, never a
+bullet.]
+
 [Optional one-liners — include only those that apply, omit the rest:]
 - **For users:** [what they experienced before vs. now]
 - **Business impact:** [risk, cost, or reliability effect of the fix]

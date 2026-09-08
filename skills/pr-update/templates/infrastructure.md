@@ -9,6 +9,12 @@ Use this template for infrastructure changes, deployments, and cloud resources.
 for reliability, cost, capacity, or risk — and why it matters. No file paths, no code,
 minimal jargon. Lead with the outcome.]
 
+[Multi-issue PR (hotfix or release bundle): the sentences carry the headline problem, then a
+roster — one bullet per shipped customer-visible issue, `BF-1763: one plain sentence`,
+complete over the census; shipped internal-only issues on one trailing `Also in this release,
+with no customer-visible change:` line as bare IDs. Concision cuts within a bullet, never a
+bullet.]
+
 [Optional one-liners — include only those that apply, omit the rest:]
 - **For users:** [reliability, performance, or availability they'll notice]
 - **Business impact:** [cost change, capacity, SLA, or compliance effect]
