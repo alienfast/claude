@@ -4,14 +4,23 @@
 
 ### `[skip ci]` / `[ci skip]`
 
-CI providers skip a build when the **HEAD commit of a push** carries the token — CircleCI matches it anywhere in that commit's subject or body; earlier commits in the same push trigger nothing. Two consequences:
+CI providers skip a build when the **HEAD commit of a push** carries the token — CircleCI and GitHub Actions both match it anywhere in that commit's subject or body; earlier commits in the same push trigger nothing, so the token on the top commit silently un-tests everything beneath it. That one fact shapes every rule below.
 
-- **Allowed and useful on working branches**: a docs-only or config-only commit that tops a branch push skips a CI run that would verify nothing.
-- **Never let it head a push to the default branch.** Merge commits are the convention (squash+merge is retired), so a branch commit's message never becomes main's HEAD and branch-commit `[skip ci]` cannot suppress main CI. The residual hazards are committing directly to main and fast-forwarding a branch onto main — both put the token-bearing commit at main's HEAD and silently skip its CI.
+**A docs-only push carries the token by default.** A CI run over a Markdown change verifies nothing, so when everything the push will carry is documentation, end the subject with `[skip ci]` — the same placement the release bot's own commits use. Docs-only is decided **by path, over the whole push range**, never by reading the diff:
+
+```bash
+git diff --name-only --cached origin/<branch>   # every path on which the pushed tip and the commit about to be made differ
+```
+
+Every listed path must end in `.md` or `.mdx`; one other extension means a normal commit. `--cached` against the remote-tracking branch is what makes this the push range rather than this commit's diff — it covers the unpushed commits below *and* the staged change in one answer — so run it at the pre-commit moment, when both are settled. Spell the branch name out: `$(git branch --show-current)` is refused in worktree-isolated sessions (below). A branch with no `origin/` counterpart yet gets no token — CI has never seen any of it — and announces itself: the command dies with `fatal: ambiguous argument 'origin/<branch>': unknown revision`, which is also what a branch recreated after its remote twin was deleted on merge looks like. A stale remote-tracking ref only widens the range, so an unfetched branch fails toward running CI. In a repo with no CI the token is inert, so the rule applies everywhere without first checking what the repo runs.
+
+**Only Markdown qualifies — not comments, not config.** A comment-only edit inside a code file is not cheaply verifiable, and many comments are instructions to the very tools a skipped run would have exercised: `# shellcheck disable=`, `// biome-ignore`, `# rubocop:disable`, `// @ts-ignore`, Ruby's `# frozen_string_literal: true`. A change to CI or tooling config — `.circleci/`, `.github/`, a lockfile, `package.json` — is what CI most needs to run on. Both take a normal commit.
+
+**Never let it head a push to the default branch.** Merge commits are the convention (squash+merge is retired), so a branch commit's message never becomes main's HEAD and branch-commit `[skip ci]` cannot suppress main CI. The residual hazards are committing directly to main and fast-forwarding a branch onto main — both put the token-bearing commit at main's HEAD and silently skip its CI. The one sanctioned case is release automation's own commits: the version-bump and changelog commits CI pushes to main after a release carry the token on purpose, so a release cannot trigger itself. Nothing a person or a session commits qualifies.
+
+Where a GitHub Actions check is **required** for merge, a skipped run leaves that check pending and blocks the PR (GitHub's documented behavior), so on such a branch the push that will be merged must not carry the token, docs-only or not.
 
 Because the token matches in the body too, write it literally only when you mean it — prose like "originally committed with [skip ci]" arms the skip.
-
-(The previous absolute ban here dated from the squash+merge era, when PR titles and descriptions became the main-branch commit message. Squash+merge is retired, so that path is gone.)
 
 ### Commit Message Guidelines
 
