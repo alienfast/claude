@@ -19,6 +19,15 @@
 #
 # REAP DISCIPLINE — destroy only on positive evidence of completion, never on mere inactivity:
 #   A worktree is reaped iff ALL hold:
+#     • PROVENANCE: /start wt created it — its per-worktree config carries the start.source-branch stamp
+#       start-wt-setup.sh writes, or a sidecar identity loads for it — or the user opted it in with
+#       `git config --worktree reap.managed true`. Every rule below encodes the /start wt lifecycle (one
+#       issue, one branch, merged once = done); a hand-made or EnterWorktree worktree has no stamp and no
+#       such lifecycle — for one the user iterates in and merges repeatedly, "merged" is its resting state
+#       after every round. Measured 2026-09-08: api-memo, hand-made, clean and three hours idle, was reaped
+#       eight minutes after hotfixes landed on origin/main, and its branch deleted with it. Reported KEEP.
+#     • NOT PINNED: `git config --worktree reap.keep true` keeps any worktree, stamped or not, until it is
+#       unset; only a queued merge outranks it (the drainer removes that worktree when its merge lands).
 #     • completion evidence (any one):
 #         - its branch is an ancestor of its source branch or the repo default (merged), OR
 #         - its PR state is MERGED (gh), OR
@@ -231,6 +240,26 @@ recorded_baseline() {
   git -C "$dir" config --worktree --get start.baseline-sha 2>/dev/null || true
 }
 
+# reap.keep as the user wrote it: pinned unless unset or parsing false, so a mistyped value ("tru") still
+# keeps — a pin is a request to preserve, and the only safe reading of an ambiguous one is yes. A repo
+# without extensions.worktreeConfig fails every --worktree read (rc 128), which reads as unset here.
+is_pinned() {
+  local dir="$1" raw
+  raw=$(git -C "$dir" config --worktree --get reap.keep 2>/dev/null || true)
+  [ -n "$raw" ] || return 1
+  [ "$(git -C "$dir" config --worktree --get --type=bool reap.keep 2>/dev/null || echo invalid)" != false ]
+}
+
+# True when /start wt created this worktree (header, PROVENANCE): start.source-branch is the oldest key the
+# stamp writes; a loadable sidecar identity covers a worktree whose config was wiped. reap.managed opts a
+# hand-made worktree in, and unlike the pin it must parse to exactly true — it authorizes destruction.
+is_managed() {
+  local dir="$1" slug="$2"
+  [ "$(git -C "$dir" config --worktree --get --type=bool reap.managed 2>/dev/null || true)" = true ] && return 0
+  [ -n "$(git -C "$dir" config --worktree --get start.source-branch 2>/dev/null || true)" ] && return 0
+  declare -f wt_identity_load >/dev/null 2>&1 && wt_identity_load "$dir" "$slug" >/dev/null 2>&1
+}
+
 # True when the worktree's index was modified within REAP_GRACE_MIN minutes — a cheap liveness proxy
 # (a live session's git ops keep the index fresh; it goes stale only after the session ends). MUST be
 # called BEFORE any index-writing git op in evaluate_worktree (e.g. `git status`) to avoid self-poison.
@@ -283,6 +312,19 @@ evaluate_worktree() {
   # Safety: a deferred merge owns this worktree — the drainer will remove it when the merge lands.
   if [ -f "$repo/$MQ_SUBDIR/$slug.json" ]; then
     printf '  %-12s %s\n' "$issue" "SKIP — merge queued; the merge-queue drainer owns this worktree."
+    return 0
+  fi
+
+  # Pinned by the user. Placed after the merge-queue check on purpose: the drainer removes a queued worktree
+  # when its merge lands whatever this config says, so SKIP is the accurate verdict there.
+  if is_pinned "$dir"; then
+    printf '  %-12s %s\n' "$issue" "KEEP — pinned (reap.keep); never auto-reaped. Unpin: git -C '$dir' config --worktree --unset reap.keep"
+    return 0
+  fi
+
+  # Provenance — every gate below assumes the /start wt lifecycle (header, PROVENANCE).
+  if ! is_managed "$dir" "$slug"; then
+    printf '  %-12s %s\n' "$issue" "KEEP — unmanaged (no /start wt identity stamp); only /start wt worktrees are auto-reaped. Opt in: git -C '$dir' config --worktree reap.managed true"
     return 0
   fi
 

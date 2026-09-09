@@ -360,3 +360,36 @@ cp <repo>/<new-file> <wt>/<new-file>                                     # untra
 ```
 
 Undo it before `git worktree remove`: removal refuses on **modified or untracked** files (`fatal: … contains modified or untracked files, use --force to delete it`), and `--force` is blocked by the git-permissions hook, so the flag git suggests is not available. Restore tracked files with `git show HEAD:<path> >| <wt>/<path>` (`>|`, not `>` — the target exists by definition, so an imported `NO_CLOBBER` would silently refuse the restore on the one path invoked to repair a tree) — not `git restore`/`git checkout` (hook-blocked), and not `git stash` (also hook-blocked; the stack is worktree-shared — Safe Commands above) — and delete any file you added.
+
+## The hourly reaper reclaims `/start wt` worktrees it can prove finished — pin one you mean to keep
+
+`reap-worktrees.sh` runs hourly under launchd and removes a worktree — and deletes its branch — once the
+branch is merged into its source branch or the repo default, the tree is clean, and the index has sat idle
+past the grace (60 minutes). Those rules encode the `/start wt` lifecycle: one issue, one branch, merged once
+and done. A worktree you made by hand under `.claude/worktrees/`, or one `EnterWorktree` made, has no such
+lifecycle: commit in it, merge it out, keep going, and "merged, clean, idle" is its resting state between
+rounds. Measured 2026-09-08: `api-memo` (hand-made, no Linear issue, no PR) had been merged into `hotfixes`
+twice that afternoon; eight minutes after PR #485 carried `hotfixes` onto `origin/main`, the 22:08Z pass
+removed the directory and deleted `rosskevin/api-memo-design`. No commit was lost — every one was already on
+`main` — but the worktree and the ref the session was working from were gone.
+
+The reaper now keys on provenance: a worktree without the `/start wt` identity stamp is reported
+`KEEP — unmanaged` and never touched. Two per-worktree config keys adjust that, in either direction:
+
+```bash
+git -C <wt> config --worktree reap.keep true       # pin: never auto-reaped, stamped or not (KEEP — pinned)
+git -C <wt> config --worktree --unset reap.keep    # release the pin
+git -C <wt> config --worktree reap.managed true    # opt a hand-made worktree INTO the /start wt rules
+```
+
+Pin a `/start interactive` worktree you intend to keep merging from — it is stamped, so once merged and idle
+it is otherwise eligible. A queued merge outranks the pin: the drainer removes that worktree when its merge
+lands. `--worktree` config needs `extensions.worktreeConfig`; `start-wt-setup.sh` enables it in every repo it
+has touched, and a repo without it refuses the write with a `fatal:` naming the extension.
+
+A session that drives a worktree from the main checkout is the one a reap hurts most: `cd <wt>; cmd` against
+a worktree that no longer exists reports the failed `cd` on stderr, and `;` runs `cmd` anyway — in the main
+checkout (measured 2026-09-08: a tracked file on `hotfixes` was modified this way). Address the worktree
+without changing directory (`git -C <wt> …`, absolute paths), or chain with `&&` so a failed `cd` stops the
+line. The reaper's process sweep is no guard here: it kills only processes whose cwd is inside a worktree that
+is already gone, and a session parked in the main checkout is never in that set.

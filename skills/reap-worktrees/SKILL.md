@@ -26,6 +26,14 @@ This skill is for **on-demand inspection and cleanup** between those passes.
 [reap-worktrees.sh](../../scripts/reap-worktrees.sh) destroys a worktree **only on positive evidence of
 completion** — never on mere inactivity. A worktree is reaped iff **all** hold:
 
+- **Provenance**: `/start wt` created it — the per-worktree `start.source-branch` stamp, or a loadable
+  identity sidecar — or the user opted it in (`git -C <wt> config --worktree reap.managed true`). Every rule
+  below assumes the `/start wt` lifecycle (one issue, one branch, merged once = done); a hand-made or
+  `EnterWorktree` worktree the user keeps merging from is "merged, clean, idle" between every round, and one
+  was reaped on exactly that shape (api-memo, 2026-09-08). An unstamped worktree is reported
+  `KEEP — unmanaged` and never touched.
+- **Not pinned**: `git -C <wt> config --worktree reap.keep true` keeps any worktree, stamped or not
+  (`KEEP — pinned`); `--unset reap.keep` releases it. Only a queued merge outranks the pin.
 - **Completion evidence** (any one): its branch is an ancestor of its source branch or the repo default
   (merged); **or** its PR state is `MERGED` (via `gh`); **or** its Linear issue state type is terminal
   (`completed`/`canceled`/`duplicate`).
@@ -82,7 +90,7 @@ notes itself and skips.
 ~/.claude/scripts/reap-worktrees.sh list <repo>     # one repo
 ```
 
-Each worktree prints one of: `REAP-ELIGIBLE`, `KEEP` (with the reason — active, unpushed, or dirty),
+Each worktree prints one of: `REAP-ELIGIBLE`, `KEEP` (with the reason — pinned, unmanaged, active, unpushed, or dirty),
 `SKIP` (detached / merge-queued), or `STRAY`, followed by an `ORPHAN-PROC` line per leftover host process.
 
 **Reap (mutating — removes eligible worktrees, serialized per repo under the same common-git-dir lock

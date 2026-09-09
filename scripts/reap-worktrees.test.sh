@@ -86,11 +86,13 @@ stamp_owner() { # wt pid
   git -C "$1" config --worktree start.owner-pid-start "$(bash -c '. "$1"; wtid_pid_start "$2"' _ "$IDLIB" "$2")"
 }
 
-# build_case <name> <issue> <linear-state> <commits:0|1> <dirty:0|1> <age:fresh|idle> [owner] → repo path
+# build_case <name> <issue> <linear-state> <commits:0|1> <dirty:0|1> <age:fresh|idle> [owner] [stamp] → repo path
 # age=idle backdates the worktree's index so liveness guard B sees no session; fresh leaves it now.
 # owner (default none) stamps the identity tier wt_owner_alive adjudicates: none|alive|dead|released.
+# stamp (default stamped) writes the config keys start-wt-setup.sh leaves; unstamped is a hand-made or
+# EnterWorktree worktree, which carries none.
 build_case() {
-  local name="$1" issue="$2" state="$3" commits="$4" dirty="$5" age="$6" owner="${7:-none}"
+  local name="$1" issue="$2" state="$3" commits="$4" dirty="$5" age="$6" owner="${7:-none}" stamp="${8:-stamped}"
   local repo="$ROOT/$name" slug wt base opid
   mkdir -p "$repo"
   git -C "$repo" init -q -b main
@@ -101,8 +103,10 @@ build_case() {
   wt="$repo/.claude/worktrees/$slug"
   git -C "$repo" worktree add -q -b "user/$slug" "$wt" main
   base=$(git -C "$repo" rev-parse main)
-  git -C "$wt" config --worktree start.source-branch main
-  git -C "$wt" config --worktree start.baseline-sha "$base"
+  if [ "$stamp" = stamped ]; then
+    git -C "$wt" config --worktree start.source-branch main
+    git -C "$wt" config --worktree start.baseline-sha "$base"
+  fi
   [ "$commits" = 1 ] && { echo x > "$wt/f"; git -C "$wt" add f
     git -C "$wt" -c user.email=t@t -c user.name=t commit -q -m work; }
   [ "$dirty" = 1 ] && echo scratch > "$wt/untracked"
@@ -206,6 +210,60 @@ ck "commits + issue active + unmerged → KEEP" \
 r=$(build_case unpushed BF-907 canceled 1 0 idle)
 ck "commits + canceled + local-only commits → KEEP, reported for manual resolution" \
    'local-only commits' "$($SCRIPT list "$r" 2>&1)"
+
+echo "== provenance and pinning: only a /start wt stamp admits a worktree, and a pin refuses every gate =="
+
+# Lands the worktree branch on main — the evidence every /start wt reap rests on.
+merge_into_main() { git -C "$1" merge -q --ff-only "user/$2"; }
+
+# The 2026-09-08 api-memo reap: a hand-made worktree (no stamp), committed, merged to the default branch, idle
+# and clean — every evidence gate passed, and the reaper took the directory and the branch. The stamped twin
+# below is the control: identical in every other respect, and eligible.
+r=$(build_case unmanaged_merged BF-930 started 1 0 idle none unstamped)
+merge_into_main "$r" bf-930
+ck "unstamped + merged + idle + clean → KEEP — unmanaged" 'KEEP — unmanaged' "$($SCRIPT list "$r" 2>&1)"
+out=$($SCRIPT reap "$r" 2>&1)
+ck "reap leaves an unmanaged worktree's directory in place" PRESENT \
+   "$([ -d "$r/.claude/worktrees/bf-930" ] && echo PRESENT || echo GONE)"
+ck "reap leaves an unmanaged worktree's branch in place" PRESENT \
+   "$(git -C "$r" rev-parse --verify --quiet user/bf-930 >/dev/null 2>&1 && echo PRESENT || echo NOBRANCH)"
+
+r=$(build_case managed_merged BF-931 started 1 0 idle none stamped)
+merge_into_main "$r" bf-931
+ck "the same worktree stamped → eligible (the stamp is what decides)" \
+   'REAP-ELIGIBLE — branch merged into main' "$($SCRIPT list "$r" 2>&1)"
+
+# The opt-in: a hand-made worktree the user does want reclaimed on the /start wt rules. It authorizes
+# destruction, so only an exact boolean true counts — a mistyped value stays unmanaged.
+r=$(build_case optin_merged BF-932 started 1 0 idle none unstamped)
+merge_into_main "$r" bf-932
+git -C "$r/.claude/worktrees/bf-932" config --worktree reap.managed garbage
+ck "unstamped + reap.managed=garbage → still KEEP — unmanaged" 'KEEP — unmanaged' "$($SCRIPT list "$r" 2>&1)"
+git -C "$r/.claude/worktrees/bf-932" config --worktree reap.managed true
+ck "unstamped + reap.managed=true + merged → eligible" 'REAP-ELIGIBLE — branch merged into main' "$($SCRIPT list "$r" 2>&1)"
+
+# The pin holds on a stamped worktree that clears every other gate — a /start interactive worktree the user
+# keeps merging from is exactly this shape.
+r=$(build_case pinned BF-933 started 1 0 idle none stamped)
+merge_into_main "$r" bf-933
+git -C "$r/.claude/worktrees/bf-933" config --worktree reap.keep true
+ck "stamped + merged + reap.keep=true → KEEP — pinned" 'KEEP — pinned' "$($SCRIPT list "$r" 2>&1)"
+out=$($SCRIPT reap "$r" 2>&1)
+ck "reap leaves a pinned worktree's directory in place" PRESENT \
+   "$([ -d "$r/.claude/worktrees/bf-933" ] && echo PRESENT || echo GONE)"
+ck "reap leaves a pinned worktree's branch in place" PRESENT \
+   "$(git -C "$r" rev-parse --verify --quiet user/bf-933 >/dev/null 2>&1 && echo PRESENT || echo NOBRANCH)"
+
+# A pin is a request to preserve: an unparseable value still pins; only an explicit false releases it.
+git -C "$r/.claude/worktrees/bf-933" config --worktree reap.keep tru
+ck "reap.keep=tru (unparseable) still pins" 'KEEP — pinned' "$($SCRIPT list "$r" 2>&1)"
+git -C "$r/.claude/worktrees/bf-933" config --worktree reap.keep false
+ck "reap.keep=false releases the pin → eligible" 'REAP-ELIGIBLE' "$($SCRIPT list "$r" 2>&1)"
+
+# A queued merge outranks the pin: the drainer removes that worktree when its merge lands whatever the config says.
+git -C "$r/.claude/worktrees/bf-933" config --worktree reap.keep true
+mkdir -p "$r/.claude/merge-queue" && : > "$r/.claude/merge-queue/bf-933.json"
+ck "pinned + merge queued → SKIP (the drainer owns it)" 'SKIP — merge queued' "$($SCRIPT list "$r" 2>&1)"
 
 echo "== reap mode removes what list called eligible =="
 
