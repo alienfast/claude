@@ -57,7 +57,9 @@ scan=$(printf '%s' "$COMMAND" | awk '
 # group is not an anchor, so `(^|[[:space:]])` silently never matched a command-initial executor.
 executor_probe=" $scan"
 if ! [[ "$executor_probe" =~ [[:space:]](ba|z|k)?sh[[:space:]]+-[A-Za-z]*c([[:space:]]|$) || "$executor_probe" =~ [[:space:]](eval|xargs)([[:space:]]|$) ]]; then
-  scan=$(printf '%s' "$scan" | sed -E "s/'[^']*'/ /g; s/\"[^\"]*\"/ /g")
+  # A placeholder, not a blank: `git -C "$REPO" reset --hard` must keep its -C argument slot, or the
+  # global-option peel below eats `reset` as the path and the subcommand anchors see nothing.
+  scan=$(printf '%s' "$scan" | sed -E "s/'[^']*'/ Q /g; s/\"[^\"]*\"/ Q /g")
 fi
 
 # Evaluate EVERY command in the string, not just the leading one. All rules below anchor on ^git,
@@ -74,6 +76,18 @@ while IFS= read -r segment; do
   segment="${segment%"${segment##*[![:space:]]}"}"
 
   [[ "$segment" =~ ^git[[:space:]] ]] || continue
+
+  # Peel git's global options: every rule below anchors on `^git <subcommand>`, so `-C <path>` (the
+  # form standards/git.md prescribes in worktree sessions), `-c k=v`, `--git-dir`, `--work-tree` and
+  # the flag-only globals hid the subcommand from all of them. Measured 2026-09-09: a runaway heredoc
+  # ran `git -C "$REPO" reset -q --hard; git -C "$REPO" clean -qfd; git -C "$REPO" branch -q -D ...`
+  # against ~/.claude itself, and none of the three was blocked.
+  while [[ "$segment" =~ ^git[[:space:]]+(-C|-c|--git-dir|--work-tree|--namespace|--exec-path|--super-prefix)(=[^[:space:]]*|[[:space:]]+[^[:space:]]+)[[:space:]]+(.*)$ ]]; do
+    segment="git ${BASH_REMATCH[3]}"
+  done
+  while [[ "$segment" =~ ^git[[:space:]]+(--no-pager|-p|--paginate|-P|--bare|--no-replace-objects|--literal-pathspecs|--glob-pathspecs|--noglob-pathspecs|--icase-pathspecs|--no-optional-locks)[[:space:]]+(.*)$ ]]; do
+    segment="git ${BASH_REMATCH[2]}"
+  done
 
   # ---- Force flags. Checked BEFORE the safe-subcommand allowlist: `git branch --force` and
   # ---- `git add --force` used to short-circuit into the allowlist and skip this test entirely.

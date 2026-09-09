@@ -136,6 +136,24 @@ assert_allowed "git commit -m 'revert the git checkout foo.ts change'" "quoted c
 assert_allowed "bash -c 'git reset --hard'" "executor form — documented bypass, git not in command position"
 assert_allowed "eval 'git clean -fd'" "executor form — documented bypass"
 
+echo "== 10c. global options between git and the subcommand do not hide it"
+# 2026-09-09: a runaway heredoc ran these three forms against ~/.claude and none was blocked —
+# every rule anchored on `^git <subcommand>` and `-C "$REPO"` sat in between.
+assert_blocked 'git -C "$REPO" reset -q --hard' "reset behind -C with a quoted path"
+assert_blocked 'git -C "$REPO" clean -qfd' "clean -fd behind -C with a quoted path"
+assert_blocked 'git -C "$REPO" branch -q -D feature' "branch -D behind -C with a quoted path"
+assert_blocked 'git -C /abs/path reset --hard' "reset behind -C with a bare path"
+assert_blocked 'git --git-dir=/x/.git --work-tree=/x reset --hard' "reset behind --git-dir= and --work-tree="
+assert_blocked 'git -c core.pager=cat -C . checkout -f main' "checkout -f behind stacked -c and -C"
+assert_blocked 'git --no-pager -C . push --force origin main' "push --force behind --no-pager and -C"
+assert_blocked 'true; git -C "$REPO" checkout -q main; git -C "$REPO" reset -q --hard' "the incident's ;-list"
+assert_allowed 'git -C "$REPO" status' "status behind -C"
+assert_allowed 'git -C /abs/path log --oneline -5' "log behind -C"
+assert_allowed 'git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init' "test-fixture commit behind -c"
+assert_allowed 'git -C "$REPO" reset -q --soft HEAD~1' "--soft reset behind -C stays allowed"
+assert_allowed 'git -C "$REPO" branch --format="%(refname:short)"' "branch listing behind -C"
+assert_allowed 'git -C /abs/path' "-C with no subcommand"
+
 echo "== 11. the hook fails CLOSED on an unparseable payload"
 rc_bad=$(printf 'not json at all' | "$HOOK" >/dev/null 2>&1; echo $?)
 if [ "$rc_bad" = "2" ]; then
