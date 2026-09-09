@@ -154,14 +154,19 @@ cat > "$WORK/bin/linear-cli" <<EOF
 FIX="$FIX"
 if [ "\${1:-}" != "api" ]; then exit 0; fi
 q="\${@: -1}"
+T=""
+for a in "\$@"; do case "\$a" in team=*) T="\${a#team=}" ;; esac; done
+pick() { # <base>: per-team fixture when one exists, else the shared file
+  if [ -n "\$T" ] && [ -f "\$FIX/\$1.\$T.json" ]; then cat "\$FIX/\$1.\$T.json"; else cat "\$FIX/\$1.json"; fi
+}
 case "\$q" in
   *viewer\{email\}*) printf '%s' '{"data":{"viewer":{"email":"t@t.test"}}}' ;;
   *inverseRelations*)
     id=""; for a in "\$@"; do case "\$a" in id=*) id="\${a#id=}" ;; esac; done
     if [ -f "\$FIX/node-\$id.json" ]; then cat "\$FIX/node-\$id.json"
     else printf '%s' '{"code":2,"details":[{"message":"Entity not found: Issue"}],"error":true}'; exit 2; fi ;;
-  *relatedIssue*)    cat "\$FIX/deps-page.json" ;;
-  *assignee*)        cat "\$FIX/issues-page.json" ;;
+  *relatedIssue*)    pick deps-page ;;
+  *assignee*)        pick issues-page ;;
   *) printf '%s' '{"errors":[{"message":"unexpected query in test shim"}]}'; exit 1 ;;
 esac
 EOF
@@ -177,6 +182,8 @@ run_noteam() { # run_noteam <outfile> <extra args...> — no --team and no $LINE
 }
 
 order_of() { grep -E '^[0-9]+\. ' "$1" | grep -oE 'TT-[0-9]+' | tr '\n' ' ' | sed 's/ $//'; }
+# Any team prefix — the cross-team gate tests rank UU-* alongside TT-*.
+ids_of() { grep -E '^[0-9]+\. ' "$1" | grep -oE '[A-Z]+-[0-9]+' | tr '\n' ' ' | sed 's/ $//'; }
 
 # ---- default run: stage-first ordering, RFR blocker resolved, open blocker hidden ----
 OUT="$WORK/out.md"
@@ -301,10 +308,13 @@ EOF
 cp "$FIX/issues-hold.json" "$FIX/issues-page.json"; cp "$FIX/deps-hold.json" "$FIX/deps-page.json"
 OUT9="$WORK/out9.md"
 run "$OUT9" --limit 20 || { echo "FAIL: hold run exited $?"; cat "$OUT9.err"; exit 1; }
-ck "hold lists nothing" "" "$(order_of "$OUT9")"
-ck_has  "hold headline"  "_Nothing pickable right now in team TT — the Planned/Todo column is not drained, so Backlog is withheld (PLANNED-HOLD below). Wait for a release or act on the held issues; do not pick Backlog._" "$OUT9"
-ck_lacks "hold is not drained" "No workable issues" "$OUT9"
-ck_has  "hold note splits releasing from keeper" "(2 issue(s) hold the gate: 0 pickable now; 1 will release on their own — TT-9; 1 need the keeper — TT-11 [needs decision]). 1 Backlog candidate(s) wait behind the gate" "$OUT9"
+# REQ 6 — releasing-only + keeper-only column: nothing here is agent-pickable, so the executable
+# Backlog candidate TT-1 is offered rather than withheld. Before the pickable-only gate this printed
+# the wait headline and withheld TT-1 indefinitely — the workspace-wide deadlock shape.
+ck "releasing-only column does not withhold Backlog" "TT-1" "$(order_of "$OUT9")"
+ck_lacks "open gate emits no control prefix" "PLANNED-HOLD" "$OUT9"
+ck_lacks "open gate is not a wait headline" "Nothing pickable right now" "$OUT9"
+ck_has  "keeper inventory survives as an informational note" "_Planned/Todo is not drained, but nothing in it is agent-pickable, so Backlog is open — 1 need the keeper: TT-11 [needs decision]._" "$OUT9"
 cp "$FIX/issues-main.json" "$FIX/issues-page.json"; cp "$FIX/deps-main.json" "$FIX/deps-page.json"
 
 # ---- BLOCKED-HOLD: the Planned column is drained and every certified Backlog issue is chained behind a
@@ -417,6 +427,100 @@ ck "missing root exits 1" "1" "$rc"
 ck_has  "missing root names the miss" "issue 'TT-99' not found" "$OUTR7.err"
 run "$OUTR7" --limit 20 --root foo; rc=$?
 ck "malformed root exits 1" "1" "$rc"
+# ============================================================================================
+# Stage-gate correction: the Planned gate closes ONLY on a currently agent-pickable Planned/Todo
+# issue. Human-held, needs-decision, epic, solo/keeper and dependency-blocked issues keep their
+# Linear states but never withhold unrelated executable Backlog work.
+# ============================================================================================
+
+# ---- REQ 1: a column of human-held work cannot deadlock an executable Backlog candidate ----
+cat > "$FIX/issues-humanhold.json" <<'EOF'
+{"data":{"issues":{"nodes":[
+ {"identifier":"TT-50","title":"human approval","estimate":null,"priority":3,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[{"name":"human"}]},"parent":null},
+ {"identifier":"TT-51","title":"parked decision","estimate":null,"priority":3,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[{"name":"needs decision"}]},"parent":null},
+ {"identifier":"TT-52","title":"delegated epic","estimate":null,"priority":3,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[{"name":"epic"}]},"parent":null},
+ {"identifier":"TT-53","title":"executable backlog","estimate":null,"priority":3,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[]},"parent":null}
+],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
+EOF
+cat > "$FIX/deps-none.json" <<'EOF'
+{"data":{"issues":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
+EOF
+cp "$FIX/issues-humanhold.json" "$FIX/issues-page.json"; cp "$FIX/deps-none.json" "$FIX/deps-page.json"
+OUT14="$WORK/out14.md"
+run "$OUT14" --limit 20 || { echo "FAIL: human-hold run exited $?"; cat "$OUT14.err"; exit 1; }
+ck "human-held column cannot deadlock Backlog" "TT-53" "$(order_of "$OUT14")"
+ck_lacks "human-held column emits no control prefix" "PLANNED-HOLD" "$OUT14"
+ck_has  "human-held keeper inventory named" "_Planned/Todo is not drained, but nothing in it is agent-pickable, so Backlog is open — 3 need the keeper: TT-50 [human], TT-51 [needs decision], TT-52 [epic — certify per child, close it when they release]._" "$OUT14"
+
+# ---- REQ 2: human-held work in one team cannot freeze unrelated work in another ----
+cat > "$FIX/issues-page.TT.json" <<'EOF'
+{"data":{"issues":{"nodes":[
+ {"identifier":"TT-50","title":"human approval","estimate":null,"priority":3,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[{"name":"human"}]},"parent":null}
+],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
+EOF
+cat > "$FIX/issues-page.UU.json" <<'EOF'
+{"data":{"issues":{"nodes":[
+ {"identifier":"UU-1","title":"unrelated executable backlog","estimate":null,"priority":3,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[]},"parent":null}
+],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
+EOF
+cp "$FIX/deps-none.json" "$FIX/deps-page.TT.json"; cp "$FIX/deps-none.json" "$FIX/deps-page.UU.json"
+OUT15="$WORK/out15.md"
+run "$OUT15" --team UU --limit 20 || { echo "FAIL: cross-team run exited $?"; cat "$OUT15.err"; exit 1; }
+ck "cross-team human hold does not freeze the other team" "UU-1" "$(ids_of "$OUT15")"
+ck_lacks "cross-team run emits no control prefix" "PLANNED-HOLD" "$OUT15"
+rm -f "$FIX/issues-page.TT.json" "$FIX/issues-page.UU.json" "$FIX/deps-page.TT.json" "$FIX/deps-page.UU.json"
+
+# ---- REQ 3: ONE genuinely pickable Planned issue still closes the gate (the priority signal holds) ----
+cat > "$FIX/issues-onepick.json" <<'EOF'
+{"data":{"issues":{"nodes":[
+ {"identifier":"TT-60","title":"pickable planned","estimate":null,"priority":3,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[]},"parent":null},
+ {"identifier":"TT-61","title":"human approval","estimate":null,"priority":3,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[{"name":"human"}]},"parent":null},
+ {"identifier":"TT-62","title":"executable backlog","estimate":null,"priority":1,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[]},"parent":null}
+],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
+EOF
+cp "$FIX/issues-onepick.json" "$FIX/issues-page.json"; cp "$FIX/deps-none.json" "$FIX/deps-page.json"
+OUT16="$WORK/out16.md"
+run "$OUT16" --limit 20 || { echo "FAIL: one-pickable run exited $?"; cat "$OUT16.err"; exit 1; }
+ck "one pickable Planned issue still withholds Backlog" "TT-60" "$(order_of "$OUT16")"
+ck_has  "one pickable Planned issue closes the gate" "_PLANNED-HOLD: Backlog withheld" "$OUT16"
+ck_has  "closed gate still counts the withheld tail" "1 Backlog candidate(s) wait behind the gate" "$OUT16"
+
+# ---- REQ 4: an unresolved dependency still blocks its own issue once the gate is open ----
+cat > "$FIX/issues-dep.json" <<'EOF'
+{"data":{"issues":{"nodes":[
+ {"identifier":"TT-70","title":"planned behind a human blocker","estimate":null,"priority":3,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[]},"parent":null},
+ {"identifier":"TT-71","title":"human blocker","estimate":null,"priority":3,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[{"name":"human"}]},"parent":null},
+ {"identifier":"TT-72","title":"executable backlog","estimate":null,"priority":3,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[]},"parent":null}
+],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
+EOF
+cat > "$FIX/deps-dep.json" <<'EOF'
+{"data":{"issues":{"nodes":[
+ {"identifier":"TT-71","title":"human blocker","state":{"name":"Planned","type":"unstarted"},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-70"}}]}}
+],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
+EOF
+cp "$FIX/issues-dep.json" "$FIX/issues-page.json"; cp "$FIX/deps-dep.json" "$FIX/deps-page.json"
+OUT17="$WORK/out17.md"
+run "$OUT17" --limit 20 || { echo "FAIL: dependency run exited $?"; cat "$OUT17.err"; exit 1; }
+grep -E '^[0-9]+\. ' "$OUT17" > "$WORK/ranked17.txt"
+ck "open gate still offers the unrelated Backlog candidate" "TT-72" "$(order_of "$OUT17")"
+ck_lacks "a blocked issue is still blocked once the gate opens" "TT-70" "$WORK/ranked17.txt"
+
+# ---- REQ 5: a keeper-only column with no Backlog work DRAINS (so /auto stops) rather than holding ----
+cat > "$FIX/issues-keeperonly.json" <<'EOF'
+{"data":{"issues":{"nodes":[
+ {"identifier":"TT-80","title":"human approval","estimate":null,"priority":3,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[{"name":"human"}]},"parent":null},
+ {"identifier":"TT-81","title":"parked decision","estimate":null,"priority":3,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[{"name":"needs decision"}]},"parent":null}
+],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
+EOF
+cp "$FIX/issues-keeperonly.json" "$FIX/issues-page.json"; cp "$FIX/deps-none.json" "$FIX/deps-page.json"
+OUT18="$WORK/out18.md"
+run "$OUT18" --limit 20 || { echo "FAIL: keeper-only run exited $?"; cat "$OUT18.err"; exit 1; }
+ck "keeper-only column lists nothing" "" "$(order_of "$OUT18")"
+ck_has  "keeper-only column drains rather than holding" "_No workable issues in team TT._" "$OUT18"
+ck_lacks "keeper-only column does not park on the gate" "PLANNED-HOLD" "$OUT18"
+ck_lacks "keeper-only column does not park on a blocker" "BLOCKED-HOLD" "$OUT18"
+ck_has  "keeper-only inventory still named" "_Planned/Todo is not drained, but nothing in it is agent-pickable, so Backlog is open — 2 need the keeper: TT-80 [human], TT-81 [needs decision]._" "$OUT18"
+cp "$FIX/issues-main.json" "$FIX/issues-page.json"; cp "$FIX/deps-main.json" "$FIX/deps-page.json"
 
 echo
 echo "$PASS passed / $FAIL failed"

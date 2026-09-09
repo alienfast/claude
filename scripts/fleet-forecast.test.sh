@@ -55,21 +55,21 @@ cat > "$WORK/a.json" <<'EOF'
 EOF
 rc=$(run "$WORK/a.json" "$WORK/a.out" --sessions 2 --horizon-h 12 --hours-per-issue 2 --flat)
 ck "A exit" 0 "$rc"
-ck_has "A forecast"        "FORECAST: 2 sessions × 12.0h horizon — est. 3 ship · 0 unreached · 2 stranded · 1 withheld — pool 6 shippable of 8 certified" "$WORK/a.out"
+ck_has "A forecast"        "FORECAST: 2 sessions × 12.0h horizon — est. 4 ship · 0 unreached · 2 stranded — pool 6 shippable of 8 certified" "$WORK/a.out"
 ck_has "A stage-first"     "PICK t=0.0h: TT-1 → s1" "$WORK/a.out"
-ck_has "A hold not fill"   "HOLD t=0.0h: s2 — Backlog withheld (Planned/Todo not drained: TT-2, TT-3, TT-4, TT-7 +2 more)" "$WORK/a.out"
-ck_lacks "A no backlog fill" "PICK t=0.0h: TT-5" "$WORK/a.out"
-ck_has "A withheld"        "WITHHELD: TT-5 — Backlog withheld (Planned/Todo not drained)" "$WORK/a.out"
-ck_has "A planned-hold"    "PLANNED-HOLD: 1 unblocked Backlog candidate(s) withheld through the run — Planned/Todo never drained: TT-3 [needs decision], TT-4 [blocked], TT-8 [uncertified], TT-11 [delegated epic]" "$WORK/a.out"
-ck_has "A lane s2"         "LANE s2: TT-7[2.0→4.0]" "$WORK/a.out"
+ck_has "A backlog fills the idle lane" "PICK t=0.0h: TT-5 → s2 (~2.0h)" "$WORK/a.out"
+ck_lacks "A never holds on unpickable Planned work" "HOLD t=0.0h" "$WORK/a.out"
+ck_lacks "A withholds nothing" "WITHHELD" "$WORK/a.out"
+ck_lacks "A emits no control prefix" "PLANNED-HOLD" "$WORK/a.out"
+ck_has "A lane s2"         "LANE s2: TT-5[0.0→2.0] TT-7[2.0→4.0]" "$WORK/a.out"
 ck_has "A unlock cascade"  "SHIP t=2.0h: TT-1 — unblocks TT-2" "$WORK/a.out"
 ck_has "A pick via"        "PICK t=2.0h: TT-2 → s1 (~2.0h) (unblocked by TT-1)" "$WORK/a.out"
 ck_has "A inflight"        "INFLIGHT: TT-6 [In Progress] — assumed to finish ≈t=2.0h (outside the fleet)" "$WORK/a.out"
 ck_has "A inflight unlock" "PICK t=2.0h: TT-7 → s2 (~2.0h) (unblocked by TT-6)" "$WORK/a.out"
 ck_has "A stranded gate"   "STRANDED: TT-4 — blocked by TT-3 [Planned] — needs decision" "$WORK/a.out"
 ck_has "A stranded uncert" "STRANDED: TT-9 — blocked by TT-8 [Planned] — uncertified" "$WORK/a.out"
-ck_has "A drained"         "POOL-DRAINED: t=4.0h — no pickable candidates remain (3 remain blocked or withheld); 8.0h of horizon unused" "$WORK/a.out"
-ck_has "A stage line"      "STAGE: Planned/Todo NOT drained — 1 of 4 remain past the run (TT-4); Backlog (2 candidates) never reached this run" "$WORK/a.out"
+ck_has "A drained"         "POOL-DRAINED: t=4.0h — no pickable candidates remain (2 remain blocked or withheld); 8.0h of horizon unused" "$WORK/a.out"
+ck_has "A stage line"      "STAGE: Planned/Todo NOT drained — 1 of 4 remain past the run (TT-4); first Backlog pick ≈t=0.0h" "$WORK/a.out"
 ck_has "A lane"            "LANE s1: TT-1[0.0→2.0] TT-2[2.0→4.0]" "$WORK/a.out"
 ck_lacks "A claimed out"   "TT-10" "$WORK/a.out"
 ck_lacks "A epic never picked" "TT-11 → s" "$WORK/a.out"
@@ -195,10 +195,10 @@ cat > "$WORK/m.json" <<'EOF'
 EOF
 rc=$(run "$WORK/m.json" "$WORK/m.out" --sessions 1 --horizon-h 12 --hours-per-issue 2 --flat)
 ck "M exit" 0 "$rc"
-ck_has "M hold"            "HOLD t=0.0h: s1 — Backlog withheld (Planned/Todo not drained: TT-111)" "$WORK/m.out"
+ck_has "M backlog fills while Planned is blocked" "PICK t=0.0h: TT-113 → s1 (~2.0h)" "$WORK/m.out"
 ck_has "M planned first"   "PICK t=2.0h: TT-111 → s1 (~2.0h) (unblocked by TT-112)" "$WORK/m.out"
-ck_has "M backlog after"   "PICK t=4.0h: TT-113 → s1" "$WORK/m.out"
-ck_has "M stage"           "STAGE: Planned/Todo (1 issues) drains ≈t=4.0h; first Backlog pick ≈t=4.0h" "$WORK/m.out"
+ck_lacks "M does not idle behind in-flight work" "HOLD t=0.0h" "$WORK/m.out"
+ck_has "M stage"           "STAGE: Planned/Todo (1 issues) drains ≈t=4.0h; first Backlog pick ≈t=0.0h" "$WORK/m.out"
 ck_lacks "M nothing withheld" "WITHHELD" "$WORK/m.out"
 
 # ---- Fixture N: only a keeper-owned Planned issue remains — the fleet idles at t=0 and the Backlog
@@ -211,10 +211,10 @@ cat > "$WORK/n.json" <<'EOF'
 EOF
 rc=$(run "$WORK/n.json" "$WORK/n.out" --sessions 1 --horizon-h 12 --hours-per-issue 2 --flat)
 ck "N exit" 0 "$rc"
-ck_has "N forecast"        "est. 0 ship · 0 unreached · 0 stranded · 1 withheld — pool 1 shippable of 2 certified" "$WORK/n.out"
-ck_has "N planned-hold"    "PLANNED-HOLD: 1 unblocked Backlog candidate(s) withheld through the run — Planned/Todo never drained: TT-121 [needs decision]" "$WORK/n.out"
-ck_has "N withheld"        "WITHHELD: TT-122 — Backlog withheld (Planned/Todo not drained)" "$WORK/n.out"
-ck_has "N drained"         "POOL-DRAINED: t=0.0h" "$WORK/n.out"
+ck_has "N forecast"        "est. 1 ship · 0 unreached · 0 stranded — pool 1 shippable of 2 certified" "$WORK/n.out"
+ck_lacks "N emits no control prefix" "PLANNED-HOLD" "$WORK/n.out"
+ck_has "N keeper-held column does not withhold Backlog" "PICK t=0.0h: TT-122 → s1 (~2.0h)" "$WORK/n.out"
+ck_has "N drained"         "POOL-DRAINED: t=2.0h" "$WORK/n.out"
 
 # ---- Fixture O: a Backlog child of a Planned epic inherits the stage — pickable under the gate ----
 cat > "$WORK/o.json" <<'EOF'
@@ -227,7 +227,7 @@ EOF
 rc=$(run "$WORK/o.json" "$WORK/o.out" --sessions 1 --horizon-h 12 --hours-per-issue 2 --flat)
 ck "O exit" 0 "$rc"
 ck_has "O child picked"    "PICK t=0.0h: TT-132 → s1 (~2.0h) (Backlog — blocks Planned/Todo TT-131)" "$WORK/o.out"
-ck_has "O sibling withheld" "WITHHELD: TT-133 — Backlog withheld (Planned/Todo not drained)" "$WORK/o.out"
+ck_has "O epic shell does not withhold the sibling" "PICK t=2.0h: TT-133 → s1 (~2.0h)" "$WORK/o.out"
 
 # ---- Empty pool is distinguishable from a broken run ----
 cat > "$WORK/j.json" <<'EOF'

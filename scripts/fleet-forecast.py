@@ -228,9 +228,12 @@ def simulate(issues, n_sessions, horizon, hours):
     heapq.heapify(free)
     drained_at = None
 
-    def held():  # what keeps the Planned gate closed: the unstarted column, minus other people's claims
+    def held():  # what keeps the Planned gate closed: unstarted work an agent can pick RIGHT NOW.
+        # Mirrors next-candidates.sh -- human/needs-decision/epic/solo/keeper-held issues (absent from
+        # pool) and dependency-blocked ones are not pickable, so they never withhold unrelated Backlog.
         return sorted((i.id for i in issues.values() if i.stype == "unstarted" and not i.claimed
-                       and i.id not in shipped and i.id not in picked), key=issue_key)
+                       and i.id not in shipped and i.id not in picked
+                       and i.id in pool and unblocked(pool[i.id])), key=issue_key)
 
     def unblocked(p):
         return all(b in shipped or b not in issues for b in p.blockers)

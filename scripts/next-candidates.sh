@@ -750,7 +750,7 @@ if [ "$gate_on" -eq 1 ]; then
                 else {id: $i.identifier, kind: "keeper", reason: $cr} end)
            end) ]
   ' "$list_file")
-  if [ "$(printf '%s' "$held_json" | jq 'length')" -gt 0 ]; then
+  if [ "$(printf '%s' "$held_json" | jq '[.[] | select(.kind == "pickable")] | length')" -gt 0 ]; then
     gate_closed=1
     withheld=$(printf '%s' "$candidates_json" | jq '[.[] | select(.state_rank == 1)] | length')
     candidates_json=$(printf '%s' "$candidates_json" | jq 'map(select(.state_rank != 1))')
@@ -762,10 +762,21 @@ if [ "$gate_on" -eq 1 ]; then
         + (if ($r | length) > 0 then "; \($r | length) will release on their own — \($r | join(", "))" else "" end)
         + (if ($k | length) > 0 then "; \($k | length) need the keeper — \($k | join(", "))" else "" end)
         + "). \($w) Backlog candidate(s) wait behind the gate; it opens when the column drains — pass --no-stage-gate to list them._"')
+  else
+    # Gate OPEN with a non-empty column: nothing in Planned/Todo is agent-pickable, so unrelated
+    # Backlog work proceeds. The keeper inventory is still worth naming — it is what a human must act
+    # on for the column to produce pickable work — but it carries NO control prefix: /auto keys the
+    # literal PLANNED-HOLD marker to park, and this state is explicitly not a park. Releasing-kind
+    # issues are omitted; the blocked note below already names them with what each waits on.
+    hold_line=$(printf '%s' "$held_json" | jq -r '
+      [.[] | select(.kind == "keeper") | "\(.id) [\(.reason)]"] as $k
+      | if ($k | length) == 0 then ""
+        else "_Planned/Todo is not drained, but nothing in it is agent-pickable, so Backlog is open — \($k | length) need the keeper: \($k | join(", "))._"
+        end')
   fi
 fi
 hold_note() {
-  [ "$gate_closed" -eq 1 ] && printf '\n%s\n' "$hold_line"
+  [ -n "$hold_line" ] && printf '\n%s\n' "$hold_line"
   return 0
 }
 
