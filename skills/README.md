@@ -200,6 +200,26 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 - All logic in `~/.claude/scripts/fleet-launch.sh`; `SKILL.md` dispatches and narrates
 - Deadline contract shared with `skills/auto/SKILL.md` Step 2's fleet-deadline gate
 
+### fleet-sequence
+
+**Description**: Ship an ordered list of certified issues as a stack of PRs — strictly one at a time, each in its own background `claude --bg "/auto pr <ID>"` session, each forked from the previous issue's branch with its PR targeting that branch. The targeted, serialized sibling of `/fleet-launch` and the runner for `solo` work.
+
+**When Invoked**:
+
+- User says "run these in sequence", "ship BF-1 then BF-2 then BF-3", "stack these", or "solo batch"
+- Several `solo`-labeled (or order-dependent, oversized) issues are ready and no fleet is running
+
+**Key Features**:
+
+- One detached runner walks the list: dispatch `/auto pr <ID>`, wait for the session registry to list the session as done, read its `tmp/auto-state-<id>.json` outcome, continue only on `shipped` with an open PR for the issue's worktree branch; anything else stops the sequence with the remaining issues untouched
+- Between issues it detaches the main checkout's HEAD at the previous issue's branch and sets `start.wt-source-branch`, so `/start wt` forks from there and `/finish pr` targets it — the stack unwinds bottom-up as GitHub retargets each PR when its base merges (merge commits only; never squash)
+- `status` / `stop` forms; re-running the same list resumes, skipping what already shipped; the checkout is restored to the launch branch on every exit; sessions are never killed
+
+**Structure**:
+
+- All logic in `~/.claude/scripts/fleet-sequence.sh`; `SKILL.md` dispatches and narrates
+- Marker `tmp/fleet-sequence.json`, log `tmp/fleet-sequence.log`; each child session is named `fleet-sequence <ID>` in `claude agents`
+
 ### fleet-forecast
 
 **Description**: Estimate — explicitly not a plan — of what a fleet of parallel `/loop /auto` sessions would ship over a time horizon: simulates the certified backlog draining across N sessions as blockers resolve and unblock their dependents. Read-only; nothing is launched or written.

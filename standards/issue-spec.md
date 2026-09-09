@@ -61,7 +61,7 @@ Wiring a `blocks` edge is a guard, not a reflex: wire one only when the blocked 
 - **Distinguish from `needs decision`:** that one means a human must *decide* something and the issue must not ship until they do. This one means no human is needed at all, only an empty fleet.
 - **Who applies it:** `/auto-prep`'s certification audit (Step 2's solo disposition), or a human who knows an issue will collide with everything else in flight.
 - **Who clears it:** whoever ships it — a scheduling constraint on an open issue dies with the issue. Clear it early (`~/.claude/scripts/linear-remove-label.sh <ID> solo`) only if the blast radius proves narrower than the audit judged.
-- **How to run one:** while no fleet is active, first or last, never mid-fleet. `~/.claude/scripts/next-candidates.sh --label solo` lists the pool; `/auto <ID>` ships one unattended.
+- **How to run one:** while no fleet is active, first or last, never mid-fleet. `~/.claude/scripts/next-candidates.sh --label solo` lists the pool; `/auto <ID>` ships one unattended; `/fleet-sequence <ID> <ID>...` ships several strictly in order as a PR stack, each in its own background session and forked from the previous one's branch.
 - **One workspace-level issue label**, same as `specified`: `linear-cli labels create "solo" -t issue`.
 
 ## The `simple` label

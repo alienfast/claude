@@ -51,6 +51,7 @@ The primary shipping mode: N parallel autonomous sessions draining the certified
 | Prep | `/auto-prep` | Certification honesty audit (the `needs decision` / `solo` / `human` gates), family consolidation, `blocks` edges between file-colliding issues, and a recommended session count — interactive; run it before every launch |
 | Forecast | `/fleet-forecast 12 hours` | Optional dry run of the drain — projected pick order as waves, when Planned burns down into Backlog, what the horizon can't reach, and what is stranded behind blockers the fleet can never ship. Read-only; an estimate, never a plan |
 | Launch | `/fleet-launch 3 10 hours` | Staggered background sessions. Count defaults to prep's persisted recommendation (an explicit count is your quota throttle); the duration winds the fleet down cleanly at the deadline |
+| Sequence | `/fleet-sequence BF-1 BF-2 BF-3` | The targeted, serialized sibling: an explicit issue list shipped strictly one at a time as a PR stack — each in its own background session, forked from the previous issue's branch, its PR targeting that branch; merge bottom-up. The runner for `solo` work and for big issues that must land in order; never mid-fleet |
 | Watch | `/fleet-status` | One screen, any time, read-only: time remaining, per-session shipped/failed ledgers with liveness, in-flight issues, merges cross-checked against git, remaining runway |
 | End early | `/fleet-stop` | Rationing quota or done for the day — ends the timer; in-flight issues finish; nothing is killed |
 | Post-mortem | `/fleet-retro` | Where the capacity went, what the run filed, what to fix before the next launch — its findings feed the next `/auto-prep` |
@@ -185,6 +186,7 @@ In workflow order — seed, certify, fleet, then the per-issue tiers and upkeep:
 | [auto-prep](skills/auto-prep/) | Fleet prep — certification honesty audit (`needs decision` / `solo` / `human`), family consolidation, collision `blocks` edges, recommended session count |
 | [fleet-forecast](skills/fleet-forecast/) | Read-only projection of what a fleet would ship over a horizon — pick order as waves, the Planned→Backlog crossover, stranded candidates |
 | [fleet-launch](skills/fleet-launch/) | Launch N parallel `/loop /auto` background sessions, staggered and deadline-bounded |
+| [fleet-sequence](skills/fleet-sequence/) | Ship an ordered issue list as a PR stack, one background `/auto pr <ID>` session at a time, each forked from the previous branch — the `solo` runner |
 | [fleet-stop](skills/fleet-stop/) | Wind a running fleet down early — in-flight issues finish, no new picks; nothing is killed |
 | [fleet-status](skills/fleet-status/) | Read-only mid-run readout — time remaining, per-session ledgers with liveness, in-flight issues, merges cross-checked against git, runway |
 | [fleet-retro](skills/fleet-retro/) | Post-mortem a finished fleet — capacity metrics, filed-issue audit, state reconciliation; feeds the next prep |
