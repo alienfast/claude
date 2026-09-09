@@ -121,8 +121,7 @@ edits. Whatever partial output the harness recovers is narration, not a filesyst
 evidence its writes landed in the right tree," and a dead delegate's report is weaker still.
 
 So establish the actual state before resuming or re-dispatching: `git status --porcelain` for what changed, and the project's check gate for whether it still builds.
-In `wt` mode also run Step 8 item 1's `wt-baseline.sh diff` — a delegate that died can have written into the main checkout exactly like one that finished. Then route
-on what you find:
+Then route on what you find:
 
 - **Nothing changed** → resume the same agent via `SendMessage`, addressed by the `agentId` from its spawn result (both `/start` and `/quality-review` mandate
   *unnamed* dispatch, so there is no name to address). Its context is intact, and re-dispatching would re-buy the reading it already paid for.

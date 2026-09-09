@@ -28,8 +28,8 @@
 # cycle already completed; or (b) a NEW user-typed macro command (<command-name>/start|/full</command-name>)
 # that supersedes the tracked /full — this also covers a crashed, tagless /full with no close tag to key
 # off. A /start-TERMINAL tag (BLOCKED-ON-REVIEW, CANCELED, ABANDONED, SKIPPED-BLOCKED, INTERACTIVE-READY)
-# must NEVER close the window: a recoverable stop (a contamination false-alarm, a blocker the user overrides
-# with "continue") leaves that tag as a historical line once the run resumes while the /full is still in
+# must NEVER close the window: a recoverable stop (a blocker the user overrides with "continue", a blocked
+# delegate write the user clears) leaves that tag as a historical line once the run resumes while the /full is still in
 # flight — treat it as a close and `pending` wrongly goes false, so the poll bails in one read and the later
 # READY handoff is missed (the tell: stop-hook durations collapsing from ~1.6s to <100ms mid-session). This
 # is the BF-391 regression. Skill-tool /start dispatches (what /full and /auto emit internally) are NOT user

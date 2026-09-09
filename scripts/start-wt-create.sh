@@ -257,7 +257,7 @@ if [ -z "$baseline_sha" ]; then
 fi
 
 # The single most consequential path in the worktree family: it is stamped into the identity, printed as
-# WT_ABS, and inherited by every consumer (wt-baseline, start-wt-verify, /finish). A shell `pwd` here yields
+# WT_ABS, and inherited by every consumer (start-wt-verify, /finish). A shell `pwd` here yields
 # the MSYS form, which git.exe and pnpm reject on a path containing a `~` segment — silently, one layer down.
 wt_abs=$(wt_path_canon "$wt_dir") || { echo "ERROR: could not canonicalize worktree path '$wt_dir'." >&2; exit 1; }
 

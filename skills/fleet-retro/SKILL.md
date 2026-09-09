@@ -58,9 +58,8 @@ basefund run, begun ~10 minutes before the last session closed out: the missing-
 un-armed-loop findings were both artifacts, and that session wrote a correct `halted` status with an
 accurate `reason` while the report was still being drafted.
 
-The event-based flags are real either way — classifier blocks, contamination halts, ran without a
-surviving ledger, shipped with no persisted verdict, off-schema verdict body. Only the bookkeeping ones
-need this gate.
+The event-based flags are real either way — classifier blocks, ran without a surviving ledger, shipped
+with no persisted verdict, off-schema verdict body. Only the bookkeeping ones need this gate.
 
 **`wound down but never finalized its ledger` is a bookkeeping flag that is also real either way** — it
 fires only on a terminal tag or a stop-wakeup, which is exactly what a live session lacks, so its own
@@ -244,7 +243,6 @@ The script finds *shapes*; it does not explain them. Each flag is a lead:
 | a stall far outlasting its own stated reset | the cutoff killed the turn **mid-iteration**, before any wakeup was armed — so nothing was pending to wake it and the session is dead until a human prompts it. **No hook can catch this**: a turn killed by an API error fires no Stop hook at all (verified — no `stop_hook_summary` follows the limit message), so `auto-heartbeat.sh` is structurally unable to see it | compare each stalled session's resume against the reset named in its limit message. A session with a wakeup pending resumes 1–8 min after reset; one without does not resume at all. On 2026-08-14 that split 1-recovered / 2-dead within one cutoff — 4.85 avoidable session-hours. The mitigation is `scripts/auto-stall-watch.sh` (launchd agent `com.alienfast.auto-stall-watch`, installed by `update.sh`) — detection only, since a live background agent accepts no scripted prompt, so recovery is the operator running `claude attach <id>`. If a stall outlived it silently, read `~/.claude/logs/auto-stall-watch.log` for whether the watcher flagged it and whether anyone acted |
 | shipped without recording it | Step 4 never ran; the run's own tally undercounts | compare against `git log` and Linear state |
 | classifier blocks | a permission-shaped stall; check whether the agent rerouted or silently dropped the step | the subagent transcript — read what it did *next* |
-| contamination halts | the graduated contamination response (`/start` Step 8 item 1) hard-stopped an issue — each is either a real mis-bound delegate or a false positive the graduation failed to absorb | adjudicate every halt **true/false positive** — flagged paths vs the delegation's scope and footprint, via the issue's contamination comment and the transcript — and read the benign-continue note comments on issues alongside; the false-positive rate is the number that decides whether further relaxation is justified |
 | dangling tool calls | unanswered prompt or killed turn | the tail of that transcript |
 | high blind-sleep % | agents waiting on background dispatch | correlate with the `bg/sync/ign` column — and read `sync` as what the model *typed*, never as how dispatches ran: a non-zero `ign` means the harness lacked `run_in_background`, every dispatch backgrounded regardless, and neither a low `sync` count (no discipline failure) nor a high one (no proof of discipline) says anything about behavior |
 | shipped but no commit | the ledger is wrong, or the merge never landed | `git log --all --grep=<ID>`, `/merge-queue` |

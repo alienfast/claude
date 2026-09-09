@@ -30,8 +30,8 @@
 # Label-gated strands are invisible to the deps graph (it carries no labels), so this script does
 # its own one-query fetch (states + labels + relations).
 #
-# WHY A SCRIPT: the same silent-empty hazard as wt-baseline.sh — a mistranscribed inline filter
-# prints nothing at exit 0, which reads as "nothing blocks the fleet". The summary/verdict lines
+# WHY A SCRIPT: the silent-empty hazard — a mistranscribed inline filter prints nothing at exit 0,
+# which reads as "nothing blocks the fleet". The summary/verdict lines
 # make an empty result distinguishable from a broken run; the regression suite pins the
 # classification.
 #

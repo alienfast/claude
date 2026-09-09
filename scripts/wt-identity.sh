@@ -225,7 +225,7 @@ _wtid_main_root() {
   # a path that cannot exist. `_wtid_main_root` then returned 1 and the repo-level identity sidecar was never
   # written — silently, because that tier is best-effort. Measured 2026-09-05: every stamp on Windows landed
   # in git config alone, leaving /finish's hijack detection with a single tier that a config wipe erases.
-  # The same flag is already the convention in start-wt-setup.sh and wt-baseline.sh.
+  # The same flag is already the convention in start-wt-setup.sh.
   cdir=$(git -C "$wt_dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
   [ -z "$cdir" ] && return 1
   wt_path_canon "$cdir/.." || return 1

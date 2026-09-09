@@ -15,10 +15,10 @@
 # form failed with `ENOENT: lstat 'C:\c\Users'` — the drive letter prepended to an unconverted MSYS path.
 #
 # The consequence that made this worth centralizing: `start-wt-create.sh` derived WT_ABS with `cd && pwd`
-# (MSYS form) and every downstream consumer inherited it, so `wt-baseline.sh`'s `git -C "$WT_ABS"` failed and
-# the session-start dirty baseline was never captured — silently disarming the main-checkout contamination
-# check that Step 8 of /start depends on. A safety artifact that fails to exist is worse than one that fails
-# loudly, which is why the fix belongs at the boundary rather than at each call site.
+# (MSYS form) and every downstream consumer inherited it, so every `git -C "$WT_ABS"` in the worktree family
+# failed one layer down — silently, because the callers treated the failure as "nothing to report". A safety
+# artifact that fails to exist is worse than one that fails loudly, which is why the fix belongs at the
+# boundary rather than at each call site.
 #
 # The canonical form is what `cygpath -m` produces (`C:/Users/...`, forward slashes): Windows-native binaries
 # accept it, MSYS never tilde-expands it, `cd`/`[ -d ]` in Git Bash accept it, and it is what git itself
@@ -35,8 +35,8 @@
 if [ -z "${WT_PATH_LIB_LOADED:-}" ]; then
   WT_PATH_LIB_LOADED=1
 
-  # Probed once at source time rather than per call: `command -v` is cheap but these helpers run inside
-  # per-file loops in wt-baseline.sh's dirty map.
+  # Probed once at source time rather than per call: `command -v` is cheap but these helpers can run inside
+  # per-file loops.
   if command -v cygpath >/dev/null 2>&1; then WT_PATH_HAS_CYGPATH=1; else WT_PATH_HAS_CYGPATH=0; fi
 
   # Convert a path STRING to native form. Does not require the path to exist, so it is safe on a path being

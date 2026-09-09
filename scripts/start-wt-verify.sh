@@ -1,38 +1,32 @@
 #!/bin/bash
 # start-wt-verify.sh — verify a /start worktree session before implementation begins.
 #
-# Why this exists: extends the wt-baseline.sh extraction (see that script's header) — skills carry
-# policy, scripts carry machinery. This was /start Step 0 sub-step 3's "merged verification block"
-# (cwd confirm → baseline verify → claim → source-branch probe → pnpm check), previously re-emitted
-# verbatim in skill markdown every session; that transcription was itself a failure mode. This script
-# is the single tested implementation. The skill keeps only the policy: which claim flag to pass, and
-# what each FAILED-* verdict routes to (BLOCKED-ON-REVIEW tags, auto-mode bounds) — see
+# Why this exists: skills carry policy, scripts carry machinery. This was /start Step 0 sub-step 3's
+# "merged verification block" (cwd confirm → claim → source-branch probe → pnpm check), previously
+# re-emitted verbatim in skill markdown every session; that transcription was itself a failure mode.
+# This script is the single tested implementation. The skill keeps only the policy: which claim flag to
+# pass, and what each FAILED-* verdict routes to (BLOCKED-ON-REVIEW tags, auto-mode bounds) — see
 # skills/start/SKILL.md Step 0 sub-step 3.
 #
 # Usage:
-#   start-wt-verify.sh <wt-abs-path> <ISSUE-ID> (--claim|--no-claim) [--baseline-file <path>]
+#   start-wt-verify.sh <wt-abs-path> <ISSUE-ID> (--claim|--no-claim)
 #
 # --claim|--no-claim is REQUIRED, no default — it carries the orchestrator's Step 3 availability
 # decision (claim now vs. idempotent resumption already claimed by me). This script never guesses it;
 # a missing flag is a usage error.
-# --baseline-file <path>: when given with a non-empty path, verified with `[ -r ]` — a zero-byte file
-# is the CORRECT capture result for a clean main checkout, so readability is the test, not size. When
-# omitted (or given empty), this script re-captures via the sibling wt-baseline.sh and requires its
-# CAPTURED verdict.
 #
 # stdout contract — the FIRST line of stdout is the verdict; orchestrators branch on it:
 #   VERIFIED                            exit 0
 #   FAILED-USAGE: <reason>              exit 1   (stage 1: bad args)
 #   FAILED-CWD: <reason>                exit 1   (stage 2: cwd confirm)
-#   FAILED-BASELINE: <reason>           exit 1   (stage 3: baseline verify/re-capture)
-#   FAILED-CLAIM: <reason>              exit 1   (stage 4: linear-cli claim)
-#   FAILED-SOURCE-BRANCH: <reason>      exit 1   (stage 5: source-branch probe)
-#   FAILED-CHECK: <reason>              exit 1   (stage 6: pnpm check)
+#   FAILED-CLAIM: <reason>              exit 1   (stage 3: linear-cli claim)
+#   FAILED-SOURCE-BRANCH: <reason>      exit 1   (stage 4: source-branch probe)
+#   FAILED-CHECK: <reason>              exit 1   (stage 5: pnpm check)
 #
 # Everything else — stage markers (`== ... ==`, so a mid-stage failure is attributable in logs), the
 # `SOURCE_BRANCH=<value>` diagnostic, and ALL `pnpm check` output — goes to stderr. The FAILED-* line
-# mirrors to stderr too (like wt-baseline.sh's fail()). Routing each FAILED-* verdict to a
-# BLOCKED-ON-REVIEW tag (and any auto-mode bound) is skill policy, not this script's concern.
+# mirrors to stderr too. Routing each FAILED-* verdict to a BLOCKED-ON-REVIEW tag (and any auto-mode
+# bound) is skill policy, not this script's concern.
 
 set -uo pipefail
 
@@ -54,14 +48,13 @@ usage() {
 # shellcheck source=/dev/null
 . "$(dirname "$0")/wt-path.sh"
 
-[ $# -ge 3 ] || usage "usage: start-wt-verify.sh <wt-abs-path> <ISSUE-ID> (--claim|--no-claim) [--baseline-file <path>]"
+[ $# -ge 3 ] || usage "usage: start-wt-verify.sh <wt-abs-path> <ISSUE-ID> (--claim|--no-claim)"
 
 wt_arg=$1
 issue_arg=$2
 shift 2
 
 claim_flag=""
-baseline_file=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --claim)
@@ -73,11 +66,6 @@ while [ $# -gt 0 ]; do
       [ -z "$claim_flag" ] || usage "--claim/--no-claim given more than once"
       claim_flag="no-claim"
       shift
-      ;;
-    --baseline-file)
-      [ $# -ge 2 ] || usage "--baseline-file requires a value"
-      baseline_file=$2
-      shift 2
       ;;
     *)
       usage "unknown argument '$1'"
@@ -107,19 +95,6 @@ echo "== cwd confirm ==" >&2
 # Both sides through the same helper: cwd via `pwd -P` alone is the MSYS form while WT_ABS is native, and a
 # raw comparison of the two spellings of one directory would report a registration failure that never happened.
 [ "$(wt_path_canon .)" = "$WT_ABS" ] || fail "FAILED-CWD: cwd is not the worktree — EnterWorktree registration did not take"
-
-echo "== baseline verify ==" >&2
-if [ -n "$baseline_file" ]; then
-  [ -r "$baseline_file" ] || fail "FAILED-BASELINE: baseline file '$baseline_file' missing/unreadable"
-else
-  if ! capture_out=$("$SCRIPT_DIR/wt-baseline.sh" capture "$WT_ABS" "$issue_lower"); then
-    fail "FAILED-BASELINE: baseline re-capture failed"
-  fi
-  case "$capture_out" in
-    CAPTURED\ *) ;;
-    *) fail "FAILED-BASELINE: baseline re-capture returned unexpected output" ;;
-  esac
-fi
 
 if [ "$claim_flag" = "claim" ]; then
   echo "== claim ==" >&2

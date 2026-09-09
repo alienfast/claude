@@ -21,28 +21,23 @@
 #      Detects branch-already-checked-out-elsewhere and refuses with a clear error.
 #   6. Records the source branch in per-worktree git config so /finish can locate
 #      it (`git config --worktree start.source-branch`), plus the identity above.
-#   7. Captures the session-start dirty baseline of the MAIN checkout via
-#      wt-baseline.sh (the contamination-detection anchor /start Step 8 diffs
-#      against). Best-effort here: on failure BASELINE_FILE= is emitted empty
-#      and Step 0 sub-step 3's start-wt-verify.sh call re-captures or stops (fail closed).
-#   8. Pre-fetches the issue digest via linear-context.sh and saves it into
+#   7. Pre-fetches the issue digest via linear-context.sh and saves it into
 #      the worktree's tmp/ — so the in-worktree subagent's Step 1 can read
 #      it directly instead of round-tripping back to Linear.
-#   9. Emits plain key=value lines on stdout for human/model consumption:
+#   8. Emits plain key=value lines on stdout for human/model consumption:
 #        WT_ABS=<absolute worktree path>
 #        BRANCH=<branch name>
 #        SOURCE_BRANCH=<source branch>
 #        ISSUE_ID=<uppercased issue id>
 #        STATE=<issue state name, e.g. Planned>
 #        ASSIGNEE=<assignee email, or empty if unassigned>
-#        BASELINE_FILE=<absolute path to captured dirty baseline, or empty if capture failed>
 #        DIGEST_FILE=<absolute path to cached digest, or empty if pre-fetch failed>
 #
 #      The caller (skill markdown) reads these from the tool output and
 #      substitutes them into the next step's Agent prompt. The values are
 #      NOT shell-escaped — do not pipe to `eval`. The "safe to substitute into
 #      double-quoted bash strings" claim applies only to WT_ABS, BRANCH,
-#      SOURCE_BRANCH, ISSUE_ID, BASELINE_FILE, DIGEST_FILE, BASELINE_SHA,
+#      SOURCE_BRANCH, ISSUE_ID, DIGEST_FILE, BASELINE_SHA,
 #      OWNER_SESSION, and IDENTITY_SIDECAR (no characters that require escaping
 #      appear in paths, branch names, or issue IDs in practice). STATE and
 #      ASSIGNEE are Linear-user-definable free text — a state name or email can
@@ -272,29 +267,6 @@ if [ "${CREATED_WT:-0}" = "1" ]; then
   done
 fi
 
-# Capture the session-start dirty baseline of the main checkout (wt-baseline.sh capture — the
-# contamination anchor /start Step 8 diffs against). Runs every invocation, including worktree reuse
-# on resumption, so the baseline is always fresh for THIS session (never reused across sessions).
-# Captured this early — before the digest fetch and warm install — so it predates any delegation by
-# the widest possible margin. Best-effort: a failure emits BASELINE_FILE= empty and Step 0 sub-step 3's
-# start-wt-verify.sh call re-captures or stops fail-closed; it must never tear down the created worktree.
-# Parse the script's own `CAPTURED <path>` stdout line rather than string-building the same path —
-# string-building could silently drift from whatever path the script actually wrote. The command
-# substitution captures only stdout; the script's stderr (MAIN_CHECKOUT=, dirty_paths=, and any
-# overwrite WARN) is left unredirected here, so it flows straight through to this script's own stderr.
-if capture_out=$("$SCRIPT_DIR/wt-baseline.sh" capture "$wt_abs" "$issue_lower"); then
-  baseline_file="${capture_out#CAPTURED }"
-  if [ -z "$baseline_file" ] || [ "$baseline_file" = "$capture_out" ]; then
-    warn_msg="WARN: baseline capture output malformed (no CAPTURED line); treating as failed. "
-    warn_msg+="The in-session verify script must re-capture before any delegation."
-    echo "$warn_msg" >&2
-    baseline_file=""
-  fi
-else
-  echo "WARN: baseline capture failed; the in-session verify script must re-capture before any delegation." >&2
-  baseline_file=""
-fi
-
 # Pre-fetch the digest into the worktree's tmp/ for the subagent's Step 1.
 mkdir -p "$wt_abs/tmp"
 digest_file="$wt_abs/tmp/linear-context-${issue_lower}.md"
@@ -349,7 +321,6 @@ printf 'SOURCE_BRANCH=%s\n' "$source_branch"
 printf 'ISSUE_ID=%s\n' "$issue_id"
 printf 'STATE=%s\n' "$issue_state"
 printf 'ASSIGNEE=%s\n' "$issue_assignee"
-printf 'BASELINE_FILE=%s\n' "$baseline_file"
 printf 'DIGEST_FILE=%s\n' "$digest_file"
 # Identity stamped by start-wt-create.sh (observability; /finish reads the sidecar, not these).
 printf 'BASELINE_SHA=%s\n' "$baseline_sha"

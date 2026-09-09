@@ -3,8 +3,8 @@
 # sourcing only exposes the function) and replays synthetic transcripts, asserting the fire/pending/
 # finishargs decision for the failure modes the window-boundary logic must get right.
 #
-# The load-bearing case is BF-391: a mid-run, recovered-from /start-terminal tag (BLOCKED-ON-REVIEW,
-# MAIN-CHECKOUT-CONTAMINATION) must NOT close the /full window — treating it as a close is what silently
+# The load-bearing case is BF-391: a mid-run, recovered-from /start-terminal tag (a BLOCKED-ON-REVIEW the
+# user answered with "continue") must NOT close the /full window — treating it as a close is what silently
 # disabled the handoff for the rest of that session. Run this after ANY change to decide().
 #
 # GROW THIS SUITE, NEVER PRUNE IT. This hook has failed in a NEW way repeatedly (READY-as-summary across
@@ -122,9 +122,9 @@ check happy.jsonl .fire true fire
 
 # 2. BF-391: /full -> mid-run BLOCKED-ON-REVIEW (recovered by the user) -> READY. Must still fire.
 { ucmd /full "wt BF-391"
-  atext "Isolation check flagged a source change.
-BLOCKED-ON-REVIEW: BF-391 — MAIN-CHECKOUT-CONTAMINATION: .claude/agents.sh vanished; manual verification required."
-  utext "main is clean, continue"
+  atext "The developer delegate reported its writes were blocked.
+BLOCKED-ON-REVIEW: BF-391 — delegate writes blocked by the worktree isolation guard; manual investigation required."
+  utext "guard cleared, continue"
   atext "Completion Summary.
 READY-FOR-FINISH: BF-391 — consolidated verification, review passed. Run /finish BF-391 merge"; } > "$TMP/bf391.jsonl"
 check bf391.jsonl .fire true fire

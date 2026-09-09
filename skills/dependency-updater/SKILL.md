@@ -133,9 +133,9 @@ worktree. If the user picks in-place, offer only `pr`. Do not silently downgrade
    skips the stamp and the lock, which is the corruption the locked create exists to prevent.
 2. `EnterWorktree(path=<WT_DIR>)` so this session's edits land in the worktree.
 3. `~/.claude/scripts/start-wt-verify.sh <WT_ABS> <ISSUE-ID> --claim` — the same script `/start` Step 0
-   sub-step 3 runs, and **the step that actually claims the issue**: cwd confirm → baseline verify →
-   claim (assignee *and* In Progress in one `linear-cli issues update`) → source-branch probe → baseline
-   `pnpm check`. `--claim` is required and has no default.
+   sub-step 3 runs, and **the step that actually claims the issue**: cwd confirm → claim (assignee *and*
+   In Progress in one `linear-cli issues update`) → source-branch probe → baseline `pnpm check`. `--claim`
+   is required and has no default.
 
    Branch on the first line of stdout: `VERIFIED` continues; any `FAILED-*` stops the run and is
    reported verbatim. `FAILED-CHECK` matters most here — it means the tree was **already red before any
