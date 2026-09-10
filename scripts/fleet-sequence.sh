@@ -384,6 +384,22 @@ cmd_launch() {
   current=$(git -C "$main_checkout" branch --show-current 2>/dev/null || true)
   [ -n "$current" ] || { echo "ERROR: HEAD is detached — check out the branch the stack's first PR should target, then re-run" >&2; exit 1; }
 
+  # The first PR's base is the launch branch, and `gh pr create --base` needs it on origin — an unpushed
+  # launch branch would spend the whole first session and then fail at its PR. Launching off the default
+  # branch is legitimate (the stack sits on top of unmerged work and reaches the default branch when that
+  # work's own PR merges), so it is a note, not a refusal.
+  if git -C "$main_checkout" remote get-url origin >/dev/null 2>&1; then
+    if ! git -C "$main_checkout" ls-remote --exit-code --heads origin "$current" >/dev/null 2>&1; then
+      echo "ERROR: '$current' does not exist on origin — the first PR's base must be a remote branch. Push it (git push -u origin $current), or launch from the default branch." >&2
+      exit 1
+    fi
+    local default_branch
+    default_branch=$(git -C "$main_checkout" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || true)
+    if [ -n "$default_branch" ] && [ "$default_branch" != "$current" ]; then
+      echo "NOTE: launching from '$current', not '$default_branch' — the first PR targets $current and the stack reaches $default_branch only when $current's own PR merges (GitHub retargets on merge). $current's changes are in every PR's history and in no PR's diff." >&2
+    fi
+  fi
+
   # Re-running a list resumes it: issues the previous marker recorded as shipped on this same base keep
   # their branch and PR and are skipped, so the next one forks from the last shipped branch.
   existing_issues='{}'

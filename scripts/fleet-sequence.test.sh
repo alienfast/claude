@@ -258,6 +258,31 @@ ck_has "flag passthrough"       "--model fable --effort high" "$WORK/dispatches"
 ck_lacks "no default model"     "opus[1m]" "$WORK/dispatches"
 ck_has "default autocompact still added" "--autocompact 500000" "$WORK/dispatches"
 
+# ---- launching from a branch: it must be on origin; the stack then sits on top of it ----
+reset
+REMOTE="$WORK/remote.git"; git init -q --bare "$REMOTE"
+git -C "$REPO" remote add origin "$REMOTE"
+git -C "$REPO" push -q -u origin main
+git -C "$REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+git -C "$REPO" checkout -q -b feature
+git -C "$REPO" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "feature: unmerged work"
+ck "unpushed launch branch exits 1" "1" "$(run BF-1 BF-2)"
+ck_has "explains the remote base"  "'feature' does not exist on origin" "$WORK/out"
+ck "unpushed dispatched nothing"   "0" "$(dispatches)"
+git -C "$REPO" push -q -u origin feature
+ck "pushed launch branch exits 0"  "0" "$(run BF-1 BF-2)"
+ck_has "notes the non-default base" "NOTE: launching from 'feature', not 'main'" "$WORK/out"
+ck "first forks from feature"      "BF-1 head=feature src=feature" "$(sed -n 1p "$WORK/forks")"
+ck "first PR targets feature"      "feature" "$(marker '.issues["BF-1"].pr_base')"
+ck "second PR targets the first"   "wt-bf-1" "$(marker '.issues["BF-2"].pr_base')"
+ck "feature's commit is in the stack" "1" "$(git -C "$REPO" rev-list --count main..feature)"
+ck "restored to feature"           "feature" "$(git -C "$REPO" branch --show-current)"
+git -C "$REPO" checkout -q main
+git -C "$REPO" push -q -u origin main
+ck "default branch launch has no note" "0" "$(run BF-3)"
+ck_lacks "no note on the default branch" "NOTE: launching from" "$WORK/out"
+git -C "$REPO" remote remove origin
+
 # ---- status / stop with no marker ----
 reset
 ck "status without marker"      "0" "$(run status)"
