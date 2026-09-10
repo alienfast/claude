@@ -212,8 +212,9 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 **Key Features**:
 
 - One detached runner walks the list: dispatch `/auto pr <ID>`, wait for the session registry to list the session as done, read its `tmp/auto-state-<id>.json` outcome, continue only on `shipped` with an open PR for the issue's worktree branch; anything else stops the sequence with the remaining issues untouched
-- Between issues it detaches the main checkout's HEAD at the previous issue's branch and sets `start.wt-source-branch`, so `/start wt` forks from there and `/finish pr` targets it — the stack unwinds bottom-up as GitHub retargets each PR when its base merges (merge commits only; never squash)
-- `status` / `stop` forms; re-running the same list resumes, skipping what already shipped; the checkout is restored to the launch branch on every exit; sessions are never killed
+- Between issues it detaches the main checkout's HEAD at the previous issue's branch and sets `start.wt-source-branch`, so `/start wt` forks from there and `/finish pr` targets it; each PR is then linked into a GitHub stack through the stacks REST API (created at the second PR, extended per PR, an existing stack adopted), so merging the top PR merges the lot
+- The wait ends on the session's ledger outcome, not the registry — a session can sit busy for hours after shipping; a stale ledger from an earlier run is ignored by mtime
+- `status` / `stop` / `link` forms; re-running the same list resumes, skipping what already shipped; the checkout is restored to the launch branch on every exit; sessions are never killed
 
 **Structure**:
 

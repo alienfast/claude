@@ -49,6 +49,7 @@ last=""; name=""; prev=""; for a in "\$@"; do last="\$a"; [ "\$prev" = "-n" ] &&
 state=done
 id="\${last#/auto pr }"
 outcome=\$(cat "$WORK/outcome-\$id" 2>/dev/null || echo shipped)
+[ "\$outcome" = "busy" ] && state=running
 head=\$(git -C "$REPO" branch --show-current)
 src=\$(git -C "$REPO" config --get start.wt-source-branch 2>/dev/null || true); [ -n "\$src" ] || src="\$head"
 echo "\$id head=\$head src=\$src" >> "$WORK/forks"
@@ -56,13 +57,13 @@ case "\$outcome" in
   none) ;;
   hang) state=running ;;
   *)
-    list="\$outcome"; case "\$outcome" in nopr|nocommit) list=shipped ;; esac
+    list="\$outcome"; case "\$outcome" in nopr|nocommit|busy) list=shipped ;; esac
     jq -n --arg id "\$id" --arg o "\$list" '{mode:"single",status:"active",shipped:[],canceled:[],skipped:[],failed:[]} | .[\$o] += [\$id]' > "$REPO/tmp/auto-state-\$sid.json"
     if [ "\$list" = "shipped" ]; then
       lower=\$(printf '%s' "\$id" | tr '[:upper:]' '[:lower:]')
       git -C "$REPO" worktree add -q "$REPO/.claude/worktrees/\$lower" -b "wt-\$lower" HEAD
       [ "\$outcome" = "nocommit" ] || git -C "$REPO/.claude/worktrees/\$lower" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "\$id: work"
-      [ "\$outcome" = "nopr" ] || printf '[{"url":"https://github.com/x/y/pull/%s","baseRefName":"%s"}]\n' "\$n" "\$src" > "$WORK/pr-wt-\$lower.json"
+      [ "\$outcome" = "nopr" ] || printf '[{"url":"https://github.com/x/y/pull/%s","baseRefName":"%s","number":%s}]\n' "\$n" "\$src" "\$n" > "$WORK/pr-wt-\$lower.json"
     fi
     ;;
 esac
@@ -79,9 +80,40 @@ if [ -f "$WORK/issue-\$id.json" ]; then cat "$WORK/issue-\$id.json"; else echo '
 STUB_LINEAR
 cat > "$BIN/gh" <<STUB_GH
 #!/usr/bin/env bash
-head=""; prev=""; for a in "\$@"; do [ "\$prev" = "--head" ] && head="\$a"; prev="\$a"; done
-f="$WORK/pr-\${head//\//_}.json"
-if [ -f "\$f" ]; then cat "\$f"; else echo '[]'; fi
+# "gh pr list --head X" answers from \$WORK/pr-X.json; "gh api" plays GitHub's stack endpoints against
+# \$WORK/stack-<n>.json (create -> #1; \$WORK/stack-fail makes create return 422; \$WORK/stacks-list.json
+# is the pull_request= lookup's answer) and records every call in \$WORK/api-calls.
+if [ "\${1:-}" = "pr" ]; then
+  head=""; prev=""; for a in "\$@"; do [ "\$prev" = "--head" ] && head="\$a"; prev="\$a"; done
+  f="$WORK/pr-\${head//\//_}.json"
+  if [ -f "\$f" ]; then cat "\$f"; else echo '[]'; fi
+  exit 0
+fi
+[ "\${1:-}" = "api" ] || { echo "stub gh: unsupported \$*" >&2; exit 1; }
+method=GET; path=""; body=""; prev=""; input=0
+for a in "\$@"; do
+  [ "\$prev" = "--method" ] && method="\$a"
+  [ "\$a" = "--input" ] && input=1
+  case "\$a" in repos/*) path="\$a" ;; esac
+  prev="\$a"
+done
+[ "\$input" = 1 ] && body=\$(cat)
+echo "\$method \$path \$body" >> "$WORK/api-calls"
+case "\$method \$path" in
+  "GET repos/{owner}/{repo}/stacks?pull_request="*) cat "$WORK/stacks-list.json" 2>/dev/null || echo '[]' ;;
+  "POST repos/{owner}/{repo}/stacks")
+    [ -f "$WORK/stack-fail" ] && { echo "HTTP 422: Validation Failed (stub)"; exit 1; }
+    printf '%s' "\$body" | jq '{number: 1, url: "https://api.github.com/repos/x/y/stacks/1", pull_requests: [.pull_requests[] | {number: .}]}' > "$WORK/stack-1.json"
+    cat "$WORK/stack-1.json" ;;
+  "GET repos/{owner}/{repo}/stacks/"*)
+    n="\${path##*/}"; cat "$WORK/stack-\$n.json" 2>/dev/null || { echo "HTTP 404 (stub)"; exit 1; } ;;
+  "POST repos/{owner}/{repo}/stacks/"*/add)
+    n="\${path%/add}"; n="\${n##*/}"
+    add=\$(printf '%s' "\$body" | jq -c '.pull_requests')
+    jq --argjson add "\$add" '.pull_requests += (\$add | map({number: .}))' "$WORK/stack-\$n.json" > "$WORK/stack-\$n.tmp" && mv "$WORK/stack-\$n.tmp" "$WORK/stack-\$n.json"
+    cat "$WORK/stack-\$n.json" ;;
+  *) echo "stub gh api: unsupported \$method \$path" >&2; exit 1 ;;
+esac
 STUB_GH
 chmod +x "$BIN"/*
 export PATH="$BIN:$PATH"
@@ -92,7 +124,8 @@ marker() { jq -r "$1" "$REPO/tmp/fleet-sequence.json"; }
 dispatches() { grep -c -- '/auto pr ' "$WORK/dispatches" 2>/dev/null || true; }
 src_cfg() { git -C "$REPO" config --get start.wt-source-branch 2>/dev/null || echo "(unset)"; }
 reset() {
-  rm -f "$WORK/dispatches" "$WORK/forks" "$WORK/seq" "$WORK"/outcome-* "$WORK"/hook-* "$WORK"/issue-* "$WORK"/pr-*
+  rm -f "$WORK/dispatches" "$WORK/forks" "$WORK/seq" "$WORK/api-calls" "$WORK/stack-fail" "$WORK/stacks-list.json" \
+        "$WORK"/outcome-* "$WORK"/hook-* "$WORK"/issue-* "$WORK"/pr-* "$WORK"/stack-*.json
   echo '[]' > "$WORK/agents.json"
   rm -rf "$REPO/tmp" "$REPO/.claude"; mkdir -p "$REPO/tmp"
   git -C "$REPO" worktree prune
@@ -168,7 +201,14 @@ ck "checkout restored to main"  "main" "$(git -C "$REPO" branch --show-current)"
 ck "source config unset"        "(unset)" "$(src_cfg)"
 ck "stack is linear in git"     "3" "$(git -C "$REPO" rev-list --count main..wt-bf-3)"
 ck "worktrees preserved"        "3" "$(git -C "$REPO" worktree list | grep -c 'worktrees/bf-')"
-ck_has "done logged with the stack" "done: BF-1, BF-2, BF-3 stacked on main — merge bottom-up: BF-1 https://github.com/x/y/pull/1  →  BF-2 https://github.com/x/y/pull/2  →  BF-3 https://github.com/x/y/pull/3" "$WORK/out"
+ck "PR numbers recorded"        "1 2 3" "$(marker '[.queue[] as $id | .issues[$id].pr_number] | join(" ")')"
+ck_has "stack created at the second PR" "POST repos/{owner}/{repo}/stacks {\"pull_requests\":[1,2]}" "$WORK/api-calls"
+ck_has "stack extended with the third" "POST repos/{owner}/{repo}/stacks/1/add {\"pull_requests\":[3]}" "$WORK/api-calls"
+ck "stack holds all three in order" "1 2 3" "$(jq -r '[.pull_requests[].number] | join(" ")' "$WORK/stack-1.json")"
+ck "stack number recorded"      "1" "$(marker .stack_number)"
+ck_has "first PR waits for a second" "GitHub stack: created once the second PR exists" "$WORK/out"
+ck_has "done names the stack"   "GitHub stack #1 — merging the top PR merges the whole stack" "$WORK/out"
+ck_has "done logged with the stack" "done: BF-1, BF-2, BF-3 stacked on main — GitHub stack #1 — merging the top PR merges the whole stack. Bottom → top: BF-1 https://github.com/x/y/pull/1  →  BF-2 https://github.com/x/y/pull/2  →  BF-3 https://github.com/x/y/pull/3" "$WORK/out"
 ck_lacks "no integrity warning" "WARN" "$WORK/out"
 ck "status exits 0"             "0" "$(run status)"
 ck_has "status shows the row"   "| BF-2 | ab000002 | done | shipped | wt-bf-2 | https://github.com/x/y/pull/2 |" "$WORK/out"
@@ -257,6 +297,61 @@ ck "flags exit 0"               "0" "$(run BF-1 -- --model fable --effort high)"
 ck_has "flag passthrough"       "--model fable --effort high" "$WORK/dispatches"
 ck_lacks "no default model"     "opus[1m]" "$WORK/dispatches"
 ck_has "default autocompact still added" "--autocompact 500000" "$WORK/dispatches"
+
+# ---- the ledger ends the wait, not the registry: a session that stays busy after shipping still advances the stack ----
+# 2026-09-10: BF-1832's session sat busy for 7h after its ledger said shipped; a registry-only wait burned the
+# 6h timeout and BF-1839 never dispatched.
+reset
+echo busy > "$WORK/outcome-BF-1"
+export FLEET_SEQUENCE_ISSUE_TIMEOUT=1
+ck "busy session exits 0"       "0" "$(run BF-1 BF-2)"
+ck "busy session did not block the next" "2" "$(dispatches)"
+ck "busy run finished"          "done" "$(marker .status)"
+ck "busy session still listed running" "running" "$(jq -r '.[] | select(.id=="ab000001") | .state' "$WORK/agents.json")"
+ck_lacks "no timeout on a busy-but-shipped session" "still running after" "$WORK/out"
+export FLEET_SEQUENCE_ISSUE_TIMEOUT=5
+
+# ---- a previous run's ledger naming the same issue is not this session's outcome ----
+reset
+echo none > "$WORK/outcome-BF-1"
+jq -n '{mode:"single",status:"active",shipped:["BF-1"],canceled:[],skipped:[],failed:[]}' > "$REPO/tmp/auto-state-old00001.json"
+touch -t 202001010000 "$REPO/tmp/auto-state-old00001.json"
+ck "stale ledger exits 1"       "1" "$(run BF-1 BF-2)"
+ck_has "stale ledger reads unknown" "BF-1 ended 'unknown'" "$WORK/out"
+
+# ---- a stack that already holds the bottom PR (made in the web UI) is adopted and extended ----
+reset
+printf '[{"number":7,"pull_requests":[{"number":1}]}]\n' > "$WORK/stacks-list.json"
+printf '{"number":7,"url":"https://api.github.com/repos/x/y/stacks/7","pull_requests":[{"number":1}]}\n' > "$WORK/stack-7.json"
+ck "adopt exits 0"              "0" "$(run BF-1 BF-2)"
+ck_has "adoption logged"        "GitHub stack #7 already holds PR #1 — extending it" "$WORK/out"
+ck_has "adopted stack extended" "POST repos/{owner}/{repo}/stacks/7/add {\"pull_requests\":[2]}" "$WORK/api-calls"
+ck_lacks "no second stack created" "POST repos/{owner}/{repo}/stacks {" "$WORK/api-calls"
+ck "adopted number recorded"    "7" "$(marker .stack_number)"
+
+# ---- stack linking failing is a WARN with the manual command, never a failed sequence ----
+reset
+touch "$WORK/stack-fail"
+ck "link failure exits 0"       "0" "$(run BF-1 BF-2)"
+ck "link failure still shipped both" "2" "$(dispatches)"
+ck_has "warns with the manual command" "WARN: could not create the GitHub stack for PRs [1,2] — HTTP 422" "$WORK/out"
+ck_has "manual command given"   "gh api --method POST -H 'X-GitHub-Api-Version: 2026-03-10' 'repos/{owner}/{repo}/stacks' --input -" "$WORK/out"
+ck "no stack number recorded"   "null" "$(marker .stack_number)"
+ck_has "done says no stack"     "no GitHub stack (fewer than two PRs, or linking failed" "$WORK/out"
+
+# ---- `link` stacks a run that shipped without a stack (the 2026-09-10 #492/#494 shape) ----
+reset
+touch "$WORK/stack-fail"
+ck "unlinked run exits 0"       "0" "$(run BF-1 BF-2)"
+ck "no stack yet"               "null" "$(marker .stack_number)"
+rm -f "$WORK/stack-fail"; : > "$WORK/api-calls"
+ck "link exits 0"               "0" "$(run link)"
+ck_has "link created the stack" "POST repos/{owner}/{repo}/stacks {\"pull_requests\":[1,2]}" "$WORK/api-calls"
+ck_has "link reports the stack" "GitHub stack #1 holds #1 → #2" "$WORK/out"
+ck "link recorded the number"   "1" "$(marker .stack_number)"
+ck "link is idempotent"         "0" "$(run link)"
+ck_has "second link changes nothing" "(was already recorded)" "$WORK/out"
+ck "link left the checkout alone" "main" "$(git -C "$REPO" branch --show-current)"
 
 # ---- launching from a branch: it must be on origin; the stack then sits on top of it ----
 reset

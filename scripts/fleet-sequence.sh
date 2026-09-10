@@ -55,7 +55,7 @@
 set -eo pipefail
 
 usage() {
-  echo "usage: fleet-sequence.sh <ISSUE-ID>... [-- <claude flags...>] | fleet-sequence.sh status | stop" >&2
+  echo "usage: fleet-sequence.sh <ISSUE-ID>... [-- <claude flags...>] | fleet-sequence.sh status | stop | link" >&2
   exit 1
 }
 
@@ -102,14 +102,17 @@ registry_alive() { # <short id> — listed and not done
 }
 
 # ---- ledger ----
-ledger_outcome() { # <short id> <ISSUE-ID> → shipped|canceled|skipped|failed|unknown
-  local sid="$1" id="$2" f list
+mtime_of() { stat -f %m "$1" 2>/dev/null || stat -c %m "$1" 2>/dev/null || echo 0; }
+ledger_outcome() { # <short id> <ISSUE-ID> [since epoch] → shipped|canceled|skipped|failed|unknown
+  local sid="$1" id="$2" since="${3:-0}" f list
   f="$main_checkout/tmp/auto-state-$sid.json"
   if [ ! -f "$f" ]; then
     # The ledger key is the session's short id; when it is not (an older harness keying on pid), take the
-    # newest ledger that records this issue at all.
+    # newest ledger that records this issue — written since this dispatch, or a previous run's ledger
+    # naming the same issue would read as this session's outcome before it has done anything.
     f=$(grep -l -- "\"$id\"" "$main_checkout"/tmp/auto-state-*.json 2>/dev/null | xargs ls -t 2>/dev/null | head -1)
     [ -n "$f" ] && [ -f "$f" ] || { echo unknown; return; }
+    [ "$(mtime_of "$f")" -ge "$since" ] || { echo unknown; return; }
   fi
   for list in shipped canceled skipped failed; do
     if jq -e --arg id "$id" ".$list // [] | index(\$id) != null" "$f" >/dev/null 2>&1; then echo "$list"; return; fi
@@ -129,20 +132,23 @@ parse_sid() { # <claude --bg output> → the short id, or ""
   return 0
 }
 
-wait_session() { # <short id> <timeout seconds> <ISSUE-ID> → 0 when the session has ended, 1 on timeout
-  local sid="$1" limit="$2" id="$3" waited=0 seen=0 st rc step
+wait_session() { # <short id> <timeout seconds> <ISSUE-ID> <since epoch> → 0 when the work has ended, 1 on timeout
+  local sid="$1" limit="$2" id="$3" since="$4" waited=0 seen=0 st rc step
   step=$(( poll > 0 ? poll : 1 ))
   while :; do
+    # The ledger is /auto Step 4's LAST act — Linear comment, label, ownership release, then the state
+    # file — so an outcome recorded for this issue means the work is over whatever the registry says.
+    # Measured 2026-09-10: a session sat "busy" in the registry for 7h after its ledger said shipped, and
+    # a registry-only wait burned the whole 6h timeout and failed the sequence with the PR already open.
+    if [ "$(ledger_outcome "$sid" "$id" "$since")" != "unknown" ]; then sleep "$poll"; return 0; fi
     rc=0; st=$(registry_state "$sid") || rc=$?
-    if [ "$rc" -eq 2 ]; then
-      # No registry: the ledger is the only signal, and it is written before the session's last line.
-      [ "$(ledger_outcome "$sid" "$id")" != "unknown" ] && { sleep "$poll"; return 0; }
-    elif [ "$st" = "done" ]; then
-      return 0
-    elif [ -n "$st" ]; then
-      seen=1
-    elif [ "$seen" -eq 1 ] || [ "$waited" -ge "$grace" ]; then
-      return 0
+    if [ "$rc" -ne 2 ]; then
+      # A session that ends without a ledger (crashed, refused) still ends: registry done, or absent
+      # after it was seen (or after the grace when it was never seen).
+      if [ "$st" = "done" ]; then return 0
+      elif [ -n "$st" ]; then seen=1
+      elif [ "$seen" -eq 1 ] || [ "$waited" -ge "$grace" ]; then return 0
+      fi
     fi
     [ "$waited" -ge "$limit" ] && return 1
     sleep "$poll"; waited=$((waited + step))
@@ -159,15 +165,63 @@ restore_checkout() { # back on the launch branch, config unset — best-effort, 
   git -C "$main_checkout" checkout -q "$base" >/dev/null 2>&1 || logln "WARN: could not put the main checkout back on $base — do it by hand (git checkout $base)"
 }
 
-open_pr_for() { # <branch> → prints "<url>\t<base>" or nothing
-  gh pr list --head "$1" --state open --json url,baseRefName 2>/dev/null \
-    | jq -r 'if type == "array" and length > 0 then "\(.[0].url)\t\(.[0].baseRefName)" else empty end' 2>/dev/null || true
+open_pr_for() { # <branch> → prints "<url>\t<base>\t<number>" or nothing
+  gh pr list --head "$1" --state open --json url,baseRefName,number 2>/dev/null \
+    | jq -r 'if type == "array" and length > 0 then "\(.[0].url)\t\(.[0].baseRefName)\t\(.[0].number)" else empty end' 2>/dev/null || true
+}
+
+# ---- the GitHub stack ----
+# GitHub's stacked pull requests (public preview, API version 2026-03-10): a stack is an ordered list of
+# PR numbers, bottom to top, each PR's base equal to the previous PR's head — exactly the chain the
+# runner builds — created once two PRs exist and extended by one each time another opens. Linking never
+# fails the sequence: the ships are the expensive part, and a stack can be created by hand afterwards.
+gh_stack_api() { gh api -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2026-03-10' "$@"; }
+shipped_pr_numbers() { # → JSON array of the shipped issues' PR numbers in queue order
+  jq -c '[ .queue[] as $q | .issues[$q] | select(.outcome == "shipped")
+           | (.pr_number // ((.pr_url // "") | split("/") | last | tonumber? )) | select(. != null) ]' "$marker"
+}
+link_stack() {
+  local prs count stack_number first existing out in_stack new
+  prs=$(shipped_pr_numbers); count=$(printf '%s' "$prs" | jq 'length')
+  stack_number=$(jq -r '.stack_number // empty' "$marker")
+  if [ -z "$stack_number" ]; then
+    first=$(printf '%s' "$prs" | jq -r '.[0] // empty')
+    [ -n "$first" ] || return 0
+    # Adopt a stack that already holds the bottom PR — one created in the web UI, or by a previous run
+    # whose marker was rewritten.
+    existing=$(gh_stack_api "repos/{owner}/{repo}/stacks?pull_request=$first" 2>/dev/null | jq -r 'if type == "array" then (.[0].number // empty) else empty end' 2>/dev/null || true)
+    if [ -n "$existing" ]; then
+      stack_number="$existing"
+      update_marker --argjson n "$stack_number" '.stack_number = $n'
+      logln "GitHub stack #$stack_number already holds PR #$first — extending it"
+    fi
+  fi
+  if [ -z "$stack_number" ]; then
+    if [ "$count" -lt 2 ]; then logln "GitHub stack: created once the second PR exists"; return 0; fi
+    if ! out=$(printf '{"pull_requests":%s}' "$prs" | gh_stack_api --method POST 'repos/{owner}/{repo}/stacks' --input - 2>&1); then
+      logln "WARN: could not create the GitHub stack for PRs $prs — $(printf '%s' "$out" | head -1). Create it by hand: printf '{\"pull_requests\":$prs}' | gh api --method POST -H 'X-GitHub-Api-Version: 2026-03-10' 'repos/{owner}/{repo}/stacks' --input -"
+      return 0
+    fi
+    stack_number=$(printf '%s' "$out" | jq -r '.number // empty' 2>/dev/null || true)
+    [ -n "$stack_number" ] || { logln "WARN: stack created but its number could not be read from the response — check the PRs' merge box"; return 0; }
+    update_marker --argjson n "$stack_number" --arg u "$(printf '%s' "$out" | jq -r '.url // ""')" '.stack_number = $n | .stack_url = $u'
+    logln "GitHub stack #$stack_number created: PRs $prs (bottom → top)"
+    return 0
+  fi
+  in_stack=$(gh_stack_api "repos/{owner}/{repo}/stacks/$stack_number" 2>/dev/null | jq -c '[.pull_requests[]?.number]' 2>/dev/null || echo '[]')
+  new=$(jq -nc --argjson a "$prs" --argjson b "$in_stack" '$a - $b')
+  [ "$(printf '%s' "$new" | jq 'length')" -gt 0 ] || return 0
+  if ! out=$(printf '{"pull_requests":%s}' "$new" | gh_stack_api --method POST "repos/{owner}/{repo}/stacks/$stack_number/add" --input - 2>&1); then
+    logln "WARN: could not add PRs $new to GitHub stack #$stack_number — $(printf '%s' "$out" | head -1). Add by hand: printf '{\"pull_requests\":$new}' | gh api --method POST -H 'X-GitHub-Api-Version: 2026-03-10' 'repos/{owner}/{repo}/stacks/$stack_number/add' --input -"
+    return 0
+  fi
+  logln "GitHub stack #$stack_number extended with PRs $new"
 }
 
 # =====================================================================================
 cmd_status() {
   [ -s "$marker" ] || { echo "No sequence marker at $marker — nothing launched here."; exit 0; }
-  local status base queue runner_pid runner live id sid st outcome pr_url branch stack prev
+  local status base queue runner_pid runner live id sid st outcome pr_url branch stack prev stack_number
   status=$(jq -r '.status' "$marker"); base=$(jq -r '.base' "$marker")
   queue=$(jq -r '.queue | join(" → ")' "$marker")
   runner_pid=$(jq -r '.runner_pid // empty' "$marker")
@@ -202,7 +256,10 @@ cmd_status() {
 - $id: \`$branch\` → \`$prev\` — $pr_url"
     prev="$branch"
   done
-  if [ -n "$stack" ]; then printf '\n**Stack (merge bottom-up, each base deleted on merge):**%s\n' "$stack"; else printf '\n**Stack:** nothing shipped yet\n'; fi
+  if [ -n "$stack" ]; then printf '\n**Stack (bottom → top):**%s\n' "$stack"; else printf '\n**Stack:** nothing shipped yet\n'; fi
+  stack_number=$(jq -r '.stack_number // empty' "$marker")
+  if [ -n "$stack_number" ]; then printf '**GitHub stack:** #%s — merging the top PR merges the whole stack\n' "$stack_number"
+  elif [ -n "$stack" ]; then printf '**GitHub stack:** not linked yet (created once two PRs exist)\n'; fi
   [ -f "$log" ] && { printf '\n**Log** (`%s`, last 5 lines):\n\n```\n' "$log"; tail -5 "$log"; printf '```\n'; }
   return 0
 }
@@ -235,7 +292,7 @@ cmd_run() {
   [ -s "$marker" ] || { echo "ERROR: no marker at $marker — the runner only runs under a launch" >&2; exit 1; }
   cd "$main_checkout"
   trap on_exit_run EXIT
-  local base ids_csv id sid out outcome prev_branch branch pr_line pr_url pr_base remaining now wt count
+  local base ids_csv id sid out outcome prev_branch branch pr_line pr_url pr_base pr_number remaining now started wt count stack_note
   local claude_args=() queue=()
   base=$(jq -r '.base' "$marker")
   while IFS= read -r id; do queue+=("$id"); done < <(jq -r '.queue[]' "$marker")
@@ -273,8 +330,8 @@ cmd_run() {
       git checkout -q --detach "$prev_branch" || fail_run "could not detach at $prev_branch before $id"
       git config start.wt-source-branch "$prev_branch"
     fi
-    now=$(date +%s)
-    update_marker --arg id "$id" --argjson now "$now" --arg prev "$prev_branch" \
+    started=$(date +%s)
+    update_marker --arg id "$id" --argjson now "$started" --arg prev "$prev_branch" \
       '.current = $id | .issues[$id] = {started_epoch: $now, forked_from: $prev}'
     logln "[$i/${#queue[@]}] dispatching: claude --bg ${claude_args[*]} -n 'fleet-sequence $id' '/auto pr $id'  (forks from $prev_branch)"
     if ! out=$(claude --bg "${claude_args[@]}" -n "fleet-sequence $id" "/auto pr $id" 2>&1); then
@@ -286,10 +343,10 @@ cmd_run() {
     [ -n "$sid" ] || fail_run "could not read the session id from the claude --bg output for $id — cannot wait on an unknown session; find it in \`claude agents\`, let it finish, then re-run the same list"
     update_marker --arg id "$id" --arg s "$sid" '.issues[$id].session = $s'
     logln "[$i/${#queue[@]}] $id running in session $sid"
-    if ! wait_session "$sid" "$issue_timeout" "$id"; then
+    if ! wait_session "$sid" "$issue_timeout" "$id" "$started"; then
       fail_run "$id: session $sid still running after ${issue_timeout}s — not killed; watch it in \`claude agents\`, then re-run the same list"
     fi
-    outcome=$(ledger_outcome "$sid" "$id")
+    outcome=$(ledger_outcome "$sid" "$id" "$started")
     now=$(date +%s)
     update_marker --arg id "$id" --arg o "$outcome" --argjson now "$now" '.issues[$id] += {outcome: $o, ended_epoch: $now}'
     logln "[$i/${#queue[@]}] $id → $outcome (session $sid)"
@@ -304,9 +361,11 @@ cmd_run() {
     [ -n "$branch" ] || fail_run "$id shipped but its worktree ($wt) has no branch to stack on — see claude logs $sid"
     pr_line=$(open_pr_for "$branch")
     [ -n "$pr_line" ] || fail_run "$id shipped on '$branch' but no open PR was found for it — open one from the worktree with /pr-update (base $prev_branch), then re-run the same list"
-    pr_url=${pr_line%%$'\t'*}; pr_base=${pr_line#*$'\t'}
-    update_marker --arg id "$id" --arg b "$branch" --arg u "$pr_url" --arg pb "$pr_base" '.issues[$id] += {branch: $b, pr_url: $u, pr_base: $pb}'
-    logln "[$i/${#queue[@]}] $id PR $pr_url ($branch → $pr_base)"
+    pr_url=${pr_line%%$'\t'*}; pr_number=${pr_line##*$'\t'}; pr_base=${pr_line#*$'\t'}; pr_base=${pr_base%%$'\t'*}
+    update_marker --arg id "$id" --arg b "$branch" --arg u "$pr_url" --arg pb "$pr_base" --argjson n "${pr_number:-0}" \
+      '.issues[$id] += {branch: $b, pr_url: $u, pr_base: $pb, pr_number: $n}'
+    logln "[$i/${#queue[@]}] $id PR #$pr_number $pr_url ($branch → $pr_base)"
+    link_stack
     [ "$pr_base" = "$prev_branch" ] || logln "WARN: $id's PR targets '$pr_base', not '$prev_branch' — the stack is not what the runner set up; check the worktree's start.source-branch"
     if git merge-base --is-ancestor "$prev_branch" "$branch" 2>/dev/null; then
       count=$(git rev-list --count "$prev_branch..$branch" 2>/dev/null || echo 0)
@@ -317,7 +376,8 @@ cmd_run() {
   done
   update_marker '.current = null | .status = "done"'
   restore_checkout
-  logln "done: $ids_csv stacked on $base — merge bottom-up: $(jq -r --arg base "$base" '
+  stack_note=$(jq -r 'if .stack_number then "GitHub stack #\(.stack_number) — merging the top PR merges the whole stack" else "no GitHub stack (fewer than two PRs, or linking failed — see WARNs above)" end' "$marker")
+  logln "done: $ids_csv stacked on $base — $stack_note. Bottom → top: $(jq -r --arg base "$base" '
     [ .queue[] as $q | .issues[$q] | select(.outcome == "shipped") | "\($q) \(.pr_url // "?")" ] | join("  →  ")' "$marker")"
 }
 
@@ -447,9 +507,24 @@ cmd_launch() {
   echo "Watch with: fleet-sequence.sh status  |  claude agents"
 }
 
+cmd_link() { # link the marker's shipped PRs into a GitHub stack now — for a run that shipped before linking existed, or whose linking WARNed
+  [ -s "$marker" ] || { echo "No sequence marker at $marker — nothing to link."; exit 0; }
+  cd "$main_checkout"
+  local before after
+  before=$(jq -r '.stack_number // empty' "$marker")
+  link_stack
+  after=$(jq -r '.stack_number // empty' "$marker")
+  if [ -n "$after" ]; then
+    echo "GitHub stack #$after holds $(gh_stack_api "repos/{owner}/{repo}/stacks/$after" 2>/dev/null | jq -r '[.pull_requests[]?.number | "#\(.)"] | join(" → ")' 2>/dev/null || echo '?')${before:+ (was already recorded)}"
+  else
+    echo "No stack linked — see the WARN above, or fewer than two shipped PRs in $marker"
+  fi
+}
+
 case "${1:-}" in
   status) [ $# -eq 1 ] || usage; cmd_status ;;
   stop)   [ $# -eq 1 ] || usage; cmd_stop ;;
+  link)   [ $# -eq 1 ] || usage; cmd_link ;;
   run)    [ $# -eq 1 ] || usage; cmd_run ;;
   "")     usage ;;
   *)      cmd_launch "$@" ;;
