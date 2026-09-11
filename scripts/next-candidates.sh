@@ -25,9 +25,10 @@
 # Backlog, then (under --include-triage) the Triage inbox; Urgent does NOT pierce stage
 # (keeper decisions 2026-08-05 and 2026-08-13) — then Urgent priority (a deliberate
 # human escalation outranks any label within its stage) > security/bug
-# label class > remaining priority > spread (a sibling under the same parent In
-# Progress/In Review soft de-ranks the candidate — parallel /auto sessions collide in
-# sibling files) > parent weight > estimate. A candidate
+# label class > remaining priority > spread (a sibling under the same parent, or a `related`
+# partner, In Progress/In Review soft de-ranks the candidate — parallel /auto sessions collide
+# in nearby files; `related` is the file-level overlap signal and `blocks` the
+# prerequisite/same-method one, standards/issue-spec.md) > parent weight > estimate. A candidate
 # whose children carry all the work (1+ children, none workable) is de-ranked below
 # everything and annotated "Delegated" (BF-504 — epics kept `specified` by design
 # recur as top picks with nothing to implement).
@@ -397,6 +398,19 @@ jq '
   | from_entries
 ' "$deps_file" > "$reverse_blocker_map_file"
 
+# Related map: id -> [ids] over `related` edges in BOTH directions — Linear stores a relation once, on
+# whichever side wired it. File-level overlap is recorded as `related` (standards/issue-spec.md §
+# Certification includes collision edges), and a partner in flight feeds the soft spread de-rank.
+related_map_file="$tmpdir/related_map.json"
+jq '
+  (.edges // [])
+  | map(select(.type == "related"))
+  | map({a: .from, b: .to}, {a: .to, b: .from})
+  | group_by(.a)
+  | map({key: .[0].a, value: (map(.b) | unique)})
+  | from_entries
+' "$deps_file" > "$related_map_file"
+
 # ---------- transitive unblocking (BFS) ----------
 
 newly_unblocked_file="$tmpdir/newly_unblocked.json"
@@ -447,6 +461,7 @@ eligible_json=$(jq \
   --slurpfile sm_doc "$state_map_file" \
   --slurpfile bm_doc "$blocker_map_file" \
   --slurpfile rbm_doc "$reverse_blocker_map_file" \
+  --slurpfile rm_doc "$related_map_file" \
   --slurpfile newly_doc "$newly_unblocked_file" \
   --arg me "${me_email:-}" \
   --arg label "$label" \
@@ -458,6 +473,7 @@ eligible_json=$(jq \
     ($sm_doc[0]) as $sm
     | ($bm_doc[0]) as $bm
     | ($rbm_doc[0]) as $rbm
+    | ($rm_doc[0]) as $rm
     | ($newly_doc[0]) as $newly
     # Stage by identifier for the inherited-stage walk: the fetch carries every non-terminal
     # team issue, so a Planned dependent is present whether or not it is itself a candidate.
@@ -466,6 +482,9 @@ eligible_json=$(jq \
     # Hot parents: a sibling In Progress/In Review under the same parent means a live
     # session is likely editing nearby files — feeds the soft spread de-rank below.
     | ([ .[] | select(.state_type == "started" and (.parent != null)) | .parent ] | unique) as $hot
+    # Hot issues: every In Progress/In Review issue — a `related` partner among them is a live session
+    # in the files this candidate would touch.
+    | ([ .[] | select(.state_type == "started") | .identifier ]) as $hot_ids
     | def priority_label(p):
       if p == 1 then "Urgent"
       elif p == 2 then "High"
@@ -541,6 +560,7 @@ eligible_json=$(jq \
          then ([ (gated([$id]; [$id])[] | select(. != $id)), (lineage($id; [$id])[]) ]
                | map(select(is_unstarted_id(.))) | unique)
          else [] end) as $gates_unstarted
+      | ([ ($rm[$id] // [])[] | select(. as $r | ($hot_ids | index($r)) != null) ] | sort) as $spread_related
       | {
           id: $id,
           title: $i.title,
@@ -593,7 +613,8 @@ eligible_json=$(jq \
             | if ($ls | index("security")) != null then 0
               elif ($ls | index("bug")) != null then 1
               else 2 end),
-          spread_penalty: (if ($i.parent != null) and (($hot | index($i.parent)) != null) then 1 else 0 end)
+          spread_related: $spread_related,
+          spread_penalty: (if (($i.parent != null) and (($hot | index($i.parent)) != null)) or (($spread_related | length) > 0) then 1 else 0 end)
         }
     )
   ' "$list_file")
@@ -1053,7 +1074,11 @@ printf '%s' "$ranked_json" | jq -r --argjson lim "$limit" '
         then "\n   - Delegated: \(.value.delegated_open) open sub-issue(s) carry the work — de-ranked, no independent work of its own"
         else "\n   - Delegated: all sub-issues shipped/terminal — de-ranked; the epic likely needs closing, not implementation" end)
     else "" end) +
-    (if (.value.spread_penalty // 0) > 0 then "\n   - Spread: a sibling under the same parent is in flight — soft de-rank to reduce file collisions" else "" end) +
+    (if (.value.spread_penalty // 0) > 0 then
+       (if ((.value.spread_related // []) | length) > 0
+        then "\n   - Spread: `related` partner \(.value.spread_related | join(", ")) is in flight — soft de-rank to reduce file collisions"
+        else "\n   - Spread: a sibling under the same parent is in flight — soft de-rank to reduce file collisions" end)
+     else "" end) +
     (if ((.value.gates_unstarted // []) | length) > 0 then "\n   - Stage inherited: Backlog, but it gates Planned/Todo \(.value.gates_unstarted | join(", ")) (as blocker or child) — release scope by implication, ranked in the Planned stage" else "" end) +
     (if .value.unresolved_count > 0 then "\n   - Blocked: \(.value.unresolved_count) unresolved blocker(s)" else "" end)
 '

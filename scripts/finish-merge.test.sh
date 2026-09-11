@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Functional suite for finish-merge.sh's generated-artifact discard guard (assert_no_ours_discards)
-# plus the merge/conflict seams around it. Builds throwaway repos with real linked worktrees and drives
+# plus the merge/conflict seams around it — including the merged-tree gate (exit 5): every merge of
+# source into the worktree branch ends the invocation before anything lands, so the caller can run
+# the project check on the combined tree, and the re-run finalizes. Builds throwaway repos with real linked worktrees and drives
 # the real script end to end — including its unconditional with-repo-lock.py re-exec.
 #
 # The guard exists because a merge=ours driver on generated files (schema.json, codegen outputs,
@@ -123,12 +125,17 @@ run_fm() { # run_fm [VAR=val] — sets RC and OUT (combined output)
 
 blob() { git -C "$R" show "source:$1" 2>/dev/null; }
 
-echo "=== case 1: control — each side changes a different file, no driver involvement ==="
+echo "=== case 1: control — each side changes a different file, no driver involvement; the merged-tree gate stops first ==="
 mk_repo c1
 src_commit src.txt s1
 wt_commit gen.txt g2
 run_fm
-ck_eq "exit 0" 0 "$RC"
+ck_eq "source advanced: exit 5 before anything lands" 5 "$RC"
+ck "MERGED-SOURCE message" "MERGED-SOURCE" "$OUT"
+ck_eq "worktree carries source's delta after the merge" s1 "$(cat "$WT/src.txt")"
+ck_eq "source not advanced yet" g0 "$(blob gen.txt)"
+run_fm
+ck_eq "re-run after the gate: exit 0" 0 "$RC"
 ck_eq "source has wt's gen" g2 "$(blob gen.txt)"
 ck_eq "source kept its src" s1 "$(blob src.txt)"
 [ ! -d "$WT" ] && { pass=$((pass+1)); echo "  PASS  worktree removed"; } || { fail=$((fail+1)); echo "  FAIL  worktree still present"; }
@@ -138,7 +145,10 @@ mk_repo c1b
 src_commit gen.txt g1 src.txt s1
 wt_commit feat.txt f1
 run_fm
-ck_eq "exit 0" 0 "$RC"
+ck_eq "source advanced: exit 5 (gate)" 5 "$RC"
+ck_absent "no driver fire on a one-sided generated change" "GENERATED-DISCARD" "$OUT"
+run_fm
+ck_eq "re-run after the gate: exit 0" 0 "$RC"
 ck_eq "source keeps its gen" g1 "$(blob gen.txt)"
 
 echo "=== case 2: two-sided generated change — discard detected, then regen clears it ==="
@@ -164,7 +174,10 @@ mk_repo c3
 src_commit gen.txt gX src.txt s1
 wt_commit gen.txt gX
 run_fm
-ck_eq "exit 0" 0 "$RC"
+ck_eq "source advanced: exit 5 (gate), guard silent" 5 "$RC"
+ck_absent "identical content is not a discard" "GENERATED-DISCARD" "$OUT"
+run_fm
+ck_eq "re-run after the gate: exit 0" 0 "$RC"
 ck_eq "gen content correct" gX "$(blob gen.txt)"
 
 echo "=== case 4: manual mid-issue merge baked the discard before /finish — still caught ==="
@@ -181,7 +194,9 @@ mk_repo c5
 src_commit gen.txt g1-source src.txt s1-source
 wt_commit gen.txt g2-wt
 run_fm _FM_SKIP_OURS_GUARD=1
-ck_eq "exit 0 under _FM_SKIP_OURS_GUARD=1" 0 "$RC"
+ck_eq "exit 5 under _FM_SKIP_OURS_GUARD=1 (the gate still stops)" 5 "$RC"
+run_fm _FM_SKIP_OURS_GUARD=1
+ck_eq "re-run: exit 0 under _FM_SKIP_OURS_GUARD=1" 0 "$RC"
 ck_eq "discard shipped deliberately" g2-wt "$(blob gen.txt)"
 
 echo "=== case 6: ordinary conflict path unchanged, and the guard stays silent on the resolved merge ==="
@@ -198,6 +213,23 @@ git -C "$WT" commit -q -F "$MSG"
 run_fm
 ck_eq "re-run after resolution: exit 0" 0 "$RC"
 ck_eq "source has the resolution" sR "$(blob src.txt)"
+
+echo "=== case 7: source advances between the gate and the re-run — the re-merge under the lock gates again, then lands ==="
+mk_repo c7
+src_commit src.txt s1
+wt_commit feat.txt f1
+run_fm
+ck_eq "first catch-up merge: exit 5" 5 "$RC"
+src_commit other.txt o1
+run_fm
+ck_eq "re-merge under the lock: exit 5 again" 5 "$RC"
+ck "re-merge reported as MERGED-SOURCE" "MERGED-SOURCE" "$OUT"
+ck_eq "worktree carries the second source delta" o1 "$(cat "$WT/other.txt")"
+ck_eq "source still without the feature" "" "$(blob feat.txt)"
+run_fm
+ck_eq "third run lands: exit 0" 0 "$RC"
+ck_eq "source has the feature" f1 "$(blob feat.txt)"
+[ ! -d "$WT" ] && { pass=$((pass+1)); echo "  PASS  worktree removed"; } || { fail=$((fail+1)); echo "  FAIL  worktree still present"; }
 
 echo ""
 echo "finish-merge.test.sh: $pass passed, $fail failed"

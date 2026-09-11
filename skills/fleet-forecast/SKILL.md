@@ -69,8 +69,8 @@ hours-per-issue basis, and any `THROTTLE-RISK` warning. Then:
   transitive root-cause walk) rather than re-deriving remedies here. `UNREACHED` rows are the
   horizon/capacity argument: what a longer run or another session would add.
 - **Caveats, once, at the end** — one short line restating that this is an estimate of shape, with
-  whatever model simplifications bit this particular run (e.g. many same-file candidates the sim
-  schedules concurrently that collision edges would serialize).
+  whatever model simplifications bit this particular run (e.g. many `related` partners the sim
+  schedules concurrently that the spread de-rank would stagger at pick time).
 
 ## Error handling
 

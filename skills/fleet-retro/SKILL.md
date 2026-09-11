@@ -325,8 +325,9 @@ Filed issues are output too, and they fail in ways the metrics cannot see. Check
   without `--state` — to move to Backlog and trace to its filing path.
 - **Missing collision edges.** Group the run's filings by mechanism/file (their titles and bodies name
   it) and check `linear-cli relations list` on each same-mechanism sibling pair: two fleet-pickable
-  `specified` siblings against one file need a `blocks` edge, mechanism-sharing pairs a `related` edge
-  plus a comment (the direction and certification rules live in standards/issue-spec.md § Certification
+  `specified` siblings editing one method body, or one a prerequisite of the other, need a `blocks`
+  edge; siblings sharing only a file or a mechanism need a `related` edge plus a comment (the three
+  meanings of `blocks`, the direction rule, and the certification guard live in standards/issue-spec.md § Certification
   includes collision edges). The filing-time rule (quality-review's dedup/edge-wiring sub-step) loses
   under exactly this audit's conditions — measured on two consecutive fleets (2026-08-16:
   BF-1201/BF-1202/BF-1205; 2026-08-17: BF-1220→BF-1221, BF-1223↔BF-1203, BF-1208↔BF-1213), every edge

@@ -72,6 +72,9 @@ mkdir -p "$FIX" "$WORK/bin" "$WORK/home"
 #                                     (a child gates its epic the way a blocker gates a dependent)
 #   TT-27 Planned epic (label `epic`) -> HIDDEN from every ranking (delegated container; note +
 #                                     --label epic lists it); the gate note lists it as the keeper's
+#   TT-28 Planned High, `related` to In Progress TT-10 -> spread de-rank (file-level overlap with a
+#                                     live session, standards/issue-spec.md): after TT-5 (same class
+#                                     and priority, no penalty), before every lower priority
 cat > "$FIX/issues-page.json" <<'EOF'
 {"data":{"issues":{"nodes":[
  {"identifier":"TT-1","title":"urgent backlog","estimate":null,"priority":1,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[]},"parent":null},
@@ -100,17 +103,19 @@ cat > "$FIX/issues-page.json" <<'EOF'
  {"identifier":"TT-24","title":"backlog chain middle","estimate":null,"priority":0,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[]},"parent":null},
  {"identifier":"TT-25","title":"planned chain tail","estimate":null,"priority":3,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[]},"parent":null},
  {"identifier":"TT-26","title":"backlog child of planned epic","estimate":null,"priority":0,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[]},"parent":{"identifier":"TT-27"}},
- {"identifier":"TT-27","title":"planned epic","estimate":null,"priority":0,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[{"name":"epic"}]},"parent":null}
+ {"identifier":"TT-27","title":"planned epic","estimate":null,"priority":0,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[{"name":"epic"}]},"parent":null},
+ {"identifier":"TT-28","title":"planned high related to in-flight","estimate":null,"priority":2,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[]},"parent":null}
 ],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
 EOF
 
-# Deps page (linear-deps-graph.sh --team shape): TT-8 blocks TT-7, TT-10 blocks TT-9,
+# Deps page (linear-deps-graph.sh --team shape): TT-8 blocks TT-7, TT-10 blocks TT-9 and is `related`
+# to TT-28 (stored on TT-10's side only — the map must read it in both directions),
 # TT-19 (In Review — terminal by name, keeper ruling 2026-08-21) blocks TT-18; TT-20 blocks
 # TT-21, TT-22 blocks the shipped TT-8, and TT-23 → TT-24 → TT-25 is the transitive chain.
 cat > "$FIX/deps-page.json" <<'EOF'
 {"data":{"issues":{"nodes":[
  {"identifier":"TT-8","title":"shipped blocker","state":{"name":"Ready for Release","type":"completed"},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-7"}}]}},
- {"identifier":"TT-10","title":"open blocker","state":{"name":"In Progress","type":"started"},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-9"}}]}},
+ {"identifier":"TT-10","title":"open blocker","state":{"name":"In Progress","type":"started"},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-9"}},{"type":"related","relatedIssue":{"identifier":"TT-28"}}]}},
  {"identifier":"TT-19","title":"review blocker","state":{"name":"In Review","type":"started"},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-18"}}]}},
  {"identifier":"TT-20","title":"backlog blocker of planned","state":{"name":"Backlog","type":"backlog"},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-21"}}]}},
  {"identifier":"TT-22","title":"backlog behind shipped chain","state":{"name":"Backlog","type":"backlog"},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-8"}}]}},
@@ -150,10 +155,11 @@ grep -E '^[0-9]+\. ' "$OUT" > "$WORK/ranked.txt"
 
 # The Planned column is not drained, so every Backlog candidate — TT-17 (tier 1, assigned to the
 # viewer), TT-1 (Urgent), TT-6 (security), TT-22 — is withheld; inherited-stage TT-20/TT-23 stay.
-ck "stage-first order under the gate" "TT-3 TT-2 TT-4 TT-5 TT-7 TT-18 TT-20 TT-23 TT-26" "$(order_of "$OUT")"
+ck "stage-first order under the gate" "TT-3 TT-2 TT-4 TT-5 TT-28 TT-7 TT-18 TT-20 TT-23 TT-26" "$(order_of "$OUT")"
+ck_has  "related partner in flight annotated" 'Spread: `related` partner TT-10 is in flight — soft de-rank to reduce file collisions' "$OUT"
 ck_has  "epic note" '1 issue(s) hidden as delegated epics (`epic` label' "$OUT"
 ck_lacks "epic hidden" "TT-27" "$WORK/ranked.txt"
-ck_has  "planned-hold note" "_PLANNED-HOLD: Backlog withheld — the Planned/Todo column is not drained (13 issue(s) hold the gate: 6 pickable now; 3 will release on their own — TT-9, TT-21, TT-25; 4 need the keeper — TT-11 [needs decision], TT-12 [solo], TT-13 [human], TT-27 [epic — certify per child, close it when they release]). 4 Backlog candidate(s) wait behind the gate; it opens when the column drains — pass --no-stage-gate to list them._" "$OUT"
+ck_has  "planned-hold note" "_PLANNED-HOLD: Backlog withheld — the Planned/Todo column is not drained (14 issue(s) hold the gate: 7 pickable now; 3 will release on their own — TT-9, TT-21, TT-25; 4 need the keeper — TT-11 [needs decision], TT-12 [solo], TT-13 [human], TT-27 [epic — certify per child, close it when they release]). 4 Backlog candidate(s) wait behind the gate; it opens when the column drains — pass --no-stage-gate to list them._" "$OUT"
 ck_lacks "claimed planned does not hold the gate" "TT-16 [" "$OUT"
 ck_has  "rfr blocker resolved"  "TT-7" "$OUT"
 ck_has  "in-review blocker resolved" "TT-18" "$OUT"
@@ -180,7 +186,7 @@ ck_lacks "blocked chain members hidden"     "TT-24" "$WORK/ranked.txt"
 # ---- --include-blocked: TT-9 restored (Low outranks TT-7's None), everything else unchanged ----
 OUT2="$WORK/out2.md"
 run "$OUT2" --limit 20 --include-blocked || { echo "FAIL: include-blocked run exited $?"; cat "$OUT2.err"; exit 1; }
-ck "blocked order" "TT-17 TT-3 TT-2 TT-4 TT-5 TT-25 TT-9 TT-21 TT-7 TT-18 TT-20 TT-23 TT-24 TT-26 TT-1 TT-6 TT-22" "$(order_of "$OUT2")"
+ck "blocked order" "TT-17 TT-3 TT-2 TT-4 TT-5 TT-28 TT-25 TT-9 TT-21 TT-7 TT-18 TT-20 TT-23 TT-24 TT-26 TT-1 TT-6 TT-22" "$(order_of "$OUT2")"
 ck_lacks "discovery listing is gate-exempt" "PLANNED-HOLD" "$OUT2"
 
 # ---- label filter: only the security-labeled issues, stage-first within the filter ----
@@ -199,7 +205,7 @@ ck_lacks "no epic note on its own listing" "hidden as delegated epics" "$OUT3b"
 ck_lacks "triage absent by default" "TT-14" "$OUT"
 OUT5="$WORK/out5.md"
 run "$OUT5" --limit 20 --include-triage || { echo "FAIL: include-triage run exited $?"; cat "$OUT5.err"; exit 1; }
-ck "triage ranks last" "TT-17 TT-3 TT-2 TT-4 TT-5 TT-7 TT-18 TT-20 TT-23 TT-26 TT-1 TT-6 TT-22 TT-14 TT-15" "$(order_of "$OUT5")"
+ck "triage ranks last" "TT-17 TT-3 TT-2 TT-4 TT-5 TT-28 TT-7 TT-18 TT-20 TT-23 TT-26 TT-1 TT-6 TT-22 TT-14 TT-15" "$(order_of "$OUT5")"
 ck_lacks "triage listing is gate-exempt" "PLANNED-HOLD" "$OUT5"
 
 # ---- assignment is a claim: a foreign assignee hides the issue from every ranking (with the
@@ -208,8 +214,8 @@ ck_lacks "foreign-claimed hidden" "TT-16" "$OUT"
 ck_has  "claimed note"  "1 issue(s) hidden as claimed by a person" "$OUT"
 OUT6="$WORK/out6.md"
 run "$OUT6" --limit 20 --include-claimed || { echo "FAIL: include-claimed run exited $?"; cat "$OUT6.err"; exit 1; }
-ck "claimed restored in place" "TT-3 TT-2 TT-4 TT-5 TT-16 TT-7 TT-18 TT-20 TT-23 TT-26" "$(order_of "$OUT6")"
-ck_has  "restored claim counts as pickable" "14 issue(s) hold the gate: 7 pickable now" "$OUT6"
+ck "claimed restored in place" "TT-3 TT-2 TT-4 TT-5 TT-28 TT-16 TT-7 TT-18 TT-20 TT-23 TT-26" "$(order_of "$OUT6")"
+ck_has  "restored claim counts as pickable" "15 issue(s) hold the gate: 8 pickable now" "$OUT6"
 ck_lacks "no claimed note when included" "hidden as claimed" "$OUT6"
 
 # ---- the limit cut never hides Planned/Todo: --limit 1 keeps a one-item top list but
@@ -217,15 +223,15 @@ ck_lacks "no claimed note when included" "hidden as claimed" "$OUT6"
 # ---- while the Backlog tail stays cut ----
 OUT4="$WORK/out4.md"
 run "$OUT4" --limit 1 || { echo "FAIL: limit-floor run exited $?"; cat "$OUT4.err"; exit 1; }
-ck "planned never hidden"   "TT-3 TT-2 TT-4 TT-5 TT-7 TT-18 TT-20 TT-23 TT-26" "$(order_of "$OUT4")"
+ck "planned never hidden"   "TT-3 TT-2 TT-4 TT-5 TT-28 TT-7 TT-18 TT-20 TT-23 TT-26" "$(order_of "$OUT4")"
 ck_has  "planned-below section" "### Planned/Todo below the cut — always surfaced" "$OUT4"
 ck_has  "inherited blocker surfaces below the cut" "| Gates Planned/Todo: TT-21" "$OUT4"
-ck_has  "remaining note"        "8 more workable candidate(s) available" "$OUT4"
+ck_has  "remaining note"        "9 more workable candidate(s) available" "$OUT4"
 
 # ---- --no-stage-gate lifts the filter: the withheld Backlog tail returns, stage-first, no note ----
 OUT7="$WORK/out7.md"
 run "$OUT7" --limit 20 --no-stage-gate || { echo "FAIL: no-stage-gate run exited $?"; cat "$OUT7.err"; exit 1; }
-ck "gate lifted order" "TT-17 TT-3 TT-2 TT-4 TT-5 TT-7 TT-18 TT-20 TT-23 TT-26 TT-1 TT-6 TT-22" "$(order_of "$OUT7")"
+ck "gate lifted order" "TT-17 TT-3 TT-2 TT-4 TT-5 TT-28 TT-7 TT-18 TT-20 TT-23 TT-26 TT-1 TT-6 TT-22" "$(order_of "$OUT7")"
 ck_lacks "no note when lifted" "PLANNED-HOLD" "$OUT7"
 
 # ---- gate OPEN: the Planned column holds only a claimed issue, so Backlog is offered normally ----

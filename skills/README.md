@@ -170,7 +170,7 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 **Key Features**:
 
 - Audits `specified` labels for unattended-shippability; de-labels or flags decision-gated, human-dependent, and run-attended/solo issues
-- Wires minimal `blocks` chains between file-colliding certified candidates (the only dependency signal `/next` observes)
+- Wires minimal `blocks` chains only for prerequisite, same-method, and deliberately-incremental pairs (the one hiding signal `/next` observes); file-level overlap becomes `related`, a soft de-rank while the partner is in flight
 - Repairs `/reflect` filing labels (`reflection`/`keeper`) and dedupes duplicate filings
 - Validates the result through `next-candidates.sh` and recommends a parallel-session count from the independent-lane analysis
 

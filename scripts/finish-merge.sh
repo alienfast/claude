@@ -62,6 +62,14 @@
 #       parallel session reset its branch/HEAD or wiped its config). Routed to the
 #       /finish recovery path (finish-recover.sh); the merge was never attempted.
 #       Suppressed via _WT_SKIP_IDENTITY_CHECK=1 when recovery re-invokes this.
+#   5 — source merged cleanly into the worktree branch (the initial catch-up merge, or a
+#       re-merge after source advanced under the lock); nothing finalized, lock released.
+#       The caller runs the project check on the MERGED tree in the worktree — the pre-merge
+#       check proved this branch alone, and a clean textual merge can still break the
+#       combination (two edits to one method, a rename beside a new caller) — then
+#       re-invokes; the re-run finds source already contained and finalizes. Printed as
+#       MERGED-SOURCE:. Same-file siblings ship in parallel on the strength of this gate
+#       (standards/issue-spec.md § Certification includes collision edges).
 
 set -eo pipefail
 
@@ -195,6 +203,17 @@ assert_no_ours_discards() {
   echo "  git -C '$wt_dir' add <files> && git -C '$wt_dir' commit -m 'Regenerate merged artifacts'" >&2
   echo "Then re-run /finish merge. If the discard is genuinely intended, re-run with _FM_SKIP_OURS_GUARD=1." >&2
   exit 2
+}
+
+# The merged-tree gate. Every merge of source into the worktree branch ends the invocation here so the
+# caller can run the project check on the combined tree before anything is finalized — the pre-merge check
+# proved this branch on its own, and same-file siblings ship without a blocks edge on the strength of this
+# stop (standards/issue-spec.md § Certification includes collision edges). Runs after assert_no_ours_discards:
+# a discard is repaired first, and the skill gates the regenerated tree on its re-invoke path.
+merged_source_exit() {
+  echo "MERGED-SOURCE: $source_branch merged cleanly into $worktree_branch in the worktree ($(git -C "$wt_dir" rev-parse --short HEAD))." >&2
+  echo "Run the project check gate from '$wt_dir' on the merged tree, then re-run /finish merge. (Lock released; main checkout untouched.)" >&2
+  exit 5
 }
 
 if [ ! -f "$message_file" ]; then
@@ -416,6 +435,8 @@ if ! git merge-base --is-ancestor "$source_branch" "$worktree_branch"; then
     git -C "$wt_dir" diff --name-only --diff-filter=U >&2
     exit 2
   fi
+  assert_no_ours_discards
+  merged_source_exit
 fi
 
 # Finalize loop (under the lock): advance source to include the worktree branch,
@@ -424,7 +445,8 @@ fi
 # checked out in another worktree and never moves the user's HEAD, so an exit-2
 # below always leaves the main checkout exactly as the user left it. Bounded
 # only as a backstop against pathological continuous contention — a clean
-# re-merge loops silently and converges; it does NOT hard-fail on transient races.
+# re-merge exits 5 for the merged-tree gate and the re-invocation converges; it
+# does NOT hard-fail on transient races.
 # (cur_branch was captured in precondition 6, before the dirty-tree relaxation.)
 max_finalize_attempts=50
 attempt=0
@@ -439,8 +461,9 @@ while : ; do
 
   # Re-verify, while holding the lock, that the worktree branch still descends
   # from source's CURRENT tip. If source advanced, reconcile the new delta in
-  # the worktree and loop. A conflict here exits 2 with the main checkout still
-  # pristine — we have not touched it.
+  # the worktree. A conflict here exits 2 and a clean merge exits 5 (the
+  # merged-tree gate), both with the main checkout still pristine — we have not
+  # touched it.
   if ! git merge-base --is-ancestor "$source_branch" "$worktree_branch"; then
     if ! git -C "$wt_dir" merge --no-edit "$source_branch"; then
       echo "CONFLICT: source advanced; merging $source_branch into $worktree_branch produced conflicts in the worktree." >&2
@@ -450,7 +473,8 @@ while : ; do
       git -C "$wt_dir" diff --name-only --diff-filter=U >&2
       exit 2
     fi
-    continue
+    assert_no_ours_discards
+    merged_source_exit
   fi
 
   # Every merge is committed by this point (initial, loop re-merges, and any manual

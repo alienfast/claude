@@ -27,6 +27,9 @@
 #         0 → marker already removed by finish-merge (DRAINED)
 #         3 → marker already refreshed by finish-merge; bump attempts (STILL-BLOCKED)
 #         2 → flag needs_resolution + notify         (NEEDS-RESOLUTION)
+#         5 → flag needs_gate + notify               (NEEDS-GATE: source merged cleanly into the
+#             worktree; a session must run the project check on the merged tree — the bulk drain
+#             skips the marker from then on, and only the single-issue drain re-runs it)
 #         1 → flag hard_failed + notify              (HARD-FAIL)
 #   list [repo_root]
 #       Human-readable table of pending markers (one repo, or all registered).
@@ -137,7 +140,7 @@ cmd_add() {
       message_file:$message_file, repo_root:$repo_root, enqueued_at:$enqueued_at,
       enqueued_epoch:$enqueued_epoch, last_attempt_at:$last_attempt_at,
       last_attempt_epoch:$last_attempt_epoch, attempts:$attempts, last_reason:$last_reason,
-      needs_resolution:false, hard_failed:false, notified_state:$notified_state}' \
+      needs_resolution:false, needs_gate:false, hard_failed:false, notified_state:$notified_state}' \
     > "$tmp"
   mv -f "$tmp" "$marker"
   register_repo "$repo_root"
@@ -156,7 +159,7 @@ cmd_remove() {
 # Assumes the per-repo queue lock is already held (see cmd_drain).
 process_marker() {
   require_jq
-  local marker="$1"
+  local marker="$1" force="${2:-0}"
   [ -f "$marker" ] || return 0
   local issue wt_dir source_branch worktree_branch message_file repo_root prev_state rc attempts
   issue=$(jq -r '.issue // empty' "$marker" 2>/dev/null || true)
@@ -171,6 +174,13 @@ process_marker() {
   # empty args (which would `cd ""` → exit 1 → falsely flag a HARD-FAIL).
   if [ -z "$issue" ] || [ -z "$wt_dir" ] || [ -z "$source_branch" ] || [ -z "$worktree_branch" ] || [ -z "$message_file" ] || [ -z "$repo_root" ]; then
     echo "SKIP: malformed merge-queue marker (missing fields): $marker" >&2
+    return 0
+  fi
+
+  # A gated marker waits for a session: re-running finish-merge.sh would find source already merged and
+  # finalize past the check the gate exists for. The single-issue drain is the session's explicit re-run.
+  if [ "$force" != 1 ] && [ "$(jq -r '.needs_gate // false' "$marker" 2>/dev/null || echo false)" = "true" ]; then
+    echo "NEEDS-GATE: $issue — waiting for a session to run the project check in $wt_dir, then: merge-queue.sh drain $issue"
     return 0
   fi
 
@@ -214,6 +224,14 @@ process_marker() {
         notify "Merge conflict: $issue" "Resolve in the worktree, then run /merge-queue $issue."
       fi
       ;;
+    5)
+      update_marker "$marker" ".needs_gate = true | .last_attempt_at = \"$(now_iso)\" | .last_attempt_epoch = $(now_epoch) | .last_reason = \"source merged cleanly into the worktree — the merged tree needs the project check gate in a session\""
+      echo "NEEDS-GATE: $issue"
+      if [ "$prev_state" != "needs_gate" ]; then
+        update_marker "$marker" '.notified_state = "needs_gate"'
+        notify "Merge gated: $issue" "Source merged into the worktree; run the project check there, then /merge-queue $issue."
+      fi
+      ;;
     *)
       update_marker "$marker" ".hard_failed = true | .last_attempt_at = \"$(now_iso)\" | .last_attempt_epoch = $(now_epoch) | .last_reason = \"hard failure (exit $rc) — see merge-queue drain log\""
       echo "HARD-FAIL: $issue (exit $rc)"
@@ -233,7 +251,7 @@ cmd_drain_one() {
   [ -d "$qdir" ] || return 0
   if [ -n "$only_slug" ]; then
     marker="$qdir/$only_slug.json"
-    if [ -f "$marker" ]; then process_marker "$marker"; else echo "merge-queue: $repo_root — no marker for $only_slug"; fi
+    if [ -f "$marker" ]; then process_marker "$marker" 1; else echo "merge-queue: $repo_root — no marker for $only_slug"; fi
     return 0
   fi
   # Snapshot the marker list first — process_marker removes/refreshes files in place.
@@ -315,7 +333,7 @@ cmd_list() {
     shopt -s nullglob
     for marker in "$qdir"/*.json; do
       found=1
-      local issue attempts enq_epoch reason nr hf
+      local issue attempts enq_epoch reason nr hf ng
       # Read defensively (2>/dev/null || true): a single corrupt marker must not
       # crash the listing — the diagnostic command must still surface the rest.
       issue=$(jq -r '.issue // empty' "$marker" 2>/dev/null || true)
@@ -328,12 +346,14 @@ cmd_list() {
       reason=$(jq -r '.last_reason // ""' "$marker" 2>/dev/null || true)
       nr=$(jq -r '.needs_resolution // false' "$marker" 2>/dev/null || echo false)
       hf=$(jq -r '.hard_failed // false' "$marker" 2>/dev/null || echo false)
+      ng=$(jq -r '.needs_gate // false' "$marker" 2>/dev/null || echo false)
       # Numeric guards: `// 0` only covers a missing/null field — a present-but-
       # non-numeric value (e.g. "12abc" from a partial write) survives jq and would
       # abort the `$(( ))` arithmetic below under set -e, crashing the whole listing.
       { [ "$enq_epoch" -ge 0 ]; } 2>/dev/null || enq_epoch=0
       { [ "$attempts" -ge 0 ]; } 2>/dev/null || attempts=0
       flags="queued"
+      [ "$ng" = "true" ] && flags="NEEDS-GATE"
       [ "$nr" = "true" ] && flags="NEEDS-RESOLUTION"
       [ "$hf" = "true" ] && flags="HARD-FAIL"
       age_min=$(( (now - enq_epoch) / 60 ))

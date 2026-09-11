@@ -39,6 +39,9 @@ Each row is `ISSUE | REPO | AGE(min) | TRIES | STATUS / REASON`. Interpret the s
 - **queued** — transient block; the drainer will keep retrying. No action needed.
 - **NEEDS-RESOLUTION** — the deferred merge hit a real conflict. It needs a human: resolve it
   (see below), the drainer cannot.
+- **NEEDS-GATE** — the drainer merged the source branch into the worktree cleanly and stopped
+  (`finish-merge.sh` exit 5): the merged tree has not passed the project check, which only a session
+  can run and fix. The bulk drain skips it from then on (see below).
 - **HARD-FAIL** — a hard precondition failed (worktree removed, source branch gone, etc.). Inspect;
   the marker won't clear on its own.
 
@@ -58,8 +61,8 @@ is always safe to run):
 ```
 
 The drainer prints one line per marker: `DRAINED` (merged, marker removed), `STILL-BLOCKED`
-(transient, will retry), `NEEDS-RESOLUTION` (conflict — needs you), or `HARD-FAIL`. Surface those
-lines and summarize.
+(transient, will retry), `NEEDS-RESOLUTION` (conflict — needs you), `NEEDS-GATE` (merged, the check
+gate needs you), or `HARD-FAIL`. Surface those lines and summarize.
 
 ### Resolving a `NEEDS-RESOLUTION` entry (conflict)
 
@@ -75,6 +78,20 @@ branch without review. Resolve it in a normal session, exactly like
 5. `git -C '<wt_dir>' commit -F '<wt_dir>/tmp/git-merge-msg-<issue-lower>.md'`
 6. Re-drain that issue: `~/.claude/scripts/merge-queue.sh drain '<ISSUE-ID>'`. On success the marker
    is removed and the worktree torn down.
+
+### Resolving a `NEEDS-GATE` entry (merged, ungated)
+
+The drainer merged the source branch into the worktree without conflicts and stopped there, exactly
+like [/finish](../finish/SKILL.md) Step 9's exit-5 path: the merged tree has not passed the project
+check, and the bulk drain skips the marker until a session gates it — re-running `finish-merge.sh`
+blind would find source already merged and finalize past the check.
+
+1. Read the marker for the worktree path (as above).
+2. Run `pnpm check` from `<wt_dir>` — the merged tree, not this branch alone, is what lands. Red means
+   the merge broke the combination: fix it in the worktree and commit.
+3. Re-drain that issue: `~/.claude/scripts/merge-queue.sh drain '<ISSUE-ID>'` — the single-issue
+   drain is the explicit re-run that bypasses the skip. On success the marker is removed and the
+   worktree torn down.
 
 ## Installing the drainer
 
@@ -92,4 +109,4 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.alienfast.merge-queu
 To remove: `launchctl bootout gui/$(id -u)/com.alienfast.merge-queue-drain`.
 
 Drainer activity is logged to `~/.claude/logs/merge-queue-drain.log`. Notifications fire (macOS
-desktop) only for `NEEDS-RESOLUTION` / `HARD-FAIL` / long-stuck entries — never for routine retries.
+desktop) only for `NEEDS-RESOLUTION` / `NEEDS-GATE` / `HARD-FAIL` / long-stuck entries — never for routine retries.
