@@ -5,7 +5,16 @@
 #   next-candidates.sh [--team KEY[,KEY...]] [--completed PL-XX] [--limit N]
 #                      [--no-parent-walk] [--label NAME] [--exclude-label NAME]
 #                      [--include-triage] [--include-blocked] [--include-claimed]
-#                      [--no-stage-gate]
+#                      [--no-stage-gate] [--root EPIC-ID]
+#
+# --root EPIC-ID scopes the whole ranking to one epic's graph (epic-graph.sh: the epic, its
+# transitive descendants, and the transitive blockers of any member — non-terminal only,
+# cross-team included). The graph's teams are added to the fetch, and the fetched list is cut to
+# members right after the merge — before the Planned gate and every hold/hidden note — so the
+# order, the holds, the counts, and the drained headline all describe the epic and nothing else.
+# The deps graph stays unfiltered (blockers resolve exactly as unscoped). Fails closed: a missing
+# root, a root without the `epic` label, or an unreadable graph exits non-zero with the message,
+# never an empty ranking — an unattended run scoped to a bad epic must not latch drained.
 #
 # Assignment is a claim (standards/linear-workflow.md): an issue assigned to anyone other
 # than the viewer is hidden from every ranking — certifying and working alike — with a
@@ -133,6 +142,7 @@ include_triage=0
 include_blocked=0
 include_claimed=0
 stage_gate=1
+root=""
 
 # Value-taking flags must fail loudly, not silently: a missing value makes the `shift 2`
 # below fail under set -e with no stderr, and an empty value (e.g. --label "") must not
@@ -157,8 +167,9 @@ while [ $# -gt 0 ]; do
     --include-blocked) include_blocked=1; shift ;;
     --include-claimed) include_claimed=1; shift ;;
     --no-stage-gate) stage_gate=0; shift ;;
+    --root) require_value --root "$#" "${2:-}"; root="$2"; shift 2 ;;
     -h|--help)
-      sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *) echo "ERROR: unknown arg '$1'" >&2; exit 1 ;;
@@ -177,6 +188,13 @@ if [ -n "$completed" ]; then
     exit 1
   fi
 fi
+if [ -n "$root" ]; then
+  root=$(printf '%s' "$root" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')
+  if ! [[ "$root" =~ ^[A-Z0-9]+-[0-9]+$ ]]; then
+    echo "ERROR: --root '$root' does not match ^[A-Z0-9]+-[0-9]+\$" >&2
+    exit 1
+  fi
+fi
 
 for cmd in linear-cli jq; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -184,6 +202,30 @@ for cmd in linear-cli jq; do
     exit 3
   fi
 done
+
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+
+# ---------- epic scope ----------
+
+# The graph is resolved before the teams: its members decide which teams must be fetched. Its
+# refusals propagate (exit 1 for a usage-class refusal, 2 for a fetch failure) — a scoped run
+# never degrades to the unscoped pool.
+graph_file="$tmpdir/graph.json"
+members_file="$tmpdir/members.json"
+graph_teams=""
+if [ -n "$root" ]; then
+  rc=0
+  "$SCRIPT_DIR/epic-graph.sh" "$root" > "$graph_file" 2>"$tmpdir/graph.err" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    cat "$tmpdir/graph.err" >&2
+    echo "ERROR: --root $root: the epic graph is unavailable — refusing to rank an unscoped pool in its place" >&2
+    [ "$rc" -eq 1 ] && exit 1
+    exit 2
+  fi
+  jq -c '[.members[].identifier]' "$graph_file" > "$members_file"
+  graph_teams=$(jq -r '.teams | join(",")' "$graph_file")
+fi
 
 # ---------- team resolution ----------
 
@@ -195,6 +237,12 @@ fi
 # teams degrade to a warning so one flaky team cannot zero the whole workspace run.
 teams_explicit=1
 [ -z "$teams_raw" ] && teams_explicit=0
+# The scope's own teams are always explicit — a member the fetch dropped is a member the fleet
+# never sees — and with nothing else pinned they replace workspace discovery outright.
+if [ -n "$graph_teams" ]; then
+  teams_raw="${teams_raw:+$teams_raw,}$graph_teams"
+  teams_explicit=1
+fi
 if [ -z "$teams_raw" ]; then
   # No team pinned anywhere → search the whole workspace. Sorted for deterministic output.
   teams_raw=$(linear-cli teams list -o json -q 2>/dev/null \
@@ -229,9 +277,6 @@ if [ ${#teams[@]} -eq 0 ]; then
 fi
 
 # ---------- parallel fetch ----------
-
-tmpdir=$(mktemp -d)
-trap 'rm -rf "$tmpdir"' EXIT
 
 list_file="$tmpdir/list.json"
 deps_file="$tmpdir/deps.json"
@@ -337,6 +382,16 @@ done
 jq -s 'add' "${list_parts[@]}" > "$list_file"
 jq -s '{nodes: [ .[] | (.nodes // [])[] | {identifier, state: (.state.name // .state // "?")} ],
         edges: [ .[] | (.edges // [])[] ]}' "${deps_parts[@]}" >"$deps_file"
+
+# Epic scope: cut the list to members HERE, before anything reads it — the candidate select, the
+# Planned gate, the blocked note, and every hidden-count note all derive from $list_file, so one
+# cut scopes them all. The deps graph is left whole: a member blocked by anything still reads as
+# blocked, and a member is only ever blocked by another member or by a terminal issue.
+if [ -n "$root" ]; then
+  jq --slurpfile m "$members_file" '($m[0]) as $ids | map(select(.identifier as $i | ($ids | index($i)) != null))' \
+    "$list_file" > "$list_file.scoped"
+  mv "$list_file.scoped" "$list_file"
+fi
 
 # ---------- my email ----------
 
@@ -790,6 +845,21 @@ epic_note() {
 
 candidate_count=$(printf '%s' "$candidates_json" | jq 'length')
 
+# Where the ranking looked — the headlines name it, and a scoped run states its membership up
+# front so a reader (or /auto's NO-CANDIDATES line) never mistakes the epic's pool for the team's.
+team_word="team"
+[ ${#teams[@]} -gt 1 ] && team_word="teams"
+where_desc="$team_word $teams_label"
+scope_line=""
+if [ -n "$root" ]; then
+  where_desc="epic $root ($team_word $teams_label)"
+  scope_line=$(jq -r --arg root "$root" '"_Scope: epic \($root) — \(.members | length) non-terminal member(s) across \(.teams | join(", ")); ranking limited to the graph._"' "$graph_file")
+fi
+scope_note() {
+  [ -n "$scope_line" ] && printf '%s\n\n' "$scope_line"
+  return 0
+}
+
 # ---------- Blocked note: the last silent exclusion (see the header) ----------
 #
 # Every eligible issue with an unresolved blocker, classified by the chain walk the Planned gate uses.
@@ -843,16 +913,16 @@ if [ "$candidate_count" -eq 0 ]; then
   filter_desc=""
   [ -n "$label" ] && filter_desc=" with label '$label'"
   [ -n "$exclude_label" ] && filter_desc="$filter_desc lacking label '$exclude_label'"
-  team_word="team"
-  [ ${#teams[@]} -gt 1 ] && team_word="teams"
+  printf '## Suggested next\n\n'
+  scope_note
   if [ "$gate_closed" -eq 1 ]; then
     # Deliberately not the drained text: /auto keys on this headline to wait instead of latching drained.
-    printf '## Suggested next\n\n_Nothing pickable right now%s in %s %s — the Planned/Todo column is not drained, so Backlog is withheld (PLANNED-HOLD below). Wait for a release or act on the held issues; do not pick Backlog._\n' "$filter_desc" "$team_word" "$teams_label"
+    printf '_Nothing pickable right now%s in %s — the Planned/Todo column is not drained, so Backlog is withheld (PLANNED-HOLD below). Wait for a release or act on the held issues; do not pick Backlog._\n' "$filter_desc" "$where_desc"
   elif [ "$blocked_hold" -eq 1 ]; then
     # Same contract as the Planned hold: chained behind in-flight work is not drained, and the note names the chain.
-    printf '## Suggested next\n\n_Nothing pickable right now%s in %s %s — every remaining candidate waits behind an unresolved blocker, and %s will release on their own (BLOCKED-HOLD below). Wait for a sibling to ship; do not latch drained._\n' "$filter_desc" "$team_word" "$teams_label" "$blocked_releasing"
+    printf '_Nothing pickable right now%s in %s — every remaining candidate waits behind an unresolved blocker, and %s will release on their own (BLOCKED-HOLD below). Wait for a sibling to ship; do not latch drained._\n' "$filter_desc" "$where_desc" "$blocked_releasing"
   else
-    printf '## Suggested next\n\n_No workable issues%s in %s %s._\n' "$filter_desc" "$team_word" "$teams_label"
+    printf '_No workable issues%s in %s._\n' "$filter_desc" "$where_desc"
   fi
   hold_note
   blocked_note
@@ -1044,6 +1114,7 @@ fi
 # ---------- emit markdown ----------
 
 printf '## Suggested next\n\n'
+scope_note
 printf '%s' "$ranked_json" | jq -r --argjson lim "$limit" '
   def tier_reason(c):
     if c.tier == 0 then

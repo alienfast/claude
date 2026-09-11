@@ -75,6 +75,9 @@ mkdir -p "$FIX" "$WORK/bin" "$WORK/home"
 #   TT-28 Planned High, `related` to In Progress TT-10 -> spread de-rank (file-level overlap with a
 #                                     live session, standards/issue-spec.md): after TT-5 (same class
 #                                     and priority, no penalty), before every lower priority
+#   TT-29 Backlog None, CHILD of epic TT-27, blocked by TT-20 -> hidden by default (open blocker);
+#                                     inherits the Planned stage via its parent under --include-blocked;
+#                                     with TT-20 it makes TT-27's graph the --root fixture (below)
 cat > "$FIX/issues-page.json" <<'EOF'
 {"data":{"issues":{"nodes":[
  {"identifier":"TT-1","title":"urgent backlog","estimate":null,"priority":1,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[]},"parent":null},
@@ -104,28 +107,48 @@ cat > "$FIX/issues-page.json" <<'EOF'
  {"identifier":"TT-25","title":"planned chain tail","estimate":null,"priority":3,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[]},"parent":null},
  {"identifier":"TT-26","title":"backlog child of planned epic","estimate":null,"priority":0,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[]},"parent":{"identifier":"TT-27"}},
  {"identifier":"TT-27","title":"planned epic","estimate":null,"priority":0,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[{"name":"epic"}]},"parent":null},
- {"identifier":"TT-28","title":"planned high related to in-flight","estimate":null,"priority":2,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[]},"parent":null}
+ {"identifier":"TT-28","title":"planned high related to in-flight","estimate":null,"priority":2,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[]},"parent":null},
+ {"identifier":"TT-29","title":"backlog child behind member blocker","estimate":null,"priority":0,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[]},"parent":{"identifier":"TT-27"}}
 ],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
 EOF
 
 # Deps page (linear-deps-graph.sh --team shape): TT-8 blocks TT-7, TT-10 blocks TT-9 and is `related`
 # to TT-28 (stored on TT-10's side only — the map must read it in both directions),
 # TT-19 (In Review — terminal by name, keeper ruling 2026-08-21) blocks TT-18; TT-20 blocks
-# TT-21, TT-22 blocks the shipped TT-8, and TT-23 → TT-24 → TT-25 is the transitive chain.
+# TT-21 and TT-29, TT-22 blocks the shipped TT-8, and TT-23 → TT-24 → TT-25 is the transitive chain.
 cat > "$FIX/deps-page.json" <<'EOF'
 {"data":{"issues":{"nodes":[
  {"identifier":"TT-8","title":"shipped blocker","state":{"name":"Ready for Release","type":"completed"},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-7"}}]}},
  {"identifier":"TT-10","title":"open blocker","state":{"name":"In Progress","type":"started"},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-9"}},{"type":"related","relatedIssue":{"identifier":"TT-28"}}]}},
  {"identifier":"TT-19","title":"review blocker","state":{"name":"In Review","type":"started"},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-18"}}]}},
- {"identifier":"TT-20","title":"backlog blocker of planned","state":{"name":"Backlog","type":"backlog"},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-21"}}]}},
+ {"identifier":"TT-20","title":"backlog blocker of planned","state":{"name":"Backlog","type":"backlog"},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-21"}},{"type":"blocks","relatedIssue":{"identifier":"TT-29"}}]}},
  {"identifier":"TT-22","title":"backlog behind shipped chain","state":{"name":"Backlog","type":"backlog"},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-8"}}]}},
  {"identifier":"TT-23","title":"backlog chain head","state":{"name":"Backlog","type":"backlog"},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-24"}}]}},
  {"identifier":"TT-24","title":"backlog chain middle","state":{"name":"Backlog","type":"backlog"},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-25"}}]}}
 ],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
 EOF
 
-# linear-cli shim: `api query` dispatches on the query text (its last argument); the parent
-# walk's `issues get` no-ops (empty output is a tolerated skip in the walk).
+# Per-issue nodes for epic-graph.sh's walk (the --root fixture), in the raw `issue(id:)` shape and
+# consistent with the two pages above: TT-27's graph is itself, its children TT-26 and TT-29, and
+# TT-20 (a member because it blocks TT-29). TT-21 is fetched only as TT-20's outside dependent;
+# TT-5 is a non-epic root for the refusal case; anything else answers not-found.
+gnode() { # gnode <ID> <state> <type> <labels-json> <parent|null> <children-json> <relations-json> <inverse-json>
+  local parent='null'
+  [ "$5" != "null" ] && parent="{\"identifier\":\"$5\"}"
+  printf '{"data":{"issue":{"identifier":"%s","title":"%s","state":{"name":"%s","type":"%s"},"team":{"key":"TT"},"labels":{"nodes":%s},"parent":%s,"children":{"nodes":%s},"relations":{"nodes":%s},"inverseRelations":{"nodes":%s}}}}\n' \
+    "$1" "$1" "$2" "$3" "$4" "$parent" "$6" "$7" "$8" > "$FIX/node-$1.json"
+}
+gnode TT-27 Planned unstarted '[{"name":"epic"}]' null '[{"identifier":"TT-26"},{"identifier":"TT-29"}]' '[]' '[]'
+gnode TT-26 Backlog backlog '[]' TT-27 '[]' '[]' '[]'
+gnode TT-29 Backlog backlog '[]' TT-27 '[]' '[]' '[{"type":"blocks","issue":{"identifier":"TT-20"}}]'
+gnode TT-20 Backlog backlog '[]' null '[]' '[{"type":"blocks","relatedIssue":{"identifier":"TT-21"}},{"type":"blocks","relatedIssue":{"identifier":"TT-29"}}]' '[]'
+gnode TT-21 Planned unstarted '[]' null '[]' '[]' '[{"type":"blocks","issue":{"identifier":"TT-20"}}]'
+gnode TT-5  Planned unstarted '[]' null '[]' '[]' '[]'
+
+# linear-cli shim: `api query` dispatches on the query text (its last argument) — the graph walk's
+# query is the only one carrying `inverseRelations`, and it is matched FIRST because it also carries
+# `relatedIssue` like the deps page; the parent walk's `issues get` no-ops (empty output is a
+# tolerated skip in the walk).
 cat > "$WORK/bin/linear-cli" <<EOF
 #!/bin/bash
 FIX="$FIX"
@@ -133,6 +156,10 @@ if [ "\${1:-}" != "api" ]; then exit 0; fi
 q="\${@: -1}"
 case "\$q" in
   *viewer\{email\}*) printf '%s' '{"data":{"viewer":{"email":"t@t.test"}}}' ;;
+  *inverseRelations*)
+    id=""; for a in "\$@"; do case "\$a" in id=*) id="\${a#id=}" ;; esac; done
+    if [ -f "\$FIX/node-\$id.json" ]; then cat "\$FIX/node-\$id.json"
+    else printf '%s' '{"code":2,"details":[{"message":"Entity not found: Issue"}],"error":true}'; exit 2; fi ;;
   *relatedIssue*)    cat "\$FIX/deps-page.json" ;;
   *assignee*)        cat "\$FIX/issues-page.json" ;;
   *) printf '%s' '{"errors":[{"message":"unexpected query in test shim"}]}'; exit 1 ;;
@@ -143,6 +170,10 @@ chmod +x "$WORK/bin/linear-cli"
 run() { # run <outfile> <extra args...>
   local out="$1"; shift
   HOME="$WORK/home" PATH="$WORK/bin:$PATH" LINEAR_TEAM="" "$SCRIPT" --team TT "$@" > "$out" 2>"$out.err"
+}
+run_noteam() { # run_noteam <outfile> <extra args...> — no --team and no $LINEAR_TEAM (discovery is a no-op in the shim)
+  local out="$1"; shift
+  HOME="$WORK/home" PATH="$WORK/bin:$PATH" LINEAR_TEAM="" "$SCRIPT" "$@" > "$out" 2>"$out.err"
 }
 
 order_of() { grep -E '^[0-9]+\. ' "$1" | grep -oE 'TT-[0-9]+' | tr '\n' ' ' | sed 's/ $//'; }
@@ -186,7 +217,7 @@ ck_lacks "blocked chain members hidden"     "TT-24" "$WORK/ranked.txt"
 # ---- --include-blocked: TT-9 restored (Low outranks TT-7's None), everything else unchanged ----
 OUT2="$WORK/out2.md"
 run "$OUT2" --limit 20 --include-blocked || { echo "FAIL: include-blocked run exited $?"; cat "$OUT2.err"; exit 1; }
-ck "blocked order" "TT-17 TT-3 TT-2 TT-4 TT-5 TT-28 TT-25 TT-9 TT-21 TT-7 TT-18 TT-20 TT-23 TT-24 TT-26 TT-1 TT-6 TT-22" "$(order_of "$OUT2")"
+ck "blocked order" "TT-17 TT-3 TT-2 TT-4 TT-5 TT-28 TT-25 TT-9 TT-21 TT-7 TT-18 TT-20 TT-23 TT-24 TT-26 TT-29 TT-1 TT-6 TT-22" "$(order_of "$OUT2")"
 ck_lacks "discovery listing is gate-exempt" "PLANNED-HOLD" "$OUT2"
 
 # ---- label filter: only the security-labeled issues, stage-first within the filter ----
@@ -336,6 +367,56 @@ ck_has  "keeper-only blocked pool is drained" "_No workable issues with label 's
 ck_lacks "no hold when nothing releases" "BLOCKED-HOLD" "$OUT13"
 ck_has  "keeper-only note" "_1 issue(s) hidden behind unresolved blockers — 1 need the keeper (TT-32 [blocked by TT-33 [lacks label specified]]). Pass --include-blocked to list them._" "$OUT13"
 cp "$FIX/issues-main.json" "$FIX/issues-page.json"; cp "$FIX/deps-main.json" "$FIX/deps-page.json"
+
+# ---- --root: the ranking scoped to an epic's graph. TT-27's graph is itself, its children TT-26
+# ---- and TT-29, and TT-20 (a member because it blocks TT-29); every other fixture issue sits
+# ---- outside it, so no hidden or hold note may count one — the cut lands before the notes ----
+OUTR="$WORK/outr.md"
+run "$OUTR" --limit 20 --root TT-27 || { echo "FAIL: root run exited $?"; cat "$OUTR.err"; exit 1; }
+ck "scoped order (TT-29 blocked, TT-20 withheld as Backlog, TT-27 hidden as the epic)" "TT-26" "$(order_of "$OUTR")"
+ck_has  "scope line"        "_Scope: epic TT-27 — 4 non-terminal member(s) across TT; ranking limited to the graph._" "$OUTR"
+ck_has  "scoped planned-hold counts members only" "_PLANNED-HOLD: Backlog withheld — the Planned/Todo column is not drained (1 issue(s) hold the gate: 0 pickable now; 1 need the keeper — TT-27 [epic — certify per child, close it when they release]). 1 Backlog candidate(s) wait behind the gate; it opens when the column drains — pass --no-stage-gate to list them._" "$OUTR"
+ck_has  "scoped epic note"  "1 issue(s) hidden as delegated epics" "$OUTR"
+ck_lacks "scoped: no needs-decision note (TT-11 is outside)" "hidden awaiting a human decision" "$OUTR"
+ck_lacks "scoped: no claimed note (TT-16 is outside)"        "hidden as claimed" "$OUTR"
+ck_lacks "scoped: no solo note (TT-12 is outside)"           "hidden as fleet-hostile" "$OUTR"
+ck_lacks "scoped: no human note (TT-13 is outside)"          "hidden as human-owned" "$OUTR"
+ck_lacks "scoped: outside Planned Urgent absent"             "TT-3" "$OUTR"
+
+OUTR2="$WORK/outr2.md"
+run "$OUTR2" --limit 20 --root TT-27 --no-stage-gate || { echo "FAIL: root no-gate run exited $?"; cat "$OUTR2.err"; exit 1; }
+ck "scoped gate lifted" "TT-26 TT-20" "$(order_of "$OUTR2")"
+ck_has  "scoped blocked note names the member chain only" "_1 issue(s) hidden behind unresolved blockers — 1 will release on their own (TT-29 behind TT-20 [Backlog]). Pass --include-blocked to list them._" "$OUTR2"
+
+OUTR3="$WORK/outr3.md"
+run "$OUTR3" --limit 20 --root TT-27 --include-blocked || { echo "FAIL: root include-blocked run exited $?"; cat "$OUTR3.err"; exit 1; }
+ck "scoped listing (TT-29 inherits the Planned stage from its epic, TT-20 stays Backlog)" "TT-26 TT-29 TT-20" "$(order_of "$OUTR3")"
+
+OUTR4="$WORK/outr4.md"
+run "$OUTR4" --limit 20 --root TT-27 --label specified || { echo "FAIL: root label run exited $?"; cat "$OUTR4.err"; exit 1; }
+ck "scoped hold lists nothing" "" "$(order_of "$OUTR4")"
+ck_has  "scoped hold headline names the scope" "_Nothing pickable right now with label 'specified' in epic TT-27 (team TT) — the Planned/Todo column is not drained, so Backlog is withheld (PLANNED-HOLD below). Wait for a release or act on the held issues; do not pick Backlog._" "$OUTR4"
+ck_has  "scoped hold keeps the scope line" "_Scope: epic TT-27" "$OUTR4"
+
+# The graph's teams replace workspace discovery when nothing else is pinned.
+OUTR5="$WORK/outr5.md"
+run_noteam "$OUTR5" --limit 20 --root TT-27 || { echo "FAIL: root no-team run exited $?"; cat "$OUTR5.err"; exit 1; }
+ck "scoped run without --team resolves the team from the graph" "TT-26" "$(order_of "$OUTR5")"
+
+# Fail closed: a root that is not an epic, a missing root, and a malformed one all refuse — never an
+# unscoped ranking in the scope's place.
+OUTR6="$WORK/outr6.md"
+run "$OUTR6" --limit 20 --root TT-5; rc=$?
+ck "non-epic root exits 1" "1" "$rc"
+ck "non-epic root prints no ranking" "" "$(order_of "$OUTR6")"
+ck_has  "non-epic root names the label" "does not carry the 'epic' label" "$OUTR6.err"
+ck_has  "non-epic root says it refused" "refusing to rank an unscoped pool" "$OUTR6.err"
+OUTR7="$WORK/outr7.md"
+run "$OUTR7" --limit 20 --root TT-99; rc=$?
+ck "missing root exits 1" "1" "$rc"
+ck_has  "missing root names the miss" "issue 'TT-99' not found" "$OUTR7.err"
+run "$OUTR7" --limit 20 --root foo; rc=$?
+ck "malformed root exits 1" "1" "$rc"
 
 echo
 echo "$PASS passed / $FAIL failed"
