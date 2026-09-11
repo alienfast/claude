@@ -101,8 +101,8 @@
 # targeted-mode carve-out: /auto refuses a human-labeled target in any mode.
 #
 # `epic`-labeled issues are hidden the same way and surfaced via --label epic: a delegated
-# container whose children carry the work (BF-95 — certify per child, close the epic when they
-# release), so it never counts fleet-workable, certified or not. fleet-blockers.sh and
+# container whose children carry the work (BF-95 — certify per child; the epic closes itself when
+# the last child releases, mark-ready-for-release.sh), so it never counts fleet-workable, certified or not. fleet-blockers.sh and
 # fleet-forecast.py already classify it so; here it was only the BF-504 de-rank, which the
 # Planned gate made insufficient — with Backlog withheld, an all-children-shipped Planned epic
 # sat one pick behind the workable Planned set instead of behind the whole Backlog.
@@ -707,7 +707,7 @@ CHAIN_DEFS='def is_terminal($x): ((($terminal | map(ascii_downcase)) | index((($
       def lbl($i; $n): (any(($i.labels // [])[]; ascii_downcase == $n));
       # Why a held issue is the keeper to move — empty when the fleet could pick it (now or once unblocked).
       def self_reason($i):
-        if lbl($i; "epic") then "epic — certify per child, close it when they release"
+        if lbl($i; "epic") then "epic — certify per child; it closes itself when they release"
         elif lbl($i; "needs decision") then "needs decision"
         elif lbl($i; "human") then "human"
         elif lbl($i; "solo") then "solo"
@@ -839,7 +839,7 @@ if [ "$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')" != "epic" ]; then
   epic_hidden=$(jq '[.[] | . as $i | select((["Backlog","Planned","Todo"] | index($i.state)) != null) | select(any(($i.labels // [])[]; ascii_downcase == "epic"))] | length' "$list_file" 2>/dev/null || echo 0)
 fi
 epic_note() {
-  [ "$epic_hidden" -gt 0 ] && printf '\n_%s issue(s) hidden as delegated epics (`epic` label — the children carry the work; certify per child, close the epic when they release) — list with --label epic._\n' "$epic_hidden"
+  [ "$epic_hidden" -gt 0 ] && printf '\n_%s issue(s) hidden as delegated epics (`epic` label — the children carry the work; certify per child, and the epic closes itself when they release) — list with --label epic._\n' "$epic_hidden"
   return 0
 }
 

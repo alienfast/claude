@@ -16,9 +16,15 @@
 #
 #   `epic`-labeled issues are delegated containers (BF-95; next-candidates' BF-504 de-rank):
 #   certification is per CHILD, so an epic is never flagged "uncertified (/spec to certify)" —
-#   its remedy row says to certify children and close the epic when they release — and it never
-#   counts fleet-workable, certified or not (an epic carrying `specified` is the BF-504 shape
-#   that burned two /auto worktree cycles on BF-95 before the label was removed).
+#   its remedy row says to certify children — and it never counts fleet-workable, certified or
+#   not (an epic carrying `specified` is the BF-504 shape that burned two /auto worktree cycles
+#   on BF-95 before the label was removed). An epic closes ITSELF when its last child releases
+#   (mark-ready-for-release.sh's parent walk, keeper decision 2026-09-11); the CLOSE-SET line
+#   below is the one-time sweep for epics that were already complete before that walk existed.
+#
+#   CLOSE-SET — every fetched `epic` with at least one child and every child terminal (Done /
+#   Canceled / Duplicate / Ready for Release, by state type or name — In Review is not terminal
+#   here), ready to paste into `linear-set-state.sh 'Ready for Release' <IDs>`.
 #
 #   FLEET-BLOCKED — pool-drain hygiene, second-order: every `blocks` edge whose blocked side is
 #   a certified fleet candidate (workable state + `specified`, not label-hidden) but whose
@@ -48,6 +54,7 @@
 #           dependents through; the co-gate annotation stops a fan-out reading as frees-alone)
 #         `PROMOTE-SET: <ID>[<gate>], <ID>, …`   (the deduped Backlog chain membership in full —
 #           the required promotion batch; gates annotated inline, never filtered)
+#         `CLOSE-SET: <ID>, …`   (epics whose every child is terminal — the auto-close sweep batch)
 #         `FLEET-BLOCKED: <n>`, then one sorted line per stranded edge:
 #         `<BLOCKED> [<state>] blocked by <BLOCKER> [<state>] — <reason(; reason)>`
 # Exit:   0 when fetched and classified (counts may be 0); non-zero on fetch/parse failure.
@@ -84,7 +91,7 @@ fi
 
 # One paginated query per team: every non-terminal issue's state, labels, and outgoing relations. A
 # terminal-state blocker is excluded by the filter, so its edges vanish — resolved by construction.
-q='query($team:String!,$after:String){issues(filter:{team:{key:{eq:$team}}, state:{type:{nin:["completed","canceled"]}}}, first:250, after:$after){nodes{identifier state{name type} assignee{email} labels{nodes{name}} relations{nodes{type relatedIssue{identifier}}}} pageInfo{hasNextPage endCursor}}}'
+q='query($team:String!,$after:String){issues(filter:{team:{key:{eq:$team}}, state:{type:{nin:["completed","canceled"]}}}, first:250, after:$after){nodes{identifier state{name type} assignee{email} labels{nodes{name}} children(first:250){nodes{state{name type}}} relations{nodes{type relatedIssue{identifier}}}} pageInfo{hasNextPage endCursor}}}'
 all='[]'
 for team in $teams; do
   after=''
@@ -130,7 +137,10 @@ printf '%s' "$all" | jq -r --arg me "${me_email:-}" '
   # teammates'"'"' claimed High issues (2026-08-15).
   def gate_reasons($v):
     [ (if claimed($v) then "claimed by \($v.assignee) (assignment is a claim — their work, not fleet-releasable, no keeper action)" else empty end),
-      (if ($v.labels | index("epic")) then "delegated epic (children carry the work — certify per child, close the epic when they release)" else empty end),
+      (if ($v.labels | index("epic")) then
+         (if $v.closeable then "delegated epic — every child is terminal; close it (CLOSE-SET below)"
+          else "delegated epic (children carry the work — certify per child; it closes itself when the last child releases)" end)
+       else empty end),
       (if ($v.labels | index("human")) then "human-labeled (human-performed; the fleet never ships it)" else empty end),
       (if ($v.labels | index("needs decision")) then "needs decision (decide and clear the label)" else empty end),
       (if ($v.labels | index("solo")) then "solo (targeted /auto in the quiet window)" else empty end),
@@ -158,11 +168,16 @@ printf '%s' "$all" | jq -r --arg me "${me_email:-}" '
     | if ($fresh | length) == 0 then []
       else $fresh + ([ $fresh[] | ancestors($up; .; $seen + $fresh) ] | add)
       end;
+  # The terminal set the epic auto-close walk uses (mark-ready-for-release.sh): by type and by name,
+  # In Review deliberately excluded — a child awaiting human review keeps its epic open.
+  def closed: ((.type // "") | IN("completed","canceled","duplicate"))
+    or ((.name // "") | ascii_downcase | IN("done","canceled","cancelled","duplicate","ready for release"));
   . as $nodes
   | ([ $nodes[] | {key: .identifier,
                    value: {sname: (.state.name // "?"), stype: (.state.type // "?"),
                            assignee: (.assignee.email // ""),
-                           labels: [((.labels.nodes // [])[].name) | ascii_downcase]}} ]
+                           labels: [((.labels.nodes // [])[].name) | ascii_downcase],
+                           closeable: (((.children.nodes // []) | length) > 0 and all((.children.nodes // [])[]; .state | closed))}} ]
      | from_entries) as $m
   | ([ $nodes[]
        # "In Review" is completed-in-substance (keeper ruling 2026-08-21): its outgoing blocks are
@@ -226,6 +241,11 @@ printf '%s' "$all" | jq -r --arg me "${me_email:-}" '
             | gate_tags($m[$p]) as $t
             | $p + (if ($t | length) > 0 then "[\($t | join("; "))]" else "" end) ] | join(", "))
      else "PROMOTE-SET: (none)" end) as $promote_line
+  # Every fetched epic already complete — the one-time sweep batch (linear-set-state.sh "Ready for
+  # Release" <IDs>); from here on mark-ready-for-release.sh closes them when the last child releases.
+  # No apostrophes in this block — the jq program is one single-quoted shell string.
+  | ([ $m | to_entries[] | select(.value.closeable and (.value.labels | index("epic"))) | .key ] | sort) as $closeable
+  | (if ($closeable | length) > 0 then "CLOSE-SET: " + ($closeable | join(", ")) else "CLOSE-SET: (none)" end) as $close_line
   | ([ $focus[] | . as $f | $m[$f] as $fv
        | select((($up[$f] // []) | length) == 0)
        | select((gate_reasons($fv) | length) == 0)
@@ -250,6 +270,6 @@ printf '%s' "$all" | jq -r --arg me "${me_email:-}" '
        | select($reasons | length > 0)
        | "\(.blocked) [\($t.sname)] blocked by \(.blocker) [\($b.sname)] — \($reasons | join("; "))"
      ] | sort) as $edge_rows
-  | ([$summary] + $action_lines + $root_lines + [$promote_line] + ["FLEET-BLOCKED: \($edge_rows | length)"] + $edge_rows)
+  | ([$summary] + $action_lines + $root_lines + [$promote_line, $close_line] + ["FLEET-BLOCKED: \($edge_rows | length)"] + $edge_rows)
   | .[]
 '

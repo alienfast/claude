@@ -58,6 +58,8 @@ cat > "$FIX/issues-page.json" <<'EOF'
  {"identifier":"TT-41","state":{"name":"Backlog","type":"backlog"},"labels":{"nodes":[]},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-40"}}]}},
  {"identifier":"TT-70","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"epic"}]},"relations":{"nodes":[]}},
  {"identifier":"TT-71","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"},{"name":"epic"}]},"relations":{"nodes":[]}},
+ {"identifier":"TT-72","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"epic"}]},"children":{"nodes":[{"state":{"name":"Done","type":"completed"}},{"state":{"name":"Ready for Release","type":"completed"}},{"state":{"name":"Canceled","type":"canceled"}}]},"relations":{"nodes":[]}},
+ {"identifier":"TT-73","state":{"name":"Backlog","type":"backlog"},"labels":{"nodes":[{"name":"epic"}]},"children":{"nodes":[{"state":{"name":"Done","type":"completed"}},{"state":{"name":"In Review","type":"started"}}]},"relations":{"nodes":[]}},
  {"identifier":"TT-50","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"}]},"relations":{"nodes":[]}},
  {"identifier":"TT-51","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"}]},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-50"}}]}},
  {"identifier":"TT-52","state":{"name":"Backlog","type":"backlog"},"labels":{"nodes":[{"name":"specified"},{"name":"needs decision"}]},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-51"}}]}},
@@ -114,7 +116,7 @@ HOME="$WORK/home" PATH="$WORK/bin:$PATH" "$SCRIPT" --team TT > "$OUT" 2>"$OUT.er
 # ---- FOCUS section: the release-scope audit is the primary output and leads ----
 # TT-54 (blocked only by clean-Backlog TT-55) counts as attention, not draining: the promotion
 # is required release scope (keeper ruling 2026-08-13), so its dependent waits on the batch.
-ck "focus summary leads" "FOCUS: 28 unstarted — 2 fleet-workable · 22 need keeper action · 4 draining on their own" "$(head -1 "$OUT")"
+ck "focus summary leads" "FOCUS: 29 unstarted — 2 fleet-workable · 23 need keeper action · 4 draining on their own" "$(head -1 "$OUT")"
 # TT-91's only blocker is In Review TT-90 — completed-in-substance, so the edge never exists:
 # TT-91 counts fleet-workable (not draining) and neither issue appears in any row.
 ck "in-review blocker resolved by construction" "0" "$(grep -c 'TT-90' "$OUT")"
@@ -125,9 +127,16 @@ ck_has "hidden dependent surfaces in focus"    "FOCUS-ACTION: TT-40 [Planned] �
 # Epic-labeled issues are delegated containers (BF-95/BF-504): the remedy is per-child
 # certification + closure on release — never "/spec the epic" — and a CERTIFIED epic still
 # needs keeper action rather than counting fleet-workable.
-ck_has "uncertified epic gets the epic remedy" "FOCUS-ACTION: TT-70 [Planned] — delegated epic (children carry the work — certify per child, close the epic when they release)" "$OUT"
+ck_has "uncertified epic gets the epic remedy" "FOCUS-ACTION: TT-70 [Planned] — delegated epic (children carry the work — certify per child; it closes itself when the last child releases)" "$OUT"
 ck "epic is never flagged uncertified"         "0" "$(grep -F 'TT-70' "$OUT" | grep -c 'uncertified')"
-ck_has "certified epic is keeper action, not fleet-workable" "FOCUS-ACTION: TT-71 [Planned] — delegated epic (children carry the work — certify per child, close the epic when they release)" "$OUT"
+ck_has "certified epic is keeper action, not fleet-workable" "FOCUS-ACTION: TT-71 [Planned] — delegated epic (children carry the work — certify per child; it closes itself when the last child releases)" "$OUT"
+# Epic auto-close (keeper decision 2026-09-11): an epic whose every child is already terminal is the
+# one-time sweep's batch — a Planned one is a FOCUS action pointing at CLOSE-SET, a Backlog one is
+# in the set without a FOCUS row, and In Review does NOT count as terminal (TT-73 stays out).
+ck_has "complete epic points at the sweep"     "FOCUS-ACTION: TT-72 [Planned] — delegated epic — every child is terminal; close it (CLOSE-SET below)" "$OUT"
+ck_has "close-set lists the complete epics"    "CLOSE-SET: TT-72" "$OUT"
+ck "close-set excludes an epic with an In Review child" "0" "$(grep '^CLOSE-SET' "$OUT" | grep -c 'TT-73')"
+ck "close-set excludes childless epics"        "0" "$(grep '^CLOSE-SET' "$OUT" | grep -c 'TT-70')"
 ck_has "transitive root with fan-out"          "FOCUS-ROOT: TT-52 [Backlog] (via TT-51) — needs decision (decide and clear the label) — unblocks TT-50, TT-51" "$OUT"
 ck_has "direct gated root"                     "FOCUS-ROOT: TT-21 [Planned] — needs decision (decide and clear the label) — unblocks TT-20" "$OUT"
 ck_has "triage root under a Todo dependent"    "FOCUS-ROOT: TT-27 [Inbox] — in Triage (groom via /spec) — unblocks TT-26" "$OUT"
@@ -222,6 +231,7 @@ ck_lacks "no verdict on failure" "FLEET-BLOCKED" "$OUT2"
 # exit 1 with nothing on stderr; the guard must get to name it.
 ck_has "fetch failure is named" "ERROR: issue fetch failed for team 'TT'" "$OUT2.err"
 ck_lacks "no promote-set on failure" "PROMOTE-SET" "$OUT2"
+ck_lacks "no close-set on failure" "CLOSE-SET" "$OUT2"
 
 if "$SCRIPT" 2>/dev/null; then FAIL=$((FAIL+1)); echo "FAIL: no-args exited 0"; else PASS=$((PASS+1)); fi
 
