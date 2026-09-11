@@ -283,6 +283,54 @@ ck "clean exit" "0" "$RC"
 ck_has "  done row reads dead"                "| sess-b | dead (ended) | active" "$OUT"
 ck_has "  and the stranded-claim flag fires"  'Session sess-b reads `active` but its process is gone' "$OUT"
 
+echo "== 16. an epic-scoped marker — scope line, and the member burn-down against the prep snapshot"
+# fleet-launch.sh epic:<ID> records scope, the prep-time members snapshot, and the integration branch.
+# The burn-down is a LIVE epic-graph.sh read: XX-1 shipped since prep, XX-3 in flight, XX-10 filed
+# mid-run (absent from the snapshot). The stub answers the graph walk by the `id=` variable.
+gnode() { # gnode <ID> <state> <type> <labels-json> <children-json>
+  printf '{"data":{"issue":{"identifier":"%s","title":"t","state":{"name":"%s","type":"%s"},"team":{"key":"XX"},"labels":{"nodes":%s},"parent":null,"children":{"nodes":%s},"relations":{"nodes":[]},"inverseRelations":{"nodes":[]}}}}\n' \
+    "$1" "$2" "$3" "$4" "$5" > "$ROOT/node-$1.json"
+}
+gnode XX-100 Planned unstarted '[{"name":"epic"}]' '[{"identifier":"XX-1"},{"identifier":"XX-2"},{"identifier":"XX-3"},{"identifier":"XX-10"}]'
+gnode XX-1 Done completed '[]' '[]'
+gnode XX-2 Planned unstarted '[{"name":"specified"}]' '[]'
+gnode XX-3 "In Progress" started '[{"name":"specified"}]' '[]'
+gnode XX-10 Backlog backlog '[]' '[]'
+cat > "$STUB/linear-cli" <<EOF
+#!/bin/bash
+case "\${1:-} \${2:-}" in
+  "api query")
+    id=""; for a in "\$@"; do case "\$a" in id=*) id="\${a#id=}" ;; esac; done
+    if [ -f "$ROOT/node-\$id.json" ]; then cat "$ROOT/node-\$id.json"; exit 0; fi
+    echo '{"code":2,"details":[{"message":"Entity not found: Issue"}],"error":true}'; exit 2 ;;
+  "issues list") echo '[]' ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x "$STUB/linear-cli"
+jq -n --argjson le "$((NOW - 500))" '{count: 1, launch_epoch: $le, fleet_sessions: ["sess-a"], scope: "XX-100", members: ["XX-100","XX-1","XX-2","XX-3"], branch: "epic/xx-e", base: "main"}' > "$REPO/tmp/fleet-deadline.json"
+run_fs --no-runway
+ck "clean exit" "0" "$RC"
+ck_has "  scope line with the branch posture" '**Scope:** epic XX-100 — integration branch `epic/xx-e` (forked from `main`; ships as one PR onto it)' "$OUT"
+ck_has "  burn-down: shipped / remaining / in flight / added since prep" "**Members:** 1 shipped · 3 remaining (1 in flight: XX-3) · 1 added since prep: XX-10" "$OUT"
+ck_has "  shipped members named with state" "shipped: XX-1 [Done]" "$OUT"
+
+echo "== 17. a scoped marker without a snapshot, an unreadable epic, and no linear-cli"
+jq 'del(.members) | del(.branch) | del(.base)' "$REPO/tmp/fleet-deadline.json" > "$ROOT/m.tmp" && mv "$ROOT/m.tmp" "$REPO/tmp/fleet-deadline.json"
+run_fs --no-runway
+ck "clean exit" "0" "$RC"
+ck_has "  scope line without a branch" "**Scope:** epic XX-100" "$OUT"
+ck_lacks "  no branch clause" "integration branch" "$OUT"
+ck_has "  added-since-prep declared unknown" "no prep snapshot in the marker, so added-since-prep is unknown" "$OUT"
+jq '.scope = "XX-404"' "$REPO/tmp/fleet-deadline.json" > "$ROOT/m.tmp" && mv "$ROOT/m.tmp" "$REPO/tmp/fleet-deadline.json"
+run_fs --no-runway
+ck "clean exit on an unreadable epic" "0" "$RC"
+ck_has "  burn-down failure disclosed, never a fabricated count" "_Member burn-down unavailable — \`epic-graph.sh XX-404\` failed" "$OUT"
+rm "$STUB/linear-cli"
+run_fs --no-runway
+ck "clean exit without linear-cli" "0" "$RC"
+ck_has "  burn-down skipped without linear-cli" "_Member burn-down skipped — linear-cli unavailable._" "$OUT"
+
 echo ""
 echo "$PASS passed / $FAIL failed"
 [ "$FAIL" -eq 0 ]

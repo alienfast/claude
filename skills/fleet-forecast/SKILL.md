@@ -29,7 +29,13 @@ the output anywhere `/auto` or a fleet session might read it as instructions.
 
 ```bash
 ~/.claude/scripts/fleet-forecast.py --team <KEY> [--sessions N] [--horizon-h H]
+~/.claude/scripts/fleet-forecast.py --root <EPIC-ID> [--sessions N] [--horizon-h H]   # an epic-scoped fleet
 ```
+
+`--root` forecasts what `/fleet-launch epic:<ID>` would run: the pool is cut to the epic's graph members
+right after the fetch (the epic, its descendants, and their blockers — `scripts/epic-graph.sh`), the
+graph's teams are fetched on their own, and a `SCOPE:` line leads the output. It fails closed — a root
+that is not an epic exits 1 with the reason; never render the team forecast in its place.
 
 Defaults: sessions and horizon from `tmp/fleet-recommendation.json` (horizon falls back to 12h); no
 count from either source is a hard error — point at `/auto-prep` or ask for one. Useful overrides:

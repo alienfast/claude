@@ -239,5 +239,41 @@ rc=$(run "$WORK/j.json" "$WORK/j.out" --sessions 2 --horizon-h 12 --hours-per-is
 ck "J exit" 0 "$rc"
 ck_has "J empty verdict" "est. 0 ship · 0 unreached · 0 stranded — pool 0 shippable of 0 certified" "$WORK/j.out"
 
+# ---- --root: the epic-scoped simulation — the pool is cut to the epic's members right after the fetch.
+# ---- epic-graph.sh runs for real against a linear-cli shim in $HOME/.cargo/bin (the PATH both scripts
+# ---- prepend); the nodes still come from fixture A, so TT-3/TT-4/TT-7 exist and must not appear ----
+mkdir -p "$HOME/.cargo/bin"
+cat > "$HOME/.cargo/bin/linear-cli" <<'EOF'
+#!/usr/bin/env bash
+id=""; for a in "$@"; do case "$a" in id=*) id="${a#id=}" ;; esac; done
+node() { printf '{"data":{"issue":{"identifier":"%s","title":"t","state":{"name":"%s","type":"%s"},"team":{"key":"TT"},"labels":{"nodes":%s},"parent":null,"children":{"nodes":%s},"relations":{"nodes":%s},"inverseRelations":{"nodes":[]}}}}\n' "$1" "$2" "$3" "$4" "$5" "$6"; }
+case "$id" in
+  TT-100) node TT-100 Planned unstarted '[{"name":"epic"}]' '[{"identifier":"TT-1"},{"identifier":"TT-2"},{"identifier":"TT-5"}]' '[]' ;;
+  TT-1) node TT-1 Planned unstarted '[{"name":"specified"}]' '[]' '[{"type":"blocks","relatedIssue":{"identifier":"TT-2"}}]' ;;
+  TT-2) node TT-2 Planned unstarted '[{"name":"specified"}]' '[]' '[]' ;;
+  TT-5) node TT-5 Backlog backlog '[{"name":"specified"}]' '[]' '[]' ;;
+  TT-200) node TT-200 Planned unstarted '[]' '[]' '[]' ;;
+  *) echo '{"code":2,"details":[{"message":"Entity not found: Issue"}],"error":true}'; exit 2 ;;
+esac
+EOF
+chmod +x "$HOME/.cargo/bin/linear-cli"
+rc=$(run "$WORK/a.json" "$WORK/r.out" --root tt-100 --sessions 1 --horizon-h 12 --hours-per-issue 2 --flat)
+ck "R exit" 0 "$rc"
+ck_has "R scope line leads"   "SCOPE: epic TT-100 — 4 non-terminal member(s) across TT; pool limited to the graph" "$WORK/r.out"
+ck "R scope is the first line" "SCOPE" "$(head -1 "$WORK/r.out" | cut -d: -f1)"
+ck_has "R forecast covers members only" "FORECAST: 1 sessions × 12.0h horizon — est. 3 ship · 0 unreached · 0 stranded — pool 3 shippable of 3 certified" "$WORK/r.out"
+ck_has "R chain inside the scope"  "PICK t=2.0h: TT-2 → s1 (~2.0h) (unblocked by TT-1)" "$WORK/r.out"
+ck_has "R backlog member after the column drains" "PICK t=4.0h: TT-5 → s1" "$WORK/r.out"
+ck_lacks "R outside planned issue absent" "TT-4" "$WORK/r.out"
+ck_lacks "R outside in-flight blocker absent" "TT-6" "$WORK/r.out"
+ck_lacks "R outside gate holder absent from the hold" "TT-3" "$WORK/r.out"
+rc=$(run "$WORK/a.json" "$WORK/s.out" --root TT-200 --sessions 1 --horizon-h 12 --hours-per-issue 2 --flat)
+ck "S non-epic root exits 1" 1 "$rc"
+ck_has "S refusal names the label" "does not carry the 'epic' label" "$WORK/s.out.err"
+ck_lacks "S no forecast in the scope's place" "FORECAST" "$WORK/s.out"
+rc=$(run "$WORK/a.json" "$WORK/t.out" --root TT-404 --sessions 1 --horizon-h 12 --hours-per-issue 2 --flat)
+ck "T missing root exits 1" 1 "$rc"
+ck_has "T refusal names the miss" "not found" "$WORK/t.out.err"
+
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

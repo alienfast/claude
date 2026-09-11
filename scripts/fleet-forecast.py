@@ -18,9 +18,14 @@ Eligibility mirrors fleet-blockers.sh gate_reasons: a fleet session ships only w
 fleet-blockers.test.sh alongside this suite when the classification rules move.
 
 Usage:
-  fleet-forecast.py --team KEY [--sessions N] [--horizon-h H] [--hours-per-issue X] [--flat]
-                    [--recommendation PATH] [--history PATH] [--me EMAIL] [--fixture PATH]
+  fleet-forecast.py --team KEY | --root EPIC-ID [--team KEY] [--sessions N] [--horizon-h H]
+                    [--hours-per-issue X] [--flat] [--recommendation PATH] [--history PATH]
+                    [--me EMAIL] [--fixture PATH]
 
+  --root EPIC-ID simulates an epic-scoped fleet (what /fleet-launch epic:<ID> runs): the pool is cut
+  to the epic's graph members right after the fetch (epic-graph.sh — the epic, its descendants,
+  and their blockers, non-terminal only), the graph's teams are fetched on their own, and a
+  SCOPE line leads the output. Fails closed: a root that is not an epic exits 1 with the reason.
   --sessions / --horizon-h default from tmp/fleet-recommendation.json (sessions / duration_h);
   horizon falls back to 12. --hours-per-issue overrides the calibration from
   tmp/fleet-metrics-history.jsonl (mean session_hours/shipped over recent runs, rows above
@@ -92,6 +97,18 @@ def viewer_email():
         return cli(["api", "query", "-q", "-o", "json", "query{viewer{email}}"])["data"]["viewer"]["email"] or ""
     except Exception:
         return ""  # unresolvable viewer → every assignment reads claimed, failing toward the claim
+
+
+def epic_graph(root):
+    """The epic's graph as epic-graph.sh prints it; its refusals (missing root, no `epic` label,
+    unreadable node) become a RuntimeError so the caller never simulates an unscoped pool in the
+    scope's place."""
+    script = Path(__file__).resolve().parent / "epic-graph.sh"
+    env = dict(os.environ, PATH=f"{Path.home()}/.cargo/bin:{os.environ.get('PATH', '')}")
+    out = subprocess.run([str(script), root], capture_output=True, text=True, env=env)
+    if out.returncode != 0 or not out.stdout.strip():
+        raise RuntimeError(f"epic scope '{root}' did not validate — {out.stderr.strip() or 'no graph printed'}")
+    return json.loads(out.stdout)
 
 
 class Issue:
@@ -321,6 +338,7 @@ def throttle_line(rec, n_sessions):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--team")
+    ap.add_argument("--root", help="epic id — simulate the epic-scoped fleet (members only)")
     ap.add_argument("--sessions", type=int)
     ap.add_argument("--horizon-h", type=float)
     ap.add_argument("--hours-per-issue", type=float)
@@ -342,19 +360,34 @@ def main():
         return 1
     horizon = args.horizon_h or rec.get("duration_h") or 12.0
 
+    graph = None
     try:
+        if args.root:
+            graph = epic_graph(args.root.strip().upper())
         if args.fixture:
             nodes = json.loads(Path(args.fixture).read_text())
             me = args.me or ""
         else:
-            if not args.team:
-                print("ERROR: --team is required (or use --fixture)", file=sys.stderr)
+            teams = [args.team] if args.team else []
+            if graph:
+                teams += [t for t in graph.get("teams", []) if t not in teams]
+            if not teams:
+                print("ERROR: --team or --root is required (or use --fixture)", file=sys.stderr)
                 return 1
-            nodes = fetch_nodes(args.team)
+            nodes = []
+            for team in teams:
+                nodes += fetch_nodes(team)
             me = args.me or viewer_email()
     except (RuntimeError, OSError, json.JSONDecodeError, KeyError) as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1
+    if graph:
+        # The scope cut lands before anything reads the nodes, so the pool, the gate, the holds, and
+        # the verdicts all describe the epic alone — next-candidates.sh --root cuts at the same point.
+        members = {m["identifier"] for m in graph.get("members", [])}
+        nodes = [n for n in nodes if n.get("identifier") in members]
+        print(f"SCOPE: epic {graph['root']} — {len(members)} non-terminal member(s) across {', '.join(graph.get('teams', []))}; "
+              f"pool limited to the graph")
 
     issues = {}
     for node in nodes:

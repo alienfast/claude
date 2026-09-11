@@ -10,7 +10,10 @@
 #
 # Sources (all read-only; no Linear writes, no git mutations):
 #   tmp/fleet-deadline.json            fleet_sessions (the session set) + launch_epoch + count, plus
-#                                      the deadline when the launch carried one (fleet-launch.sh)
+#                                      the deadline when the launch carried one, plus scope + the
+#                                      prep-time members snapshot (+ branch/base) when it was
+#                                      epic-scoped (fleet-launch.sh)
+#   epic-graph.sh (scoped fleets)      the live membership, for the shipped/remaining/added burn-down
 #   tmp/auto-state-*.json              per-session ledgers: shipped/canceled/failed, mode
 #   .claude/worktrees/ + worktree-identity/ sidecars   in-flight issues, session ownership
 #   linear-cli (optional)              issue state/title joins, failed/canceled cross-check,
@@ -100,6 +103,44 @@ else
   printf '**Deadline:** none — loops run until the certified backlog drains.\n\n'
 fi
 printf '_Wind down early: `/fleet-launch stop` — ends the timer, in-flight issues finish, nothing is killed._\n\n'
+
+# ---------- epic scope + member burn-down ----------
+
+# An epic-scoped launch (fleet-launch.sh epic:<ID>) records scope, the prep-time member snapshot,
+# and the integration branch. The burn-down is a LIVE epic-graph.sh read against that snapshot —
+# membership is recomputed at every pick, so members filed mid-run show up here as "added since
+# prep" rather than silently widening the fleet's work.
+scope=""
+[ -s "$marker" ] && scope=$(jq -r '.scope // empty' "$marker" 2>/dev/null || true)
+if [ -n "$scope" ]; then
+  s_branch=$(jq -r '.branch // empty' "$marker")
+  s_base=$(jq -r '.base // empty' "$marker")
+  printf '**Scope:** epic %s' "$scope"
+  [ -n "$s_branch" ] && printf ' — integration branch `%s`%s' "$s_branch" "${s_base:+ (forked from \`$s_base\`; ships as one PR onto it)}"
+  printf '\n\n'
+  if [ "$have_linear" -eq 1 ]; then
+    graph=$("$SCRIPT_DIR/epic-graph.sh" "$scope" 2>/dev/null) || graph=""
+    if [ -n "$graph" ]; then
+      snapshot=$(jq -c '.members // []' "$marker")
+      printf '%s' "$graph" | jq -r --arg root "$scope" --argjson snap "$snapshot" '
+        ([.members[] | select(.identifier != $root)]) as $rem
+        | ([.terminal[] | select(.identifier != $root)]) as $done
+        | ([$rem[] | select(.state_type == "started") | .identifier]) as $flight
+        | ([$rem[] | select(.identifier as $i | ($snap | index($i)) == null) | .identifier]) as $added
+        | "**Members:** \($done | length) shipped · \($rem | length) remaining"
+          + (if ($flight | length) > 0 then " (\($flight | length) in flight: \($flight | join(", ")))" else "" end)
+          + (if ($snap | length) == 0 then " · no prep snapshot in the marker, so added-since-prep is unknown"
+             elif ($added | length) > 0 then " · \($added | length) added since prep: \($added | join(", "))"
+             else " · none added since prep" end)
+          + (if ($done | length) > 0 then "\n  shipped: \($done | map("\(.identifier) [\(.state)]") | join(", "))" else "" end)'
+      printf '\n'
+    else
+      printf '_Member burn-down unavailable — `epic-graph.sh %s` failed; the epic may have lost its label or become unreadable._\n\n' "$scope"
+    fi
+  else
+    printf '_Member burn-down skipped — linear-cli unavailable._\n\n'
+  fi
+fi
 
 # ---------- fleet scoping epoch ----------
 
@@ -418,6 +459,8 @@ else
   team=$(printf '%s\n%s\n%s\n' "$all_shipped" "$wt_issues" "$fc_ids" | sed -n 's/^\([A-Z][A-Z0-9]*\)-[0-9]*$/\1/p' | sort -u)
   [ "$(printf '%s\n' "$team" | sed '/^$/d' | wc -l | tr -d ' ')" = "1" ] || team=""
 fi
+# A scoped fleet names its own team — the epic's prefix — when nothing else did.
+[ -z "$team" ] && [ -n "$scope" ] && team="${scope%%-*}"
 if [ "$have_linear" -eq 1 ] && [ -n "$team" ]; then
   stalled=$(linear-cli issues list --team "$team" -l stalled -o json 2>/dev/null \
     | jq -r '.[] | "- **\(.identifier)** [\(.state.name // "?")] \(.title)"' 2>/dev/null || true)
@@ -429,9 +472,16 @@ fi
 # ---------- runway ----------
 
 if [ "$no_runway" -eq 0 ] && [ "$have_linear" -eq 1 ] && [ -n "$team" ]; then
-  ranking=$("$SCRIPT_DIR/next-candidates.sh" --team "$team" --label specified --limit 100 2>/dev/null || true)
+  # A scoped fleet's runway is the epic's: the same --root ranking every session picks from.
+  if [ -n "$scope" ]; then
+    ranking=$("$SCRIPT_DIR/next-candidates.sh" --root "$scope" --label specified --limit 100 2>/dev/null || true)
+    where="epic $scope"
+  else
+    ranking=$("$SCRIPT_DIR/next-candidates.sh" --team "$team" --label specified --limit 100 2>/dev/null || true)
+    where="$team"
+  fi
   n=$(printf '%s\n' "$ranking" | grep -c '^[0-9]*\. \*\*' || true)
-  printf '### Runway\n\n**%s** unblocked certified candidate(s) remain in %s.\n' "$n" "$team"
+  printf '### Runway\n\n**%s** unblocked certified candidate(s) remain in %s.\n' "$n" "$where"
   printf '%s\n' "$ranking" | grep '^_' | sed 's/^/  /' || true
   printf '\n'
 elif [ "$no_runway" -eq 1 ]; then

@@ -76,6 +76,20 @@ cat > "$FIX/issues-page.json" <<'EOF'
 ],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
 EOF
 
+# Per-issue nodes for epic-graph.sh's walk (the --root case), consistent with the page above: epic
+# TT-70's graph is itself, children TT-50 and TT-51, and TT-52 (a member because it blocks TT-51).
+gnode() { # gnode <ID> <state> <type> <labels-json> <children-json> <relations-json> <inverse-json>
+  printf '{"data":{"issue":{"identifier":"%s","title":"t","state":{"name":"%s","type":"%s"},"team":{"key":"TT"},"labels":{"nodes":%s},"parent":null,"children":{"nodes":%s},"relations":{"nodes":%s},"inverseRelations":{"nodes":%s}}}}\n' \
+    "$1" "$2" "$3" "$4" "$5" "$6" "$7" > "$FIX/node-$1.json"
+}
+gnode TT-70 Planned unstarted '[{"name":"epic"}]' '[{"identifier":"TT-50"},{"identifier":"TT-51"}]' '[]' '[]'
+gnode TT-50 Planned unstarted '[{"name":"specified"}]' '[]' '[]' '[{"type":"blocks","issue":{"identifier":"TT-51"}}]'
+gnode TT-51 Planned unstarted '[{"name":"specified"}]' '[]' '[{"type":"blocks","relatedIssue":{"identifier":"TT-50"}}]' '[{"type":"blocks","issue":{"identifier":"TT-52"}}]'
+gnode TT-52 Backlog backlog '[{"name":"specified"},{"name":"needs decision"}]' '[]' '[{"type":"blocks","relatedIssue":{"identifier":"TT-51"}}]' '[]'
+gnode TT-20 Planned unstarted '[{"name":"specified"}]' '[]' '[]' '[]'
+
+# The graph walk's query is the only one carrying `inverseRelations` — matched FIRST, since it also
+# carries `labels` like the team page.
 cat > "$WORK/bin/linear-cli" <<EOF
 #!/bin/bash
 FIX="$FIX"
@@ -83,6 +97,10 @@ if [ "\${1:-}" != "api" ]; then exit 0; fi
 q="\${@: -1}"
 case "\$q" in
   *viewer*) printf '%s' '{"data":{"viewer":{"email":"keeper@test"}}}' ;;
+  *inverseRelations*)
+    id=""; for a in "\$@"; do case "\$a" in id=*) id="\${a#id=}" ;; esac; done
+    if [ -f "\$FIX/node-\$id.json" ]; then cat "\$FIX/node-\$id.json"
+    else printf '%s' '{"code":2,"details":[{"message":"Entity not found: Issue"}],"error":true}'; exit 2; fi ;;
   *labels*) cat "\$FIX/issues-page.json" ;;
   *) printf '%s' '{"errors":[{"message":"unexpected query in test shim"}]}'; exit 1 ;;
 esac
@@ -160,6 +178,36 @@ ck_lacks "hidden dependent skipped in edges"      "TT-40 [Planned] blocked by" "
 rows=$(grep -c 'blocked by' "$OUT")
 verdict=$(grep -m1 '^FLEET-BLOCKED' "$OUT" | grep -oE '[0-9]+')
 ck "verdict matches rows" "$rows" "$verdict"
+
+# ---- --root: the audit scoped to an epic's graph — every row describes members only ----
+OUTR="$WORK/outr.txt"
+HOME="$WORK/home" PATH="$WORK/bin:$PATH" "$SCRIPT" --root tt-70 > "$OUTR" 2>"$OUTR.err" \
+  || { echo "FAIL: scoped run exited $?"; cat "$OUTR.err"; exit 1; }
+ck "scope line leads"   "SCOPE: epic TT-70 — 4 non-terminal member(s) across TT" "$(head -1 "$OUTR")"
+ck "scoped focus counts members only" "FOCUS: 3 unstarted — 0 fleet-workable · 3 need keeper action · 0 draining on their own" "$(sed -n 2p "$OUTR")"
+ck_has "scoped epic action row"        "FOCUS-ACTION: TT-70 [Planned] — delegated epic" "$OUTR"
+ck_has "scoped root with fan-out"      "FOCUS-ROOT: TT-52 [Backlog] (via TT-51) — needs decision (decide and clear the label) — unblocks TT-50, TT-51" "$OUTR"
+ck_has "scoped promote-set"            "PROMOTE-SET: TT-52[needs decision]" "$OUTR"
+ck "scoped verdict counts member edges only" "FLEET-BLOCKED: 1" "$(grep -m1 '^FLEET-BLOCKED' "$OUTR")"
+ck_has "scoped stranded edge"          "TT-51 [Planned] blocked by TT-52 [Backlog] — needs decision" "$OUTR"
+ck_lacks "outside gated issue absent"  "TT-21" "$OUTR"
+ck_lacks "outside root absent"         "TT-27" "$OUTR"
+ck_lacks "outside promote member absent" "TT-55" "$OUTR"
+# Fail closed: a non-epic root refuses before any fetch — no FOCUS line in the scope's place.
+OUTR2="$WORK/outr2.txt"
+if HOME="$WORK/home" PATH="$WORK/bin:$PATH" "$SCRIPT" --root TT-20 > "$OUTR2" 2>"$OUTR2.err"; then
+  FAIL=$((FAIL+1)); echo "FAIL: non-epic root exited 0"
+else
+  PASS=$((PASS+1))
+fi
+ck_has "non-epic root names the label" "does not carry the 'epic' label" "$OUTR2.err"
+ck_lacks "non-epic root prints no audit" "FOCUS" "$OUTR2"
+if HOME="$WORK/home" PATH="$WORK/bin:$PATH" "$SCRIPT" --root TT-404 > "$OUTR2" 2>"$OUTR2.err"; then
+  FAIL=$((FAIL+1)); echo "FAIL: missing root exited 0"
+else
+  PASS=$((PASS+1))
+fi
+ck_has "missing root named" "issue 'TT-404' not found" "$OUTR2.err"
 
 # Fetch failure: exit non-zero, no verdict line (fail loud, never empty-as-clean).
 rm "$FIX/issues-page.json"

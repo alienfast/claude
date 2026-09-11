@@ -35,8 +35,13 @@
 # make an empty result distinguishable from a broken run; the regression suite pins the
 # classification.
 #
-# Usage:  fleet-blockers.sh --team <KEY>
-# Output: `FOCUS: <n> unstarted — <w> fleet-workable · <a> need keeper action · <d> draining on their own`
+# Usage:  fleet-blockers.sh --team <KEY> | --root <EPIC-ID> [--team <KEY>]
+#         --root audits an epic-scoped fleet's pool (what /fleet-launch epic:<ID> runs): the fetch is
+#         cut to the epic's graph members right after it lands (epic-graph.sh — the epic, its
+#         descendants, and their blockers, non-terminal only), the graph's teams are fetched on their
+#         own, and a `SCOPE:` line leads. Fails closed: a root that is not an epic exits 1 with the reason.
+# Output: `SCOPE: epic <ID> — <n> non-terminal member(s) across <teams>`   (scoped runs only)
+#         `FOCUS: <n> unstarted — <w> fleet-workable · <a> need keeper action · <d> draining on their own`
 #         `FOCUS-ACTION: <ID> [<state>] — <reason(; reason)>`               (the issue itself needs the keeper)
 #         `FOCUS-ROOT: <ROOT> [<state>] (via <ID>) — <remedy> — unblocks <ID>, <ID> (<n> alone; co-gated with <ID>)`
 #           (root causes, widest fan-out first; `via` = chain members this root reaches its
@@ -51,32 +56,65 @@ set -euo pipefail
 # linear-cli installs to ~/.cargo/bin, which is not on a non-interactive PATH.
 export PATH="$HOME/.cargo/bin:$PATH"
 
-[ "${1:-}" = "--team" ] && [ -n "${2:-}" ] || { echo "usage: fleet-blockers.sh --team <KEY>" >&2; exit 1; }
-team="$2"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+team=""
+root=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --team) [ -n "${2:-}" ] || { echo "ERROR: --team requires a value" >&2; exit 1; }; team="$2"; shift 2 ;;
+    --root) [ -n "${2:-}" ] || { echo "ERROR: --root requires a value" >&2; exit 1; }
+            root=$(printf '%s' "$2" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]'); shift 2 ;;
+    *) echo "usage: fleet-blockers.sh --team <KEY> | --root <EPIC-ID> [--team <KEY>]" >&2; exit 1 ;;
+  esac
+done
+[ -n "$team" ] || [ -n "$root" ] || { echo "usage: fleet-blockers.sh --team <KEY> | --root <EPIC-ID> [--team <KEY>]" >&2; exit 1; }
 
-# One paginated query: every non-terminal issue's state, labels, and outgoing relations. A
+# The scope resolves first: its members decide which teams to fetch, and its refusals (missing root,
+# no `epic` label, unreadable node) end the run before any fetch — never an unscoped audit in its place.
+graph=""
+members='[]'
+teams="$team"
+if [ -n "$root" ]; then
+  graph=$("$script_dir/epic-graph.sh" "$root") || { echo "ERROR: --root $root did not validate — refusing to audit an unscoped pool in its place" >&2; exit 1; }
+  members=$(printf '%s' "$graph" | jq -c '[.members[].identifier]')
+  for t in $(printf '%s' "$graph" | jq -r '.teams[]'); do
+    case " $teams " in *" $t "*) ;; *) teams="${teams:+$teams }$t" ;; esac
+  done
+fi
+
+# One paginated query per team: every non-terminal issue's state, labels, and outgoing relations. A
 # terminal-state blocker is excluded by the filter, so its edges vanish — resolved by construction.
 q='query($team:String!,$after:String){issues(filter:{team:{key:{eq:$team}}, state:{type:{nin:["completed","canceled"]}}}, first:250, after:$after){nodes{identifier state{name type} assignee{email} labels{nodes{name}} relations{nodes{type relatedIssue{identifier}}}} pageInfo{hasNextPage endCursor}}}'
 all='[]'
-after=''
-while :; do
-  # `|| true` on each capture: under set -e a failing linear-cli would exit on the assignment itself, before the
-  # guard below can name the failure — measured 2026-08-28 as exit 1 with empty stderr, indistinguishable from a broken run.
-  if [ -z "$after" ]; then
-    out=$(linear-cli api query -q -o json -v team="$team" "$q" 2>/dev/null) || true
-  else
-    out=$(linear-cli api query -q -o json -v team="$team" -v after="$after" "$q" 2>/dev/null) || true
-  fi
-  [ -n "$out" ] || { echo "ERROR: issue fetch failed for team '$team' (auth? network?)" >&2; exit 1; }
-  if [ "$(printf '%s' "$out" | jq 'has("errors")')" = "true" ]; then
-    echo "ERROR: API errors for team '$team': $(printf '%s' "$out" | jq -c '.errors')" >&2; exit 1
-  fi
-  nodes=$(printf '%s' "$out" | jq -c '.data.issues.nodes // []')
-  all=$(jq -n --argjson a "$all" --argjson b "$nodes" '$a + $b')
-  has=$(printf '%s' "$out" | jq -r '.data.issues.pageInfo.hasNextPage // false')
-  after=$(printf '%s' "$out" | jq -r '.data.issues.pageInfo.endCursor // empty')
-  { [ "$has" = "true" ] && [ -n "$after" ]; } || break
+for team in $teams; do
+  after=''
+  while :; do
+    # `|| true` on each capture: under set -e a failing linear-cli would exit on the assignment itself, before the
+    # guard below can name the failure — measured 2026-08-28 as exit 1 with empty stderr, indistinguishable from a broken run.
+    if [ -z "$after" ]; then
+      out=$(linear-cli api query -q -o json -v team="$team" "$q" 2>/dev/null) || true
+    else
+      out=$(linear-cli api query -q -o json -v team="$team" -v after="$after" "$q" 2>/dev/null) || true
+    fi
+    [ -n "$out" ] || { echo "ERROR: issue fetch failed for team '$team' (auth? network?)" >&2; exit 1; }
+    if [ "$(printf '%s' "$out" | jq 'has("errors")')" = "true" ]; then
+      echo "ERROR: API errors for team '$team': $(printf '%s' "$out" | jq -c '.errors')" >&2; exit 1
+    fi
+    nodes=$(printf '%s' "$out" | jq -c '.data.issues.nodes // []')
+    all=$(jq -n --argjson a "$all" --argjson b "$nodes" '$a + $b')
+    has=$(printf '%s' "$out" | jq -r '.data.issues.pageInfo.hasNextPage // false')
+    after=$(printf '%s' "$out" | jq -r '.data.issues.pageInfo.endCursor // empty')
+    { [ "$has" = "true" ] && [ -n "$after" ]; } || break
+  done
 done
+
+# The scope cut lands before anything reads the nodes, so FOCUS, the roots, PROMOTE-SET, and
+# FLEET-BLOCKED all describe the epic alone. A member's blocker is a member or terminal by
+# construction, so no edge is lost to the cut; edges to outside dependents drop with them.
+if [ -n "$root" ]; then
+  all=$(printf '%s' "$all" | jq -c --argjson m "$members" 'map(select(.identifier as $i | ($m | index($i)) != null))')
+  printf '%s' "$graph" | jq -r '"SCOPE: epic \(.root) — \(.members | length) non-terminal member(s) across \(.teams | join(", "))"'
+fi
 
 # Assignment is a claim (standards/linear-workflow.md, same rule next-candidates.sh enforces at
 # pick time): an assignee other than the viewer means a person owns the issue — never
