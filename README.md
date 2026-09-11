@@ -50,13 +50,26 @@ The primary shipping mode: N parallel autonomous sessions draining the certified
 | ---- | ------- | ----- |
 | Prep | `/auto-prep` | Certification honesty audit (the `needs decision` / `solo` / `human` gates), family consolidation, `blocks` edges between file-colliding issues, and a recommended session count — interactive; run it before every launch |
 | Forecast | `/fleet-forecast 12 hours` | Optional dry run of the drain — projected pick order as waves, when Planned burns down into Backlog, what the horizon can't reach, and what is stranded behind blockers the fleet can never ship. Read-only; an estimate, never a plan |
-| Launch | `/fleet-launch 3 10 hours` | Staggered background sessions. Count defaults to prep's persisted recommendation (an explicit count is your quota throttle); the duration winds the fleet down cleanly at the deadline |
+| Launch | `/fleet-launch 3 10 hours` | Staggered background sessions. Count defaults to prep's persisted recommendation (an explicit count is your quota throttle); the duration winds the fleet down cleanly at the deadline. An `epic:<ID>` token — or the scope `/epic-prep` persisted — confines every session to one epic's graph (see [Scoping a fleet to one epic](#scoping-a-fleet-to-one-epic)) |
 | Sequence | `/fleet-sequence BF-1 BF-2 BF-3` | The targeted, serialized sibling: an explicit issue list shipped strictly one at a time as a PR stack — each in its own background session, forked from the previous issue's branch, its PR targeting that branch, linked into a GitHub stack (merging the top PR merges the lot). The runner for `solo` work and for big issues that must land in order; never mid-fleet |
 | Watch | `/fleet-status` | One screen, any time, read-only: time remaining, per-session shipped/failed ledgers with liveness, in-flight issues, merges cross-checked against git, remaining runway |
 | End early | `/fleet-stop` | Rationing quota or done for the day — ends the timer; in-flight issues finish; nothing is killed |
 | Post-mortem | `/fleet-retro` | Where the capacity went, what the run filed, what to fix before the next launch — its findings feed the next `/auto-prep` |
 
 Top-ups compose (`/fleet-launch 2 <remaining>` adds two sessions) — but every launch resets the shared deadline, so re-pass the remaining duration. What keeps N sessions honest is the label contract ([standards/issue-spec.md](standards/issue-spec.md)) plus worktree isolation and the serialized merge — see [Parallel safety](#parallel-safety).
+
+### Scoping a fleet to one epic
+
+One epic, worked to completion by a fleet that sees nothing else. The same machinery as the table above with one scope threaded through it, and a different release shape (keeper decision 2026-09-11): the fleet merges into an **integration branch** as it goes, and the epic ships as **one PR** from that branch onto the branch it forked from.
+
+| Step | Command | Notes |
+| ---- | ------- | ----- |
+| Prep | `/epic-prep BF-1826` | `/auto-prep` scoped to the epic's graph, plus what a team prep lacks: `/spec` over the uncertified members blockers-first, a boundary review (outside dependents and `related` partners — include by re-parenting, default leave out), promotion of the whole graph to Planned, the `epic/<id>` branch forked from the checkout's branch (or `start.wt-source-branch`), and a hard gate that every already-resolved member's code is on it — a Ready-for-Release member whose PR sits open against another branch stops the prep until it is merged in. Persists the scope, the member snapshot, the branch, and a lane count with the recommendation |
+| Launch | `/fleet-launch` — bare, or `/fleet-launch 2 8h epic:BF-1826` | Every session runs `/loop /auto epic:BF-1826`. The main checkout is parked detached on the integration branch with `start.wt-source-branch` set, so each `/start wt` forks from it and each `/finish merge` advances it ref-only; work elsewhere while it runs |
+| Watch | `/fleet-status` | Adds the scope and branch, and a member burn-down: shipped · remaining (in flight) · added since prep. Membership is recomputed at every pick, so a child filed mid-run joins the pool and shows up here rather than silently widening the work |
+| Close | automatic | `mark-ready-for-release.sh` walks up from every released child: an `epic` whose children are all terminal moves to Ready for Release itself, recursively. Then open the epic's PR from `epic/<id>` onto its base (`/pr-update`), `git checkout <base>`, and unset the config |
+
+Membership is decided by `scripts/epic-graph.sh`: the epic, its transitive descendants, and the transitive blockers of any member — non-terminal only, cross-team included. Dependents are not members (the epic enables them; it does not need them), and neither are `related` partners; both are the boundary the prep reviews. The same scope token drives the hand tools — `/next epic:<ID>`, `fleet-forecast.py --root`, `fleet-blockers.sh --root` — and every one of them fails closed on an issue that is not an epic. Expect one or two lanes: members of one epic share its files and specs by construction, so they collide more than a team pool, and the `related` de-rank plus the merge gate carry what the count leaves.
 
 ### Stepping down: one loop, one issue, one command
 
@@ -184,6 +197,7 @@ In workflow order — seed, certify, fleet, then the per-issue tiers and upkeep:
 | [triage](skills/triage/) | Analyze backlog for staleness, blockers, and priority suggestions |
 | [next](skills/next/) | Suggest best next issue using cycle, dependency, and triage signals |
 | [auto-prep](skills/auto-prep/) | Fleet prep — certification honesty audit (`needs decision` / `solo` / `human`), family consolidation, collision `blocks` edges, recommended session count |
+| [epic-prep](skills/epic-prep/) | Epic-scoped fleet prep — `/auto-prep` over one epic's graph, plus the `/spec` loop blockers-first, the boundary review, Planned promotion, the `epic/<id>` integration branch and its merged-base gate, a scoped recommendation (see [Scoping a fleet to one epic](#scoping-a-fleet-to-one-epic)) |
 | [fleet-forecast](skills/fleet-forecast/) | Read-only projection of what a fleet would ship over a horizon — pick order as waves, the Planned→Backlog crossover, stranded candidates |
 | [fleet-launch](skills/fleet-launch/) | Launch N parallel `/loop /auto` background sessions, staggered and deadline-bounded |
 | [fleet-sequence](skills/fleet-sequence/) | Ship an ordered issue list as a GitHub PR stack, one background `/auto pr <ID>` session at a time, each forked from the previous branch — the `solo` runner |
