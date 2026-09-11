@@ -224,5 +224,6 @@
   "theme": "dark",
   "agentPushNotifEnabled": true,
   "skipAutoPermissionPrompt": true,
-  "outputStyle": "concise"
+  "outputStyle": "concise",
+  "model": "claude-fable-5-1[1m]"
 }
