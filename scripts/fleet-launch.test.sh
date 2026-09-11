@@ -40,6 +40,22 @@ printf 'backgrounded · \033[36mab%06d\033[39m\n\033[2m  claude agents          
 exit 0
 EOF
 chmod +x "$BIN/claude"
+# linear-cli stub for epic-graph.sh's walk (the epic-scope cases): EP-1 is an epic whose one child
+# EP-3 is itself an epic (a valid second scope); EP-2 carries no epic label; anything else is not
+# found. HOME is an empty dir so epic-graph.sh's cargo-bin PATH prepend cannot find the real CLI.
+cat > "$BIN/linear-cli" <<'EOF'
+#!/usr/bin/env bash
+id=""; for a in "$@"; do case "$a" in id=*) id="${a#id=}" ;; esac; done
+node() { printf '{"data":{"issue":{"identifier":"%s","title":"t","state":{"name":"Planned","type":"unstarted"},"team":{"key":"EP"},"labels":{"nodes":%s},"parent":null,"children":{"nodes":%s},"relations":{"nodes":[]},"inverseRelations":{"nodes":[]}}}}\n' "$1" "$2" "$3"; }
+case "$id" in
+  EP-1) node EP-1 '[{"name":"epic"}]' '[{"identifier":"EP-3"}]' ;;
+  EP-3) node EP-3 '[{"name":"epic"}]' '[]' ;;
+  EP-2) node EP-2 '[]' '[]' ;;
+  *) echo '{"code":2,"details":[{"message":"Entity not found: Issue"}],"error":true}'; exit 2 ;;
+esac
+EOF
+chmod +x "$BIN/linear-cli"
+mkdir -p "$WORK/home"
 export PATH="$BIN:$PATH"
 export FLEET_STAGGER_TIMEOUT=0
 
@@ -51,7 +67,7 @@ git -C "$REPO" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
 # tmp/ is gitignored in every real project; without this the marker the script writes reads as dirt.
 echo 'tmp/' >> "$REPO/.git/info/exclude"
 git -C "$REPO" checkout -q -b nextjs-descope-user   # no issue ID — the 2026-08-04 branch shape
-run() { ( cd "$REPO" && "$SCRIPT" "$@" ) >"$WORK/out" 2>&1; echo $?; }
+run() { ( cd "$REPO" && HOME="$WORK/home" "$SCRIPT" "$@" ) >"$WORK/out" 2>&1; echo $?; }
 
 # ---- case 1: clean tree launches ----
 : > "$WORK/dispatches"
@@ -162,6 +178,90 @@ ck "unparseable id still launches"  "0" "$(run 1)"
 ck "dispatched once"                "1" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
 ck_has "warns about the missing id" "could not read the session id" "$WORK/out"
 ck "set left empty, not invented"   "" "$(jq -r '.fleet_sessions | join(" ")' "$REPO/tmp/fleet-deadline.json")"
+
+# ---- epic scope: the token, the prepared recommendation, and the integration-branch posture ----
+# The id-printing claude stub again (case 9 swapped in the unparseable variant).
+cat > "$BIN/claude" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = "agents" ]; then cat "$WORK/agents.json" 2>/dev/null || echo '[]'; exit 0; fi
+echo "\$@" >> "$WORK/dispatches"
+n=\$(( \$(cat "$WORK/seq" 2>/dev/null || echo 0) + 1 )); echo "\$n" > "$WORK/seq"
+printf 'backgrounded · \033[36mab%06d\033[39m\n' "\$n"
+exit 0
+EOF
+git -C "$REPO" checkout -q nextjs-descope-user
+git -C "$REPO" reset -q --hard
+rm -f "$REPO"/tmp/auto-state-*.json "$REPO/tmp/fleet-recommendation.json"
+echo '[]' > "$WORK/agents.json"
+
+# case 10: an explicit token with no prep — prompt scoped, marker records the scope and the LIVE
+# membership, the missing integration branch is warned about, the checkout is not moved.
+: > "$WORK/dispatches"
+ck "token launch exits 0"             "0" "$(run 1 epic:ep-1)"
+ck_has "token prompt scoped"          "/loop /auto epic:EP-1" "$WORK/dispatches"
+ck "token marker scope"               "EP-1" "$(jq -r '.scope' "$REPO/tmp/fleet-deadline.json")"
+ck "token members from the live graph" "EP-1 EP-3" "$(jq -r '.members | join(" ")' "$REPO/tmp/fleet-deadline.json")"
+ck "token records no branch"          "" "$(jq -r '.branch // empty' "$REPO/tmp/fleet-deadline.json")"
+ck_has "scope surfaced"               "Scope: epic EP-1 — 2 non-terminal member(s) across EP" "$WORK/out"
+ck_has "missing branch warned"        "no integration branch recorded for epic EP-1" "$WORK/out"
+ck "token leaves the checkout alone"  "nextjs-descope-user" "$(git -C "$REPO" branch --show-current)"
+
+# case 11: a bare launch after /epic-prep — the recommendation supplies count, scope, the membership
+# snapshot, and the branch; the checkout is detached at the branch tip with the config set.
+git -C "$REPO" branch -q epic/ep-1 nextjs-descope-user
+jq -n --argjson e "$(date +%s)" '{sessions: 1, team: "EP", generated_epoch: $e, scope: "EP-1", members: ["EP-1","EP-3","EP-9"], branch: "epic/ep-1", base: "nextjs-descope-user"}' > "$REPO/tmp/fleet-recommendation.json"
+: > "$WORK/dispatches"
+ck "prepared launch exits 0"          "0" "$(run)"
+ck_has "prepared prompt scoped"       "/loop /auto epic:EP-1" "$WORK/dispatches"
+ck_has "prepared scope announced"     "Using /epic-prep's scope: epic EP-1" "$WORK/out"
+ck "members are the prep snapshot"    "EP-1 EP-3 EP-9" "$(jq -r '.members | join(" ")' "$REPO/tmp/fleet-deadline.json")"
+ck "branch recorded"                  "epic/ep-1" "$(jq -r '.branch' "$REPO/tmp/fleet-deadline.json")"
+ck "base recorded"                    "nextjs-descope-user" "$(jq -r '.base' "$REPO/tmp/fleet-deadline.json")"
+ck "source-branch config set"         "epic/ep-1" "$(git -C "$REPO" config --get start.wt-source-branch)"
+ck "main checkout detached"           "" "$(git -C "$REPO" branch --show-current)"
+ck "detached at the branch tip"       "$(git -C "$REPO" rev-parse epic/ep-1)" "$(git -C "$REPO" rev-parse HEAD)"
+ck_has "posture surfaced"             "Main checkout detached at epic/ep-1" "$WORK/out"
+
+# case 12: an explicit token overrides the prepared scope — live membership, and no branch, since the
+# prep was for another epic.
+git -C "$REPO" config --unset start.wt-source-branch
+git -C "$REPO" checkout -q nextjs-descope-user
+: > "$WORK/dispatches"
+ck "override exits 0"                 "0" "$(run 1 epic:EP-3)"
+ck_has "override prompt"              "/loop /auto epic:EP-3" "$WORK/dispatches"
+ck "override members live"            "EP-3" "$(jq -r '.members | join(" ")' "$REPO/tmp/fleet-deadline.json")"
+ck "override records no branch"       "" "$(jq -r '.branch // empty' "$REPO/tmp/fleet-deadline.json")"
+
+# case 13: an invalid scope refuses before any dispatch or write — the live marker survives.
+printf '{"deadline_epoch":9999999999,"deadline":"later","count":3}\n' > "$REPO/tmp/fleet-deadline.json"
+: > "$WORK/dispatches"
+ck "non-epic scope exits 1"           "1" "$(run 1 epic:EP-2)"
+ck "non-epic scope dispatches nothing" "0" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
+ck_has "non-epic scope names the label" "does not carry the 'epic' label" "$WORK/out"
+ck_has "non-epic scope says nothing ran" "nothing was dispatched" "$WORK/out"
+ck "live marker survives a scope refusal" "9999999999" "$(jq -r '.deadline_epoch' "$REPO/tmp/fleet-deadline.json")"
+ck "missing scope exits 1"            "1" "$(run 1 epic:EP-404)"
+ck "malformed token exits 1"          "1" "$(run 1 epic:nope)"
+ck "two tokens exit 1"                "1" "$(run 1 epic:EP-1 epic:EP-3)"
+
+# case 14: a prepared branch that no longer exists, or a foreign source-branch config, refuses.
+jq '.branch = "epic/gone"' "$REPO/tmp/fleet-recommendation.json" > "$WORK/rec.tmp" && mv "$WORK/rec.tmp" "$REPO/tmp/fleet-recommendation.json"
+: > "$WORK/dispatches"
+ck "missing branch exits 1"           "1" "$(run)"
+ck_has "missing branch named"         "integration branch 'epic/gone' but no such local branch" "$WORK/out"
+jq '.branch = "epic/ep-1"' "$REPO/tmp/fleet-recommendation.json" > "$WORK/rec.tmp" && mv "$WORK/rec.tmp" "$REPO/tmp/fleet-recommendation.json"
+git -C "$REPO" config start.wt-source-branch nextjs-descope-user
+ck "foreign source-branch config exits 1" "1" "$(run)"
+ck_has "foreign config named"         "start.wt-source-branch is 'nextjs-descope-user'" "$WORK/out"
+ck "nothing dispatched across the refusals" "0" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
+ck "checkout untouched by the refusals" "nextjs-descope-user" "$(git -C "$REPO" branch --show-current)"
+git -C "$REPO" config --unset start.wt-source-branch
+
+# case 15: a FLEET_PROMPT override that drops the scope launches as typed, with a WARN.
+: > "$WORK/dispatches"
+ck "prompt override exits 0"          "0" "$(FLEET_PROMPT='/loop /auto EP' run 1 epic:EP-3)"
+ck_has "override dispatched as typed" "/loop /auto EP" "$WORK/dispatches"
+ck_has "override warned"              "does not carry epic:EP-3" "$WORK/out"
 
 echo
 echo "$PASS passed / $FAIL failed"

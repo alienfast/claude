@@ -2,13 +2,33 @@
 # fleet-launch.sh — dispatch N background `/loop /auto` sessions into `claude agents`,
 # staggered so each session's first pick sees the previous session's claim.
 #
-# Usage: fleet-launch.sh [count] [duration] [-- <claude flags...>]
+# Usage: fleet-launch.sh [count] [duration] [epic:<ID>] [-- <claude flags...>]
 #        fleet-launch.sh stop
 #
 #   [count]     Number of /loop /auto sessions to launch (1-12). Omitted → read the
 #               recommendation /auto-prep persisted to tmp/fleet-recommendation.json
 #               (error if absent — run /auto-prep first, or pass a count). An explicit
 #               count is the quota throttle: auto-prep recommends from lane math alone.
+#   [epic:<ID>] Scope the fleet to one epic's graph: every session runs `/loop /auto epic:<ID>`
+#               (next-candidates.sh --root — the epic, its descendants, and their blockers, and
+#               nothing else). Omitted → the `scope` /epic-prep persisted to the recommendation,
+#               when there is one; an explicit token overrides the file. Validated fail-closed
+#               through epic-graph.sh before anything is dispatched or written: a missing issue
+#               or one without the `epic` label refuses the launch — a fleet scoped to a bad epic
+#               would latch drained against an empty pool.
+#
+#               Release shape (keeper decision 2026-09-11): an epic ships as ONE PR from an
+#               integration branch the fleet merges into as it goes. /epic-prep creates that
+#               branch from the same source /start wt would resolve (start.wt-source-branch, else
+#               the checkout's branch) and records `branch` + `base` in the recommendation; when
+#               the recommendation's scope is the one launching, this script detaches the main
+#               checkout at the branch tip and sets start.wt-source-branch to it — the documented
+#               detached-HEAD posture (start-wt-setup.sh; fleet-sequence.sh does the same between
+#               issues) under which every /start wt forks from the branch and every /finish merge
+#               advances it ref-only. Both are recorded in the marker. After the fleet: open the
+#               epic's PR from `branch` onto `base`, then `git checkout <base>` and
+#               `git config --unset start.wt-source-branch`. A token with no matching prepared
+#               branch launches on the checkout's own branch with a WARN — the human typed it.
 #   [duration]  Optional fleet time budget — "10h", "10 hours", "90m", "45 minutes".
 #               Adds deadline_epoch to tmp/fleet-deadline.json; each session's /auto
 #               checks it before PICKING new work (never mid-issue), so at the deadline
@@ -45,12 +65,16 @@
 # A top-up launch carries forward the members the session registry still lists, then appends.
 #
 # Run it from the project the fleet should work on; sessions inherit the cwd.
-# Env: FLEET_PROMPT overrides the dispatched prompt (default "/loop /auto" — e.g.
-# "/loop /auto BF" to team-scope the run); FLEET_STAGGER_TIMEOUT seconds per wait.
+# Env: FLEET_PROMPT overrides the dispatched prompt (default "/loop /auto", or
+# "/loop /auto epic:<ID>" when scoped — e.g. "/loop /auto BF" to team-scope the run; an
+# override that drops a launch's scope is warned about, never corrected);
+# FLEET_STAGGER_TIMEOUT seconds per wait.
 #
-# Read-write: rewrites tmp/fleet-deadline.json in the main checkout; clears DEAD prior-run
-# tmp/auto-state-*.json ledgers at launch — dead = absent from `claude agents --json` or
-# listed as done there; they deliberately persist from a fleet's end until the next launch
+# Read-write: rewrites tmp/fleet-deadline.json in the main checkout (`scope`, `members`,
+# `branch`, `base` added on a scoped launch); on a scoped launch with a prepared branch,
+# detaches the main checkout at that branch and sets start.wt-source-branch; clears DEAD
+# prior-run tmp/auto-state-*.json ledgers at launch — dead = absent from `claude agents --json`
+# or listed as done there; they deliberately persist from a fleet's end until the next launch
 # so /fleet-retro and the operator can examine them — retro before relaunching; dispatches
 # background claude sessions. Exit 1 on
 # argument/environment errors (never mid-fleet: a dispatch failure stops further
@@ -58,8 +82,10 @@
 
 set -eo pipefail
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 usage() {
-  echo "usage: fleet-launch.sh [count] [duration e.g. '10h' or '10 hours'] [-- <claude flags...>] | fleet-launch.sh stop" >&2
+  echo "usage: fleet-launch.sh [count] [duration e.g. '10h' or '10 hours'] [epic:<ID>] [-- <claude flags...>] | fleet-launch.sh stop" >&2
   exit 1
 }
 
@@ -107,12 +133,22 @@ if [[ "${1:-}" =~ ^[0-9]+$ ]] && [ $# -ge 1 ]; then
 fi
 
 dur_tokens=()
-while [ $# -gt 0 ] && [ "$1" != "--" ]; do dur_tokens+=("$1"); shift; done
+scope_token=""
+while [ $# -gt 0 ] && [ "$1" != "--" ]; do
+  case "$1" in
+    [Ee][Pp][Ii][Cc]:*)
+      [ -z "$scope_token" ] || { echo "ERROR: at most one epic:<ID> token (got '$scope_token' and '$1')" >&2; exit 1; }
+      scope_token=$(printf '%s' "${1#*:}" | tr '[:lower:]' '[:upper:]')
+      [[ "$scope_token" =~ ^[A-Z0-9]+-[0-9]+$ ]] || { echo "ERROR: epic token '$1' does not name an issue (epic:BF-123)" >&2; exit 1; } ;;
+    *) dur_tokens+=("$1") ;;
+  esac
+  shift
+done
 [ "${1:-}" = "--" ] && shift
 claude_args=("$@")
 
+rec="$main_checkout/tmp/fleet-recommendation.json"
 if [ -z "$count" ]; then
-  rec="$main_checkout/tmp/fleet-recommendation.json"
   if [ ! -f "$rec" ]; then
     echo "ERROR: no count given and no $rec — run /auto-prep first, or pass a count" >&2
     exit 1
@@ -128,6 +164,51 @@ if [ -z "$count" ]; then
 fi
 { [ "$count" -ge 1 ] && [ "$count" -le 12 ]; } 2>/dev/null || { echo "ERROR: count must be 1-12 (got '$count')" >&2; exit 1; }
 [ "$count" -gt 3 ] && echo "WARN: >3 sessions reliably exhausts a 5h burst window at any duration (n=4 measured cut off 4.9h into a 12h deadline; auto-prep caps its recommendation at 3) — an explicit count is your override" >&2
+
+# ---- epic scope: token, else the recommendation's; validated before anything is written ----
+scope=""
+scope_members='[]'
+scope_branch=""
+scope_base=""
+rec_scope=""
+[ -f "$rec" ] && rec_scope=$(jq -r '.scope // empty' "$rec" 2>/dev/null || true)
+if [ -n "$scope_token" ]; then
+  scope="$scope_token"
+elif [ -n "$rec_scope" ]; then
+  scope="$rec_scope"
+  echo "Using /epic-prep's scope: epic $scope ($rec)"
+fi
+if [ -n "$scope" ]; then
+  graph=$("$script_dir/epic-graph.sh" "$scope" 2>"$main_checkout/tmp/fleet-launch-scope.err") || {
+    cat "$main_checkout/tmp/fleet-launch-scope.err" >&2
+    echo "ERROR: epic scope '$scope' did not validate — nothing was dispatched (a fleet scoped to a bad epic would latch drained against an empty pool)" >&2
+    exit 1
+  }
+  rm -f "$main_checkout/tmp/fleet-launch-scope.err"
+  # The prep-time membership is the burn-down baseline (/fleet-status reports members added since
+  # prep); a token with no matching prep snapshots the graph as launched.
+  if [ "$rec_scope" = "$scope" ]; then
+    scope_members=$(jq -c '.members // []' "$rec" 2>/dev/null || echo '[]')
+    [ "$(printf '%s' "$scope_members" | jq 'length')" -gt 0 ] || scope_members=$(printf '%s' "$graph" | jq -c '[.members[].identifier]')
+    scope_branch=$(jq -r '.branch // empty' "$rec" 2>/dev/null || true)
+    scope_base=$(jq -r '.base // empty' "$rec" 2>/dev/null || true)
+  else
+    scope_members=$(printf '%s' "$graph" | jq -c '[.members[].identifier]')
+  fi
+  echo "Scope: epic $scope — $(printf '%s' "$graph" | jq -r '"\(.members | length) non-terminal member(s) across \(.teams | join(", "))"')"
+  if [ -n "$scope_branch" ]; then
+    git -C "$main_checkout" rev-parse --verify --quiet "refs/heads/$scope_branch" >/dev/null \
+      || { echo "ERROR: the recommendation names integration branch '$scope_branch' but no such local branch exists — re-run /epic-prep $scope" >&2; exit 1; }
+    cur_src=$(git -C "$main_checkout" config --get start.wt-source-branch 2>/dev/null || true)
+    if [ -n "$cur_src" ] && [ "$cur_src" != "$scope_branch" ]; then
+      echo "ERROR: start.wt-source-branch is '$cur_src' but this launch's integration branch is '$scope_branch' — another fleet posture is in effect; unset it (git config --unset start.wt-source-branch) or finish that fleet first" >&2
+      exit 1
+    fi
+    echo "Integration branch: $scope_branch (forked from ${scope_base:-?}; the epic ships as one PR onto it)"
+  else
+    echo "WARN: no integration branch recorded for epic $scope — sessions fork from and merge into the checkout's own branch ($(git -C "$main_checkout" branch --show-current 2>/dev/null || echo detached)); run /epic-prep $scope to prepare one" >&2
+  fi
+fi
 
 deadline_epoch=""
 deadline_human=""
@@ -204,12 +285,28 @@ if [ -n "$agents_json" ] && [ -s "$marker" ]; then
   done
 fi
 
+# Integration-branch posture — the first mutation, after every refusal above has had its chance: the
+# tree is clean (preflight), so the detach moves nothing but HEAD, and start-wt-setup.sh reads the
+# config only while HEAD is detached — that pairing is what makes the branch the fork AND merge point.
+if [ -n "$scope_branch" ]; then
+  git -C "$main_checkout" checkout -q --detach "$scope_branch" \
+    || { echo "ERROR: could not detach the main checkout at '$scope_branch'" >&2; exit 1; }
+  git -C "$main_checkout" config start.wt-source-branch "$scope_branch"
+  echo "Main checkout detached at $scope_branch; start.wt-source-branch=$scope_branch (after the fleet: git checkout ${scope_base:-<base>} && git config --unset start.wt-source-branch)"
+fi
+
 # The marker is rewritten on every launch: a stale deadline from a previous fleet would end every
 # new loop at its first pick, and the session set starts from the carried siblings and grows by
-# one per dispatch below. Deadline fields only when this launch carries a duration.
+# one per dispatch below. Deadline fields only when this launch carries a duration; scope fields
+# only when it is scoped.
 carried_json=$(printf '%s\n' $carried | jq -R . | jq -s 'map(select(length > 0))')
 jq -n --argjson count "$count" --argjson launch "$launch_epoch" --argjson carried "$carried_json" \
   '{count: $count, launch_epoch: $launch, fleet_sessions: $carried}' > "$marker"
+if [ -n "$scope" ]; then
+  tmpm=$(jq --arg s "$scope" --argjson m "$scope_members" --arg b "$scope_branch" --arg base "$scope_base" \
+    '. + {scope: $s, members: $m} + (if $b != "" then {branch: $b, base: $base} else {} end)' "$marker")
+  printf '%s\n' "$tmpm" > "$marker"
+fi
 if [ -n "$deadline_epoch" ]; then
   tmpm=$(jq --argjson epoch "$deadline_epoch" --arg human "$deadline_human" '. + {deadline_epoch: $epoch, deadline: $human}' "$marker")
   printf '%s\n' "$tmpm" > "$marker"
@@ -246,7 +343,12 @@ if ! have_flag --permission-mode "${claude_args[@]}" && ! have_flag --dangerousl
   claude_args+=(--permission-mode auto)
 fi
 
-prompt="${FLEET_PROMPT:-/loop /auto}"
+default_prompt="/loop /auto"
+[ -n "$scope" ] && default_prompt="/loop /auto epic:$scope"
+prompt="${FLEET_PROMPT:-$default_prompt}"
+if [ -n "$scope" ] && [ "$prompt" != "$default_prompt" ] && ! printf '%s' "$prompt" | grep -qi "epic:$scope"; then
+  echo "WARN: FLEET_PROMPT='$prompt' does not carry epic:$scope — the sessions will NOT be scoped to the epic the marker records" >&2
+fi
 timeout="${FLEET_STAGGER_TIMEOUT:-180}"
 wt_dir="$main_checkout/.claude/worktrees"
 wt_names() { ls -1 "$wt_dir" 2>/dev/null || true; }
@@ -290,5 +392,6 @@ done
 
 echo "Launched $count session(s) — watch them with: claude agents"
 echo "Fleet session set: $(jq -r '(.fleet_sessions // []) | join(" ")' "$marker") ($marker)"
+[ -n "$scope" ] && echo "Fleet scope: epic $scope ($(printf '%s' "$scope_members" | jq 'length') member(s) snapshotted for the burn-down)"
 [ -n "$deadline_human" ] && echo "Loops stop picking new work at $deadline_human; in-flight issues run to completion."
 exit 0

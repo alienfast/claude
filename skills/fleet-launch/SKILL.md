@@ -1,6 +1,6 @@
 ---
 name: fleet-launch
-description: Launch a fleet of parallel /loop /auto sessions as background agents in `claude agents`, staggered so each session's first pick sees the previous session's claim, with an optional time budget that winds the fleet down cleanly (in-flight issues finish; no new picks). Count defaults to /auto-prep's persisted recommendation; an explicit count is the quota throttle. Ending a running fleet early is /fleet-stop, not this skill. Use when the user says 'fleet launch', 'launch the fleet', 'spawn N auto loops', 'start 5 loops for 10 hours', or invokes /fleet-launch.
+description: Launch a fleet of parallel /loop /auto sessions as background agents in `claude agents`, staggered so each session's first pick sees the previous session's claim, with an optional time budget that winds the fleet down cleanly (in-flight issues finish; no new picks). Count defaults to /auto-prep's persisted recommendation; an explicit count is the quota throttle. An `epic:<ID>` token — or the scope /epic-prep persisted — scopes every session to one epic's graph and, when prep recorded an integration branch, parks the checkout on it so the epic ships as one PR. Ending a running fleet early is /fleet-stop, not this skill. Use when the user says 'fleet launch', 'launch the fleet', 'spawn N auto loops', 'start 5 loops for 10 hours', 'fleet epic', 'launch the epic fleet', 'work the epic with a fleet', 'fleet BF-1826', or invokes /fleet-launch.
 ---
 
 # Fleet Launch
@@ -13,13 +13,26 @@ This skill does NOT run `/auto-prep` (its solo/decision-gated advice needs human
 
 ## Arguments
 
-`/fleet-launch [count] [duration]`
+`/fleet-launch [count] [duration] [epic:<ID>]`
 
-- **(none)** — launch the count `/auto-prep` persisted to `tmp/fleet-recommendation.json`, no deadline: loops run until the certified backlog drains (`NO-CANDIDATES`).
-- `<count>` (e.g. `/fleet-launch 5`) — launch exactly that many sessions — that many MORE when a fleet is already running, not a target total. This is the user's override: auto-prep recommends `min(lanes, 3)` (3 is the settled 5h-burst concurrency cap), and an explicit count overrides it in either direction.
+- **(none)** — launch the count `/auto-prep` (or `/epic-prep`) persisted to `tmp/fleet-recommendation.json`, no deadline: loops run until the certified backlog drains (`NO-CANDIDATES`). A recommendation carrying `scope` launches the scoped fleet (next bullet) with no token.
+- `<count>` (e.g. `/fleet-launch 5`) — launch exactly that many sessions — that many MORE when a fleet is already running, not a target total. This is the user's override: auto-prep recommends `min(lanes, 3)` (3 is the settled 5h-burst concurrency cap), and an explicit count overrides it in either direction. The count is the FIRST token when given.
 - `<duration>` (e.g. `/fleet-launch 5 10 hours`, `/fleet-launch 90m`) — also give the marker a deadline (`deadline_epoch`; the marker itself is written on every launch). Each session's `/auto` checks it **before picking new work, never mid-issue**: at the deadline every session finishes its in-flight issue, then ends its loop with `NO-CANDIDATES: fleet deadline reached`. Accepted forms: `10h`, `10 hours`, `90m`, `45 minutes`.
+- `epic:<ID>` (e.g. `/fleet-launch epic:BF-1826`, `/fleet-launch 2 8h epic:BF-1826`) — scope every session to that epic's graph: the dispatched prompt becomes `/loop /auto epic:<ID>`, so each pick runs `next-candidates.sh --root <ID>` and sees the epic's members and nothing else (membership is live — recomputed at every pick — so a child filed mid-run joins the pool). An explicit token overrides the recommendation's `scope`. Validated **fail-closed** through `scripts/epic-graph.sh` before anything is dispatched or written: a missing issue or one without the `epic` label refuses the launch outright — a fleet scoped to a bad epic would latch `drained` against an empty pool. There is no separate fleet-epic skill; this token is the epic fleet.
 
 Ending a running fleet early is [`/fleet-stop`](../fleet-stop/SKILL.md), not a form of this skill. Check the current picture any time with [`/fleet-status`](../fleet-status/SKILL.md).
+
+### Epic-scoped launch — the integration branch
+
+Keeper decision 2026-09-11: **an epic ships as one PR, merged into as you go.** `/epic-prep <ID>` creates an integration branch from the same source `/start wt` would resolve (`start.wt-source-branch` when set, else the checkout's current branch — so `main` with no other context, or whatever long-running branch the checkout sits on) and records `scope`, `members` (the prep-time membership, the burn-down baseline `/fleet-status` reads), `branch`, and `base` in `tmp/fleet-recommendation.json`. When the recommendation's scope is the one launching, the script:
+
+1. verifies the branch exists locally and that `start.wt-source-branch` is unset or already names it (a different value means another fleet posture — a `/fleet-sequence` stack, say — is in effect: refuse);
+2. after the ordinary clean-tree preflight, **detaches the main checkout at the branch tip and sets `start.wt-source-branch` to the branch** — the documented detached-HEAD posture (`scripts/start-wt-setup.sh` reads that config only while HEAD is detached; `fleet-sequence.sh` does the same between issues), under which every `/start wt` forks from the branch and every `/finish merge` advances it ref-only, never contending on the working tree;
+3. records `scope`, `members`, `branch`, and `base` in the marker alongside the session set.
+
+Work in the main checkout while the fleet runs from another worktree — the checkout is parked. After the fleet: open the epic's PR from `branch` onto `base` (`/pr-update` from a checkout of the branch), then `git checkout <base>` and `git config --unset start.wt-source-branch`. The script prints exactly that pair at launch.
+
+A token whose epic has no prepared branch (no recommendation, or one for a different epic) still launches — the human typed it — but on the checkout's own branch, with a WARN naming `/epic-prep <ID>` as the way to prepare one. `FLEET_PROMPT` still overrides the prompt; an override that drops the scope is warned about, not corrected.
 
 ## Behavior
 
@@ -50,7 +63,7 @@ Per-session ledgers (`tmp/auto-state-*.json`) deliberately persist after a fleet
 
 ## The deadline contract (shared with /auto)
 
-- Marker: `<main-checkout>/tmp/fleet-deadline.json` — written on **every** launch as `{fleet_sessions, count, launch_epoch}`, plus `{deadline_epoch, deadline}` when the launch carried a duration. `fleet_sessions` is the session set — the short id each `claude --bg` prints (`backgrounded · <id>`), recorded per dispatch and carried forward across a top-up — and is what `/fleet-status` and `/fleet-retro` scope by; `launch_epoch` is the scoping fallback for a marker that predates the set (`launch_epoch` is the anchor; `stopped: true` added by [`/fleet-stop`](../fleet-stop/SKILL.md), which preserves the other fields).
+- Marker: `<main-checkout>/tmp/fleet-deadline.json` — written on **every** launch as `{fleet_sessions, count, launch_epoch}`, plus `{deadline_epoch, deadline}` when the launch carried a duration, plus `{scope, members}` (and `{branch, base}` when prep recorded an integration branch) when it was epic-scoped. `fleet_sessions` is the session set — the short id each `claude --bg` prints (`backgrounded · <id>`), recorded per dispatch and carried forward across a top-up — and is what `/fleet-status` and `/fleet-retro` scope by; `launch_epoch` is the scoping fallback for a marker that predates the set (`launch_epoch` is the anchor; `stopped: true` added by [`/fleet-stop`](../fleet-stop/SKILL.md), which preserves the other fields).
 - `/auto` reads it at Step 2 (after preflight, before the pick), so in-flight work always completes and targeted `/auto <ISSUE-ID>` ignores it by construction.
 - Sessions never delete the marker (siblings still mid-issue must see it); `fleet-launch.sh` rewrites the marker on every launch, so a no-duration launch never inherits a dead fleet's deadline — which also means a top-up launch resets or erases a running fleet's deadline: re-pass the remaining duration when adding sessions.
 
@@ -59,3 +72,4 @@ Per-session ledgers (`tmp/auto-state-*.json`) deliberately persist after a fleet
 - Not in a git repo, or `claude`/`jq` missing → the script errors before dispatching anything; relay it.
 - A dispatch failure stops further launches but leaves already-launched sessions running — say how many made it and point at `claude agents`.
 - No count and no `tmp/fleet-recommendation.json` → run `/auto-prep` (or pass a count). A recommendation older than 24h gets a staleness WARN — offer to re-run `/auto-prep`.
+- An `epic:` scope that refused (not found, or no `epic` label), a recorded integration branch that no longer exists, or a `start.wt-source-branch` that names some other branch → the script exits 1 before dispatching or writing anything; relay the message. The remedy is `/epic-prep <ID>` (or unsetting the foreign config once that fleet is done), never a retry without the scope.

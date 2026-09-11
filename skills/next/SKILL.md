@@ -1,7 +1,7 @@
 ---
 name: next
 description: Suggest the best next issue to work on. Considers workflow stage (Planned before Backlog), dependency graph, triage status, and what's unblocked. Optionally filters to a label — `/next specified` restricts to certified specs (what /auto runs). Use when the user says 'what's next', 'next issue', or invokes /next.
-argument-hint: "[label] [team:KEYS]"
+argument-hint: "[label] [team:KEYS] [epic:ID]"
 ---
 
 # Next Issue
@@ -18,13 +18,14 @@ Suggests the most logical next issue to work on by combining workflow stage, dep
 ## Arguments
 
 ```text
-/next [label] [team:KEY[,KEY...]]
+/next [label] [team:KEY[,KEY...]] [epic:ID]
 ```
 
-Two optional tokens, order-insensitive:
+Three optional tokens, order-insensitive:
 
 - A Linear issue-label name (e.g. `specified`): every candidate must carry that label (ASCII-case-insensitive name match); pass it to the script as `--label <label>`. Bare `/next` is unfiltered — humans may deliberately pick uncertified issues; only `/auto` is gated to `specified`.
 - `team:KEY[,KEY...]` (e.g. `team:BF`, `team:PL,BF`): an explicit team scope; pass through as `--team`. This outranks `$LINEAR_TEAM` in Step 2's resolution — it is a direct instruction.
+- `epic:ID` (e.g. `epic:BF-1826`): scope the whole ranking to that epic's graph — the epic, its transitive descendants, and the transitive blockers of any member, non-terminal only, cross-team included (`scripts/epic-graph.sh`); pass through as `--root <ID>`. The graph's teams join the fetch on their own, so `team:` is not needed alongside it and merely widens the fetch. Validated **fail-closed by the script**: an ID that does not exist or does not carry the `epic` label exits 1 with the reason — surface it and stop; never fall back to the unscoped pool.
 
 Error on any other token.
 
@@ -61,9 +62,12 @@ A `<COMPLETED-ID>` or branch prefix feeds `--completed` only — it does **not**
 
 # Explicit scoping / more results
 ~/.claude/scripts/next-candidates.sh --team PL,BF --limit 5
+
+# Epic-scoped (/next epic:BF-1826, and what /auto epic:BF-1826 runs): members only
+~/.claude/scripts/next-candidates.sh --root BF-1826 --label specified
 ```
 
-`--label` composes with `--completed` — the unblock analysis is label-agnostic; the filter applies only to the final candidate set.
+`--label` composes with `--completed` — the unblock analysis is label-agnostic; the filter applies only to the final candidate set. `--root` composes with both: the fetched list is cut to the epic's members right after the fetch, before the Planned gate and every hold/hidden note, so the order, the holds, the counts, and the drained headline all describe the epic alone (a `_Scope: epic <ID> — N non-terminal member(s) …_` line under the heading says so, and the headlines read `in epic <ID> (team <KEY>)`).
 
 The script emits a markdown-formatted ranked list with tier, parent chain, and reasoning per candidate. It exits 0 even when no workable candidates exist — printing `_No workable issues in team <KEY>._` (single team) or `_No workable issues in teams <KEY, KEY>._` (multi), with the label named when a filter was active. Under the Planned gate (below) the empty case reads differently on purpose — `_Nothing pickable right now … the Planned/Todo column is not drained, so Backlog is withheld (PLANNED-HOLD below) …_` — and that difference is what `/auto` keys on to wait rather than end its run.
 
@@ -74,7 +78,7 @@ The same wait-not-drained distinction holds when the gate is open but every rema
 Read the script's stdout and narrate it naturally — and **definitively**:
 
 - Lead with the top candidate: identifier, title, why it's the recommendation (the tier reason already encodes this). The answer to "what's next" is that candidate — never hedge with "say the word if you want another team" or ask which team to search; the scope was already resolved mechanically in Step 2.
-- Name the scope searched in one clause (e.g. "across PL, BF, and MAR" or "in PL, per $LINEAR_TEAM") so an empty or surprising result is self-explaining.
+- Name the scope searched in one clause (e.g. "across PL, BF, and MAR" or "in PL, per $LINEAR_TEAM"; under `epic:` surface the script's `_Scope: epic …_` line) so an empty or surprising result is self-explaining.
 - If there's a runner-up that's qualitatively different from the top pick (different tier, different parent epic, different team), mention it as "also consider."
 - Surface a `_PLANNED-HOLD: …_` note **verbatim** — it is the answer to "why is nothing from Backlog here" and, for the keeper, the list of what to decide, certify, or close so the column drains. When the script reported *nothing pickable* under a hold, say that the fleet is waiting on the Planned/Todo column (name the releasing and keeper-owned entries) — never suggest Backlog work or `/spec`-for-Backlog around it.
 - Surface a `_BLOCKED-HOLD: …_` note **verbatim** the same way — it names the in-flight issue each hidden candidate waits on, so the narration is "waiting on a sibling to ship `<ID>`", never a `/spec` or Backlog suggestion.
@@ -84,7 +88,7 @@ The script's tier reasons (e.g. "newly unblocked", "sibling under completed pare
 
 ## Error Handling
 
-- Exit 1 — arg error (bad flag value, malformed team key). Read stderr and fix the invocation.
+- Exit 1 — arg error (bad flag value, malformed team key), or an `epic:` scope that refused: the issue does not exist or lacks the `epic` label. Surface stderr verbatim and stop — an epic scope never degrades to the unscoped pool.
 - Exit 2 — Linear/network failure, including workspace team discovery failing when no team was pinned. Surface the error message verbatim and stop.
 - Exit 3 — missing dependency (`linear-cli`, `jq`). Tell the user to install it.
 - If `linear-cli auth status` shows logged out, prompt: `linear-cli auth oauth`.
