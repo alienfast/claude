@@ -58,7 +58,7 @@ On every exit — done, failed, stopped, or crashed — the runner puts the main
 
 - `/fleet-sequence stop` sets `stop_requested`; the runner checks it before each dispatch, so the issue in flight finishes and nothing else starts. Killing an in-flight session is `claude agents`, never this skill.
 - **Re-running the same list resumes.** Issues the marker recorded as shipped on the same launch branch keep their branch and PR and are skipped; the next one forks from the last shipped branch. This is the recovery path after a failure too — fix or drop the failed issue (re-list it to retry, omit it to skip), then re-run. A run launched from a different branch is a fresh sequence.
-- **Merge from the top, or bottom-up.** With the GitHub stack linked, merging the top PR merges the whole stack; merging a lower PR alone retargets the ones above it. `status` prints the stack bottom → top and the stack number. Each issue moves to `In Review` when its PR opens — finished for dependency purposes, per `standards/linear-workflow.md` — and to Ready For Release after the merge, as in any `pr`-mode ship; its worktree is preserved until then — `reap-worktrees` sees the open PR and leaves it alone.
+- **Merge from the top, or bottom-up.** With the GitHub stack linked, merging the top PR merges the whole stack; merging a lower PR alone retargets the ones above it. `status` prints the stack bottom → top and the stack number. Each issue is marked Ready For Release when its PR opens (keeper ruling 2026-09-11: an open PR is work waiting for its release; `In Review` is a human-review request, never a ship's state), as in any `pr`-mode ship; its worktree is preserved until the merge — `reap-worktrees` sees the open PR and leaves it alone.
 
 ## Relationship to the fleet skills
 

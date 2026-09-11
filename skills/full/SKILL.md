@@ -27,7 +27,7 @@ All tokens are **position-agnostic and case-insensitive** (matching the conventi
 - `wt` — optional. Pass-through to `/start`; selects worktree mode. Omit for in-place mode on the current branch.
 - `auto` — optional. Pass-through to BOTH `/start` and `/finish` (see Auto mode above). Compatible with every other token.
 - `simple` — optional. Pass-through to `/start`, which forwards it to `/quality-review` at its Step 9; selects the simple review tier ([standards/issue-spec.md](../../standards/issue-spec.md) § The `simple` label). The issue's `simple` label implies it without the token. Compatible with every other token.
-- `pr` — optional. Pass-through to `/finish` Step 3 below; opens a PR instead of the default finalize. Works in **both** modes: with `wt` the PR base is the recorded source branch and the worktree is preserved; without `wt` (in-place) the base is the repo's default branch. The issue moves to `In Review` (finished for dependency purposes) until the PR merges.
+- `pr` — optional. Pass-through to `/finish` Step 3 below; opens a PR instead of the default finalize. Works in **both** modes: with `wt` the PR base is the recorded source branch and the worktree is preserved; without `wt` (in-place) the base is the repo's default branch. The issue is marked `Ready For Release` once the PR is open (keeper ruling 2026-09-11: an open PR is work waiting for its release).
 - `no push` / `don't push` / `skip push` — optional. Pass-through to `/finish`; commit still happens, push is skipped. Compatible with both modes (worktree-merge accepts `no push` implicitly via the macro's gating in Step 3; `pr` does not, in either mode — see fail-fast below).
 - Any other token — error. Surface: `Unrecognized argument 'X'. /full accepts <ISSUE-ID>, optionally with 'wt', 'auto', 'simple', 'pr', or a 'no push' variant.`
 
@@ -88,7 +88,7 @@ Compose the args string for `/finish` based on mode (in `auto` mode, prepend `au
 **The flow is the caller's, not yours.** `pr` appears below only because the macro was *given* `pr`; never add it because the repo's recent issues shipped as PRs, because a memory or `CLAUDE.md` says so, or because a PR seems safer. Absent the token, `wt` mode is `merge` — full stop.
 
 - **Non-`wt` mode without `pr`** — `args = "<ISSUE-ID>"`. Append ` no push` if the user passed it. `/finish` runs its standard flow (commit/push the current branch, mark `Ready For Release`).
-- **Non-`wt` mode with `pr`** — `args = "<ISSUE-ID> pr"`. `/finish` opens an in-place PR against the repo's default branch and moves the issue to `In Review`. No `no push` is possible here (fail-fast in Arguments rejects the combination upstream).
+- **Non-`wt` mode with `pr`** — `args = "<ISSUE-ID> pr"`. `/finish` opens an in-place PR against the repo's default branch and marks the issue `Ready For Release`. No `no push` is possible here (fail-fast in Arguments rejects the combination upstream).
 - **`wt` mode without `pr`** — `args = "<ISSUE-ID> merge"`. Append ` no push` if the user passed it. Pass `merge` explicitly even though it is `/finish`'s worktree default — keeps the dispatch self-documenting. (`/finish` Step 0 short-circuits when `SOURCE_BRANCH` is set anyway.)
 - **`wt` mode with `pr`** — `args = "<ISSUE-ID> pr"`. No `no push` is possible here (fail-fast in Arguments rejects the combination upstream).
 

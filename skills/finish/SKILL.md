@@ -254,7 +254,7 @@ The script handles all three states: pre-staged changes (commit + push), already
 
 ### Step 8: Mark Issue as Ready For Release
 
-**When `ACTION == "pr"`, the target is `In Review`, not Ready For Release.** In PR mode the work is not yet shipped — review and merge are still pending — but it is finished from an implementation perspective, which is exactly what `In Review` means (`standards/linear-workflow.md` § Terminal States: implementation complete, awaiting human review; dependents are unblocked). Run `~/.claude/scripts/linear-set-state.sh 'In Review' <ISSUE-ID>` in place of the Ready-For-Release transition below; exit 1 means the team has no `In Review` state — leave the issue `In Progress` and say so in the closing message. The transition to `Ready For Release` happens after the PR merges (manually, or via a follow-up `/finish` once the worktree branch is merged into source). Measured 2026-09-10: three PR-mode ships left at In Progress read as unfinished in Linear while their PRs sat open in a stack.
+**When `ACTION == "pr"`, Step 8 runs the verdict gate only; the Ready-For-Release transition belongs to Step 9, after `gh pr create` succeeds** — the same `mark-ready-for-release.sh` call the merge path makes. Keeper ruling 2026-09-11: an open PR is work waiting for its release, and Ready For Release is that state; `In Review` is a human-review request and never a ship's landing state. The PR merging later changes nothing in Linear.
 
 **Auto mode — the gate below never prompts.** Every refuse-with-override branch (`VERDICT_STALE=1`, `terminated-with-open-items`, `escalated-to-architect`, `malformed`, `none-found`) resolves to `abort`: emit that branch's `abort` terminator (`BLOCKED-ON-REVIEW: ... — <reason>, auto mode refused the override. No state change.`) and stop. Never override, never re-run unattended. **`none-found` keeps its own abort terminator** — unattended, "no review artifact" means unreviewed code, which never ships (`BLOCKED-ON-REVIEW: <ISSUE-ID> — no /quality-review artifact; unattended runs never ship unreviewed. Run /quality-review then /finish manually.`). The failing tag is `/auto`'s signal to count a failure and surface the issue to a human.
 
@@ -464,14 +464,14 @@ The branch was pushed in Step 7 (the `no push` + `pr` combination was rejected i
    gh pr create --base '<BASE>' --head '<WORKTREE_BRANCH>' --title '<generated title>' --body-file '<path from step 4>' [--label '<label>' ...]
    ```
 
-After the PR is created, present the closing message, ending that message on the tagged line (per `standards/lifecycle-tags.md`). Both templates' leading `This agent-view session is done.` sentence is standalone-only — under `/auto`, drop that sentence, keep the rest of the line, and continue with `/auto` Step 4 after the tag. Substitute the actual resolved `<BASE>`, branch, and label list (or the bare word `none` when no labels were applied). The message branches on whether a worktree is involved:
+After the PR is created, run `~/.claude/scripts/mark-ready-for-release.sh <ISSUE-ID>` (the PR is the ship; keeper ruling 2026-09-11 — never `In Review`, which is a human-review request), then present the closing message, ending that message on the tagged line (per `standards/lifecycle-tags.md`). Both templates' leading `This agent-view session is done.` sentence is standalone-only — under `/auto`, drop that sentence, keep the rest of the line, and continue with `/auto` Step 4 after the tag. Substitute the actual resolved `<BASE>`, branch, and label list (or the bare word `none` when no labels were applied). The message branches on whether a worktree is involved:
 
 - **`SOURCE_BRANCH` set (worktree PR)** — leave the worktree in place; it's the lifecycle boundary. The leading sentence and the tagged line should NOT duplicate the cleanup hint:
 
   ```text
   This agent-view session is done. The worktree stays in place until the PR merges.
 
-  SHIPPED-PR: <ISSUE-ID> — PR opened (base=<BASE>, head=<WORKTREE_BRANCH>), labels: <list|none>, issue In Review. After merge, run `git worktree remove .claude/worktrees/<issue-id-lowercased>` from the main checkout.
+  SHIPPED-PR: <ISSUE-ID> — PR opened (base=<BASE>, head=<WORKTREE_BRANCH>), labels: <list|none>, issue Ready For Release. After merge, run `git worktree remove .claude/worktrees/<issue-id-lowercased>` from the main checkout.
   ```
 
   After the PR merges, the user removes the worktree manually from the main repo checkout:
@@ -486,7 +486,7 @@ After the PR is created, present the closing message, ending that message on the
   ```text
   This agent-view session is done. The PR is open against <BASE> — review and merge it there.
 
-  SHIPPED-PR: <ISSUE-ID> — PR opened (base=<BASE>, head=<WORKTREE_BRANCH>), labels: <list|none>, issue In Review. Review/merge the PR.
+  SHIPPED-PR: <ISSUE-ID> — PR opened (base=<BASE>, head=<WORKTREE_BRANCH>), labels: <list|none>, issue Ready For Release. Review/merge the PR.
   ```
 
 ## Error Handling
