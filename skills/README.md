@@ -179,9 +179,29 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 - Self-contained workflow in `SKILL.md`
 - Complements `/quality-review`'s same-batch collision wiring by covering overlap across previously filed siblings (beyond the single dedup-adjacent edge `/quality-review` wires per filed item)
 
+### epic-prep
+
+**Description**: Prepare one epic's graph for an epic-scoped fleet (`/fleet-launch epic:<ID>`) — `/auto-prep`'s audit run with `--root`, plus an inline `/spec` loop over uncertified members in dependency order, a boundary review of outside dependents and `related` partners, promotion of the whole graph to Planned, the epic integration branch, a hard gate that every resolved member's code is on that branch, and a scoped recommendation. The epic ships as one PR from the branch the fleet merges into as it goes (keeper decisions 2026-09-11).
+
+**When Invoked**:
+
+- User says "epic prep", "prep the epic", "prep BF-1826 for a fleet", or "fleet this epic"
+- Before `/fleet-launch epic:<ID>` — a bare `/fleet-launch` afterwards launches the scoped fleet from the persisted recommendation
+
+**Key Features**:
+
+- Membership from `~/.claude/scripts/epic-graph.sh`: the epic, its transitive descendants, and the transitive blockers of any member — non-terminal, cross-team; dependents and `related` partners are the boundary (include by re-parenting, default leave out)
+- Certifies uncertified members through `/spec` in topological order (blockers first), then runs `/auto-prep` Steps 2–5 by link with `next-candidates.sh --root` and `fleet-blockers.sh --root`, including the CLOSE-SET sweep
+- Creates `epic/<id>` from the same source `/start wt` resolves; refuses to proceed until every Ready-for-Release / In Review member's code is contained in it (the BF-1826 rename stack is the live case), merging failing heads through a temporary worktree on approval
+- Persists `scope`, `members`, `branch`, `base` in `tmp/fleet-recommendation.json`; expects 1–2 lanes
+
+**Structure**:
+
+- Thin workflow in `SKILL.md` referencing `/auto-prep`'s steps; the mechanics live in `epic-graph.sh`, `next-candidates.sh --root`, `fleet-blockers.sh --root`, `linear-set-state.sh`, and `fleet-launch.sh`'s epic handling
+
 ### fleet-launch
 
-**Description**: Launch a fleet of parallel `/loop /auto` sessions as background agents in `claude agents`, staggered so each session's first pick sees the previous one's claim, with an optional time budget that winds the fleet down cleanly. The middle bookend: `/auto-prep` → `/fleet-launch` → `/fleet-retro`.
+**Description**: Launch a fleet of parallel `/loop /auto` sessions as background agents in `claude agents`, staggered so each session's first pick sees the previous one's claim, with an optional time budget that winds the fleet down cleanly. The middle bookend: `/auto-prep` → `/fleet-launch` → `/fleet-retro`. An `epic:<ID>` token (or the scope `/epic-prep` persisted) scopes every session to one epic's graph and parks the checkout on its integration branch.
 
 **When Invoked**:
 
