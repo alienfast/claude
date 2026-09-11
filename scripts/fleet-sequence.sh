@@ -10,7 +10,8 @@
 #
 #   <ISSUE-ID>...  The issues in the order they must ship. Each must carry `specified` and not `human`
 #                  (the same probe /auto's targeted mode runs), and must not already be terminal or
-#                  Ready For Release. `solo` is expressly fine — this is the runner for it.
+#                  Ready For Release — unless the marker records it shipped on this launch branch, which
+#                  a resume skips unprobed. `solo` is expressly fine — this is the runner for it.
 #   -- ...         Passed to every `claude --bg` verbatim; defaults added only for flags not present
 #                  (--model 'opus[1m]' --effort xhigh --autocompact 500000 --permission-mode auto —
 #                  skills/auto/SKILL.md's unattended-run prerequisites, same as fleet-launch.sh).
@@ -404,7 +405,15 @@ cmd_launch() {
     for prev in "${normalized[@]}"; do [ "$prev" = "$norm" ] && { echo "ERROR: $norm listed twice" >&2; exit 1; }; done
     normalized+=("$norm")
   done
+  # A resume's already-shipped issues sit at Ready For Release (a PR-mode ship lands there) and are skipped by
+  # the runner, so they are not probed — the refusals below are for issues that would be dispatched.
+  local carried=""
+  current=$(git -C "$main_checkout" branch --show-current 2>/dev/null || true)
+  if [ -s "$marker" ] && [ -n "$current" ] && [ "$(jq -r '.base // ""' "$marker")" = "$current" ]; then
+    carried=$(jq -r '(.issues // {}) | to_entries[] | select(.value.outcome == "shipped") | .key' "$marker" | paste -sd' ' -)
+  fi
   for id in "${normalized[@]}"; do
+    case " $carried " in *" $id "*) continue ;; esac
     json=$(linear-cli issues get "$id" -o json 2>/dev/null) || { echo "ERROR: could not read $id from Linear (linear-cli issues get failed)" >&2; exit 1; }
     labels=$(printf '%s' "$json" | jq -r '.labels.nodes[].name' 2>/dev/null || true)
     state=$(printf '%s' "$json" | jq -r '.state.name // ""' 2>/dev/null || true)

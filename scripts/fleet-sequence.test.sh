@@ -233,9 +233,12 @@ ck_has "status shows the reason" "**Reason:** BF-2 ended" "$WORK/out"
 ck_has "status shows the partial stack" "- BF-1: \`wt-bf-1\` → \`main\` — https://github.com/x/y/pull/1" "$WORK/out"
 
 # ---- re-running the same list resumes: BF-1 kept, BF-2 forks from wt-bf-1 ----
+# BF-1 now sits at Ready For Release (where a PR-mode ship lands); a carried issue is never probed.
+printf '{"labels":{"nodes":[{"name":"specified"}]},"state":{"name":"Ready For Release"}}\n' > "$WORK/issue-BF-1.json"
 echo shipped > "$WORK/outcome-BF-2"
 : > "$WORK/dispatches"; : > "$WORK/forks"
 ck "resume exits 0"             "0" "$(run BF-1 BF-2 BF-3)"
+ck_lacks "carried issue not refused" "already Ready For Release" "$WORK/out"
 ck_has "resume announced"       "Resuming on main: already shipped, kept — BF-1 (https://github.com/x/y/pull/1)" "$WORK/out"
 ck_has "BF-1 skipped"           "BF-1 already shipped (https://github.com/x/y/pull/1) — skipping" "$WORK/out"
 ck "resume dispatched the rest" "/auto pr BF-2,/auto pr BF-3" "$(grep -o -- '/auto pr [A-Z]*-[0-9]*' "$WORK/dispatches" | paste -sd, -)"
@@ -251,6 +254,8 @@ ck "other base exits 0"         "0" "$(run BF-4)"
 ck_lacks "no resume on a new base" "Resuming" "$WORK/out"
 ck "fresh marker has only BF-4" "BF-4" "$(marker '.issues | keys | join(" ")')"
 ck "restored to other"          "other" "$(git -C "$REPO" branch --show-current)"
+ck "a shipped issue outside the marker is still refused" "1" "$(run BF-1 BF-5)"
+ck_has "refusal names the state" "BF-1 is already Ready For Release" "$WORK/out"
 
 # ---- shipped without a PR, or without a ledger, is a failure ----
 reset

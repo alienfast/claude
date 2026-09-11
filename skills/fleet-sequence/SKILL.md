@@ -18,7 +18,7 @@ Why this shape, and not one loop or one batch PR:
 
 `/fleet-sequence <ISSUE-ID> <ISSUE-ID>...` · `/fleet-sequence status` · `/fleet-sequence stop` · `/fleet-sequence link`
 
-- **Issue IDs** — every token matching `^[A-Za-z]+-[0-9]+$`, in the order they must ship. Each is probed the way `/auto`'s targeted mode probes (`specified` present, `human` absent) and refused if already Done, Canceled, Duplicate, or Ready For Release. `solo` is expressly welcome.
+- **Issue IDs** — every token matching `^[A-Za-z]+-[0-9]+$`, in the order they must ship. Each is probed the way `/auto`'s targeted mode probes (`specified` present, `human` absent) and refused if already Done, Canceled, Duplicate, or Ready For Release — except an issue the marker already records as shipped on this launch branch, which a resume skips without probing (a PR-mode ship lands at Ready For Release). `solo` is expressly welcome.
 - `status` — read-only readout (below). `stop` — finish the issue in flight, then stop; the PRs already opened stand; nothing is killed. `link` — link the marker's shipped PRs into a GitHub stack now, for a run that ended without one (linking WARNed, or shipped before linking existed); idempotent.
 - Anything else → error: `Unrecognized argument 'X'. /fleet-sequence takes issue IDs in ship order, or the single word status / stop / link.`
 
