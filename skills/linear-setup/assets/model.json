@@ -3,7 +3,7 @@
     "organization": "basefund",
     "team": "BF",
     "teamName": "Product",
-    "exportedAt": "2026-09-05T01:45:27Z"
+    "exportedAt": "2026-09-11T20:42:37Z"
   },
   "team": {
     "triageEnabled": true,
@@ -91,6 +91,14 @@
       "isGroup": false,
       "parent": null,
       "required": true
+    },
+    {
+      "name": "dependencies",
+      "color": "#0EA5E9",
+      "description": null,
+      "isGroup": false,
+      "parent": null,
+      "required": false
     },
     {
       "name": "design",

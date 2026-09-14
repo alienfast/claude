@@ -157,6 +157,7 @@
       "/private/tmp"
     ]
   },
+  "model": "opus[1m]",
   "hooks": {
     "PreToolUse": [
       {
@@ -219,11 +220,10 @@
   "enabledPlugins": {
     "typescript-lsp@claude-plugins-official": true
   },
+  "outputStyle": "concise",
   "effortLevel": "xhigh",
   "tui": "fullscreen",
   "theme": "dark",
   "agentPushNotifEnabled": true,
-  "skipAutoPermissionPrompt": true,
-  "outputStyle": "concise",
-  "model": "claude-fable-5-1[1m]"
+  "skipAutoPermissionPrompt": true
 }
