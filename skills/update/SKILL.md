@@ -84,6 +84,12 @@ belongs to `/keeper`, never to this skill — do not commit, stash, reset, or di
   origin/main..HEAD` is non-empty) — on a non-keeper machine these can never be pushed and only accumulate conflicts.
   Point at `/keeper`: contributor mode carries them onto a proposal branch, opens the PR, and — with the user's
   in-session consent — resets main back to a pure clone, leaving a rescue branch behind.
+- **`~/.claude` is on a branch other than `main`, or the user just wants it back on a clean `main`** — the pull is
+  skipped by the branch rule above, and the switch cannot happen from inside a session (the git-permissions hook refuses
+  it). Hand the user the one-liner to run in their own terminal — Git Bash on Windows, Terminal on macOS — and re-run
+  `/update` after: `curl -fsSL https://raw.githubusercontent.com/alienfast/claude/main/scripts/sync-main.sh | bash`.
+  It commits any edits on the branch they were made on, keeps local-only `main` commits under `backup/main-<stamp>`,
+  checks out `origin/main`, runs `update.sh`, and prints a pass/fail summary a non-engineer can read back.
 
 ## Step 3 — Report
 

@@ -320,6 +320,14 @@ git pull
 
 From then on, `/update` is the skill that does this — it pulls the latest project code and `~/.claude` first, then runs the script.
 
+If the `~/.claude` checkout has drifted — it sits on a branch (a `/keeper` proposal, a PR checked out for review) or carries uncommitted edits — run this **outside Claude Code** (Git Bash on Windows, Terminal on macOS). It returns the checkout to the latest `main` without discarding anything (edits are committed on their branch, local-only `main` commits are kept under `backup/main-<stamp>`), runs `update.sh`, and proves the tooling works:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/alienfast/claude/main/scripts/sync-main.sh | bash
+```
+
+It has to run outside a session because the git-permissions hook refuses branch switches inside one — deliberately, since another session may own the working tree.
+
 This installs:
 
 - The TypeScript LSP plugin
