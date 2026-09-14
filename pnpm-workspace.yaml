@@ -1,0 +1,6 @@
+# pnpm runs package scripts through cmd.exe on Windows, where `hooks/x.test.sh && …` dies at "hooks is not recognized"
+# and check-markdown's quoted glob reaches markdownlint with its quotes intact (0 files linted, exit 0). One shell
+# everywhere: Git Bash on Windows, bash on macOS/Linux; a machine without bash on PATH fails loudly with spawn ENOENT.
+# pnpm 11 reads this key here and not from a project .npmrc or npm_config_script_shell (measured 2026-09-14).
+# https://pnpm.io/settings#scriptshell
+scriptShell: bash

@@ -18,6 +18,15 @@
 
 set -uo pipefail
 
+# POSIX-only. The fixture symlinks the whole checkout as $HOME/.claude (`ln -s` copies the directory on Git Bash —
+# every transcript under projects/ with it) and the ancestry-exclusion case walks `ps -o ppid=` up to pid 1, which MSYS
+# `ps` (no -o at all) cannot do; wt_owner_alive degrades to unknown there for the same reason. One counted SKIP the
+# runner can see — the same code is verified on macOS/Linux. FORCE_POSIX_SUITES=1 runs it anyway. standards/git.md
+# § Windows Git Bash: native tools behind the shell.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) [ -n "${FORCE_POSIX_SUITES:-}" ] || { echo "SKIP  $(basename "$0"): POSIX process liveness (ps -o) and a symlinked \$HOME/.claude are unavailable on Git Bash — 0 passed, 0 failed, 1 skipped"; exit 0; } ;;
+esac
+
 CLAUDE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SCRIPT="$CLAUDE_DIR/scripts/reap-worktrees.sh"
 IDLIB="$CLAUDE_DIR/scripts/wt-identity.sh"
