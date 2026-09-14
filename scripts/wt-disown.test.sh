@@ -204,6 +204,21 @@ ck_has() { # needle haystack label
 # Counted, never fatal — a missing interpreter is not a regression.
 skip() { echo "SKIP  $1"; skipped=$((skipped + 1)); }
 
+# The provable-death path rests on wt_owner_alive proving a stamped owner gone, which needs the real `ps` a
+# start-time stamp and comm check use. MSYS `ps` on Git Bash has neither `-o lstart` nor `-o comm`, so
+# wtid_pid_start returns empty and every death verdict degrades to 2:unknown — the fail-safe PR #9 accepted as
+# a Windows limitation. Probe the capability and skip only the cases that need a positive death verdict.
+HAVE_PIDSTART=no
+[ -n "$(bash -c ". '$IDLIB'; wtid_pid_start $$" 2>/dev/null)" ] && HAVE_PIDSTART=yes
+
+# Several parts drive a tier unwritable with `chmod a-w` to prove a disown fails loudly on a blocked sidecar
+# rewrite. Windows' filesystem ignores chmod (a directory stays writable), so the fixture cannot express its
+# precondition there and the disown succeeds — probe the capability and skip only those cases.
+CAN_DENY_WRITE=yes
+mkdir -p "$TMP/deny-probe"; chmod a-w "$TMP/deny-probe"
+touch "$TMP/deny-probe/x" 2>/dev/null && CAN_DENY_WRITE=no
+chmod u+w "$TMP/deny-probe" 2>/dev/null; rm -rf "$TMP/deny-probe"
+
 # Block until <pid> has really exec'd its target. Two fixture hazards live in the fork window, and both are
 # silent: a kill delivered there signals a COPY of this shell, which then runs this script's traps (deleting
 # $TMP) and resumes the suite from the fork point; and a stamp taken there records comm=bash, which
@@ -337,7 +352,14 @@ if [ "$HAVE_NODE" = yes ]; then
 
   real_start sess-B
   ck "4" "$RC" "live foreign owner refuses reuse (exit 4)"
-  ck_has "owned by another live session" "$ERR" "refusal names the live-owner mapping"
+  # The "owned by another live session" wording needs a positive ALIVE verdict; without a real-ps liveness probe
+  # (Windows) the owner reads 2:unknown and the refusal names UNKNOWN liveness instead — still a refusal (exit 4
+  # above holds, failing closed), just worded for the state it could actually determine.
+  if [ "$HAVE_PIDSTART" = yes ]; then
+    ck_has "owned by another live session" "$ERR" "refusal names the live-owner mapping"
+  else
+    skip "no real-ps liveness probe — the live-session refusal wording needs an ALIVE verdict (reads UNKNOWN here)"
+  fi
 
   drun sess-A "$WT"
   ck "0" "$RC" "owner disown exits 0"
@@ -356,7 +378,10 @@ else
 fi
 
 # --- Part 2: a foreign session cannot release a live owner's claim ---
-if [ "$HAVE_NODE" = yes ]; then
+# Its whole premise is the LIVE verdict — a foreign session is refused precisely because the owner is provably
+# alive. Without a real-ps liveness probe (Windows) the owner reads 2:unknown, so the refusal path and its exit
+# code differ; the case cannot be exercised, so gate it rather than assert a verdict the platform can't produce.
+if [ "$HAVE_NODE" = yes ] && [ "$HAVE_PIDSTART" = yes ]; then
   spawn_live
   setup foreign sess-A "$LIVE"
 
@@ -365,11 +390,14 @@ if [ "$HAVE_NODE" = yes ]; then
   ck_has "sess-A" "$ERR" "refusal names the stamped owner"
   ck "$LIVE" "$(cfg start.owner-pid)" "refused disown left the stamped pid untouched"
   ck "" "$(cfg start.owner-released-at)" "refused disown wrote no release marker"
-else
+elif [ "$HAVE_NODE" != yes ]; then
   skip "node not available — Part 2's live-owner refusal needs an allowlisted live process"
+else
+  skip "no real-ps liveness probe (MSYS ps lacks -o lstart/-o comm) — the live-owner refusal reads 2:unknown here"
 fi
 
 # --- Part 3: provable death releases without --force; --force overrides a live foreign owner ---
+if [ "$HAVE_PIDSTART" = yes ]; then
 spawn_dead
 setup deadowner sess-A "$DEAD"
 # The fixture's whole value is this pair: stamped while the owner still LIVED, so the death verdict rests on a
@@ -382,6 +410,9 @@ drun sess-B "$WT"
 ck "0" "$RC" "provably dead owner disowns without --force"
 ck "DISOWN=ok" "$(echo "$OUT" | head -1)" "dead-owner disown reports ok"
 ck "released" "$(owner_field OWNER_ALIVE)" "dead-owner release adjudicates released"
+else
+  skip "no real-ps liveness probe (MSYS ps lacks -o lstart/-o comm) — the provable-death disown path cannot be exercised; the owner reads 2:unknown"
+fi
 
 if [ "$HAVE_NODE" = yes ]; then
   spawn_live
@@ -471,9 +502,13 @@ setup partialdisown sess-A "$SLEEPER"
 chmod a-w "$REPO/.claude/worktree-identity"
 
 drun sess-A "$WT"
-ck "2" "$RC" "unwritable sidecar tier fails the disown (exit 2)"
-ck_has "sidecar" "$ERR" "failure names the sidecar tier"
-ck "released" "$(owner_field OWNER_ALIVE)" "the half-written disown still released the worktree"
+if [ "$CAN_DENY_WRITE" = yes ]; then
+  ck "2" "$RC" "unwritable sidecar tier fails the disown (exit 2)"
+  ck_has "sidecar" "$ERR" "failure names the sidecar tier"
+  ck "released" "$(owner_field OWNER_ALIVE)" "the half-written disown still released the worktree"
+else
+  skip "chmod cannot make a directory unwritable here — the blocked-sidecar disown-failure case cannot run"
+fi
 
 real_start sess-B
 ck "0" "$RC" "a truthfully released worktree is reusable even though one tier is stale (exit 0)"
@@ -489,7 +524,7 @@ chmod -R u+rwx "$REPO/.claude/worktree-identity" 2>/dev/null || true
 # tiers still corroborate a DIFFERENT owner and every operator-facing stream says so: with three tiers seeded the
 # load itself stays silent (2 of 3 agree, so its dissent WARN never fires), and the only readers of that fact are
 # wt-owner.sh's emitted CORROBORATION/TIER_DISSENT and the exit-4 refusal text — neither may be softened.
-if [ "$HAVE_NODE" = yes ]; then
+if [ "$HAVE_NODE" = yes ] && [ "$HAVE_PIDSTART" = yes ]; then
   spawn_live
   setup seize sess-A "$LIVE"
   SEIZE_JOB="$TMP/seize/job/sess-A"
@@ -527,14 +562,20 @@ if [ "$HAVE_NODE" = yes ]; then
   ck_has "wt-owner.sh" "$ERR" "and point at the report that names the other owner"
   ck "git-config" "$(probe "$SEIZE_JOB" WTID_TIER_DISSENT)" "the seized tier is named as the dissenter"
   ck "2/3" "$(probe "$SEIZE_JOB" WTID_CORROBORATION)" "the two sidecar tiers still corroborate each other"
-else
+elif [ "$HAVE_NODE" != yes ]; then
   skip "node not available — Part 9's seizure victim must read as a LIVE owner"
+else
+  skip "no real-ps liveness probe (MSYS ps lacks -o lstart/-o comm) — Part 9's seizure victim cannot read as a LIVE owner"
 fi
 
 # --- Part 10: a dead owner's worktree is still taken over, and the takeover re-corroborates every tier ---
 # Corroboration must not harden a worktree against legitimate resumption: a takeover re-stamps all three
 # tiers, so the resumer's identity becomes the corroborated one rather than a dissent the next load warns
 # about. The resumer proves death from its OWN job dir, with no access to the dead session's.
+# The takeover turns on B proving A DEAD from its own job dir — a positive death verdict the real `ps` supplies.
+# Without a real-ps liveness probe (Windows) A reads 2:unknown, /start fails closed (exit 4) rather than resuming,
+# so the whole part cannot be exercised; gate it rather than assert a verdict the platform can't produce.
+if [ "$HAVE_PIDSTART" = yes ]; then
 spawn_dead
 setup takeover sess-A "$DEAD"
 TAKE_JOB_A="$TMP/takeover/job/sess-A"; TAKE_JOB_B="$TMP/takeover/job/sess-B"
@@ -550,13 +591,16 @@ ck "sess-B" "$(owner_probe "$TAKE_JOB_B" WTID_OWNER_SESSION)" "ownership is now 
 ck "3/3" "$(probe "$TAKE_JOB_B" WTID_CORROBORATION)" "the takeover leaves all three tiers agreeing"
 ck "" "$(probe "$TAKE_JOB_B" WTID_TIER_DISSENT)" "no tier dissents after the takeover"
 ck "" "$(stderr_of "$TAKE_JOB_B")" "a corroborated identity loads in silence"
+else
+  skip "no real-ps liveness probe (MSYS ps lacks -o lstart/-o comm) — the dead-owner takeover needs a positive death verdict"
+fi
 
 # --- Part 11: a stale corroborating PAIR cannot tell a dead session it still owns the worktree ---
 # The repo-fallback tier goes unwritable (a `git clean` race, a permissions slip) while A is the owner, so
 # a later takeover advances only config and B's own job dir. A's two surviving tiers then agree with each
 # other perfectly — and they are both A's. Reading ownership from that majority tells A it still owns a
 # worktree B is working in RIGHT NOW, and A's /start walks straight into it: two sessions, one worktree.
-if [ "$HAVE_NODE" = yes ]; then
+if [ "$HAVE_NODE" = yes ] && [ "$HAVE_PIDSTART" = yes ] && [ "$CAN_DENY_WRITE" = yes ]; then
   spawn_dead
   setup stalepair sess-A "$DEAD"
   PAIR_JOB_A="$TMP/stalepair/job/sess-A"; PAIR_JOB_B="$TMP/stalepair/job/sess-B"
@@ -575,7 +619,7 @@ if [ "$HAVE_NODE" = yes ]; then
   ck "4" "$RC" "A's own /start refuses the worktree B is working in (exit 4)"
   chmod -R u+rwx "$REPO/.claude/worktree-identity" 2>/dev/null || true
 else
-  skip "node not available — Part 11's takeover session must read as a LIVE owner"
+  skip "Part 11 needs a live-owner verdict (node + real-ps liveness) and an unwritable tier (chmod) — unavailable here"
 fi
 
 # --- Part 12: a stale released marker cannot report a re-claimed live worktree as up for grabs ---
@@ -583,7 +627,7 @@ fi
 # goes unwritable, and B resumes. Config truthfully says B is claimed and alive while two stale tiers still
 # say A/released. `released` is /auto's signal to RESUME a worktree, so believing the stale pair here
 # dispatches a second session onto B's live work — the one verdict that must never be inferred from age.
-if [ "$HAVE_NODE" = yes ]; then
+if [ "$HAVE_NODE" = yes ] && [ "$HAVE_PIDSTART" = yes ] && [ "$CAN_DENY_WRITE" = yes ]; then
   spawn_live
   setup falsereleased sess-A "$LIVE"
   FR_JOB_A="$TMP/falsereleased/job/sess-A"; FR_JOB_B="$TMP/falsereleased/job/sess-B"
@@ -600,14 +644,14 @@ if [ "$HAVE_NODE" = yes ]; then
   ck "sess-B" "$(owner_probe "$FR_JOB_A" WTID_OWNER_SESSION)" "and attributes the live claim to B"
   chmod -R u+rwx "$REPO/.claude/worktree-identity" 2>/dev/null || true
 else
-  skip "node not available — Part 12's re-claimed worktree must read as a LIVE claim"
+  skip "Part 12 needs a live-owner verdict (node + real-ps liveness) and an unwritable tier (chmod) — unavailable here"
 fi
 
 # --- Part 13: wt-owner.sh reports the same owner however the worktree is named ---
 # The sidecar filename comes from basename "$wt_dir", so a '.' invocation looked for `wt-identity-..env`,
 # found neither sidecar, and answered off the git-config tier alone — an empty owner on exactly the
 # worktree whose config was wiped, which automation reads as "nobody is here".
-if [ "$HAVE_NODE" = yes ]; then
+if [ "$HAVE_NODE" = yes ] && [ "$HAVE_PIDSTART" = yes ]; then
   spawn_live
   setup relpath sess-A "$LIVE"
   REL_JOB="$TMP/relpath/job/sess-A"
@@ -619,8 +663,10 @@ if [ "$HAVE_NODE" = yes ]; then
   rel_out=$(cd "$WT" && env "CLAUDE_JOB_DIR=$REL_JOB" "$DIR/wt-owner.sh" . 2>/dev/null)
   ck "sess-A" "$(printf '%s\n' "$rel_out" | sed -n 's/^OWNER_SESSION=//p')" "a relative '.' resolves the sidecar tier instead of reporting no owner"
   ck "alive" "$(printf '%s\n' "$rel_out" | sed -n 's/^OWNER_ALIVE=//p')" "and adjudicates the live owner it found there"
-else
+elif [ "$HAVE_NODE" != yes ]; then
   skip "node not available — Part 13's sidecar-resolved owner must adjudicate alive"
+else
+  skip "no real-ps liveness probe (MSYS ps lacks -o lstart/-o comm) — Part 13's owner reads 2:unknown here"
 fi
 
 # --- Part 14: an INTERRUPTED stamp's half-written claim is not owner evidence ---
@@ -628,7 +674,7 @@ fi
 # killed mid-stamp leaves {session, no pid, no released}. Taken whole that tuple erases a LIVE owner into
 # 'unknown', and the reuse guard admits on unknown — a second session walks straight into the worktree. A torn
 # tuple must instead fall through to a path-verified sidecar, which still holds the pid config never got.
-if [ "$HAVE_NODE" = yes ]; then
+if [ "$HAVE_NODE" = yes ] && [ "$HAVE_PIDSTART" = yes ]; then
   spawn_live
   setup torncfg sess-A "$LIVE"
   git -C "$WT" config --worktree --unset start.owner-pid
@@ -642,15 +688,17 @@ if [ "$HAVE_NODE" = yes ]; then
   ck "alive" "$(owner_probe "" WTID_OWNER_ALIVE)" "so A's live claim survives A's own interrupted stamp"
   real_start sess-B
   ck "4" "$RC" "and /start refuses B the worktree A is live in (exit 4)"
-else
+elif [ "$HAVE_NODE" != yes ]; then
   skip "node not available — Part 14's interrupted stamp must leave a LIVE owner to protect"
+else
+  skip "no real-ps liveness probe (MSYS ps lacks -o lstart/-o comm) — Part 14's owner reads 2:unknown here"
 fi
 
 # --- Part 15: a torn claim is completed only from the LATEST session's sidecar ---
 # The torn config still carries the NEWEST session id, so only that session's sidecar may complete it.
 # Completing from whichever sidecar answers first lets a superseded session's stale one splice its own dead pid
 # onto the current claim: B's live worktree then reads as a dead session's leftovers, which /auto resumes.
-if [ "$HAVE_NODE" = yes ]; then
+if [ "$HAVE_NODE" = yes ] && [ "$HAVE_PIDSTART" = yes ]; then
   spawn_dead
   setup tornlatest sess-A "$DEAD"
   TL_JOB_A="$TMP/tornlatest/job/sess-A"; TL_JOB_B="$TMP/tornlatest/job/sess-B"
@@ -665,8 +713,10 @@ if [ "$HAVE_NODE" = yes ]; then
   ck "sess-B" "$(owner_probe "$TL_JOB_A" WTID_OWNER_SESSION)" "A's own stale sidecar cannot re-claim the worktree"
   ck "$LIVE" "$(owner_probe "$TL_JOB_A" WTID_OWNER_PID)" "the completing pid is B's, not the dead one A's sidecar still holds"
   ck "alive" "$(owner_probe "$TL_JOB_A" WTID_OWNER_ALIVE)" "so B's live work never reads as a dead session's leftovers"
-else
+elif [ "$HAVE_NODE" != yes ]; then
   skip "node not available — Part 15's completed tuple must adjudicate B as a LIVE owner"
+else
+  skip "no real-ps liveness probe (MSYS ps lacks -o lstart/-o comm) — Part 15's owner reads 2:unknown here"
 fi
 
 # --- Part 16: a two-line .env cannot hand an owner to a worktree that carries no identity ---
@@ -741,6 +791,9 @@ ck "sess-A" "$(owner_probe "$SCRUB_JOB" WTID_OWNER_SESSION)" "only the ownership
 # The reuse guard refuses only on `alive`, so a config seizure carrying a DEAD pid is ADMITTED — the accepted
 # risk start-wt-create.sh documents. The WARN is the whole mitigation, and nothing else reports it, so it needs
 # a case of its own: deleting it left both suites green when this was first written.
+# Admitting a dead-pid seizure rests on the owner reading DEAD; without a real-ps liveness probe (Windows) it
+# reads 2:unknown and the reuse guard fails closed (exit 4) rather than admitting, so the case cannot run here.
+if [ "$HAVE_PIDSTART" = yes ]; then
 spawn_dead
 setup admitwarn sess-A "$DEAD"
 reap_dead
@@ -754,6 +807,9 @@ ck "0" "$RC" "a seized worktree with a dead pid is admitted (exit 0)"
 ck_has "WARN: reusing" "$ERR" "but never silently"
 ck_has "owner verdict while identity tiers disagree (corroboration 1/2; dissenting: git-config)" "$ERR" \
   "and names the seized tier as the one out of step"
+else
+  skip "no real-ps liveness probe — a dead-pid seizure reads 2:unknown and is refused, not admitted, here"
+fi
 
 # --- Part 22: a release leaves no owner-pid-start behind ---
 # owner-pid-start is inside the compared fingerprint, so a survivor would leave the worktree permanently
@@ -763,7 +819,13 @@ ck_has "owner verdict while identity tiers disagree (corroboration 1/2; dissenti
 spawn_sleeper
 setup relpidstart sess-A "$SLEEPER"
 
-ck "1" "$([ -n "$(cfg start.owner-pid-start)" ] && echo 1 || echo 0)" "sanity: a start time was recorded, so the clear below clears something"
+# The sanity that a start time was recorded needs a real-ps start time; on Windows wtid_pid_start returns empty,
+# so this sanity cannot hold, though the clear below (asserting owner-pid-start is empty after disown) still does.
+if [ "$HAVE_PIDSTART" = yes ]; then
+  ck "1" "$([ -n "$(cfg start.owner-pid-start)" ] && echo 1 || echo 0)" "sanity: a start time was recorded, so the clear below clears something"
+else
+  skip "no real-ps start time (MSYS ps lacks -o lstart) — owner-pid-start is never recorded here to begin with"
+fi
 drun sess-A "$WT"
 ck "0" "$RC" "owner disown exits 0"
 ck "" "$(cfg start.owner-pid-start)" "and clears owner-pid-start, not just owner-pid"
@@ -822,6 +884,9 @@ seize_rep=$(env "CLAUDE_JOB_DIR=$CT_JOB_A" "$DIR/wt-owner.sh" "$WT" 2>/dev/null)
 ck "1" "$(printf '%s\n' "$seize_rep" | sed -n 's/^OWNER_CONTEST=//p')" "a config-write seizure raises the contest signal"
 ck_has "sess-A" "$(printf '%s\n' "$seize_rep" | sed -n 's/^OWNER_CONTEST_DETAIL=//p')" "and the detail names the rival owner the seized tier displaced"
 
+# The dead-owner takeover rests on B proving A DEAD; without a real-ps liveness probe (Windows) A reads
+# 2:unknown, /start fails closed (exit 4) rather than resuming, so the whole handoff cannot be exercised here.
+if [ "$HAVE_PIDSTART" = yes ]; then
 spawn_dead
 setup handoff sess-A "$DEAD"
 HO_JOB_A="$TMP/handoff/job/sess-A"; HO_JOB_B="$TMP/handoff/job/sess-B"
@@ -850,8 +915,14 @@ git -C "$WT" config --worktree start.owner-claimed-at "$a_claim"
 sed "s/^WT_IDENTITY_OWNER_CLAIMED_AT=.*/WT_IDENTITY_OWNER_CLAIMED_AT=$a_claim/" "$SIDE" > "$SIDE.new" && mv "$SIDE.new" "$SIDE"
 ho_same=$(env "CLAUDE_JOB_DIR=$HO_JOB_A" "$DIR/wt-owner.sh" "$WT" 2>/dev/null)
 ck "0" "$(printf '%s\n' "$ho_same" | sed -n 's/^OWNER_CONTEST=//p')" "a same-second takeover is witnessed by its own stamp — equal epochs alone are not a seizure"
+else
+  skip "no real-ps liveness probe — the dead-owner handoff/takeover (and its same-second variant) needs a positive death verdict (reads 2:unknown here)"
+fi
 
 # --- Part 25: an interrupted disown dissents but never contests — same owner on every tier ---
+# The interruption is modeled by an unwritable tier, so the case cannot exist where chmod is a no-op (Windows):
+# the disown then completes on every tier, there is no dissent to observe, and exit 2 never happens.
+if [ "$CAN_DENY_WRITE" = yes ]; then
 spawn_sleeper
 setup halfdisown sess-A "$SLEEPER"
 HD_JOB="$TMP/halfdisown/job/sess-A"
@@ -864,6 +935,9 @@ ck "released" "$(printf '%s\n' "$hd" | sed -n 's/^OWNER_ALIVE=//p')" "config's r
 ck "1" "$([ -n "$(printf '%s\n' "$hd" | sed -n 's/^TIER_DISSENT=//p')" ] && echo 1 || echo 0)" "the un-rewritten tiers dissent"
 ck "0" "$(printf '%s\n' "$hd" | sed -n 's/^OWNER_CONTEST=//p')" "but the same owner on every tier is never a contest"
 chmod -R u+rwx "$REPO/.claude/worktree-identity" 2>/dev/null || true
+else
+  skip "chmod cannot make a directory unwritable here — the interrupted-disown (blocked-tier) case cannot run"
+fi
 
 # --- Part 26: fresh and never-stamped worktrees are trivially contest-free, and the keys always emit ---
 # Parsed BY KEY like Part 17's pair: a key emitted only when something is wrong is indistinguishable
@@ -951,25 +1025,29 @@ git -C "$REPO" worktree add -q "$WT" -b issue-branch
 drun sess-A --reclaim "$WT"
 ck "3" "$RC" "never-stamped reclaim refused — unlike disown, there is nothing to withdraw"
 
-if [ "$HAVE_NODE" = yes ]; then
+if [ "$HAVE_NODE" = yes ] && [ "$HAVE_PIDSTART" = yes ]; then
   spawn_live
   setup reclaimnoop sess-A "$LIVE"
   drun sess-A --reclaim "$WT"
   ck "0" "$RC" "live self-owned reclaim is a noop (exit 0)"
   ck "RECLAIM=noop" "$(echo "$OUT" | head -1)" "noop reported"
   ck "sess-A" "$(cfg start.owner-session)" "ownership untouched by the noop"
-else
+elif [ "$HAVE_NODE" != yes ]; then
   skip "reclaim noop-on-live-self case needs node"
+else
+  skip "no real-ps liveness probe — the live self-owned reclaim-noop case reads 2:unknown here"
 fi
 
-if [ "$HAVE_NODE" = yes ]; then
+if [ "$HAVE_NODE" = yes ] && [ "$HAVE_PIDSTART" = yes ]; then
   spawn_live
   setup reclaimalien sess-A "$LIVE"
   drun sess-B --reclaim "$WT"
   ck "3" "$RC" "reclaim of another session's LIVE worktree refused"
   ck "sess-A" "$(cfg start.owner-session)" "the live owner keeps the claim"
-else
+elif [ "$HAVE_NODE" != yes ]; then
   skip "reclaim live-foreign case needs node"
+else
+  skip "no real-ps liveness probe — the live-foreign reclaim-refusal case reads 2:unknown here"
 fi
 
 

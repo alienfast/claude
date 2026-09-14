@@ -53,6 +53,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Windows Python writes stdio in the console code page with CRLF: the arrows and dashes in the report lines raised
+# UnicodeEncodeError under cp1252, and a CR-terminated line breaks any shell `read` consumer.
+for _stream in (sys.stdout, sys.stderr):
+    _stream.reconfigure(encoding="utf-8", newline="\n")
+
 GATE_LABELS = ("human", "needs decision", "solo", "stalled")
 
 
@@ -69,7 +74,7 @@ QUERY = ('query($team:String!,$after:String){issues(filter:{team:{key:{eq:$team}
 
 def cli(args):
     env = dict(os.environ, PATH=f"{Path.home()}/.cargo/bin:{os.environ.get('PATH', '')}")
-    out = subprocess.run(["linear-cli", *args], capture_output=True, text=True, env=env)
+    out = subprocess.run(["linear-cli", *args], capture_output=True, text=True, encoding="utf-8", env=env)
     if out.returncode != 0 or not out.stdout.strip():
         raise RuntimeError(f"linear-cli {' '.join(args[:3])} failed: {out.stderr.strip() or 'empty output'}")
     return json.loads(out.stdout)
@@ -105,7 +110,13 @@ def epic_graph(root):
     scope's place."""
     script = Path(__file__).resolve().parent / "epic-graph.sh"
     env = dict(os.environ, PATH=f"{Path.home()}/.cargo/bin:{os.environ.get('PATH', '')}")
-    out = subprocess.run([str(script), root], capture_output=True, text=True, env=env)
+    try:
+        out = subprocess.run([str(script), root], capture_output=True, text=True, encoding="utf-8", env=env)
+    except OSError as e:
+        # CreateProcess cannot run a shell script (WinError 193) — retry through bash, as with-repo-lock.py does.
+        if not (isinstance(e, FileNotFoundError) or getattr(e, "winerror", None) == 193):
+            raise
+        out = subprocess.run(["bash", str(script), root], capture_output=True, text=True, encoding="utf-8", env=env)
     if out.returncode != 0 or not out.stdout.strip():
         raise RuntimeError(f"epic scope '{root}' did not validate — {out.stderr.strip() or 'no graph printed'}")
     return json.loads(out.stdout)
@@ -177,7 +188,7 @@ def calibrate(history_path, override):
         return override, "--hours-per-issue"
     rows, implausible = [], []
     try:
-        for line in Path(history_path).read_text().splitlines():
+        for line in Path(history_path).read_text(encoding="utf-8").splitlines():
             try:
                 r = json.loads(line)
             except json.JSONDecodeError:
@@ -324,7 +335,7 @@ def unreached_reason(issue, issues, pool, shipped, ship_time, horizon, seen=None
 def throttle_line(rec, n_sessions):
     try:
         rate = (rec.get("sizing") or {}).get("rate_tok_per_session_hour")
-        cal = json.loads((Path.home() / ".claude/telemetry/five-hour-ceiling.json").read_text())
+        cal = json.loads((Path.home() / ".claude/telemetry/five-hour-ceiling.json").read_text(encoding="utf-8"))
         ceiling = cal.get("ceiling_output_tokens")
         if rate and ceiling and n_sessions * rate * 5 > 0.9 * ceiling:
             return (f"THROTTLE-RISK: {n_sessions} sessions × {rate / 1000:.0f}k tok/session-hour ≈ "
@@ -351,7 +362,7 @@ def main():
 
     rec = {}
     try:
-        rec = json.loads(Path(args.recommendation).read_text())
+        rec = json.loads(Path(args.recommendation).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         pass
     n_sessions = args.sessions or rec.get("sessions")
@@ -365,7 +376,7 @@ def main():
         if args.root:
             graph = epic_graph(args.root.strip().upper())
         if args.fixture:
-            nodes = json.loads(Path(args.fixture).read_text())
+            nodes = json.loads(Path(args.fixture).read_text(encoding="utf-8"))
             me = args.me or ""
         else:
             teams = [args.team] if args.team else []

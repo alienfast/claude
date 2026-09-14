@@ -103,7 +103,7 @@ registry_alive() { # <short id> — listed and not done
 }
 
 # ---- ledger ----
-mtime_of() { stat -f %m "$1" 2>/dev/null || stat -c %m "$1" 2>/dev/null || echo 0; }
+mtime_of() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0; }
 ledger_outcome() { # <short id> <ISSUE-ID> [since epoch] → shipped|canceled|skipped|failed|unknown
   local sid="$1" id="$2" since="${3:-0}" f list
   f="$main_checkout/tmp/auto-state-$sid.json"

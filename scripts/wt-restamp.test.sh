@@ -182,12 +182,21 @@ unset _WITH_REPO_LOCK_HELD
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
 
 G="git -c user.email=t@t -c user.name=t"
-pass=0; fail=0
+pass=0; fail=0; skipped=0
 
 ck() { # want got label
   if [ "$1" = "$2" ]; then echo "PASS  $3"; pass=$((pass + 1))
   else echo "FAIL  $3 (want '$1' got '$2')"; fail=$((fail + 1)); fi
 }
+# Counted in the footer, never fatal: a fixture the filesystem cannot express is not a regression, but a
+# footer that hid the gap would read like a run that verified everything.
+skip() { echo "SKIP  $1"; skipped=$((skipped + 1)); }
+# Windows' filesystem ignores chmod — `chmod a-w` leaves a directory writable (measured on Git Bash) — so the
+# unwritable-tier fixture cannot express its precondition there.
+CAN_DENY_WRITE=yes
+mkdir -p "$TMP/deny-probe"; chmod a-w "$TMP/deny-probe"
+touch "$TMP/deny-probe/x" 2>/dev/null && CAN_DENY_WRITE=no
+chmod u+w "$TMP/deny-probe"; rm -rf "$TMP/deny-probe"
 ck_has() { # needle haystack label
   if printf '%s' "$2" | grep -qF -- "$1"; then echo "PASS  $3"; pass=$((pass + 1))
   else echo "FAIL  $3 (no '$1' in: $(printf '%s' "$2" | tr '\n' '|'))"; fail=$((fail + 1)); fi
@@ -356,6 +365,7 @@ ck_has "finish or abort the rebase first" "$ERR" "exit 2 says to finish or abort
 # git config and the job-dir sidecar take the new one. Re-reading the identity cannot catch this: the
 # job-dir tier wins the load and verifies clean, so the split is invisible until ANOTHER session — which
 # only ever finds the repo-fallback tier — reads a stale baseline. Only per-tier checks see it.
+if [ "$CAN_DENY_WRITE" = yes ]; then
 setup partial
 JOBDIR="$TMP/partial/jobs/sess-A"
 mkdir -p "$JOBDIR"
@@ -380,6 +390,9 @@ chmod u+w "$REPO/.claude/worktree-identity"
 OUT=$(env "CLAUDE_SESSION_ID=sess-A" "CLAUDE_JOB_DIR=$JOBDIR" "$RESTAMP" "$WT" 2>"$TMP/stderr.txt"); RC=$?
 ck "0" "$RC" "retry after the tier becomes writable repairs it (exit 0)"
 ck "RESTAMP=ok" "$(echo "$OUT" | head -1)" "repair retry takes the full restamp path"
+else
+  skip "chmod cannot make a directory unwritable here — Part 7's stale-tier cases cannot run"
+fi
 
 # --- Part 8: a restamp re-baselines; it does not re-create the worktree ---
 setup created
@@ -1453,5 +1466,5 @@ ck "0" "$RC" "the acknowledged drop merges (finish-merge exit 0)"
 ck_has "K: kept replacement" "$(git -C "$REPO" log main --format=%s | tr '\n' '|')" "the replacement work shipped"
 
 echo "----------------------------------------"
-echo "$pass passed, $fail failed"
+echo "$pass passed, $fail failed, $skipped skipped"
 [ "$fail" = 0 ]

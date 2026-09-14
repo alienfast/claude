@@ -149,7 +149,7 @@ echo '{"status":"active","mode":"single","shipped":["XX-2"]}' > "$REPO/tmp/auto-
 echo '{"status":"active","shipped":["XX-3"]}' > "$REPO/tmp/auto-state-dead0001.json"
 touch -t 202601011200 "$REPO/tmp/auto-state-ab000001.json"
 touch -t 202506011200 "$REPO/tmp/auto-state-cafe0001.json"
-loop_mtime=$(stat -f %m "$REPO/tmp/auto-state-ab000001.json" 2>/dev/null || stat -c %m "$REPO/tmp/auto-state-ab000001.json")
+loop_mtime=$(stat -c %Y "$REPO/tmp/auto-state-ab000001.json" 2>/dev/null || stat -f %m "$REPO/tmp/auto-state-ab000001.json")
 cat > "$WORK/agents.json" <<'EOF'
 [{"id":"ab000001","kind":"background","sessionId":"ab000001-0000-4000-8000-000000000000","state":"working"},
  {"kind":"interactive","sessionId":"cafe0001-0000-4000-8000-000000000000","pid":1},

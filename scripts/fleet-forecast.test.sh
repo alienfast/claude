@@ -13,6 +13,7 @@
 set -uo pipefail
 
 SCRIPT="$(cd "$(dirname "$0")" && pwd)/fleet-forecast.py"
+. "$(dirname "$0")/wt-path.sh"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/home"
@@ -126,7 +127,9 @@ not json
 EOF
 python3 "$SCRIPT" --fixture "$WORK/b.json" --me me@x.com --sessions 1 --horizon-h 12 --flat \
   --recommendation "$WORK/no-rec.json" --history "$WORK/hist.jsonl" > "$WORK/e.out" 2>&1
-ck_has "E calibrated" "HOURS-PER-ISSUE: 3.75 (calibrated from 2 fleet runs in $WORK/hist.jsonl)" "$WORK/e.out"
+# The path echoes back in whatever form the interpreter received it — on Git Bash that is the native spelling, so
+# compare through the same boundary the worktree scripts use rather than pinning the MSYS one.
+ck_has "E calibrated" "HOURS-PER-ISSUE: 3.75 (calibrated from 2 fleet runs in $(wt_path_native "$WORK/hist.jsonl"))" "$WORK/e.out"
 rc=$(run "$WORK/b.json" "$WORK/f.out" --sessions 1 --horizon-h 12 --flat)
 ck "F default exit" 0 "$rc"
 ck_has "F default base" "HOURS-PER-ISSUE: 2.0 (default — no usable fleet history)" "$WORK/f.out"

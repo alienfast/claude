@@ -102,7 +102,7 @@ fresh=""
 while IFS= read -r id; do
   [ -n "$id" ] || continue
   transcript=$(find "$HOME/.claude/projects" -maxdepth 2 -name "$id*.jsonl" -type f 2>/dev/null | head -1)
-  mt=$(stat -f %m "$transcript" 2>/dev/null || echo 0)
+  mt=$(stat -c %Y "$transcript" 2>/dev/null || stat -f %m "$transcript" 2>/dev/null || echo 0)
   key="$id:$mt"
   grep -qxF "$key" "$SEEN" 2>/dev/null && continue
   echo "$key" >> "$SEEN"

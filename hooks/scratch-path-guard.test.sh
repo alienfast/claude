@@ -19,6 +19,11 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
 
+# Git Bash rewrites a POSIX-looking argument for a native binary before jq sees it — `--arg p /tmp/vis_test.rb` arrives
+# as C:/Users/<you>/AppData/Local/Temp/vis_test.rb and the BLOCK cases read ALLOW. The hook itself is unaffected (its
+# payload comes in on stdin); only the fixture builders below need the conversion off. No-op outside MSYS.
+export MSYS_NO_PATHCONV=1
+
 PASS=0
 FAIL=0
 

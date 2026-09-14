@@ -65,8 +65,23 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from statistics import median
 
+# Windows Python writes stdio in the console code page with CRLF — the report's dashes and middots need UTF-8, and
+# `read` consumers need LF.
+for _stream in (sys.stdout, sys.stderr):
+    _stream.reconfigure(encoding="utf-8", newline="\n")
+
 # Overridable so the regression suite can point at a fixture tree instead of the live transcripts.
 PROJ = Path(os.environ.get("CLAUDE_PROJECTS_DIR", str(Path.home() / ".claude" / "projects")))
+
+
+def transcript_dir_glob(checkout):
+    """Glob for the harness's transcript dirs of a checkout (its worktrees share the prefix). The harness names the dir
+    by replacing every non-alphanumeric character of the session cwd with a dash — C:\\Users\\x\\.claude lives under
+    c--Users-x--claude — and spells the drive letter however the session's cwd did, so match either case."""
+    s = re.sub(r"[^A-Za-z0-9]", "-", str(checkout))
+    if re.match(r"^[A-Za-z]:", str(checkout)):
+        s = f"[{s[0].lower()}{s[0].upper()}]{s[1:]}"
+    return s + "*"
 
 # A wait that cannot end early. Mirrors hooks/no-blind-sleep.sh: any of these means the loop exits
 # when the work does, so its duration is legitimate rather than burned. Kept deliberately generous —
@@ -203,7 +218,7 @@ def is_blind_sleep(cmd):
 
 def load(path):
     rows = []
-    with path.open(errors="replace") as fh:
+    with path.open(encoding="utf-8", errors="replace") as fh:
         for line in fh:
             line = line.strip()
             if not line:
@@ -229,7 +244,7 @@ def auto_session_mode(path, probe_lines=60):
     of four sessions (10.2h, 7 of 12 ships) vanished exactly this way. Streams the head of the file
     rather than load()ing it — this runs over every transcript in every matching project dir."""
     try:
-        with path.open(errors="replace") as fh:
+        with path.open(encoding="utf-8", errors="replace") as fh:
             for _ in range(probe_lines):
                 line = fh.readline()
                 if not line:
@@ -257,7 +272,7 @@ def subagent_meta(path):
     """agent-<id>.jsonl sits next to agent-<id>.meta.json, which records the Agent dispatch's
     agentType and description — exact attribution, vs. guessing the type from prompt text."""
     try:
-        meta = json.loads(path.with_name(path.stem + ".meta.json").read_text())
+        meta = json.loads(path.with_name(path.stem + ".meta.json").read_text(encoding="utf-8"))
         return meta.get("agentType") or "unknown", meta.get("description") or ""
     except (OSError, json.JSONDecodeError):
         return "unknown", ""
@@ -828,7 +843,7 @@ def linear_issue_index(paths):
     for p in paths:
         p = Path(p)
         try:
-            data = json.loads(p.read_text())
+            data = json.loads(p.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
         nodes = data if isinstance(data, list) else \
@@ -862,7 +877,7 @@ def record_history(checkout, headline, record):
     path = checkout / "tmp" / "fleet-metrics-history.jsonl"
     rows = []
     try:
-        for line in path.read_text().splitlines():
+        for line in path.read_text(encoding="utf-8").splitlines():
             try:
                 rows.append(json.loads(line))
             except json.JSONDecodeError:
@@ -875,7 +890,7 @@ def record_history(checkout, headline, record):
     rows.sort(key=lambda r: r.get("fleet_start") or "")
     if record:
         try:
-            path.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in rows))
+            path.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in rows), encoding="utf-8")
         except OSError as e:
             print(f"WARN: could not write {path}: {e}", file=sys.stderr)
     return rows
@@ -899,7 +914,7 @@ def parse_verdicts(checkout, cutoff, launch_epoch=None, until=None):
         if until and mtime > until:
             continue
         try:
-            text = p.read_text(errors="replace")
+            text = p.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
         m = V_RESOLVED.search(text)
@@ -940,7 +955,7 @@ def git_merged(checkout, issues):
         try:
             commits = subprocess.run(
                 ["git", "-C", str(checkout), "log", "--oneline", "--all", f"--grep={issue}"],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True, text=True, encoding="utf-8", timeout=30,
             ).stdout
         except (subprocess.SubprocessError, OSError):
             commits = ""
@@ -973,6 +988,15 @@ def session_alive(pid, recorded_start):
         pid = int(pid)
     except (TypeError, ValueError):
         return False
+    if os.name == "nt":
+        # No usable liveness probe on Windows: CPython maps os.kill(pid, non-CTRL-signal) to
+        # TerminateProcess, so os.kill(pid, 0) would try to KILL the pid rather than test it, and the
+        # ledger's pid (an MSYS pid written by the bash /auto flow) is not in the Windows pid namespace
+        # tasklist reads, nor does MSYS `ps` offer `-o lstart`. Liveness is therefore unknowable here, so
+        # return the conservative False the killed-mid-loop flag already wants for a post-fleet retro. A
+        # session measured mid-fleet is over-reported as "ended without an outcome" — an accepted Windows
+        # limitation, cosmetic in a read-only retro, mirroring wt-owner.sh's OWNER_ALIVE=unknown (PR #9).
+        return False
     try:
         os.kill(pid, 0)
     except PermissionError:
@@ -981,7 +1005,7 @@ def session_alive(pid, recorded_start):
         return False
     try:
         out = subprocess.run(["ps", "-p", str(pid), "-o", "lstart="],
-                             capture_output=True, text=True, timeout=10).stdout
+                             capture_output=True, text=True, encoding="utf-8", timeout=10).stdout
     except (subprocess.SubprocessError, OSError):
         return False
     actual = " ".join(out.split())
@@ -1018,7 +1042,7 @@ def main():
     try:
         checkout = Path(subprocess.run(
             ["git", "-C", str(checkout), "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, timeout=15, check=True).stdout.strip())
+            capture_output=True, text=True, encoding="utf-8", timeout=15, check=True).stdout.strip())
     except (subprocess.SubprocessError, OSError):
         pass
 
@@ -1033,7 +1057,7 @@ def main():
     explicit_window = bool(args.since or args.until or args.all or args.hours is not None)
     if req_keys is None and not explicit_window:
         try:
-            recorded = json.loads((checkout / "tmp" / "fleet-deadline.json").read_text()).get("fleet_sessions")
+            recorded = json.loads((checkout / "tmp" / "fleet-deadline.json").read_text(encoding="utf-8")).get("fleet_sessions")
         except (json.JSONDecodeError, OSError, AttributeError):
             recorded = None
         if isinstance(recorded, list) and recorded:
@@ -1060,12 +1084,11 @@ def main():
     # and severity/origin mixes with a run nobody was measuring. Mirrors fleet-status.sh's -le.
     launch_epoch = None
     try:
-        launch_epoch = json.loads((checkout / "tmp" / "fleet-deadline.json").read_text()).get("launch_epoch")
+        launch_epoch = json.loads((checkout / "tmp" / "fleet-deadline.json").read_text(encoding="utf-8")).get("launch_epoch")
     except (json.JSONDecodeError, OSError, AttributeError):
         pass
 
-    mangled = str(checkout).replace("/", "-")
-    dirs = [d for d in PROJ.glob(f"{mangled}*") if d.is_dir()]
+    dirs = [d for d in PROJ.glob(transcript_dir_glob(checkout)) if d.is_dir()]
 
     states = []
     prior_run_keys = set()
@@ -1083,7 +1106,7 @@ def main():
             prior_run_keys.add(p.stem.replace("auto-state-", ""))
             continue
         try:
-            st = json.loads(p.read_text())
+            st = json.loads(p.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             continue
         # A single-run ledger (a targeted or one-shot /auto) is not a fleet member. Stamped by /auto
@@ -1094,7 +1117,7 @@ def main():
             mode = st.get("mode") if isinstance(st, dict) else None
             if mode not in ("loop", "single"):
                 mode = next((auto_session_mode(t) for d in dirs for t in sorted(d.glob(f"{key}*.jsonl"))
-                             if "/subagents/" not in str(t)), None)
+                             if "subagents" not in t.parts), None)
             if mode == "single":
                 single_excluded.append(key)
                 continue
@@ -1107,7 +1130,9 @@ def main():
             transcripts += list(d.glob(f"{run_key}*.jsonl"))
             transcripts += list(d.glob(f"{run_key}*/subagents/*.jsonl"))
         for tpath in transcripts:
-            if "/subagents/" in str(tpath):
+            # tpath.parts, not `"/subagents/" in str(tpath)` — str() uses the OS separator, so the substring
+            # check silently fails on Windows backslash paths and every delegate transcript is misfiled as main.
+            if "subagents" in tpath.parts:
                 agg["subagents"] += 1
                 scan_transcript(tpath, agg, *subagent_meta(tpath))
             else:
@@ -1172,7 +1197,7 @@ def main():
             # so a genuine unrecorded ship is still caught.
             spath = checkout / "tmp" / f"auto-state-{run_key}.json"
             try:
-                states.append((spath, json.loads(spath.read_text()),
+                states.append((spath, json.loads(spath.read_text(encoding="utf-8")),
                                datetime.fromtimestamp(spath.stat().st_mtime, timezone.utc)))
                 continue
             except (json.JSONDecodeError, OSError):
@@ -1413,7 +1438,7 @@ def main():
     # post-deadline; BF-1206). The marker may be gone by retro time; clipping is best-effort.
     fleet_deadline_dt = None
     try:
-        dl = json.loads((checkout / "tmp" / "fleet-deadline.json").read_text())
+        dl = json.loads((checkout / "tmp" / "fleet-deadline.json").read_text(encoding="utf-8"))
         if isinstance(dl.get("deadline_epoch"), (int, float)):
             fleet_deadline_dt = datetime.fromtimestamp(dl["deadline_epoch"], tz=timezone.utc)
     except Exception:

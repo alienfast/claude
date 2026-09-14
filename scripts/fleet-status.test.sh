@@ -129,6 +129,12 @@ jq -n '{status: "drained"}' > "$REPO/tmp/auto-state-old.json"
 touch -t "$(stamp $((T - 100)))" "$REPO/tmp/auto-state-old.json"
 jq -n '{status: "drained"}' > "$REPO/tmp/auto-state-tie.json"
 touch -t "$(stamp "$T")" "$REPO/tmp/auto-state-tie.json"
+# sess-a/sess-b carry over from section 3 and must read as CURRENT here (mtime > launch_epoch), leaving only
+# old+tie hidden. Their mtime was the wall-clock moment section 3 wrote them, which is fine on a fast run but
+# ages past this section's 50s window on a slow one (Windows: hundreds of jq.exe spawns between sections) —
+# then they count as prior-run too and the hidden total is 4, not 2. Pin them to NOW so the boundary is
+# deterministic regardless of how long the sections took.
+touch -t "$(stamp "$NOW")" "$REPO/tmp/auto-state-sess-a.json" "$REPO/tmp/auto-state-sess-b.json"
 run_fs --no-runway
 ck_has "  both prior-run ledgers hidden, with count" "_2 prior-run ledger(s) hidden" "$OUT"
 ck_lacks "  hidden ledger has no row" "| old |" "$OUT"
@@ -194,7 +200,7 @@ rm -f "$REPO/tmp/auto-state-sess-c.json"
 echo "== 12. a LEDGER-LESS /AUTO session gets a row; an interactive worktree owner does not"
 # Resolve the projects dir exactly as the script does, so the mangled name matches on macOS where
 # mktemp's /var/folders is a symlink to /private/var/folders.
-MANGLED=$( (cd "$REPO" && git worktree list --porcelain | awk '/^worktree /{print substr($0,10); exit}') | tr / - )
+MANGLED=$( (cd "$REPO" && git worktree list --porcelain | awk '/^worktree /{print substr($0,10); exit}') | sed 's/[^A-Za-z0-9]/-/g' )
 PDIR="$FHOME/.claude/projects/$MANGLED"
 mkdir -p "$PDIR"
 

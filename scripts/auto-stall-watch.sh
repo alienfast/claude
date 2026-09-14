@@ -74,8 +74,9 @@ find_transcript() {
 }
 
 mtime_of() {
-  # BSD stat (macOS) first, GNU second — this runs from launchd on macOS but the tests may not.
-  stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null
+  # GNU first: GNU stat accepts BSD's -f as --file-system and prints filesystem info at exit 1, so the BSD-first order
+  # captures garbage on Linux and Git Bash; BSD stat rejects -c outright and falls through (finish-read-verdict.sh).
+  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null
 }
 
 # Epoch seconds of the transcript's last TIMESTAMPED record (see the header for why not mtime). Empty

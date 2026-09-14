@@ -21,6 +21,10 @@ import re
 import sys
 from pathlib import Path
 
+# Windows Python writes stdio in the console code page with CRLF — the table's dashes need UTF-8, and `read` consumers need LF.
+for _stream in (sys.stdout, sys.stderr):
+    _stream.reconfigure(encoding="utf-8", newline="\n")
+
 PROJ = Path.home() / ".claude" / "projects"
 INIT_RE = re.compile(r"Task for quality-reviewer: Adversarial implementation review for ([A-Z]+-\d+)")
 # BF-576 moved re-reviews and confirmations to the quality-verifier agent; transcripts from before it carry quality-reviewer.
@@ -40,7 +44,7 @@ detail_lines = []
 for f in sorted(PROJ.glob(f"*{project}*/*.jsonl")):
     s = {"init": 0, "rerev": 0, "conf": 0, "auto": False, "plan": False, "issues": set()}
     is_detail = detail_target and detail_target in str(f.parent)
-    with open(f, errors="replace") as fh:
+    with open(f, encoding="utf-8", errors="replace") as fh:
         for line in fh:
             if "command-name>/auto<" in line:
                 s["auto"] = True

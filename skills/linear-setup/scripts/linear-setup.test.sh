@@ -11,6 +11,12 @@
 set -uo pipefail
 
 SCRIPT="$(cd "$(dirname "$0")" && pwd)/linear-setup.sh"
+# linear-setup.sh drives jq (53 call sites); the run helper pins a minimal PATH to isolate the linear-cli shim,
+# so jq's real directory has to be added or the whole export exits 2 before writing anything. On Git Bash jq is
+# a ~/bin shim outside /usr/bin:/bin; on macOS it is under Homebrew, also outside /usr/bin — so this is needed on
+# both, not just Windows. `command -v jq` resolves to a plain path here (no linear-cli), so adding its dir cannot
+# leak the real linear-cli, and $WORK/bin still leads the PATH.
+JQ_DIR="$(command -v jq >/dev/null 2>&1 && dirname "$(command -v jq)" || echo /usr/bin)"
 WORK="$(mktemp -d)"
 trap '[ -n "${KEEP:-}" ] && echo "kept: $WORK" || rm -rf "$WORK"' EXIT
 PASS=0 FAIL=0
@@ -189,7 +195,7 @@ chmod +x "$WORK/bin/linear-cli"
 
 run() { # run <outfile> <args...> — runs the script under the shim; echoes exit code
   local out="$1"; shift
-  PATH="$WORK/bin:/usr/bin:/bin" HOME="$WORK/home" LINEAR_TEAM= LINEAR_CLI_PROFILE= "$SCRIPT" "$@" > "$out" 2>&1
+  PATH="$WORK/bin:$JQ_DIR:/usr/bin:/bin" HOME="$WORK/home" LINEAR_TEAM= LINEAR_CLI_PROFILE= "$SCRIPT" "$@" > "$out" 2>&1
   echo $?
 }
 

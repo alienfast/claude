@@ -133,6 +133,46 @@ else
   done
 fi
 
+# Windows: two interpreter shims in $HOME/bin, which Git for Windows' /etc/profile.d/env.sh puts first on PATH.
+#
+# jq — the winget build ends every output line with CRLF (measured on jq 1.8.2: `jq -r '.[]'` over `["TT-26"]` emits
+# `TT-26\r\n`). Bash's `$(…)` strips the trailing CR along with the newline, which is why most scripts work, but `read`
+# keeps it: a `while read id … done < <(jq -r …)` loop walks `TT-26\r`, so epic-graph.sh reported every child of an epic
+# as not found and scratch-path-guard.sh let a multi-line `cp a /tmp/b` through. `jq -b` is jq's own switch for exactly
+# this (the manual: Windows users under MSYS2 or Cygwin should pass it), and the shim adds it to every call so no script
+# has to know which build it got.
+#
+# python3 — python.org's Windows installer ships python.exe and py.exe with no python3 alias. The four .py entry points'
+# polyglot shebang already falls back to `python`, but the shell scripts that invoke python3 by name (finish-read-verdict.sh
+# and auto-prep-pool.sh on production paths) do not, so resolve a real interpreter once and shim the name.
+if [ "$CLAUDE_OS" = windows ]; then
+  mkdir -p "$HOME/bin"
+  write_shim() { # write_shim <path> <body> — rewrite only when the content changed, so re-runs stay quiet
+    if [ ! -f "$1" ] || [ "$(cat "$1")" != "$2" ]; then
+      printf '%s\n' "$2" > "$1" && chmod +x "$1" && echo "  ✓ wrote $1"
+    fi
+  }
+  real_jq=$(which -a jq 2>/dev/null | grep -vx "$HOME/bin/jq" | head -1 || true)
+  if [ -n "$real_jq" ]; then
+    write_shim "$HOME/bin/jq" "$(printf '#!/bin/sh\nexec "%s" -b "$@"' "$real_jq")"
+    if printf '["x"]' | "$HOME/bin/jq" -r '.[]' | od -c | grep -q '\\r'; then
+      echo "  ⚠️  $HOME/bin/jq still emits CRLF — scripts that read jq output line by line (epic-graph.sh, the hooks) will misparse it." >&2
+    fi
+  fi
+  if ! python3 -c 'import sys' >/dev/null 2>&1; then
+    real_py=$( { python -c 'import sys; print(sys.executable)' || py -3 -c 'import sys; print(sys.executable)'; } 2>/dev/null | tr -d '\r' || true)
+    if [ -n "$real_py" ]; then
+      write_shim "$HOME/bin/python3" "$(printf '#!/bin/sh\nexec "%s" "$@"' "$(cygpath -u "$real_py")")"
+    else
+      echo "  ⚠️  no Python interpreter found (python3 / python / py) — in PowerShell run: winget install -e --id Python.Python.3.13" >&2
+    fi
+  fi
+  case ":$PATH:" in
+    *":$HOME/bin:"*) ;;
+    *) echo "  ⚠️  $HOME/bin is not on PATH, so the shims above are inert — open a new Git Bash (its /etc/profile adds it) or add it yourself." >&2 ;;
+  esac
+fi
+
 # gh must be authenticated for the PR/start/finish flows (gh api user, gh pr create). Mirror the linear-cli auth step
 # below: check status, and only launch the interactive `gh auth login` when there is a TTY — in a non-interactive run
 # (CI, piped, ssh one-shot, a /full macro) it would hang on a prompt with no stdin, so warn and continue instead.

@@ -269,6 +269,14 @@ MSYS_NO_PATHCONV=1 git show origin/main:.gitignore
 
 Do not test path identity by string-comparing resolved paths, and be wary of deriving a value one script `pwd -P`-resolves that another script compares against (e.g. a per-repo lock key from `cd "$common_dir" && pwd -P`) — the two can diverge by input format alone. Prefer a structural signal independent of path format: e.g. to tell a registered linked worktree from an orphaned dir, test the shape of `git rev-parse --absolute-git-dir` (`*/worktrees/*`) plus the worktree's own `.git` pointer, not `--show-toplevel` vs the directory string.
 
+### Windows Git Bash: native tools behind the shell
+
+The shell is MSYS but `jq`, `python`, `gh` and `git` are native Windows binaries, and three of their habits reach the scripts here:
+
+- **The winget `jq` ends every output line with CRLF** (measured on jq 1.8.2). `$(…)` strips the trailing CR with the newline, so most call sites work, but `read` keeps it — a `while read id … done < <(jq -r …)` loop walks `TT-26\r`, which is how `epic-graph.sh` reported every child of an epic as missing. `update.sh` installs a `~/bin/jq` shim that adds `-b` (jq's own LF switch) to every call; a machine that has not run it shows exactly that symptom.
+- **Python writes stdio in the console code page with CRLF.** A `→` or `≈` in a report line raises `UnicodeEncodeError` under cp1252, and `open()`/`read_text()` decode files the same way. The `.py` entry points reconfigure stdio to UTF-8 with LF and pass `encoding="utf-8"` explicitly; a new script does the same. `python3` itself is a `~/bin` shim (python.org ships `python.exe` only), also from `update.sh`.
+- **A POSIX-looking argument to a native binary is rewritten before the binary sees it**: `jq -n --arg p /tmp/x.rb` arrives as `C:/Users/<you>/AppData/Local/Temp/x.rb`, and a `.py` script echoes back the native spelling of any path it was handed. A test that hands a system path to a native tool as *data* sets `MSYS_NO_PATHCONV=1` (the scratch-path-guard suite); one that asserts on an echoed path compares through `wt_path_native` (`scripts/wt-path.sh`), never the raw `mktemp` string.
+
 ### Recovery is not available
 
 This is why the rules above are absolute rather than advisory. A session once read a concurrent

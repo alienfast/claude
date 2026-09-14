@@ -265,7 +265,7 @@ for sf in "$main_checkout"/tmp/auto-state-*.json; do
   key=$(basename "$sf" | sed 's/auto-state-//;s/\.json//')
   if [ -z "$agents_json" ] || registry_alive "$key"; then
     [ "$(jq -r '.mode // "loop"' "$sf" 2>/dev/null)" = "single" ] && continue
-    mt=$(stat -f %m "$sf" 2>/dev/null || stat -c %m "$sf" 2>/dev/null || echo "")
+    mt=$(stat -c %Y "$sf" 2>/dev/null || stat -f %m "$sf" 2>/dev/null || echo "")
     [[ "$mt" =~ ^[0-9]+$ ]] && [ "$mt" -lt "$launch_epoch" ] && launch_epoch="$mt"
     [ -n "$agents_json" ] && carried="$carried $key"
   else

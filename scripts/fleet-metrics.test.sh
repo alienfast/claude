@@ -24,6 +24,14 @@ ck_lacks() { # ck_lacks <label> <needle> <haystack-file>
   if grep -qF -- "$2" "$3"; then FAIL=$((FAIL+1)); echo "FAIL: $1 — unexpected [$2]"; else PASS=$((PASS+1)); fi
 }
 ts_ago() { python3 -c "from datetime import datetime,timezone,timedelta; print((datetime.now(timezone.utc)-timedelta(seconds=$1)).strftime('%Y-%m-%dT%H:%M:%SZ'))"; }
+SKIP=0
+skip() { SKIP=$((SKIP+1)); echo "SKIP: $1"; }  # counted, never fatal — a fixture the platform can't express
+# session_alive needs a real process-liveness probe: an existence test plus `ps -o lstart` to defeat pid
+# reuse. Windows has neither — os.kill(pid,0) would TerminateProcess and MSYS `ps` lacks -o lstart — so the
+# script returns a conservative False there and the one control that asserts a LIVE session is suppressed
+# cannot hold. Probe the capability the same way the script does, and skip only that control when it is absent.
+LIVENESS_PROBE=no
+[ "$(python3 -c 'import os;print(os.name)')" != "nt" ] && ps -p $$ -o lstart= >/dev/null 2>&1 && LIVENESS_PROBE=yes
 
 # ---- fixture: a checkout with state + verdict files, and a projects dir with transcripts ----
 CHECKOUT="$WORK/checkout"
@@ -75,8 +83,9 @@ loop. Both fixed and confirmed.
 EOF
 
 # Mangle from git's resolved toplevel, not $CHECKOUT — the script resolves through git rev-parse,
-# and on macOS mktemp's /var/folders is a symlink to /private/var/folders, so the two differ.
-MANGLED="$(git -C "$CHECKOUT" rev-parse --show-toplevel | tr / -)"
+# and on macOS mktemp's /var/folders is a symlink to /private/var/folders, so the two differ. Every
+# non-alphanumeric character becomes a dash, as the harness does (it is what turns `C:/` into `C--`).
+MANGLED="$(git -C "$CHECKOUT" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
 TDIR="$WORK/projects/$MANGLED"
 SUBDIR="$TDIR/abc12345-0000/subagents"
 mkdir -p "$SUBDIR"
@@ -127,7 +136,7 @@ MD="$WORK/out.md"
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CHECKOUT" --all --json > "$JSON" 2>"$WORK/err" || { echo "FAIL: json run exited $?"; cat "$WORK/err"; exit 1; }
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CHECKOUT" --all > "$MD" 2>&1 || { echo "FAIL: md run exited $?"; exit 1; }
 
-q() { python3 -c "import json,sys; d=json.load(open('$JSON')); print($1)"; }
+q() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$JSON"; }
 
 # session metrics (pre-existing schema — regression guard)
 ck "two sessions"       "2"        "$(q "len(d['sessions'])")"
@@ -245,7 +254,7 @@ CK2="$WORK/checkout2"
 mkdir -p "$CK2/tmp"
 git -C "$CK2" init -q 2>/dev/null
 git -C "$CK2" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "init"
-M2="$(git -C "$CK2" rev-parse --show-toplevel | tr / -)"
+M2="$(git -C "$CK2" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
 mkdir -p "$WORK/projects/$M2"
 cat > "$WORK/projects/$M2/aaa11111-0000.jsonl" <<'EOF'
 {"type":"user","timestamp":"2026-08-04T09:00:00Z","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
@@ -257,7 +266,7 @@ if CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK2" --all --json
 else
   FAIL=$((FAIL+1)); echo "FAIL: total-loss run exited non-zero — a ledger-less fleet must still report"
 fi
-q2() { python3 -c "import json,sys; d=json.load(open('$J2')); print($1)"; }
+q2() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J2"; }
 ck "total-loss session"  "1"        "$(q2 "len(d['sessions'])")"
 ck "total-loss flagged"  "True"     "$(q2 "d['sessions'][0]['ledger_missing']")"
 ck "total-loss ships"    "['TT-5']" "$(q2 "d['sessions'][0]['observed_shipped']")"
@@ -274,7 +283,7 @@ CK3="$WORK/checkout3"
 mkdir -p "$CK3/tmp"
 git -C "$CK3" init -q 2>/dev/null
 git -C "$CK3" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "TT-6: land it"
-M3="$(git -C "$CK3" rev-parse --show-toplevel | tr / -)"
+M3="$(git -C "$CK3" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
 mkdir -p "$WORK/projects/$M3"
 
 cat > "$CK3/tmp/auto-state-bbb22222.json" <<'EOF'
@@ -294,7 +303,7 @@ J3="$WORK/out3.json"
 MD3="$WORK/out3.md"
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK3" --hours 24 --json > "$J3" 2>/dev/null
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK3" --hours 24 > "$MD3" 2>&1
-q3() { python3 -c "import json,sys; d=json.load(open('$J3')); print($1)"; }
+q3() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J3"; }
 ck "windowed-out found"    "1"        "$(q3 "len(d['sessions'])")"
 ck "windowed-out NOT flagged" "False" "$(q3 "d['sessions'][0]['ledger_missing']")"
 ck "windowed-out reads ledger" "['TT-6']" "$(q3 "d['sessions'][0]['recorded_shipped']")"
@@ -307,7 +316,7 @@ cat > "$WORK/projects/$M3/ccc33333-0000.jsonl" <<EOF
 EOF
 J4="$WORK/out4.json"
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK3" --hours 24 --json > "$J4" 2>/dev/null
-q4() { python3 -c "import json,sys; d=json.load(open('$J4')); print($1)"; }
+q4() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J4"; }
 ck "real gap still flags"  "['ccc33333']" "$(q4 "sorted(s['run_key'] for s in d['sessions'] if s['ledger_missing'])")"
 ck "both sessions present" "2"            "$(q4 "len(d['sessions'])")"
 
@@ -320,7 +329,7 @@ ck "both sessions present" "2"            "$(q4 "len(d['sessions'])")"
 CK5="$WORK/checkout5"
 mkdir -p "$CK5/tmp"
 git -C "$CK5" init -q 2>/dev/null
-M5="$(git -C "$CK5" rev-parse --show-toplevel | tr / -)"
+M5="$(git -C "$CK5" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
 mkdir -p "$WORK/projects/$M5"
 
 for run in aa111111 bb222222 cc333333; do
@@ -358,7 +367,7 @@ J5="$WORK/out5.json"
 MD5="$WORK/out5.md"
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK5" --since 2026-08-06 --json > "$J5" 2>/dev/null
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK5" --since 2026-08-06 > "$MD5" 2>&1
-q5() { python3 -c "import json,sys; d=json.load(open('$J5')); print($1)"; }
+q5() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J5"; }
 ck "recovered stall detected"  "1" "$(q5 "len(d['windows']['quota_stall_groups'])")"
 ck "stall names the 3 stalled" "['aa111111', 'bb222222', 'cc333333']" \
    "$(q5 "sorted(d['windows']['quota_stall_groups'][0]['runs'])")"
@@ -381,7 +390,7 @@ ck_has "md says drained clean" "drained normally" "$MD5"
 CK7="$WORK/checkout7"
 mkdir -p "$CK7/tmp"
 git -C "$CK7" init -q 2>/dev/null
-M7="$(git -C "$CK7" rev-parse --show-toplevel | tr / -)"
+M7="$(git -C "$CK7" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
 mkdir -p "$WORK/projects/$M7"
 
 mk_spread() { # mk_spread <run> <quiet-at> <resume-at> <throttled|selfended>
@@ -419,7 +428,7 @@ J7="$WORK/out7.json"
 MD7="$WORK/out7.md"
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK7" --since 2026-08-07 --json > "$J7" 2>/dev/null
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK7" --since 2026-08-07 > "$MD7" 2>&1
-q7() { python3 -c "import json,sys; d=json.load(open('$J7')); print($1)"; }
+q7() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J7"; }
 ck "spread-onset stall detected" "1" "$(q7 "len(d['windows']['quota_stall_groups'])")"
 # The self-ended session is excluded; only the two the harness actually refused are in the group.
 ck "spread names the 2 throttled" "['r2222222', 'r3333333']" \
@@ -459,7 +468,7 @@ ck_has  "clean run keeps floor framing"   "Both peaks are FLOORS" "$MD"
 CK6="$WORK/checkout6"
 mkdir -p "$CK6/tmp"
 git -C "$CK6" init -q 2>/dev/null
-M6="$(git -C "$CK6" rev-parse --show-toplevel | tr / -)"
+M6="$(git -C "$CK6" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
 mkdir -p "$WORK/projects/$M6"
 for run in ee555555 ff666666; do
   cat > "$CK6/tmp/auto-state-$run.json" <<EOF
@@ -482,7 +491,7 @@ J6="$WORK/out6.json"
 MD6="$WORK/out6.md"
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK6" --since 2026-08-06 --json > "$J6" 2>/dev/null
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK6" --since 2026-08-06 > "$MD6" 2>&1
-q6() { python3 -c "import json,sys; d=json.load(open('$J6')); print($1)"; }
+q6() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J6"; }
 ck "unrecovered stall detected" "1" "$(q6 "len(d['windows']['quota_stall_groups'])")"
 ck "unrecovered kind"           "unrecovered" "$(q6 "d['windows']['quota_stall_groups'][0]['kind']")"
 ck "unrecovered no resume"      "None" "$(q6 "d['windows']['quota_stall_groups'][0]['resumed_at']")"
@@ -498,7 +507,7 @@ ck_has "md says never recovered" "never recovered" "$MD6"
 CK8="$WORK/checkout8"
 mkdir -p "$CK8/tmp"
 git -C "$CK8" init -q 2>/dev/null
-M8="$(git -C "$CK8" rev-parse --show-toplevel | tr / -)"
+M8="$(git -C "$CK8" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
 mkdir -p "$WORK/projects/$M8"
 TS_A="$(ts_ago 2400)"   # 40 min ago
 TS_B="$(ts_ago 1500)"   # 25 min ago — every internal gap stays under min_silence_s (30 min)
@@ -517,7 +526,7 @@ J8="$WORK/out8.json"
 MD8="$WORK/out8.md"
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK8" --hours 2 --json > "$J8" 2>/dev/null
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK8" --hours 2 > "$MD8" 2>&1
-q8() { python3 -c "import json,sys; d=json.load(open('$J8')); print($1)"; }
+q8() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J8"; }
 ck "live sessions form no group"  "0" "$(q8 "len(d['windows']['quota_stall_groups'])")"
 ck "live run emits no cutoff meters" "0" "$(q8 "len(d['windows']['cutoff_trailing_5h'])")"
 ck_has  "live run keeps floor framing" "Both peaks are FLOORS" "$MD8"
@@ -535,7 +544,7 @@ CK9="$WORK/checkout9"
 mkdir -p "$CK9/tmp"
 git -C "$CK9" init -q 2>/dev/null
 git -C "$CK9" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "init"
-M9="$(git -C "$CK9" rev-parse --show-toplevel | tr / -)"
+M9="$(git -C "$CK9" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
 SUB9="$WORK/projects/$M9/gg999999-0000/subagents"
 mkdir -p "$SUB9"
 
@@ -603,7 +612,7 @@ J9="$WORK/out9.json"
 MD9="$WORK/out9.md"
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK9" --all --json > "$J9" 2>/dev/null
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK9" --all > "$MD9" 2>&1
-q9() { python3 -c "import json,sys; d=json.load(open('$J9')); print($1)"; }
+q9() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J9"; }
 ck "impl lane by model"   "{'claude-opus-5': 100, 'claude-sonnet-5': 40}" "$(q9 "d['developer_lanes']['impl']")"
 ck "fix lane by model"    "{'claude-sonnet-5': 200}" "$(q9 "d['developer_lanes']['fix']")"
 ck "unattributed lane"    "{'claude-opus-5': 30}"    "$(q9 "d['developer_lanes']['unattributed']")"
@@ -643,7 +652,7 @@ CK10="$WORK/checkout10"
 mkdir -p "$CK10/tmp"
 git -C "$CK10" init -q 2>/dev/null
 git -C "$CK10" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "TT-30: current work"
-M10="$(git -C "$CK10" rev-parse --show-toplevel | tr / -)"
+M10="$(git -C "$CK10" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
 mkdir -p "$WORK/projects/$M10"
 
 cat > "$CK10/tmp/auto-state-stale0001.json" <<'EOF'
@@ -675,7 +684,7 @@ J10="$WORK/out10.json"
 MD10="$WORK/out10.md"
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK10" --hours 24 --json > "$J10" 2>/dev/null
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK10" --hours 24 > "$MD10" 2>&1
-q10() { python3 -c "import json,sys; d=json.load(open('$J10')); print($1)"; }
+q10() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J10"; }
 ck "stale session excluded"      "['live0001']" "$(q10 "sorted(s['run_key'] for s in d['sessions'])")"
 ck "exclusion reported"          "stale0001"    "$(q10 "d['excluded_stale'][0]['run_key']")"
 ck "exclusion carries end time"  "2026-08-01T21:00:00Z" "$(q10 "d['excluded_stale'][0]['ended']")"
@@ -687,7 +696,7 @@ ck_has "md names the stale run"  "\`stale0001\` (ended 2026-08-01T21:00:00Z)" "$
 ck_lacks "stale row absent from table" "| \`stale0001\`" "$MD10"
 # An --all run has no cutoff and must keep the stale session — the gate is the window's, not global.
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK10" --all --json > "$WORK/out10b.json" 2>/dev/null
-ck "--all keeps both" "2" "$(python3 -c "import json; print(len(json.load(open('$WORK/out10b.json'))['sessions']))")"
+ck "--all keeps both" "2" "$(python3 -c "import json,sys; print(len(json.load(open(sys.argv[1]))['sessions']))" "$WORK/out10b.json")"
 
 # ---- trend + provenance fixture: history ledger, ctx buckets at scale, Linear join ----
 # The 2026-08-14 finding this schema extension exists for: cost-per-issue climbed $90 -> $161 across
@@ -699,7 +708,7 @@ CK11="$WORK/checkout11"
 mkdir -p "$CK11/tmp"
 git -C "$CK11" init -q 2>/dev/null
 git -C "$CK11" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "TT-70: land it"
-M11="$(git -C "$CK11" rev-parse --show-toplevel | tr / -)"
+M11="$(git -C "$CK11" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
 mkdir -p "$WORK/projects/$M11"
 
 cat > "$CK11/tmp/auto-state-ee555555.json" <<'EOF'
@@ -722,7 +731,7 @@ J11="$WORK/out11.json"
 MD11="$WORK/out11.md"
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK11" --hours 24 --json > "$J11" 2>/dev/null
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK11" --hours 24 > "$MD11" 2>&1
-q11() { python3 -c "import json,sys; d=json.load(open('$J11')); print($1)"; }
+q11() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J11"; }
 ck "ctx ge400k bucket"     "450010" "$(q11 "d['sessions'][0]['context_volume_tokens']['ge400k']")"
 ck "ctx 200_400k bucket"   "250010" "$(q11 "d['sessions'][0]['context_volume_tokens']['200_400k']")"
 ck "fleet ge200k share"    "1.0"    "$(q11 "d['context_distribution']['share_ge200k']")"
@@ -763,13 +772,13 @@ ck "history appends new set" "2" "$(wc -l < "$CK11/tmp/fleet-metrics-history.jso
 # (ee555555 ~2h ago, ff666666 ~1h ago), so it doubles as the overlap fixture.
 J12="$WORK/out12.json"
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK11" --sessions ee555555 --json > "$J12" 2>/dev/null
-q12() { python3 -c "import json,sys; d=json.load(open('$J12')); print($1)"; }
+q12() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J12"; }
 ck "exact set selects one"    "['ee555555']" "$(q12 "sorted(s['run_key'] for s in d['sessions'])")"
 ck "exact set replaces its history row" "2" "$(wc -l < "$CK11/tmp/fleet-metrics-history.jsonl" | tr -d ' ')"
 ck "history row keyed to the set" "1" "$(python3 -c "
-import json
-rows=[json.loads(l) for l in open('$CK11/tmp/fleet-metrics-history.jsonl')]
-print(len([r for r in rows if r['session_set']=='ee555555']))")"
+import json,sys
+rows=[json.loads(l) for l in open(sys.argv[1])]
+print(len([r for r in rows if r['session_set']=='ee555555']))" "$CK11/tmp/fleet-metrics-history.jsonl")"
 
 # A requested key with nothing on disk is a hard error — a silent drop would report a smaller
 # fleet than requested, the exact mislabeling --sessions exists to prevent.
@@ -785,7 +794,7 @@ ck_has "missing key named" "nosuchkey" "$WORK/err12"
 # have fresh mtimes while 99900001's span is 2026-08-04, so none may pool in.
 J13="$WORK/out13.json"
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CHECKOUT" --sessions 99900001 --json > "$J13" 2>/dev/null
-q13() { python3 -c "import json,sys; d=json.load(open('$J13')); print($1)"; }
+q13() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J13"; }
 ck "named key skips auto probe" "['99900001']" "$(q13 "sorted(s['run_key'] for s in d['sessions'])")"
 ck "verdicts scoped to set span" "0" "$(q13 "len(d['review_churn'])")"
 
@@ -796,7 +805,7 @@ MD14="$WORK/out14.md"
 UNTIL="$(python3 -c "from datetime import datetime,timezone,timedelta; print((datetime.now(timezone.utc)-timedelta(seconds=5000)).strftime('%Y-%m-%dT%H:%M:%S'))")"
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK11" --hours 24 --until "$UNTIL" --json > "$J14" 2>/dev/null
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK11" --hours 24 --until "$UNTIL" > "$MD14" 2>&1
-q14() { python3 -c "import json,sys; d=json.load(open('$J14')); print($1)"; }
+q14() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J14"; }
 ck "--until keeps the earlier fleet" "['ee555555']" "$(q14 "sorted(s['run_key'] for s in d['sessions'])")"
 ck "--until reports the late start"  "ff666666"     "$(q14 "d['excluded_stale'][0]['run_key']")"
 ck "late exclusion says started"     "1"            "$(q14 "len([e for e in d['excluded_stale'] if 'started' in e])")"
@@ -813,7 +822,7 @@ CK12="$WORK/checkout12"
 mkdir -p "$CK12/tmp"
 git -C "$CK12" init -q 2>/dev/null
 git -C "$CK12" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "TT-40: fleet work"
-M12="$(git -C "$CK12" rev-parse --show-toplevel | tr / -)"
+M12="$(git -C "$CK12" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
 mkdir -p "$WORK/projects/$M12"
 
 LAUNCH=$(python3 -c "import time; print(int(time.time()) - 7200)")
@@ -859,7 +868,7 @@ PY
 J12="$WORK/out12.json"; MD12="$WORK/out12.md"
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK12" --hours 24 --json > "$J12" 2>/dev/null
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK12" --hours 24 > "$MD12" 2>&1
-q12() { python3 -c "import json,sys; d=json.load(open('$J12')); print($1)"; }
+q12() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J12"; }
 ck "launch tie: prior ledger excluded"   "['fleet001']" "$(q12 "sorted(s['run_key'] for s in d['sessions'])")"
 # The excluded key must also be seeded into the ledgerless pass's seen set, or that pass re-adopts
 # the state file straight off disk. `ledger_missing` is the emitted key (there is no top-level
@@ -896,7 +905,7 @@ git -C "$CK13" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "TT-7
 git -C "$CK13" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "Merge TT-71"
 # TT-72 genuinely landed with no merge commit of either shape — the flag must still fire.
 git -C "$CK13" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "TT-72: fast-forwarded widget"
-M13="$(git -C "$CK13" rev-parse --show-toplevel | tr / -)"
+M13="$(git -C "$CK13" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
 mkdir -p "$WORK/projects/$M13"
 
 # killed001: status still `active`, wakeups armed, NO stop-wakeup, and no live pid — the
@@ -968,7 +977,11 @@ ck "landing: merge-flow ship resolves"  "0" "$(printf '%s' "$NOMERGE" | grep -c 
 ck "landing: unmerged still flagged"    "1" "$(printf '%s' "$NOMERGE" | grep -c 'TT-72' || true)"
 ck_has "landing: message names both shapes" "Merge pull request #N from" "$MD13"
 ck_has   "killed: mid-loop death flagged"  "\`killed001\` ended without recording an outcome" "$MD13"
-ck_lacks "killed: live session not flagged" "\`live001\` ended without recording an outcome"  "$MD13"
+if [ "$LIVENESS_PROBE" = yes ]; then
+  ck_lacks "killed: live session not flagged" "\`live001\` ended without recording an outcome"  "$MD13"
+else
+  skip "killed: live session not flagged — no process-liveness probe on this platform (Windows)"
+fi
 ck_lacks "killed: drained control clean"   "\`clean001\` ended without recording an outcome"  "$MD13"
 ck_lacks "killed: run not reported clean"  "- None. Every session armed its heartbeat"        "$MD13"
 ck_has   "wounddown: unfinalized ledger flagged" "\`wounddown001\` wound down but never finalized" "$MD13"
@@ -988,7 +1001,7 @@ stamp14() { python3 -c 'import time,sys; print(time.strftime("%Y%m%d%H%M.%S", ti
 CK14="$WORK/ck14"; mkdir -p "$CK14/tmp"
 git -C "$CK14" init -q 2>/dev/null
 git -C "$CK14" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "TT-90: ship it"
-M14="$(git -C "$CK14" rev-parse --show-toplevel | tr / -)"
+M14="$(git -C "$CK14" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
 T14="$WORK/projects/$M14"; mkdir -p "$T14"
 
 echo '{"status":"drained","reason":"t","shipped":["TT-90"],"canceled":[],"skipped":[],"failed":[]}' \
@@ -1036,7 +1049,7 @@ ck "control: trend row written"                   "1" "$(hist14)"
 CK15="$WORK/ck15"; mkdir -p "$CK15/tmp"
 git -C "$CK15" init -q 2>/dev/null
 git -C "$CK15" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "TT-95: ship it"
-M15="$(git -C "$CK15" rev-parse --show-toplevel | tr / -)"
+M15="$(git -C "$CK15" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
 T15="$WORK/projects/$M15"; mkdir -p "$T15"
 loop_txn() { # loop_txn <path> <start-secs-ago> <end-secs-ago>
   cat > "$1" <<EOF
@@ -1084,5 +1097,5 @@ CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK15" --hours 24 > "
 ck_has "recorded set: explicit window overrides"      "scope: --hours 24" "$MD15"
 
 echo
-echo "$PASS passed / $FAIL failed"
+echo "$PASS passed / $FAIL failed / $SKIP skipped"
 [ "$FAIL" -eq 0 ]

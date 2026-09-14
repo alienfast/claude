@@ -222,6 +222,13 @@ for _v in "${!GIT_@}" "${!WTID_@}" "${!CLAUDE_@}" "${!WT_@}" "${!GREP_@}" "${!NO
 done
 unset _WITH_REPO_LOCK_HELD TEST_SHIM MV_LOG CFG_LOG
 
+# Sourced AFTER the WT_* sweep above, not with IDLIB near the top: wt-path.sh's own state (WT_PATH_LIB_LOADED,
+# WT_PATH_HAS_CYGPATH) matches the `WT_@` glob and would be swept away, leaving wt_path_native defined but its
+# cygpath flag unset — which crashes the function under `set -u` on the first path comparison (Windows only,
+# where the flag is actually read). The path helpers are used from Part 5 onward, well after this point.
+# shellcheck source=/dev/null
+. "$DIR/wt-path.sh"
+
 # A developer's own git config must not decide it either, and redirecting the config FILES is only half of
 # that: commit.gpgsign=true (which `-c user.email`/`-c user.name` do NOT suppress) fails almost every commit
 # and core.logAllRefUpdates=false removes the branch reflog wt-restamp.sh walks, while the env-borne
@@ -281,6 +288,16 @@ ck() { # want got label
   if [ "$1" = "$2" ]; then echo "PASS  $3"; pass=$((pass + 1))
   else echo "FAIL  $3 (want '$1' got '$2')"; fail=$((fail + 1)); fi
 }
+# A skip drops coverage, so it has to be visible in the tally: on a node-less machine, or one whose filesystem
+# cannot express the fixture (no symlinks, no unwritable directories), the footer would otherwise be
+# indistinguishable from a run that verified everything, and this suite gates `pnpm check`. Counted, never fatal.
+skip() { echo "SKIP  $1"; skipped=$((skipped + 1)); }
+# Windows' filesystem ignores chmod — `chmod a-w` leaves a directory writable (measured on Git Bash) — so the
+# unwritable-tier fixtures cannot express their precondition there and are skipped, never failed.
+CAN_DENY_WRITE=yes
+mkdir -p "$TMP/deny-probe"; chmod a-w "$TMP/deny-probe"
+touch "$TMP/deny-probe/x" 2>/dev/null && CAN_DENY_WRITE=no
+chmod u+w "$TMP/deny-probe"; rm -rf "$TMP/deny-probe"
 ck_has() { # needle haystack label
   if printf '%s' "$2" | grep -qF -- "$1"; then echo "PASS  $3"; pass=$((pass + 1))
   else echo "FAIL  $3 (no '$1' in: $(printf '%s' "$2" | tr '\n' '|'))"; fail=$((fail + 1)); fi
@@ -361,7 +378,7 @@ mkrepo tiers
 stamp "$WT"
 JOB="$TMP/tiers/job"; mkdir -p "$JOB"
 ck "0:repo-fallback" "$(idl "$WT" "" "" '$rc:$WTID_SOURCE')" "the repo-fallback sidecar is the tier when no job dir is set"
-ck "$SIDE" "$(idl "$WT" "" "" '$WTID_SIDECAR_PATH')" "the load reports the sidecar it actually read"
+ck "$(wt_path_native "$SIDE")" "$(idl "$WT" "" "" '$WTID_SIDECAR_PATH')" "the load reports the sidecar it actually read"
 ck "test-1:issue-branch:main" "$(idl "$WT" "" "" '$WTID_ISSUE:$WTID_BRANCH:$WTID_SOURCE_BRANCH')" "a sidecar identity carries the stamped issue, branch and source branch"
 ck "$(git -C "$WT" merge-base issue-branch main)" "$(idl "$WT" "" "" '$WTID_BASELINE')" "a sidecar identity carries the stamped baseline"
 cp "$SIDE" "$JOB/"
@@ -431,7 +448,11 @@ set_key "$JOBFILE" WT_IDENTITY_WT_DIR ""
 ck "0:job-dir" "$(idl "$WT" "$JOB" "" '$rc:$WTID_SOURCE')" "a pre-field sidecar with an empty recorded path is accepted"
 set_key "$JOBFILE" WT_IDENTITY_WT_DIR "$WT"
 ln -s "$WT" "$TMP/trust/aliased"
-ck "0:job-dir" "$(idl "$TMP/trust/aliased" "$JOB" test-1 '$rc:$WTID_SOURCE')" "a worktree reached through a symlink still matches its sidecar"
+if [ -L "$TMP/trust/aliased" ]; then
+  ck "0:job-dir" "$(idl "$TMP/trust/aliased" "$JOB" test-1 '$rc:$WTID_SOURCE')" "a worktree reached through a symlink still matches its sidecar"
+else
+  skip "ln -s copied the directory instead of linking it (Git Bash default) — the symlink-alias case cannot run here"
+fi
 
 # The accept-on-unresolvable rule, from the other side: when the worktree DIRECTORY is gone the sidecar
 # is the only surviving record of it, and rejecting it would blind finish-recover and the reaper to
@@ -512,7 +533,7 @@ stamp "$WT" sess-A "" "$TWOARG_ERA"
 stamp_issue "$WT" other-2 sess-A "$TWOARG_ERA"
 ck "test-1" "$(idl "$WT" "" "" '$WTID_ISSUE')" "the one-arg form derives the sidecar from the directory basename"
 ck "other-2" "$(idl "$WT" "" other-2 '$WTID_ISSUE')" "the two-arg form selects the sidecar named for the explicit slug"
-ck "$MAINROOT/.claude/worktree-identity/wt-identity-other-2.env" "$(idl "$WT" "" other-2 '$WTID_SIDECAR_PATH')" "the two-arg load reports the slug's sidecar path"
+ck "$(wt_path_native "$MAINROOT/.claude/worktree-identity/wt-identity-other-2.env")" "$(idl "$WT" "" other-2 '$WTID_SIDECAR_PATH')" "the two-arg load reports the slug's sidecar path"
 
 # The straddle itself, held deterministic forever (BF-578): push the config tier's era one second past
 # the basename sidecar's. The two tiers now genuinely disagree — they came from different stamp calls,
@@ -802,7 +823,7 @@ MISSINGJOB="$TMP/stampnojob/never-created"
 stamp_env "CLAUDE_JOB_DIR=$MISSINGJOB" "$WT" '$WTID_STAMP_SIDECAR'
 ck "0" "$STAMP_RC" "a job dir that does not exist is not a failure"
 ck "no" "$([ -e "$MISSINGJOB" ] && echo yes || echo no)" "the stamp does not create the job dir"
-ck "$SIDE" "$STAMP_OUT" "the repo tier supplies the sidecar instead"
+ck "$(wt_path_native "$SIDE")" "$STAMP_OUT" "the repo tier supplies the sidecar instead"
 ck "" "$STAMP_ERR" "a skipped job-dir tier warns about nothing"
 
 # Tier C is the one any session can find, so it is also the one most likely to be committed by accident
@@ -811,7 +832,7 @@ ck "" "$STAMP_ERR" "a skipped job-dir tier warns about nothing"
 # broader rule a project put there.
 mkrepo stamprepo
 stamp_env "CLAUDE_SESSION_ID=sess-A" "$WT" '$WTID_STAMP_SIDECAR'
-ck "$SIDE" "$STAMP_OUT" "the repo tier lands under the MAIN checkout's .claude/worktree-identity/"
+ck "$(wt_path_native "$SIDE")" "$STAMP_OUT" "the repo tier lands under the MAIN checkout's .claude/worktree-identity/"
 ck "yes" "$([ -f "$SIDE" ] && echo yes || echo no)" "the repo-level sidecar is on disk"
 ck "*" "$(cat "$MAINROOT/.claude/worktree-identity/.gitignore")" "the repo tier is made self-ignoring"
 mkrepo stampgitignore
@@ -854,6 +875,7 @@ ck "0" "$(grep -c '^WT_IDENTITY_OWNER_RELEASED_AT=' "$SIDE" || true)" "a stamp n
 # them — or neither — still returns 0 and still reports success to its caller. That contract is exactly
 # why wt-restamp.sh implements its own tiers_consistent audit: the library will not surface a split
 # identity, and the tier that failed is the one another session may be the only one to read.
+if [ "$CAN_DENY_WRITE" = yes ]; then
 mkrepo stampjobfail
 JOB="$TMP/stampjobfail/sess-A"; mkdir -p "$JOB"; chmod a-w "$JOB"
 stamp_env "CLAUDE_JOB_DIR=$JOB" "$WT" '$WTID_STAMP_SIDECAR'
@@ -882,6 +904,9 @@ ck_has "no identity sidecar could be written" "$STAMP_ERR" "the total sidecar fa
 ck_has "git-config-only identity" "$STAMP_ERR" "the announcement names the degraded identity the worktree is left with"
 ck "issue-branch" "$(cfg start.worktree-branch)" "the mandatory config tier is written regardless"
 chmod u+w "$JOB" "$MAINROOT/.claude/worktree-identity"
+else
+  skip "chmod cannot make a directory unwritable here — the unwritable job-dir / repo / both-tier stamp cases cannot run"
+fi
 
 # Atomicity (one of the three BF-534 bugs). _wtid_write_sidecar writes to "<path>.tmp.$$" and renames within
 # the same directory, so a concurrent reader never sees a half-written block — missing keys parse as an
@@ -895,7 +920,10 @@ JOB="$TMP/stampatomic/sess-A"; mkdir -p "$JOB"
 stamp_env "CLAUDE_JOB_DIR=$JOB TEST_SHIM=$MVSHIM MV_LOG=$MV_LOG" "$WT"
 RENAMES=$(sed 's/\.tmp\.[0-9][0-9]*/.tmp.PID/g' "$MV_LOG")
 ck_has "$JOB/wt-identity-test-1.env.tmp.PID $JOB/wt-identity-test-1.env" "$RENAMES" "the job-dir sidecar reaches its final path by renaming its own tmp file"
-ck_has "$SIDE.tmp.PID $SIDE" "$RENAMES" "the repo-tier sidecar reaches its final path the same way"
+# The repo-tier path is derived from git's --git-common-dir, which emits the native (C:/…) spelling on Windows,
+# while $SIDE is the shell's own ($MAINROOT via pwd -P) spelling — compare through the same boundary the write used.
+SIDE_N=$(wt_path_native "$SIDE")
+ck_has "$SIDE_N.tmp.PID $SIDE_N" "$RENAMES" "the repo-tier sidecar reaches its final path the same way"
 ck "" "$(tmpres "$JOB")" "a successful job-dir write leaves no tmp file behind"
 ck "" "$(tmpres "$MAINROOT/.claude/worktree-identity")" "a successful repo-tier write leaves no tmp file behind"
 
@@ -930,10 +958,13 @@ chmod u+w "$JOB"
 # fixture from also being mistaken for this session's own harness.
 HAVE_NODE=no
 command -v node >/dev/null 2>&1 && HAVE_NODE=yes
-# A skip drops coverage, so it has to be visible in the tally: on a node-less or python3-less machine the
-# footer would otherwise be indistinguishable from a run that verified everything, and this suite gates
-# `pnpm check`. Counted, never fatal — a missing interpreter is not a regression.
-skip() { echo "SKIP  $1"; skipped=$((skipped + 1)); }
+# wt_owner_alive adjudicates liveness through the REAL `ps` — a start time (`ps -o lstart=`, defeating pid
+# reuse) and the process comm. MSYS `ps` on Git Bash offers neither `-o lstart` nor `-o comm`, so every
+# adjudication against a real process returns 2:unknown — the fail-safe PR #9 accepted as a Windows limitation
+# (wt-owner.sh OWNER_ALIVE=unknown). The cases that drive `ps` through a TEST_SHIM still run everywhere; only
+# the real-process ones are gated here. Probe the capability exactly as the library does.
+HAVE_PIDSTART=no
+[ -n "$(bash -c ". '$IDLIB'; wtid_pid_start $$" 2>/dev/null)" ] && HAVE_PIDSTART=yes
 
 LIVE=""; DEAD=""
 spawn_live() { # a pid wt_owner_alive will adjudicate as a live harness
@@ -983,19 +1014,25 @@ isme() { # wt_dir ["VAR=VAL ..."] -> wt_owner_is_me's status, resolved after wt_
 # The four verdicts and their four distinct return codes. Automation routes on all four differently —
 # alive is hands-off, dead and released are resumable, unknown must fail safe — so collapsing any two of
 # them silently changes what a parallel session is allowed to do to a worktree it does not own.
-if [ "$HAVE_NODE" = yes ]; then
+if [ "$HAVE_NODE" = yes ] && [ "$HAVE_PIDSTART" = yes ]; then
   mkrepo ownerlive
   spawn_live
   stamp_env "CLAUDE_SESSION_ID=sess-A CLAUDE_HARNESS_PID=$LIVE" "$WT"
   ck "0:alive" "$(alive "$WT")" "a running harness process adjudicates alive (rc 0)"
-else
+elif [ "$HAVE_NODE" != yes ]; then
   skip "node not available — the live-owner fixture needs an allowlisted long-running process"
+else
+  skip "no real-ps liveness probe (MSYS ps lacks -o lstart) — live-owner adjudication is 2:unknown here"
 fi
 mkrepo ownerdead
 spawn_dead
 stamp_env "CLAUDE_SESSION_ID=sess-A CLAUDE_HARNESS_PID=$DEAD" "$WT"
 ck "yes" "$(pid_gone "$DEAD")" "sanity: the reaped pid is still unallocated, so 'dead' is a real verdict"
-ck "1:dead" "$(alive "$WT")" "an exited, reaped owner adjudicates dead (rc 1)"
+if [ "$HAVE_PIDSTART" = yes ]; then
+  ck "1:dead" "$(alive "$WT")" "an exited, reaped owner adjudicates dead (rc 1)"
+else
+  skip "no real-ps liveness probe — reaped-owner adjudication is 2:unknown here"
+fi
 mkrepo ownerunknown
 stamp_env "TEST_SHIM=$PSSHIM" "$WT"
 ck "2:unknown" "$(alive "$WT")" "no owner pid and no release marker adjudicates unknown (rc 2)"
@@ -1019,21 +1056,27 @@ mkrepo ownerrecycled
 spawn_other
 stamp_env "CLAUDE_SESSION_ID=sess-A CLAUDE_HARNESS_PID=$OTHER" "$WT"
 ck "yes" "$(nonempty "$(cfg start.owner-pid)")" "sanity: the recycled-pid fixture stamped a pid that is genuinely running"
-ck "1:dead" "$(alive "$WT")" "a live pid running something that is not a harness is a recycled pid, not the owner"
+if [ "$HAVE_PIDSTART" = yes ]; then
+  ck "1:dead" "$(alive "$WT")" "a live pid running something that is not a harness is a recycled pid, not the owner"
+else
+  skip "no real-ps liveness probe — recycled-pid adjudication is 2:unknown here"
+fi
 
 # The subtler recycling: the pid was handed to ANOTHER harness, so comm still passes the allowlist and only
 # the start time tells the two apart. This is the entire reason owner-pid-start is stamped at all. Both
 # fixtures elsewhere are self-consistent by construction — the same wtid_pid_start call on the same pid at
 # stamp and at check — so a stored value that DISAGREES with the running process exists only here.
-if [ "$HAVE_NODE" = yes ]; then
+if [ "$HAVE_NODE" = yes ] && [ "$HAVE_PIDSTART" = yes ]; then
   mkrepo ownerrestarted
   spawn_live
   stamp_env "CLAUDE_SESSION_ID=sess-A CLAUDE_HARNESS_PID=$LIVE" "$WT"
   ck "0:alive" "$(alive "$WT")" "sanity: the fixture reads alive while the stamped start time is the true one"
   git -C "$WT" config --worktree start.owner-pid-start 'Mon Jan  1 00:00:00 2020'
   ck "1:dead" "$(alive "$WT")" "a running harness whose start time is not the stamped one is a recycled pid"
-else
+elif [ "$HAVE_NODE" != yes ]; then
   skip "node not available — the recycled-into-another-harness fixture needs a live allowlisted process"
+else
+  skip "no real-ps liveness probe (MSYS ps lacks -o lstart) — the start-time recycling case cannot run"
 fi
 
 # Start times are compared as strings, so the stamped side and the checked side must be normalized the same
@@ -1060,15 +1103,21 @@ spawn_dead
 stamp_env "CLAUDE_SESSION_ID=sess-A CLAUDE_HARNESS_PID=$DEAD" "$WT"
 git -C "$WT" config --worktree start.owner-released-at 1700000000
 ck "yes" "$(pid_gone "$DEAD")" "sanity: the stamped pid is unallocated, so the verdict turns on the pid rather than on luck"
-ck "1:dead" "$(alive "$WT")" "a stale pid beside a release marker adjudicates dead, never released"
-if [ "$HAVE_NODE" = yes ]; then
+if [ "$HAVE_PIDSTART" = yes ]; then
+  ck "1:dead" "$(alive "$WT")" "a stale pid beside a release marker adjudicates dead, never released"
+else
+  skip "no real-ps liveness probe — stale-pid-beside-release adjudication is 2:unknown here"
+fi
+if [ "$HAVE_NODE" = yes ] && [ "$HAVE_PIDSTART" = yes ]; then
   mkrepo ownerhalflive
   spawn_live
   stamp_env "CLAUDE_SESSION_ID=sess-A CLAUDE_HARNESS_PID=$LIVE" "$WT"
   git -C "$WT" config --worktree start.owner-released-at 1700000000
   ck "0:alive" "$(alive "$WT")" "a LIVE pid beside a release marker keeps the worktree claimed"
-else
+elif [ "$HAVE_NODE" != yes ]; then
   skip "node not available — the live-pid-beats-released fixture needs it"
+else
+  skip "no real-ps liveness probe (MSYS ps lacks -o lstart) — live-pid-beats-released cannot run"
 fi
 
 # --- Session-scoped liveness (BF-1103): the owner's job dir answers at session granularity, and it
@@ -1239,7 +1288,11 @@ ck "0" "$(env "CLAUDE_HARNESS_PID=999999" bash -c ". '$IDLIB'; WTID_OWNER_SESSIO
 spawn_dead
 ck "yes" "$(pid_gone "$DEAD")" "sanity: the pid handed to wtid_pid_start really does resolve to nothing"
 ck "survived:" "$(bash -c "set -eo pipefail; . '$IDLIB'; s=\$(wtid_pid_start $DEAD); printf 'survived:%s' \"\$s\"")" "an unresolvable pid returns empty without aborting a set -eo pipefail caller"
-ck "yes" "$(bash -c ". '$IDLIB'; [ -n \"\$(wtid_pid_start \$\$)\" ] && echo yes || echo no")" "a resolvable pid returns its start time"
+if [ "$HAVE_PIDSTART" = yes ]; then
+  ck "yes" "$(bash -c ". '$IDLIB'; [ -n \"\$(wtid_pid_start \$\$)\" ] && echo yes || echo no")" "a resolvable pid returns its start time"
+else
+  skip "no real-ps start time (MSYS ps lacks -o lstart) — wtid_pid_start returns empty here by design"
+fi
 
 # wtid_harness_pid short-circuits on a pre-resolved CLAUDE_HARNESS_PID without validating it — that is
 # what lets the node fixtures above stand in for a harness. When the walk finds no claude ancestor it
@@ -1326,14 +1379,12 @@ ck "1" "$(kv CREATED_WT)" "/start reports that it created the worktree rather th
 # being handed to git.exe. Off Windows they differ too whenever a component is a symlink — macOS mktemp's
 # `/var` → `/private/var` on every run — so the helper is load-bearing here, not a no-op. `wt_path_canon` is what
 # start-wt-create.sh itself applies, so this asserts the contract rather than a platform accident.
-# shellcheck source=/dev/null
-. "$DIR/wt-path.sh"
 ck "$(wt_path_canon "$WT")" "$(kv WT_ABS)" "/start reports the worktree it created"
 ck "issue-branch" "$(kv BRANCH)" "/start reports the branch"
 ck "main" "$(kv SOURCE_BRANCH)" "/start reports the source branch"
 ck "$(git -C "$WT" rev-parse HEAD)" "$(kv BASELINE_SHA)" "/start reports the fork point as the baseline"
 ck "sess-A" "$(kv OWNER_SESSION)" "/start reports the owning session"
-ck "$SIDE" "$(kv IDENTITY_SIDECAR)" "/start reports the immune sidecar it wrote"
+ck "$(wt_path_native "$SIDE")" "$(kv IDENTITY_SIDECAR)" "/start reports the immune sidecar it wrote"
 START_BASELINE=$(kv BASELINE_SHA); START_BRANCH=$(kv BRANCH); START_SOURCE=$(kv SOURCE_BRANCH)
 
 # Step 2 — /finish's check on the worktree /start just handed it. IDENTITY_SOURCE is asserted too: a

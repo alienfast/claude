@@ -111,8 +111,8 @@ body_ok '# Second' | (cd "$wt" && "$SCRIPT" BF-111 -) >/dev/null 2>&1
 ck_file "  main copy carries the newer body" "$main/tmp/quality-review-verdict-bf-111.md" "# Second"
 
 echo "== 11. published file is 0644, not mktemp's 0600"
-perms=$(stat -f '%Lp' "$main/tmp/quality-review-verdict-bf-111.md" 2>/dev/null \
-     || stat -c '%a'  "$main/tmp/quality-review-verdict-bf-111.md" 2>/dev/null)
+perms=$(stat -c '%a'  "$main/tmp/quality-review-verdict-bf-111.md" 2>/dev/null \
+     || stat -f '%Lp' "$main/tmp/quality-review-verdict-bf-111.md" 2>/dev/null)
 ck "  mode 644" "644" "$perms"
 
 echo "== 12. off-schema bodies still publish but exit 3 (the 2026-08-06 fleet shapes)"

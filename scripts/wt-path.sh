@@ -32,41 +32,43 @@
 #   abs=$(wt_path_canon  "$some_dir")    # existing directory -> canonical native absolute path
 #   p=$(  wt_path_native "$some_string") # any path string    -> native form (no existence requirement)
 
-if [ -z "${WT_PATH_LIB_LOADED:-}" ]; then
-  WT_PATH_LIB_LOADED=1
+# No load guard: the probe and the two function definitions run on every source. An earlier version gated
+# them on WT_PATH_LIB_LOADED to "probe cygpath once", but that flag is inherited across processes while the
+# functions are not — a child shell (or one whose startup scrubs imported functions, as wt-identity.test.sh
+# does) then has the flag set and the functions gone, so the guard skips the very definitions the child needs
+# and the first call is a "command not found" that reads as an empty result. Re-defining is idempotent and the
+# `command -v` probe is cheap, so unconditional is both correct and simpler; WT_PATH_LIB_LOADED remains only
+# as a marker any external caller may still read.
+WT_PATH_LIB_LOADED=1
+if command -v cygpath >/dev/null 2>&1; then WT_PATH_HAS_CYGPATH=1; else WT_PATH_HAS_CYGPATH=0; fi
 
-  # Probed once at source time rather than per call: `command -v` is cheap but these helpers can run inside
-  # per-file loops.
-  if command -v cygpath >/dev/null 2>&1; then WT_PATH_HAS_CYGPATH=1; else WT_PATH_HAS_CYGPATH=0; fi
-
-  # Convert a path STRING to native form. Does not require the path to exist, so it is safe on a path being
-  # composed (a worktree that has not been created yet) or on git output that is already native — `cygpath -m`
-  # is idempotent, so passing an already-converted path back through is a no-op rather than a corruption.
-  wt_path_native() {
-    _wtp=$1
+# Convert a path STRING to native form. Does not require the path to exist, so it is safe on a path being
+# composed (a worktree that has not been created yet) or on git output that is already native — `cygpath -m`
+# is idempotent, so passing an already-converted path back through is a no-op rather than a corruption.
+wt_path_native() {
+  _wtp=$1
+  [ -n "$_wtp" ] || return 1
+  if [ "$WT_PATH_HAS_CYGPATH" = 1 ]; then
+    _wtp=$(cygpath -m -- "$_wtp" 2>/dev/null) || return 1
     [ -n "$_wtp" ] || return 1
-    if [ "$WT_PATH_HAS_CYGPATH" = 1 ]; then
-      _wtp=$(cygpath -m -- "$_wtp" 2>/dev/null) || return 1
-      [ -n "$_wtp" ] || return 1
-    fi
-    # Strip a trailing slash so two spellings of one directory compare equal — but never turn `/` into the
-    # empty string or `C:/` into a bare drive letter, both of which stop naming a directory at all.
-    case "$_wtp" in
-      /) ;;
-      ?:/) ;;
-      */) _wtp=${_wtp%/} ;;
-    esac
-    printf '%s\n' "$_wtp"
-  }
+  fi
+  # Strip a trailing slash so two spellings of one directory compare equal — but never turn `/` into the
+  # empty string or `C:/` into a bare drive letter, both of which stop naming a directory at all.
+  case "$_wtp" in
+    /) ;;
+    ?:/) ;;
+    */) _wtp=${_wtp%/} ;;
+  esac
+  printf '%s\n' "$_wtp"
+}
 
-  # Canonicalize an EXISTING directory: resolve symlinks physically (the `pwd -P` the callers already relied
-  # on, so a symlinked component cannot make one directory compare unequal to itself), then convert to native
-  # form. Returns non-zero when the argument is empty or not a directory — callers turn that into their own
-  # `fail`, so a bad path stops the run instead of silently measuring the wrong tree.
-  wt_path_canon() {
-    _wtd=$1
-    [ -n "$_wtd" ] && [ -d "$_wtd" ] || return 1
-    _wtd=$(cd "$_wtd" 2>/dev/null && pwd -P) || return 1
-    wt_path_native "$_wtd"
-  }
-fi
+# Canonicalize an EXISTING directory: resolve symlinks physically (the `pwd -P` the callers already relied
+# on, so a symlinked component cannot make one directory compare unequal to itself), then convert to native
+# form. Returns non-zero when the argument is empty or not a directory — callers turn that into their own
+# `fail`, so a bad path stops the run instead of silently measuring the wrong tree.
+wt_path_canon() {
+  _wtd=$1
+  [ -n "$_wtd" ] && [ -d "$_wtd" ] || return 1
+  _wtd=$(cd "$_wtd" 2>/dev/null && pwd -P) || return 1
+  wt_path_native "$_wtd"
+}

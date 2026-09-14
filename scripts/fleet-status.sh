@@ -154,7 +154,7 @@ if [ -s "$marker" ]; then
     if [ "$(jq -r '.stopped // false' "$marker")" = "true" ]; then
       scope_epoch=""
     else
-      scope_epoch=$(stat -f %m "$marker" 2>/dev/null || stat -c %m "$marker" 2>/dev/null || echo "")
+      scope_epoch=$(stat -c %Y "$marker" 2>/dev/null || stat -f %m "$marker" 2>/dev/null || echo "")
     fi
   fi
 fi
@@ -191,10 +191,16 @@ registry_row() {
 # so without flattening, `head -1` takes the first LINE rather than the first MESSAGE and every
 # genuine /loop /auto session reads as interactive.
 proj_root="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
-proj_mangled=$(printf '%s' "$main_checkout" | tr / -)
+# The harness names the dir by replacing every non-alphanumeric character of the session cwd with a dash (C:/Users/x/.claude
+# lives under c--Users-x--claude) and spells a Windows drive letter however the session's cwd did, so match either case.
+proj_mangled=$(printf '%s' "$main_checkout" | sed 's/[^A-Za-z0-9]/-/g')
+case "$main_checkout" in
+  [A-Za-z]:*) d0=$(printf '%s' "$proj_mangled" | cut -c1)
+              proj_mangled="[$(printf '%s' "$d0" | tr A-Z a-z)$(printf '%s' "$d0" | tr a-z A-Z)]${proj_mangled#?}" ;;
+esac
 is_auto_run() {
   local key="$1" d f first
-  for d in "$proj_root/$proj_mangled"*; do
+  for d in "$proj_root"/$proj_mangled*; do
     [ -d "$d" ] || continue
     for f in "$d/$key"*.jsonl; do
       [ -f "$f" ] || continue
@@ -238,7 +244,7 @@ for f in $state_files; do
   if [ -n "$fleet_set" ]; then
     case " $fleet_set " in *" $key "*) ;; *) hidden=$((hidden + 1)); continue ;; esac
   elif [[ "$scope_epoch" =~ ^[0-9]+$ ]]; then
-    mtime=$(stat -f %m "$f" 2>/dev/null || stat -c %m "$f" 2>/dev/null || echo "")
+    mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo "")
     # -le, not -lt: fleet-launch stamps launch_epoch as it dispatches, so a ledger whose last write
     # lands in that same second was written by a session that had not been dispatched yet — it is
     # prior-run history. Measured 2026-08-21: a prior session's ledger tied launch_epoch exactly and
