@@ -469,14 +469,17 @@ else
   echo "  skipped (macOS/launchd-only; this is $OSTYPE)."
 fi
 
-# Reconcile this repo's local devDependencies (markdownlint-cli2, typescript) against the committed
-# lockfile before the lint step below relies on them — a fresh clone has no node_modules, and a git
-# pull can bump the lockfile out from under a stale install. --frozen-lockfile keeps it deterministic.
+# Reconcile ~/.claude's own devDependencies (markdownlint-cli2, typescript) against the committed lockfile before the
+# lint step below relies on them — a fresh clone has no node_modules, and a git pull can bump the lockfile out from under
+# a stale install. --frozen-lockfile keeps it deterministic. Pinned to $claude_repo with -C: this script also runs from a
+# project directory (/update) and from a home directory (sync-main.sh's one-liner), where a cwd-relative install either
+# touches the wrong project or, under set -e, ends the whole run — measured on a contributor machine: "No package.json
+# found in C:\Users\<user>" was the last line before the run's final steps went missing.
 echo ""
-echo "Installing local project dependencies..."
-pnpm install --frozen-lockfile
+echo "Installing ~/.claude devDependencies..."
+pnpm -C "$claude_repo" install --frozen-lockfile
 
-lint_and_fix "pnpm check-markdown"
+lint_and_fix "pnpm -C \"$claude_repo\" check-markdown"
 
 echo ""
 echo ""

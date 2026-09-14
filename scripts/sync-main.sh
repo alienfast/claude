@@ -6,7 +6,12 @@
 # git-permissions hook refuses the branch switch (standards/git.md § What the hook enforces), and that refusal is right:
 # moving the checkout is a deliberate act, and this script does it on the user's own command, once, with everything kept.
 #
-#   curl -fsSL https://raw.githubusercontent.com/alienfast/claude/main/scripts/sync-main.sh | bash
+#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/alienfast/claude/main/scripts/sync-main.sh)"
+#
+# That form rather than `curl … | bash`: piped, bash reads the script from stdin as it goes, so the first child that reads
+# stdin — the skills installer inside update.sh prompts on it — swallows the rest of the script. Measured on a contributor
+# machine: step 5 and the summary appeared as text inside the installer's output and never ran. Step 4 now also detaches
+# update.sh from the script's stdin, so the piped form survives too; the bash -c form is the one that cannot regress.
 #
 # Nothing is discarded:
 #   - uncommitted edits are committed onto the branch they were made on (a detached HEAD gets a saved/<stamp> branch first)
@@ -100,10 +105,12 @@ if [ "$NO_UPDATE" = 1 ]; then
   pause; exit 0
 fi
 
-# 4. Tools and shims. update.sh is non-fatal here on purpose: its own output says what it could not do, and the checks
-#    below report what actually works now.
+# 4. Tools and shims. Run from inside the checkout, and with stdin on the terminal when there is one, else /dev/null —
+#    never on the script's own stdin, which under `curl | bash` IS the script. update.sh is non-fatal here on purpose: its
+#    own output says what it could not do, and the checks below report what actually works now.
 say "== running update.sh (a few minutes; it may open a browser to sign in to GitHub or Linear)"
-bash "$CLAUDE_DIR/update.sh" || say "update.sh exited $? — see its output above; the checks below show what works now"
+if ( : < /dev/tty ) 2>/dev/null; then tty_in=/dev/tty; else tty_in=/dev/null; fi
+(cd "$CLAUDE_DIR" && bash ./update.sh < "$tty_in") || say "update.sh exited $? — see its output above; the checks below show what works now"
 
 # 5. Proof. ~/bin is where update.sh puts the Windows shims and the shell that started this script may not have it yet.
 export PATH="$HOME/bin:$PATH"
@@ -119,7 +126,7 @@ else check "jq" 1 "not found on PATH"; fi
 if command -v python3 >/dev/null 2>&1; then check "python3" 0 "$(command -v python3)"; else check "python3" 1 "not found on PATH"; fi
 for suite in epic-graph fleet-forecast; do
   log="$CLAUDE_DIR/tmp/sync-main-$suite.log"
-  if bash "$CLAUDE_DIR/scripts/$suite.test.sh" >| "$log" 2>&1; then check "$suite suite" 0 "$(grep -v '^[[:space:]]*$' "$log" | tail -1)"
+  if bash "$CLAUDE_DIR/scripts/$suite.test.sh" < /dev/null >| "$log" 2>&1; then check "$suite suite" 0 "$(grep -v '^[[:space:]]*$' "$log" | tail -1)"
   else check "$suite suite" 1 "exit $? — see $log"; fi
 done
 

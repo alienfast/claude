@@ -114,6 +114,31 @@ ck "  missing dir exits 1" 1 "$(CLAUDE_DIR="$WORK/nope" bash "$SCRIPT" --no-upda
 mkdir -p "$WORK/notgit"
 ck "  non-repo exits 1" 1 "$(CLAUDE_DIR="$WORK/notgit" bash "$SCRIPT" --no-update >/dev/null 2>&1; echo $?)"
 
+echo "== 9. fed through stdin (curl | bash): a child that reads stdin must not swallow the script"
+# origin carries a stub update.sh that drains stdin — as the skills installer inside the real one does — and stub suites,
+# so the checks run without the real tooling. They reach the clone's tree when main lands on origin/main. Measured on a
+# contributor machine before the fix: the installer ate step 5 and the summary, and the run ended with no checks at all.
+fresh nine
+(cd "$SEED" && mkdir -p scripts && printf 'tmp/\n' > .gitignore \
+  && printf '#!/usr/bin/env bash\ncat > /dev/null\necho stub-update ran\n' > update.sh \
+  && printf '#!/usr/bin/env bash\necho "stub 35 passed / 0 failed"\n' > scripts/epic-graph.test.sh \
+  && printf '#!/usr/bin/env bash\necho "stub PASS=81 FAIL=0"\n' > scripts/fleet-forecast.test.sh \
+  && $G add -A && $G commit -q -m tools && $G push -q "$ORIGIN" main)
+(cd "$CLONE" && git checkout -q -b proposal/z && echo edit >> a)
+cat "$SCRIPT" | CLAUDE_DIR="$CLONE" bash > "$WORK/out" 2>&1; rc=$?
+ck "  exit 0" 0 "$rc"
+ck_has "  update.sh ran" "stub-update ran" "$WORK/out"
+ck_has "  the script survived its child reading stdin" "== summary" "$WORK/out"
+ck_has "  suites checked" "epic-graph suite — stub 35 passed / 0 failed" "$WORK/out"
+ck_has "  four checks" "checks:   4 ok, 0 failed" "$WORK/out"
+ck "  lands on main" main "$(branch)"
+
+echo "== 10. the documented bash -c form, end to end on the same fixture"
+CLAUDE_DIR="$CLONE" bash -c "$(cat "$SCRIPT")" sync-main > "$WORK/out" 2>&1; rc=$?
+ck "  exit 0" 0 "$rc"
+ck_has "  nothing to save on a clean main" "nothing to save (working tree was clean)" "$WORK/out"
+ck_has "  four checks" "checks:   4 ok, 0 failed" "$WORK/out"
+
 echo
 echo "$PASS passed / $FAIL failed"
 [ "$FAIL" -eq 0 ]
