@@ -26,8 +26,9 @@
 #               detached-HEAD posture (start-wt-setup.sh; fleet-sequence.sh does the same between
 #               issues) under which every /start wt forks from the branch and every /finish merge
 #               advances it ref-only. Both are recorded in the marker. After the fleet: open the
-#               epic's PR from `branch` onto `base`, then `git checkout <base>` and
-#               `git config --unset start.wt-source-branch`. A token with no matching prepared
+#               epic's PR from `branch` onto `base` (integration-pr.sh, then /pr-update from the
+#               branch), then `git checkout <base>` and `git config --unset start.wt-source-branch`.
+#               A token with no matching prepared
 #               branch launches on the checkout's own branch with a WARN — the human typed it.
 #   [duration]  Optional fleet time budget — "10h", "10 hours", "90m", "45 minutes".
 #               Adds deadline_epoch to tmp/fleet-deadline.json; each session's /auto
@@ -292,7 +293,7 @@ if [ -n "$scope_branch" ]; then
   git -C "$main_checkout" checkout -q --detach "$scope_branch" \
     || { echo "ERROR: could not detach the main checkout at '$scope_branch'" >&2; exit 1; }
   git -C "$main_checkout" config start.wt-source-branch "$scope_branch"
-  echo "Main checkout detached at $scope_branch; start.wt-source-branch=$scope_branch (after the fleet: git checkout ${scope_base:-<base>} && git config --unset start.wt-source-branch)"
+  echo "Main checkout detached at $scope_branch; start.wt-source-branch=$scope_branch (after the fleet: ~/.claude/scripts/integration-pr.sh $scope_branch ${scope_base:-<base>} <member IDs...>, then /pr-update from the branch, then git checkout ${scope_base:-<base>} && git config --unset start.wt-source-branch)"
 fi
 
 # The marker is rewritten on every launch: a stale deadline from a previous fleet would end every

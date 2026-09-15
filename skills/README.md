@@ -222,24 +222,26 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 
 ### fleet-sequence
 
-**Description**: Ship an ordered list of certified issues as a stack of PRs — strictly one at a time, each in its own background `claude --bg "/auto pr <ID>"` session, each forked from the previous issue's branch with its PR targeting that branch. The targeted, serialized sibling of `/fleet-launch` and the runner for `solo` work.
+**Description**: Ship an ordered list of certified issues onto one integration branch — strictly one at a time, each in its own background `claude --bg "/auto <ID>"` session, each forked from the branch's current tip and merged back by its own `/finish` — then open one PR from that branch onto the launch branch and run `/pr-update` on it. The targeted, serialized sibling of `/fleet-launch` and the runner for `solo` work; `merge` ships straight into the launch branch instead.
 
 **When Invoked**:
 
-- User says "run these in sequence", "ship BF-1 then BF-2 then BF-3", "stack these", or "solo batch"
+- User says "run these in sequence", "ship BF-1 then BF-2 then BF-3", "sequential auto", or "solo batch"
 - Several `solo`-labeled (or order-dependent, oversized) issues are ready and no fleet is running
 
 **Key Features**:
 
-- One detached runner walks the list: dispatch `/auto pr <ID>`, wait for the session registry to list the session as done, read its `tmp/auto-state-<id>.json` outcome, continue only on `shipped` with an open PR for the issue's worktree branch; anything else stops the sequence with the remaining issues untouched
-- Between issues it detaches the main checkout's HEAD at the previous issue's branch and sets `start.wt-source-branch`, so `/start wt` forks from there and `/finish pr` targets it; each PR is then linked into a GitHub stack through the stacks REST API (created at the second PR, extended per PR, an existing stack adopted), so merging the top PR merges the lot
+- One detached runner walks the list: create `seq/<first-id>` from the launch branch, dispatch `/auto <ID>`, wait for the session's `tmp/auto-state-<id>.json` outcome, require the branch's tip to have moved (a deferred merge is waited on, bounded), push the branch; anything but `shipped` stops the sequence with the remaining issues untouched
+- Before every dispatch it re-detaches the main checkout's HEAD at the branch's tip and sets `start.wt-source-branch`, so `/start wt` forks from the predecessor's merged code and `/finish merge` advances the branch ref-only
+- When the list completes, `scripts/integration-pr.sh` pushes and opens the PR with a roster body (bare IDs, no close keywords), then a last `/pr-update` child writes the real description; the base moving during the run costs one catch-up merge, reported when the PR opens
+- Why not a PR stack: GitHub stacks assume rebase-and-restack; this house merges only, so a moved base meant re-merging every level with its own CI run (September 2026)
 - The wait ends on the session's ledger outcome, not the registry — a session can sit busy for hours after shipping; a stale ledger from an earlier run is ignored by mtime
-- `status` / `stop` / `link` forms; re-running the same list resumes, skipping what already shipped; the checkout is restored to the launch branch on every exit; sessions are never killed
+- `status` / `stop` forms; re-running the same list resumes, skipping what already shipped (a list whose every issue shipped repeats only the PR step); the checkout is restored to the launch branch on every exit; sessions are never killed
 
 **Structure**:
 
-- All logic in `~/.claude/scripts/fleet-sequence.sh`; `SKILL.md` dispatches and narrates
-- Marker `tmp/fleet-sequence.json`, log `tmp/fleet-sequence.log`; each child session is named `fleet-sequence <ID>` in `claude agents`
+- All logic in `~/.claude/scripts/fleet-sequence.sh` (PR opening shared with the epic fleet in `scripts/integration-pr.sh`); `SKILL.md` dispatches and narrates
+- Marker `tmp/fleet-sequence.json`, log `tmp/fleet-sequence.log`; each child session is named `fleet-sequence <ID>` in `claude agents`, the closing one `fleet-sequence pr-update`
 
 ### fleet-forecast
 
