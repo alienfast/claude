@@ -497,7 +497,14 @@ while : ; do
     # [source, orig_tip], reusing the worktree's resolved tree, so source's
     # first-parent line stays on the mainline. Build against $src_old (not the
     # live ref) so the new commit's first parent matches the compare-and-swap.
-    new=$(git commit-tree "${worktree_branch}^{tree}" \
+    # commit-tree is plumbing and ignores commit.gpgSign (git commit and git
+    # merge both honour it), so an unsigned merge lands in an otherwise signed
+    # history — and a forge that requires verified commits refuses the tip.
+    sign=()
+    if [ "$(git config --bool commit.gpgsign 2>/dev/null || true)" = "true" ]; then
+      sign=(-S)
+    fi
+    new=$(git commit-tree "${sign[@]}" "${worktree_branch}^{tree}" \
             -p "$src_old" -p "$orig_tip" -F "$message_file") || {
       echo "ERROR: git commit-tree failed during merge reconstruction." >&2
       exit 1

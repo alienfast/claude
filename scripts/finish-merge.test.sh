@@ -231,6 +231,28 @@ ck_eq "third run lands: exit 0" 0 "$RC"
 ck_eq "source has the feature" f1 "$(blob feat.txt)"
 [ ! -d "$WT" ] && { pass=$((pass+1)); echo "  PASS  worktree removed"; } || { fail=$((fail+1)); echo "  FAIL  worktree still present"; }
 
+echo "=== case 8: commit.gpgsign reaches the reconstructed merge commit — commit-tree is plumbing and ignores the config on its own ==="
+mk_repo c8
+src_commit src.txt s1
+wt_commit feat.txt f1
+run_fm
+ck_eq "catch-up merge: exit 5" 5 "$RC"
+# Configured only now, after the catch-up merge: the fixture's own commits and the in-worktree merge would
+# otherwise fail on the bogus signer before the divergent re-run — the one path this case is about.
+git -C "$R" config commit.gpgsign true
+git -C "$R" config gpg.format openpgp
+git -C "$R" config gpg.program /nonexistent-gpg
+run_fm
+ck_eq "signing on but broken: the reconstruction fails instead of landing unsigned" 1 "$RC"
+ck "reports the commit-tree failure" "commit-tree failed" "$OUT"
+ck_eq "source untouched" "" "$(blob feat.txt)"
+git -C "$R" config commit.gpgsign false
+run_fm
+ck_eq "signing off: exit 0" 0 "$RC"
+ck_eq "source has the feature" f1 "$(blob feat.txt)"
+ck_eq "merge commit rebuilt with two parents" 2 "$(git -C "$R" cat-file -p source | grep -c '^parent ')"
+ck_eq "and unsigned" 0 "$(git -C "$R" cat-file -p source | grep -c '^gpgsig')"
+
 echo ""
 echo "finish-merge.test.sh: $pass passed, $fail failed"
 [ "$fail" = 0 ]
