@@ -176,6 +176,26 @@ V_SEVERITY = re.compile(r"\b(CRIT(?:ICAL)?|HIGH|MED(?:IUM)?)\b")
 V_ORIGIN = re.compile(r"\b(?:CRIT(?:ICAL)?|HIGH|MED(?:IUM)?|NICE-TO-HAVE)/(plan|impl|spec|test|latent)\b")
 V_ISSUE_ID = re.compile(r"\b[A-Z][A-Z0-9]*-\d+\b")
 SEV_SHORT = {"CRITICAL": "CRIT", "MEDIUM": "MED"}
+# A verdict author compresses a run of same-tag findings as `MED/impl: 9` or `HIGH/test ×6`, and the
+# headline `Findings resolved: N` counts every one, so a tag carries its multiplicity here too — read
+# as one each, every churn column in the trend ledger deflates whenever an author compresses
+# (2026-09-16 BFP fleet: 131 tags for 183 findings; HIGH 28 → 33, MED 98 → 119). The colon form
+# needs a separator or line end after the count so `MED/impl: 2 callers miss the guard` stays one.
+V_ORIGIN_SUFFIX = re.compile(r"/(?:plan|impl|spec|test|latent)\b")
+V_MULTIPLICITY = re.compile(r"\s*(?:×\s*(\d+)\b|x(\d+)\b|:\s*(\d+)(?=\s*(?:[—–\-;,)]|$)))", re.M)
+
+
+def tag_counts(pattern, blob, key):
+    """Counter of key(match) over pattern's matches in blob, each weighted by its multiplicity suffix."""
+    counts = Counter()
+    for m in pattern.finditer(blob):
+        end = m.end()
+        suffix = V_ORIGIN_SUFFIX.match(blob, end)
+        if suffix:
+            end = suffix.end()
+        mult = V_MULTIPLICITY.match(blob, end)
+        counts[key(m)] += int(next(g for g in mult.groups() if g)) if mult else 1
+    return counts
 
 
 def ts(value):
@@ -273,7 +293,11 @@ def subagent_meta(path):
     agentType and description — exact attribution, vs. guessing the type from prompt text."""
     try:
         meta = json.loads(path.with_name(path.stem + ".meta.json").read_text(encoding="utf-8"))
-        return meta.get("agentType") or "unknown", meta.get("description") or ""
+        # A dispatch given a `name` records that name as agentType and the real type under
+        # customAgentType; read as the name it lands in a one-off token row and, for a developer,
+        # drops the lane join to "main-loop" (2026-09-16 BFP fleet: six named developer dispatches).
+        return (meta.get("customAgentType") or meta.get("agentType") or "unknown",
+                meta.get("description") or "")
     except (OSError, json.JSONDecodeError):
         return "unknown", ""
 
@@ -921,7 +945,7 @@ def parse_verdicts(checkout, cutoff, launch_epoch=None, until=None):
         resolved = int(m.group(1)) if m and m.group(1).isdigit() else 0
         block = V_RESOLVED_BLOCK.search(text)
         blob = block.group(0) if block else ""
-        sev = Counter(SEV_SHORT.get(s, s) for s in V_SEVERITY.findall(blob))
+        sev = tag_counts(V_SEVERITY, blob, lambda m: SEV_SHORT.get(m.group(1), m.group(1)))
         m = V_FILED_LINE.search(text)
         # Parenthetical annotations name OTHER issues — `(sub-issues of TT-9)`, `(collision edge to
         # TT-8 not wired)` — so ids are extracted only from the unparenthesized remainder.
@@ -939,7 +963,7 @@ def parse_verdicts(checkout, cutoff, launch_epoch=None, until=None):
             "cycles": int(V_CYCLES.search(text).group(1)) if V_CYCLES.search(text) else None,
             "resolved": resolved,
             "sev": sev,
-            "origin": Counter(V_ORIGIN.findall(blob)),
+            "origin": tag_counts(V_ORIGIN, blob, lambda m: m.group(1)),
             "filed": filed,
             "missing_fields": missing,
             "edges_recorded": bool(V_EDGES_LINE.search(text)),
@@ -1304,11 +1328,14 @@ def main():
         v_cutoff = min(firsts) if firsts else None
         v_until = max(lasts) if lasts else None
     verdicts = parse_verdicts(checkout, v_cutoff, launch_epoch, v_until)
-    filed_total = sum(len(v["filed"]) for v in verdicts)
+    # A verdict that routes a finding onto an existing issue records it as `BF-XX (existing — evidence
+    # appended)`, the dedup recipe's own bookkeeping — one filing cited by two reviews is one filing,
+    # so both counts run over unique ids (2026-09-16: 12 citations for 9 issues created).
+    filed_total = len({i for v in verdicts for i in v["filed"]})
     # The ratio pairs this fleet's filings with this fleet's ships: verdicts for issues no session in
     # the window shipped (run `-` in the table) stay out of the numerator, or a window that catches an
     # earlier run's reviews inflates the rate.
-    filed_matched = sum(len(v["filed"]) for v in verdicts if v["issue"] in all_shipped)
+    filed_matched = len({i for v in verdicts if v["issue"] in all_shipped for i in v["filed"]})
     filed_per_shipped = round(filed_matched / len(all_shipped), 2) if all_shipped else None
     # Verdict existence is checked against every file on disk, not just the window — the filename
     # alone names the issue, and a review persisted just before the cutoff is not a missing verdict.
@@ -1410,7 +1437,6 @@ def main():
                           "them, or --allow-partial to persist this partial measurement anyway.",
                           file=sys.stderr)
 
-    history = record_history(checkout, headline, record=not args.all and not partial_scope)
     # A rate averaged over EVERY session in the window is the wrong number to size a fleet with: it
     # pools dense fleet sessions with idle and interactive ones and lands roughly half the truth
     # (measured 55.9k vs 84.9k on the same BF data). Scope it to the peak window instead — that is
@@ -1430,6 +1456,12 @@ def main():
             and s["agg"]["first"].timestamp() < w1 and s["agg"]["last"].timestamp() > w0)
         if peak_5h_concurrency:
             peak_5h_rate = round(peak_5h / (peak_5h_concurrency * 5))
+    # /auto-prep sizes from the burst peak, and a row per fleet is what lets it take the max over
+    # recent unthrottled runs instead of inheriting the latest retro's — which on 2026-09-15 was a
+    # starved fleet (3 shipped in 36h) whose 553k peak sized the next run 3.5x under its realized burn.
+    headline["peak_5h_output_tokens"] = peak_5h
+    headline["output_tokens_per_session_hour_at_peak"] = peak_5h_rate
+    history = record_history(checkout, headline, record=not args.all and not partial_scope)
     burn_rate_all = round(sum(fleet_tokens.values()) / session_hours) if session_hours else None
     stall_groups = quota_stalls(sessions)
 

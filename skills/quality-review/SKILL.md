@@ -622,6 +622,10 @@ body_file=$(mktemp -u tmp/deferred-XXXXXX)   # -u = name only; Write creates it.
 # 3. Label arg (comma-separated): `specified` for every item (all members are
 #    severity-carrying; their spec-shaped bodies self-certify, making them /auto-eligible
 #    immediately) — except the needs-decision exception above, which files without it.
+#    BUT it is the LAST write, never part of the create: the create call below carries
+#    the class labels only, and `specified` is attached once every edge the item owes is
+#    wired ("Certify last", below the edge-wiring steps) — the label is what makes the
+#    item pickable, and an edge wired after it exists is a race a sibling session wins.
 #    ALSO classify severity-carrying items by failure mode and
 #    append the class label(s) /next's ranking reads (security > bug > everything else).
 #    The two are independent — apply each that fits, either, or, or both:
@@ -629,7 +633,7 @@ body_file=$(mktemp -u tmp/deferred-XXXXXX)   # -u = name only; Write creates it.
 #        or a cross-boundary write (e.g. a preview reaching a production vendor) —
 #        including latent ones a code change would make reachable
 #      - `bug` — a behavioral defect of shipped code (wrong output, race, silent failure);
-#        a live security defect is both (e.g. "specified,security,bug")
+#        a live security defect is both (e.g. "security,bug")
 #      - neither — coverage gaps, hardening, docs: real work, but it must not jump the
 #        queue disguised as a defect
 #    ALSO append `simple` (standards/issue-spec.md § The `simple` label) when the item is
@@ -651,7 +655,7 @@ body_file=$(mktemp -u tmp/deferred-XXXXXX)   # -u = name only; Write creates it.
 #    the sub-step 6 render (the prompt display), not the filed title: the priority field
 #    now carries the grade, and a tag baked into the title duplicates it and goes stale
 #    if the grade is later revised.
-new_id=$(~/.claude/scripts/linear-create-child.sh [--allow-planned on the Planned path] <ISSUE-ID> <team> <Backlog|Planned per the state rule above> "<short title>" "$body_file" <specified|-> <1|2|3|->)
+new_id=$(~/.claude/scripts/linear-create-child.sh [--allow-planned on the Planned path] <ISSUE-ID> <team> <Backlog|Planned per the state rule above> "<short title>" "$body_file" <class labels per rule 3, or -; never specified here — "Certify last"> <1|2|3|->)
 create_status=$?   # captured immediately, before any other command — the discriminator the
                    # filing-failure rules below branch on: 0 = filed and parent-linked; 2 = filed
                    # and linked, label not attached (keep the issue); anything else = create
@@ -670,7 +674,7 @@ After each creation, re-verify the parent link independently (`linear-cli issues
 
 **A criterion citing this run's measurement must ship the apparatus, not just the number.** When a filed body's Problem or Success Criteria cite a measurement this run produced — a repro rate ("8/8 under the barrier"), a baseline count, a remedy matrix — the runnable apparatus behind it (the repro script, schema setup, concurrent driver, invocation) must outlive the session: paste it verbatim into the filed body or a comment on the new issue, or commit it with the issue's changes when the repo has a home for such scripts. A prose summary is not a baseline — the next session re-pays the entire empirical setup before it can even confirm the problem still exists, which routinely costs more than the deferred work itself (BF-1175's criteria name BF-673's 8/8 repro as their baseline; the harness lived in that session's scratch and died with it).
 
-A `create_status` of **2** means the issue was created and parent-linked but the requested `specified` label could not attach — NOT a failure: keep the issue, annotate it in the verdict block as `PL-XX (specified label not attached — not /auto-eligible until labeled)` so a human can fix it (`~/.claude/scripts/linear-add-label.sh PL-XX specified`), and continue filing.
+A `create_status` of **2** means the issue was created and parent-linked but a requested class label could not attach — NOT a failure: keep the issue, annotate it in the verdict block as `PL-XX (<label> label not attached — add manually: ~/.claude/scripts/linear-add-label.sh PL-XX <label>)`, and continue filing. `specified` is never part of the create ("Certify last", below), so it is not what exit 2 reports here.
 
 **A parent at Linear's sub-issue nesting cap is not a filing failure — do not stop, do not downgrade.** A `create_status` of **3** (or **4**) means the helper detected the cap — the parent already has 10 ancestors, so Linear deterministically rejects every new sub-issue, and this shape grows by construction: a review of issue N files sub-issues of N, so each generation sits one level deeper — and wired the linkage as a `related` peer edge itself. The issue exists, is labelled (on 4 the label also failed — apply the exit-2 annotation from the previous paragraph too), and is fully usable: keep filing the remaining items, skip the independent parent re-query for these (it will correctly print no parent, and the `(sub-issues of <PARENT>)` suffix does not apply to them), and annotate each in the verdict block as `BF-XX (related, not sub-issue — parent at Linear's nesting cap)`.
 
@@ -698,6 +702,16 @@ when Step 1 resolved no issue (`-` parent, a top-level issue) or when the helper
 rather than a child. On a passing verdict the edge is self-clearing: `/finish` moves the parent to `Ready For Release`, which `next-candidates.sh` counts as terminal
 (case-insensitively), and the child unblocks minutes later. Best-effort, exactly like the batch edges above: a failed `relations add` annotates the affected issue
 in the verdict block's `Deferred filed as issues` entry and never stops filing, re-opens the loop, or changes the verdict.
+
+**Certify last.** `specified` is what makes an item pickable — `next-candidates.sh --label specified` is every fleet session's ranking, and under `/auto`'s
+hot-handoff rule a session's own filing is its very next pick — so it goes on AFTER every edge above is wired: the open-hit edge from the search-before-filing
+step, the parent→child `blocks`, and for a batch the intra-batch edges, which wire only after the last item files. Create with the class labels alone (`-` when
+there are none), wire, then `~/.claude/scripts/linear-add-label.sh <new-ID> specified` per item. The state — Backlog, or Planned on the Critical/High path — is
+still set at create: an uncertified issue in either column is invisible to the fleet, so the column is not the race, the label is. Measured 2026-09-16: `/next`
+ranked a Planned High filing first three minutes after its create, a sibling built its worktree, and only then read the `blocks` edge its filer had wired in the
+meantime — the sibling backed out (four minutes, one `SKIPPED-BLOCKED`), which is the cheap outcome; a session that had claimed it first would have implemented
+against a premise its parent's unmerged fix changes. `specified` is workspace-level and always exists, so the helper's exit 2 here is "could not confirm", not
+"failed" (linear skill gotcha #17): annotate the verdict entry and do not retry.
 
 **Every fileable item rendered at this prompt that the chosen reply did not select for filing** goes to `Deferred dropped` — explicit declines, numbers simply omitted from a numeric list, and the whole rendered fileable set under `none` alike. These dropped items join **any `note-only` items — from sub-step 2 or classified by the sub-step 5 re-reviews** — record them all as one list for the verdict block. (Two classes route to `Open items` instead: items that never reached this prompt because Step 6 terminated early in sub-step 5 — see sub-step 5 — and chosen items a create failure left unfiled — see the filing-failure rules above.)
 

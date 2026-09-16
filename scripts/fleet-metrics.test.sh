@@ -549,7 +549,7 @@ SUB9="$WORK/projects/$M9/gg999999-0000/subagents"
 mkdir -p "$SUB9"
 
 cat > "$CK9/tmp/auto-state-gg999999.json" <<'EOF'
-{"status": "drained", "reason": "deadline", "shipped": ["TT-20", "TT-21"], "canceled": [], "skipped": [], "failed": []}
+{"status": "drained", "reason": "deadline", "shipped": ["TT-20", "TT-21", "TT-23"], "canceled": [], "skipped": [], "failed": []}
 EOF
 cat > "$CK9/tmp/quality-review-verdict-tt-20.md" <<'EOF'
 Verdict: passed-after-fixes
@@ -561,13 +561,25 @@ cat > "$CK9/tmp/quality-review-verdict-tt-21.md" <<'EOF'
 Verdict: passed
 Cycles: 1
 Findings resolved: 1 (MED/impl: off-by-one in pager)
-Deferred filed as issues: none
+Deferred filed as issues: TT-60 (sub-issues of TT-21)
+EOF
+# Compressed tags — `HIGH/test ×3`, `MED/impl: 2 —` — carry their multiplicity (the 2026-09-16 BFP
+# fleet wrote 131 tags for 183 findings), while a description that merely STARTS with a number
+# (`NICE-TO-HAVE/plan: 3 callers …`) stays one. TT-23 also re-cites TT-21's filing as the dedup
+# recipe's `(existing — evidence appended)` record: one filing, counted once across both verdicts.
+cat > "$CK9/tmp/quality-review-verdict-tt-23.md" <<'EOF'
+Verdict: passed-after-fixes
+Cycles: 2 (initial + 1 re-review)
+Findings resolved: 6 (HIGH/test ×3: cursor decode, empty page, mark regression; MED/impl: 2 — clamp to now, envelope keys optional; NICE-TO-HAVE/plan: 3 callers renamed for the new seam)
+Deferred filed as issues: TT-60 (existing — evidence appended)
+Collision edges: none owed
 EOF
 
 cat > "$WORK/projects/$M9/gg999999-0000.jsonl" <<'EOF'
 {"type":"user","timestamp":"2026-08-04T10:00:00Z","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
 {"type":"assistant","timestamp":"2026-08-04T10:30:00Z","message":{"role":"assistant","id":"msg_gga","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":80},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-20 done"}]}}
 {"type":"assistant","timestamp":"2026-08-04T11:00:00Z","message":{"role":"assistant","id":"msg_ggb","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":70},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-21 done"}]}}
+{"type":"assistant","timestamp":"2026-08-04T11:30:00Z","message":{"role":"assistant","id":"msg_ggc","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":60},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-23 done"}]}}
 EOF
 
 # TT-20's implementation (opus, before its review start), the review that sets the lane boundary,
@@ -589,6 +601,15 @@ cat > "$SUB9/agent-f1.jsonl" <<'EOF'
 EOF
 cat > "$SUB9/agent-f1.meta.json" <<'EOF'
 {"agentType":"developer","description":"Fix TT-20 review findings","toolUseId":"tu_f1","spawnDepth":1}
+EOF
+# NAMED developer dispatch — the meta shape a live `Agent(name: …, subagent_type: developer)` writes
+# (snapshotted from the 2026-09-16 BFP fleet): agentType is the NAME, customAgentType the real type.
+# Tokens must land under developer/, the lane join must read it as TT-23's sonnet implementation.
+cat > "$SUB9/agent-an1.jsonl" <<'EOF'
+{"type":"assistant","timestamp":"2026-08-04T10:06:00Z","agentId":"an1","isSidechain":true,"message":{"role":"assistant","id":"msg_an1","model":"claude-sonnet-5","usage":{"input_tokens":5,"output_tokens":70},"content":[{"type":"text","text":"built the exporter"}]}}
+EOF
+cat > "$SUB9/agent-an1.meta.json" <<'EOF'
+{"agentType":"tt23-dev-a","description":"Implement TT-23 exporter","name":"tt23-dev-a","spawnDepth":0,"requestShape":"background","requestNonInteractive":true,"model":"sonnet","taskKind":"in_process_teammate","teamName":"session-gg999999","color":"blue","customAgentType":"developer","permissionMode":"auto"}
 EOF
 # Issue-less developer dispatch (no id in description, no user row): must land in `unattributed`,
 # never guessed into a lane.
@@ -613,18 +634,26 @@ MD9="$WORK/out9.md"
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK9" --all --json > "$J9" 2>/dev/null
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK9" --all > "$MD9" 2>&1
 q9() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J9"; }
-ck "impl lane by model"   "{'claude-opus-5': 100, 'claude-sonnet-5': 40}" "$(q9 "d['developer_lanes']['impl']")"
+ck "impl lane by model"   "{'claude-sonnet-5': 110, 'claude-opus-5': 100}" "$(q9 "d['developer_lanes']['impl']")"
 ck "fix lane by model"    "{'claude-sonnet-5': 200}" "$(q9 "d['developer_lanes']['fix']")"
 ck "unattributed lane"    "{'claude-opus-5': 30}"    "$(q9 "d['developer_lanes']['unattributed']")"
 ck "tt20 implemented_by"  "['claude-opus-5']" "$(q9 "[v for v in d['review_churn'] if v['issue']=='TT-20'][0]['implemented_by']")"
 ck "tt21 main-loop"       "['main-loop']"     "$(q9 "[v for v in d['review_churn'] if v['issue']=='TT-21'][0]['implemented_by']")"
+ck "tt23 named dispatch by custom type" "['claude-sonnet-5']" "$(q9 "[v for v in d['review_churn'] if v['issue']=='TT-23'][0]['implemented_by']")"
+ck "tier join sonnet"     "{'n': 1, 'mean': 2.0, 'median': 2, 'values': [2]}" "$(q9 "d['impl_origin_by_tier']['sonnet']")"
+ck "named dispatch tokens under developer" "310" "$(q9 "d['output_tokens']['developer/claude-sonnet-5']")"
+ck "no one-off row for the name" "False" "$(q9 "any(k.startswith('tt23-dev-a') for k in d['output_tokens'])")"
+ck "tt23 severity expanded" "{'HIGH': 3, 'MED': 2}" "$(q9 "[v for v in d['review_churn'] if v['issue']=='TT-23'][0]['severity']")"
+ck "tt23 origins expanded"  "{'test': 3, 'impl': 2, 'plan': 1}" "$(q9 "[v for v in d['review_churn'] if v['issue']=='TT-23'][0]['origin']")"
+ck "filed dedupes re-citation" "0.33" "$(q9 "d['filed_per_shipped']")"
 ck "tier join opus"       "{'n': 1, 'mean': 2.0, 'median': 2, 'values': [2]}" "$(q9 "d['impl_origin_by_tier']['opus']")"
 ck "tier join main-loop"  "{'n': 1, 'mean': 1.0, 'median': 1, 'values': [1]}" "$(q9 "d['impl_origin_by_tier']['main-loop']")"
 ck_has "churn impl-by header" "| filed | impl by |" "$MD9"
 ck_has "tt20 row impl by"     "| TT-20 | \`gg999999\` | passed-after-fixes | 2 | 3 | 0/1/2 | impl:2 test:1 | 0 | opus |" "$MD9"
-ck_has "tt21 row main-loop"   "| TT-21 | \`gg999999\` | passed | 1 | 1 | 0/0/1 | impl:1 | 0 | main-loop |" "$MD9"
+ck_has "tt21 row main-loop"   "| TT-21 | \`gg999999\` | passed | 1 | 1 | 0/0/1 | impl:1 | 1 | main-loop |" "$MD9"
+ck_has "tt23 row expanded"    "| TT-23 | \`gg999999\` | passed-after-fixes | 2 | 6 | 0/3/2 | test:3 impl:2 plan:1 | 1 | sonnet |" "$MD9"
 ck_has "join line groups"     "opus n=1 · mean 2.0 · median 2.0" "$MD9"
-ck_has "lanes line split"     "implementation 140 (claude-opus-5 100, claude-sonnet-5 40) · post-review fix 200 (claude-sonnet-5 200) · unattributed 30" "$MD9"
+ck_has "lanes line split"     "implementation 210 (claude-sonnet-5 110, claude-opus-5 100) · post-review fix 200 (claude-sonnet-5 200) · unattributed 30" "$MD9"
 
 # First fixture's new fields: agent-t1 ("fix batch", no issue id, no prompt row) stays unattributed;
 # TT-1 shipped by a session WITH dispatch records but no impl dispatch -> main-loop; TT-3's session

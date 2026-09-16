@@ -150,7 +150,15 @@ Count **lanes** from the Step 4 ranking, which already excludes both label gates
 
 A materially different workload voids the bracket — a different backlog's burn rate, a lower-tier model mix — and the signal to re-derive it is a `5-hour` `limit_kind` cutoff at n≤3 in a retro's `quota_stall_groups`. Until one appears, recommend 3 without discussion.
 
-**Record `rate` and `peak_5h_observed` in the persisted sizing block** from the latest retro's `windows` output (`~/.claude/scripts/fleet-metrics.py --json | jq .windows`): use `output_tokens_per_session_hour_at_peak`, never `output_tokens_per_session_hour_all_sessions` — the all-sessions mean pools idle and interactive sessions with fleet ones and lands roughly half the truth (measured 55.9k vs 84.9k on the same BF data). These feed the report's margin display and `/fleet-retro`'s projection audit, not a sizing decision.
+**Record `rate` and `peak_5h_observed` in the persisted sizing block** as the MAX over the recent fleets in `tmp/fleet-metrics-history.jsonl`, never the latest retro alone:
+
+```bash
+jq -s 'map(select(.peak_5h_output_tokens)) | sort_by(.fleet_start) | .[-6:]
+       | max_by(.peak_5h_output_tokens)
+       | {rate: .output_tokens_per_session_hour_at_peak, peak5h: .peak_5h_output_tokens}' tmp/fleet-metrics-history.jsonl
+```
+
+Rows written since 2026-09-16 carry both fields; a history with none yet (`null` for both) falls back to the latest retro's `windows` block (`~/.claude/scripts/fleet-metrics.py --json | jq .windows`). The latest fleet is whatever it happened to be: on 2026-09-15 it was a starved run — 3 shipped in 36 session-hours, holding on the Planned gate — whose 552,991 peak became the next prep's `rate` of 36,866, and the fleet that ran on it burned 128,306 per session-hour, 3.5x the projection, while the previous healthy run had measured 98,127. A peak is a floor on the account's capacity only when the fleet was actually working, and the max over recent rows is what keeps a starved or throttled run from resetting it. Use `output_tokens_per_session_hour_at_peak`, never `output_tokens_per_session_hour_all_sessions` — the all-sessions mean pools idle and interactive sessions with fleet ones and lands roughly half the truth (measured 55.9k vs 84.9k on the same BF data). These feed the report's margin display and `/fleet-retro`'s projection audit, not a sizing decision.
 
 State the binding term in the report — lanes or the cap. "7 lanes available, capped to 3 by the 5h burst bracket" says the backlog is not the constraint; a bare lane-bound "2 sessions" names the real lever (certify more work, or say when chains release it).
 
