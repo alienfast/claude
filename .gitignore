@@ -45,3 +45,4 @@ daemon-auth-*
 .credentials.json
 /gh-pr-status-cache.json
 /scripts/__pycache__
+/skills/synced
