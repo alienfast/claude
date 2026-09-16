@@ -10,7 +10,7 @@ Performance issues are excluded in the **query**, not dropped from the merged JS
 
 ```bash
 sentry issue list [<org/project>] \
-  --query "is:unresolved environment:production !issue.type:[performance_n_plus_one_db_queries,performance_slow_db_query]" \
+  --query "is:unresolved environment:production !issue.type:[performance_n_plus_one_db_queries,performance_slow_db_query,performance_n_plus_one_api_calls]" \
   --sort user --period "$WINDOW" --limit 50 --json \
   --fields shortId,title,userCount,count,level,priority,firstSeen,lastSeen,culprit,isUnhandled,permalink
 ```
@@ -27,17 +27,17 @@ jq -s '[.[].data[]] | unique_by(.shortId) | sort_by(-(.userCount), -(.count|tonu
 
 ## Performance queue
 
-Sentry's performance detectors (N+1 DB queries, slow DB query) are their own queue, pulled with the positive form of the alternation that [Ranking](#ranking) negates:
+Sentry's performance detectors (N+1 DB queries, slow DB query, N+1 API calls) are their own queue, pulled with the positive form of the alternation that [Ranking](#ranking) negates:
 
 ```bash
 mkdir -p tmp
 sentry issue list [<org/project>] \
-  --query "is:unresolved environment:production issue.type:[performance_n_plus_one_db_queries,performance_slow_db_query]" \
+  --query "is:unresolved environment:production issue.type:[performance_n_plus_one_db_queries,performance_slow_db_query,performance_n_plus_one_api_calls]" \
   --sort date --period "$WINDOW" --limit 50 --json \
   --fields shortId,title,count,level,priority,firstSeen,lastSeen,culprit,permalink > tmp/perf.json
 ```
 
-**The subtype list is exhaustive and has to be maintained by hand — there is no wildcard.** `issue.type:performance_*` is rejected outright (`Error parsing search query: Invalid type value of 'performance_*'`), and `issue.category:performance` matches nothing: the `issueCategory` these issues carry is `db_query`. The `key:[a,b]` alternation is the extensible form, but only across the subtypes actually named in it — **when a new `performance_*` subtype appears it must be added here *and* to the negated copy in [Ranking](#ranking), or it silently re-lands in the ERROR queue.** A subtype absent from `!issue.type:[a,b]` still satisfies that negation, so it re-consumes a server-side top-N slot there — exactly the defect this queue split exists to fix. Measured 2026-09-12: negating only `performance_slow_db_query` returned every live N+1 issue in the error pull.
+**The subtype list is exhaustive and has to be maintained by hand — there is no wildcard.** `issue.type:performance_*` is rejected outright (`Error parsing search query: Invalid type value of 'performance_*'`), and `issue.category:performance` matches nothing: the `issueCategory` these issues carry is `db_query` (`http_client` for N+1 API calls). The `key:[a,b]` alternation is the extensible form, but only across the subtypes actually named in it — **when a new `performance_*` subtype appears it must be added here *and* to the negated copy in [Ranking](#ranking), or it silently re-lands in the ERROR queue.** A subtype absent from `!issue.type:[a,b]` still satisfies that negation, so it re-consumes a server-side top-N slot there — exactly the defect this queue split exists to fix. Measured 2026-09-12: negating only `performance_slow_db_query` returned every live N+1 issue in the error pull. Measured again 2026-09-16: `performance_n_plus_one_api_calls` (issueCategory `http_client`, title "N+1 API Call") was absent from both lists and surfaced in the error queue at info level; it names repeated `http.client` spans to one host, so it ranks on the same `offenderSpanIds` count as the DB subtypes.
 
 Ranking is on the offending-span count in `event.occurrence.evidenceData`, reachable in **one** extra call per candidate — not two. `issue list --json` never returns `occurrence` (it is not in `--fields`' allow-list, and unknown fields are dropped silently) and `issue events --full --json` returns `"occurrence": null`, but those two dead ends don't extend to `issue view`: it always pulls the latest event as a nested `event` object, and `evidenceData` lives inside `event.occurrence` — one field-selected call away, keyed on the short-id. `--sort` offers no server-side substitute (`recommended|date|new|freq|user` only), so sort client-side after the one-call hop:
 
@@ -69,7 +69,7 @@ The [Dispositions](#dispositions) below still apply; four things work differentl
 
 **The repeating-span count (`numberRepeatingSpans`, above) is the severity signal; event count is not.** The two are near-orthogonal — one measured pair was 2 events / 54 repeating spans against 14 events / 33 — so ranking on events inverts the true per-request cost. And under a traces sample rate below 1, an event is one *sampled request* whose span tree tripped the detector's threshold, never one slow query: event count measures how often the detector sampled that route, not how expensive the route is. That is the whole justification for ranking this queue on a different key — which is also why the pull above sorts `--sort date` rather than `--sort freq`: a `freq`-sorted pull would let the server-side top-N truncation at `--limit 50` apply the very event-count bias this paragraph argues against, before the client-side span-count sort ever runs, silently dropping a high-span/low-event issue the moment the queue passes 50 candidates.
 
-**`merge` is unavailable — same-cause fingerprints are joined in Linear only.** `sentry issue merge --help` states it: "Only error-type issues can be merged (the API rejects performance/info issues)." The API's reported response body is `400 ["Only error issues can be merged."]`; it has not been verified against a live project, because `merge` is this skill's one irreversible mutation and carries no `--dry-run`. So a **Duplicate** disposition on a performance issue means one owning Linear issue naming every Sentry short-id in its description, with each of them resolved individually at fix time — never a Sentry-side merge.
+**`merge` is unavailable — same-cause fingerprints are joined in Linear only.** `sentry issue merge --help` states it: "Only error-type issues can be merged (the API rejects performance/info issues)." The API's reported response body is `400 ["Only error issues can be merged."]`; it has not been verified against a live project, because `merge` is this skill's one irreversible mutation and carries no `--dry-run`. So a **Duplicate** disposition on a performance issue means one owning Linear issue naming every Sentry short-id in its description, with each of them resolved individually at fix time — never a Sentry-side merge. **The comments endpoint is closed to them too**: `sentry api "issues/<numeric-id>/comments/"` — GET and `-X POST` alike — answers `{"detail": "You do not have permission to perform this action."}` on every performance issue (measured 2026-09-16 on four N+1 issues, where the same note POSTed to three error issues in the same minute landed), and `sentry api` exits **0** with that body, so an unread response reads as success. The back-link for a performance issue is therefore Linear-only; check `.id` on the note response before reporting it posted.
 
 **Going quiet is not evidence a fix worked.** A performance fingerprint *is* the normalized SQL, so a table or column rename kills the fingerprint outright: Sentry does not resolve it, it simply stops adding events to that issue and opens a new one carrying the new spelling — which arrives looking like a brand-new N+1. Verify a performance fix at the call site rather than on the event stream, and after a release that renamed schema, before filing a fresh-looking N+1, check whether it is the twin of one that just went quiet.
 

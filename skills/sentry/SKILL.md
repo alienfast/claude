@@ -58,7 +58,7 @@ Two pulls, merged (recipes and the exact commands: [triage.md](./references/tria
 
 ```bash
 sentry issue list [<org/project>] \
-  --query "is:unresolved environment:production !issue.type:[performance_n_plus_one_db_queries,performance_slow_db_query]" \
+  --query "is:unresolved environment:production !issue.type:[performance_n_plus_one_db_queries,performance_slow_db_query,performance_n_plus_one_api_calls]" \
   --sort user --period <window> --limit 50 --json --fields shortId,title,userCount,count,level,priority,firstSeen,lastSeen,culprit,isUnhandled
 # and the same with --sort freq
 ```
@@ -102,7 +102,7 @@ Execute the dispositions straight through: the Sentry mutations, then the Linear
 sentry api "issues/<numeric-id>/comments/" -X POST -d '{"text":"Linear: <TEAM>-XXXX — <linear url>"}'
 ```
 
-(Numeric ID from `sentry issue view <short-id> --json --fields id`.)
+(Numeric ID from `sentry issue view <short-id> --json --fields id`.) **A performance issue refuses this endpoint** (403 as a JSON body at exit 0 — see [triage.md § Dispositioning a performance issue](./references/triage.md#dispositioning-a-performance-issue)), so its back-link lives in Linear alone; on an error issue, read `.id` from the response to confirm the note landed.
 
 `-X POST` is required — `sentry api` defaults to GET and `-d` does not imply POST the way `curl -d` does. Without it the call GETs the comment list, folds the payload into the query string (`?text=Linear%3A+…`), creates nothing, and **exits 0** — so the note silently never lands. Confirm with `sentry api … --dry-run`, which prints the resolved method and body without sending.
 
