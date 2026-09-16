@@ -18,7 +18,7 @@ description: |
 
 Work the Sentry unresolved queue to zero, most-impactful first, with Linear as the system of record for anything needing a fix. Linear drives the workflow (`/auto`, `/start`, `/finish` pick up from there); Sentry state (archive/resolve/merge) tracks what needs no code. The skill is the judgment filter between Sentry's alert stream and the kanban the business watches — alert-rule auto-filing is deliberately not used.
 
-**Safety stance:** Sentry reads and **mutations** (resolve, archive, merge, posting notes) both run as ordinary skill work — nothing is held for approval, and the disposition table is a report, not a request. What makes that safe is reversibility, measured against this CLI: `resolve` has a first-class inverse (`unresolve`, alias `reopen`), `archive` (alias `ignore`) is reversed the same way, an `--until <cond>` archive un-archives itself on escalation, and notes are additive. `merge` is the one-way door — `sentry issue --help` lists no `unmerge` — so choose the canonical issue deliberately and name the children in the report; it is a caution, not a gate. Linear filing is normal skill work.
+**Safety stance:** Sentry reads and **mutations** (resolve, archive, merge, linking a Linear issue) both run as ordinary skill work — nothing is held for approval, and the disposition table is a report, not a request. What makes that safe is reversibility, measured against this CLI: `resolve` has a first-class inverse (`unresolve`, alias `reopen`), `archive` (alias `ignore`) is reversed the same way, an `--until <cond>` archive un-archives itself on escalation, and an external-issue link is idempotent (a repeat returns the existing record) and has a documented `DELETE`. `merge` is the one-way door — `sentry issue --help` lists no `unmerge` — so choose the canonical issue deliberately and name the children in the report; it is a caution, not a gate. Linear filing is normal skill work.
 
 The harness gates what this prose cannot: in auto mode every `sentry issue resolve | archive | merge` and `sentry api` call is classified as an external write and refused unless a permission rule allows the command, and in default mode each one prompts. The mutation batch therefore needs `Bash(sentry issue resolve:*)`, `Bash(sentry issue archive:*)`, `Bash(sentry issue merge:*)` and `Bash(sentry api:*)` in `~/.claude/settings.json`, beside the Linear rules — `sentry api` whole, since a rule cannot see the `-X POST` flag, and no rule for reads, which pass the classifier on their own. Measured 2026-09-16 on bfp-control-panel, where a user-authorised `sentry issue resolve` was refused mid-run with `[External System Writes]`.
 
@@ -98,15 +98,13 @@ In `sweep`, collect dispositions across the walk; in `next`, it's a table of one
 
 ### 6. Execute
 
-Execute the dispositions straight through: the Sentry mutations, then the Linear filings, then post each filed issue's Linear identifier back onto its Sentry issue as a note:
+Execute the dispositions straight through: the Sentry mutations, then the Linear filings, then link each filed or matched Linear issue onto its Sentry issue as an **External Link** — the sidebar's "+ Link issue", which also gives the Linear issue a `sentry` attachment:
 
 ```bash
-sentry api "issues/<numeric-id>/comments/" -X POST -d '{"text":"Linear: <TEAM>-XXXX — <linear url>"}'
+~/.claude/skills/sentry/scripts/link-linear.sh <org/project> <SHORT-ID> <TEAM>-XXXX
 ```
 
-(Numeric ID from `sentry issue view <short-id> --json --fields id`.) **A performance issue refuses this endpoint** (403 as a JSON body at exit 0 — see [triage.md § Dispositioning a performance issue](./references/triage.md#dispositioning-a-performance-issue)), so its back-link lives in Linear alone; on an error issue, read `.id` from the response to confirm the note landed.
-
-`-X POST` is required — `sentry api` defaults to GET and `-d` does not imply POST the way `curl -d` does. Without it the call GETs the comment list, folds the payload into the query string (`?text=Linear%3A+…`), creates nothing, and **exits 0** — so the note silently never lands. Confirm with `sentry api … --dry-run`, which prints the resolved method and body without sending.
+The script resolves the org's installed `linear` Sentry app, asks its search hook for the Linear issue's uuid, POSTs the same `external-issue-actions` link the UI form submits, and confirms it on the issue's `external-issues` listing; it prints `linked: … (external issue <id>, shown as BF#1939)` and exits non-zero with the reason otherwise. Re-running it is safe — Sentry returns the existing record rather than a second one. **Never post the mapping as a comment instead**: a note lands in Activity, leaves External Links empty, and reaches nothing on the Linear side (this skill did exactly that until 2026-09-16). **A performance issue cannot be linked** — the script refuses it with exit 3, because the action endpoint answers `Could not find the corresponding issue for the given groupId` and its `external-issues` listing 403s (measured 2026-09-16, alongside the same refusal on its comments endpoint) — so its mapping lives in the Linear description alone, per [triage.md § Dispositioning a performance issue](./references/triage.md#dispositioning-a-performance-issue).
 
 ### 7. Report
 
