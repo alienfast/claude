@@ -580,6 +580,8 @@ cat > "$WORK/projects/$M9/gg999999-0000.jsonl" <<'EOF'
 {"type":"assistant","timestamp":"2026-08-04T10:30:00Z","message":{"role":"assistant","id":"msg_gga","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":80},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-20 done"}]}}
 {"type":"assistant","timestamp":"2026-08-04T11:00:00Z","message":{"role":"assistant","id":"msg_ggb","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":70},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-21 done"}]}}
 {"type":"assistant","timestamp":"2026-08-04T11:30:00Z","message":{"role":"assistant","id":"msg_ggc","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":60},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-23 done"}]}}
+{"type":"assistant","timestamp":"2026-08-04T10:04:00Z","message":{"role":"assistant","id":"msg_ggd","model":"claude-opus-5","content":[{"type":"tool_use","id":"tu_an1","name":"Agent","input":{"subagent_type":"developer","description":"Implement TT-23 exporter","name":"tt23-dev-a","prompt":"x"}},{"type":"tool_use","id":"tu_ex1","name":"Agent","input":{"subagent_type":"Explore","description":"Map invoices pull & readers","name":"explore-invoices","prompt":"x"}},{"type":"tool_use","id":"tu_sv1","name":"Agent","input":{"description":"Survey the readers","name":"survey-readers","prompt":"x"}}]}}
+{"type":"user","timestamp":"2026-08-04T10:04:30Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_an1","content":"Async agent launched successfully (agentId: an1)"},{"type":"tool_result","tool_use_id":"tu_ex1","content":"Async agent launched successfully (agentId: ex1)"},{"type":"tool_result","tool_use_id":"tu_sv1","content":"Async agent launched successfully (agentId: sv1)"}]}}
 EOF
 
 # TT-20's implementation (opus, before its review start), the review that sets the lane boundary,
@@ -610,6 +612,30 @@ cat > "$SUB9/agent-an1.jsonl" <<'EOF'
 EOF
 cat > "$SUB9/agent-an1.meta.json" <<'EOF'
 {"agentType":"tt23-dev-a","description":"Implement TT-23 exporter","name":"tt23-dev-a","spawnDepth":0,"requestShape":"background","requestNonInteractive":true,"model":"sonnet","taskKind":"in_process_teammate","teamName":"session-gg999999","color":"blue","customAgentType":"developer","permissionMode":"auto"}
+EOF
+# NAMED dispatches of BUILT-IN types: the harness writes no customAgentType for these, so the name is
+# the only type on the meta and the parent's tool_use input (above) is the only record of the real one.
+# Measured 2026-09-16: five `Agent(subagent_type: "Explore", name: "explore-…")` dispatches rendered as
+# five one-off token rows (77k output tokens) and were first misread as general-purpose. Tokens land
+# under Explore/; a named dispatch with NO subagent_type is general-purpose; a name with no matching
+# tool_use (orphan-name) stays the name — the honest residual.
+cat > "$SUB9/agent-ex1.jsonl" <<'EOF'
+{"type":"assistant","timestamp":"2026-08-04T10:06:30Z","agentId":"ex1","isSidechain":true,"message":{"role":"assistant","id":"msg_ex1","model":"claude-opus-5","usage":{"input_tokens":5,"output_tokens":90},"content":[{"type":"text","text":"mapped"}]}}
+EOF
+cat > "$SUB9/agent-ex1.meta.json" <<'EOF'
+{"agentType":"explore-invoices","description":"Map invoices pull & readers","name":"explore-invoices","spawnDepth":0,"requestShape":"background","requestNonInteractive":true,"model":"opus","taskKind":"in_process_teammate","teamName":"session-gg999999","color":"blue","planModeRequired":false,"permissionMode":"auto"}
+EOF
+cat > "$SUB9/agent-sv1.jsonl" <<'EOF'
+{"type":"assistant","timestamp":"2026-08-04T10:06:40Z","agentId":"sv1","isSidechain":true,"message":{"role":"assistant","id":"msg_sv1","model":"claude-opus-5","usage":{"input_tokens":5,"output_tokens":40},"content":[{"type":"text","text":"surveyed"}]}}
+EOF
+cat > "$SUB9/agent-sv1.meta.json" <<'EOF'
+{"agentType":"survey-readers","description":"Survey the readers","name":"survey-readers","spawnDepth":0,"requestShape":"background","model":"opus","taskKind":"in_process_teammate","teamName":"session-gg999999","permissionMode":"auto"}
+EOF
+cat > "$SUB9/agent-nm1.jsonl" <<'EOF'
+{"type":"assistant","timestamp":"2026-08-04T10:06:50Z","agentId":"nm1","isSidechain":true,"message":{"role":"assistant","id":"msg_nm1","model":"claude-opus-5","usage":{"input_tokens":5,"output_tokens":20},"content":[{"type":"text","text":"unmatched"}]}}
+EOF
+cat > "$SUB9/agent-nm1.meta.json" <<'EOF'
+{"agentType":"orphan-name","description":"Named with no surviving tool_use","name":"orphan-name","spawnDepth":0,"taskKind":"in_process_teammate","teamName":"session-gg999999"}
 EOF
 # Issue-less developer dispatch (no id in description, no user row): must land in `unattributed`,
 # never guessed into a lane.
@@ -643,6 +669,12 @@ ck "tt23 named dispatch by custom type" "['claude-sonnet-5']" "$(q9 "[v for v in
 ck "tier join sonnet"     "{'n': 1, 'mean': 2.0, 'median': 2, 'values': [2]}" "$(q9 "d['impl_origin_by_tier']['sonnet']")"
 ck "named dispatch tokens under developer" "310" "$(q9 "d['output_tokens']['developer/claude-sonnet-5']")"
 ck "no one-off row for the name" "False" "$(q9 "any(k.startswith('tt23-dev-a') for k in d['output_tokens'])")"
+ck "named Explore lands under its type"         "90"    "$(q9 "d['output_tokens']['Explore/claude-opus-5']")"
+ck "no one-off row for the Explore name"        "False" "$(q9 "any(k.startswith('explore-') for k in d['output_tokens'])")"
+ck "named typeless dispatch is general-purpose" "40"    "$(q9 "d['output_tokens']['general-purpose/claude-opus-5']")"
+ck "unmatched name stays the name"              "20"    "$(q9 "d['output_tokens']['orphan-name/claude-opus-5']")"
+ck "named dispatches counted"                   "3"     "$(q9 "d['sessions'][0]['named_dispatches']")"
+ck_has "named dispatches in totals"             "3 named dispatches" "$MD9"
 ck "tt23 severity expanded" "{'HIGH': 3, 'MED': 2}" "$(q9 "[v for v in d['review_churn'] if v['issue']=='TT-23'][0]['severity']")"
 ck "tt23 origins expanded"  "{'test': 3, 'impl': 2, 'plan': 1}" "$(q9 "[v for v in d['review_churn'] if v['issue']=='TT-23'][0]['origin']")"
 ck "filed dedupes re-citation" "0.33" "$(q9 "d['filed_per_shipped']")"

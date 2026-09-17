@@ -288,15 +288,20 @@ def auto_session_mode(path, probe_lines=60):
     return None
 
 
-def subagent_meta(path):
+def subagent_meta(path, named_types):
     """agent-<id>.jsonl sits next to agent-<id>.meta.json, which records the Agent dispatch's
-    agentType and description — exact attribution, vs. guessing the type from prompt text."""
+    agentType and description — exact attribution, vs. guessing the type from prompt text.
+    `named_types` maps a dispatch `name` to the `subagent_type` its parent's tool_use carried."""
     try:
         meta = json.loads(path.with_name(path.stem + ".meta.json").read_text(encoding="utf-8"))
-        # A dispatch given a `name` records that name as agentType and the real type under
-        # customAgentType; read as the name it lands in a one-off token row and, for a developer,
-        # drops the lane join to "main-loop" (2026-09-16 BFP fleet: six named developer dispatches).
-        return (meta.get("customAgentType") or meta.get("agentType") or "unknown",
+        # A dispatch given a `name` records that name as agentType. A custom type (developer) also
+        # writes customAgentType; a BUILT-IN type (Explore, Plan, general-purpose) writes nothing
+        # else, so the parent's tool_use input is the only record of it. Read as the name it lands
+        # in a one-off token row and, for a developer, drops the lane join to "main-loop" — the
+        # 2026-09-16 BFP fleet had six named developers and five named Explores, the latter first
+        # misread as general-purpose dispatches (77k output tokens across five one-off rows).
+        return (meta.get("customAgentType") or named_types.get(meta.get("name"))
+                or meta.get("agentType") or "unknown",
                 meta.get("description") or "")
     except (OSError, json.JSONDecodeError):
         return "unknown", ""
@@ -421,6 +426,15 @@ def scan_transcript(path, agg, agent_type="main", description=""):
                     agg["visible_chars"][agent_type] += len(json.dumps(inp))
                 pending[b.get("id")] = (t, name, inp)
                 agg["tool_calls"] += 1
+                # A named dispatch is the slip /start Step 8 forbids ("never pass `name`"), and
+                # folding names back into types (subagent_meta) erases its only trace from the token
+                # table — so count it here, where the input is in hand. The name→type map is what
+                # lets a named BUILT-IN type be attributed at all: the harness writes no
+                # customAgentType for those. No second parse of the parent per subagent: measure()
+                # folds parents first, so the map is complete before any subagent reads it.
+                if name == "Agent" and inp.get("name"):
+                    agg["named_dispatches"] += 1
+                    agg["named_types"][inp["name"]] = inp.get("subagent_type") or "general-purpose"
                 # Agent dispatches are censused at RESULT time, not here: the typed run_in_background
                 # value records intent, and the parameter is feature-flagged — on a harness without it
                 # a typed False is silently accepted and the dispatch backgrounds anyway. Only the tool
@@ -497,6 +511,9 @@ def new_agg():
         # "when was this session last productive" (git's committer dates are the primary, see
         # git_merged). SKIPPED/FAILED carry no timestamped tag, so a post-ship skip reads as idle.
         "ship_times": {}, "cancel_times": [],
+        # name -> subagent_type from this session's own Agent tool_use inputs, and how many
+        # dispatches carried a name at all.
+        "named_types": {}, "named_dispatches": 0,
         "limit_hits": Counter(), "first_limit_hit": None, "limit_resets": [],
         "limit_hit_times": [], "stop_times": [],
         "tokens": Counter(), "seen_msg_ids": set(),
@@ -1179,12 +1196,15 @@ def main():
         for d in dirs:
             transcripts += list(d.glob(f"{run_key}*.jsonl"))
             transcripts += list(d.glob(f"{run_key}*/subagents/*.jsonl"))
+        # Parents before every subagent, across dirs: a named subagent's type is resolved through the
+        # name→type map the parent scan builds (subagent_meta), so the parent must be folded first.
+        transcripts.sort(key=lambda p: "subagents" in p.parts)
         for tpath in transcripts:
             # tpath.parts, not `"/subagents/" in str(tpath)` — str() uses the OS separator, so the substring
             # check silently fails on Windows backslash paths and every delegate transcript is misfiled as main.
             if "subagents" in tpath.parts:
                 agg["subagents"] += 1
-                scan_transcript(tpath, agg, *subagent_meta(tpath))
+                scan_transcript(tpath, agg, *subagent_meta(tpath, agg["named_types"]))
             else:
                 scan_transcript(tpath, agg)
         return {"run_key": run_key, "state": state, "state_mtime": mtime,
@@ -1625,6 +1645,7 @@ def main():
                 "classifier_blocks": len(s["agg"]["classifier_blocks"]),
                 "dangling_tool_calls": s["agg"]["dangling"],
                 "subagent_transcripts": s["agg"]["subagents"],
+                "named_dispatches": s["agg"]["named_dispatches"],
                 "drained_early_h": (early_drain.get(s["run_key"]) or {}).get("hours"),
                 "sibling_ships_after_drain": (early_drain.get(s["run_key"]) or {}).get("sibling_ships"),
                 "idle_tail_h": round(idle_tails[s["run_key"]][0], 1) if s["run_key"] in idle_tails else None,
@@ -1759,10 +1780,11 @@ def main():
         tot["ign"] += a["dispatch"]["ignored"]
     blind_share = f"({100 * tot['blind'] / tot['span'] / 3600:.0f}% of fleet wall-clock)" if tot["span"] else "(no transcript window)"
     ign_note = f" / {tot['ign']} ignored (run_in_background absent on harness)" if tot["ign"] else ""
+    named = sum(s["agg"]["named_dispatches"] for s in sessions)
     print(f"\n**Totals** — {tot['span']:.1f} session-hours · blind sleep {tot['blind'] / 3600:.1f}h "
           f"{blind_share} · marker polls "
           f"{tot['marker'] / 3600:.1f}h · dispatch {tot['bg']} background / {tot['sync']} sync{ign_note} · "
-          f"{tot['cls']} classifier blocks · "
+          f"{named} named dispatches · {tot['cls']} classifier blocks · "
           f"{sum(fleet_tokens.values()):,} output tokens\n")
     if pool_exhausted_h is not None and pool_exhausted_h >= 1:
         tails = ", ".join(f"`{k}` {h:.1f}h" + (" (idle from its first pick)" if from_first else "")
