@@ -146,6 +146,8 @@
       "Bash(~/.claude/scripts/wt-ci.sh:*)",
       "Bash(~/.claude/scripts/wt-rspec.sh *)",
       "Bash(~/.claude/scripts/wt-rspec.sh:*)",
+      "Bash(~/.claude/scripts/suite-baseline-cache.sh *)",
+      "Bash(~/.claude/scripts/suite-baseline-cache.sh:*)",
       "mcp__storybook-react__preview-stories"
     ],
     "deny": [],
