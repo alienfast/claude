@@ -82,8 +82,8 @@ fi
 # mode is one of:
 #   reuse  — worktree dir and branch both exist; the session resumes in place.
 #   attach — the branch (and its history) survived but the worktree dir is gone; re-checked out here.
-#   fresh  — neither existed; branch created off HEAD. The ONLY mode that establishes a new identity;
-#            the other two inherit the prior stamp below.
+#   fresh  — neither existed; branch created off the source branch's tip. The ONLY mode that establishes
+#            a new identity; the other two inherit the prior stamp below.
 # CREATED_WT is 1 for attach/fresh.
 mode=""
 CREATED_WT=0
@@ -175,8 +175,15 @@ elif git rev-parse --verify "$branch" >/dev/null 2>&1; then
   CREATED_WT=1
   mode="attach"
 else
-  # Fresh: create both worktree dir and branch off current HEAD.
-  git worktree add "$wt_dir" -b "$branch" HEAD >&2
+  # Fresh: create both worktree dir and branch off the source branch's REF, not HEAD. The two coincide when
+  # the main checkout sits on the source branch; they diverge exactly when a runner parked it elsewhere (a
+  # detached HEAD, or a per-issue start.<id>.wt-source-branch naming another branch) — and then the ref is
+  # the fork point that carries every predecessor's merge, while a detached HEAD never moves.
+  git rev-parse --verify --quiet "refs/heads/$source_branch" >/dev/null || {
+    echo "ERROR: source branch '$source_branch' is not a local branch — nothing to fork $branch from." >&2
+    exit 1
+  }
+  git worktree add "$wt_dir" -b "$branch" "refs/heads/$source_branch" >&2
   CREATED_WT=1
   mode="fresh"
 fi

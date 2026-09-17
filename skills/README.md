@@ -232,11 +232,11 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 **Key Features**:
 
 - One detached runner walks the list: create `seq/<first-id>` from the launch branch, dispatch `/auto <ID>`, wait for the session's `tmp/auto-state-<id>.json` outcome, require the branch's tip to have moved (a deferred merge is waited on, bounded), push the branch; anything but `shipped` stops the sequence with the remaining issues untouched
-- Before every dispatch it re-detaches the main checkout's HEAD at the branch's tip and sets `start.wt-source-branch`, so `/start wt` forks from the predecessor's merged code and `/finish merge` advances the branch ref-only
+- Before every dispatch it sets a per-issue `start.<id>.wt-source-branch` key (unset once the session ends), so that issue's `/start wt` forks from the branch's advancing tip and `/finish merge` advances it ref-only — the main checkout is never moved, and a concurrent `/start wt` for any other issue is untouched
 - When the list completes, `scripts/integration-pr.sh` pushes and opens the PR with a roster body (bare IDs, no close keywords), then a last `/pr-update` child writes the real description; the base moving during the run costs one catch-up merge, reported when the PR opens
 - Why not a PR stack: GitHub stacks assume rebase-and-restack; this house merges only, so a moved base meant re-merging every level with its own CI run (September 2026)
 - The wait ends on the session's ledger outcome, not the registry — a session can sit busy for hours after shipping; a stale ledger from an earlier run is ignored by mtime
-- `status` / `stop` forms; re-running the same list resumes, skipping what already shipped (a list whose every issue shipped repeats only the PR step); the checkout is restored to the launch branch on every exit; sessions are never killed
+- `status` / `stop` forms; re-running the same list resumes, skipping what already shipped (a list whose every issue shipped repeats only the PR step); every key it set is unset on every exit; sessions are never killed
 
 **Structure**:
 

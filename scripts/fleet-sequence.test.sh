@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # Regression suite for fleet-sequence.sh: the pre-dispatch refusals, strict one-at-a-time sequencing, the
-# per-issue re-detach at the integration branch (detached HEAD + start.wt-source-branch), the landing check,
-# the push after each ship, the one PR at the end and the /pr-update child, `merge` mode, the
-# stop-on-first-non-ship rule, stop/resume (including a resume that only repeats the PR step), and the
-# checkout restore.
+# per-issue fork key (start.<id>.wt-source-branch set before each dispatch and unset after — the main
+# checkout is never moved, so a concurrent /start wt for another issue is untouched), the landing check,
+# the push after each ship, the one PR at the end and the /pr-update child (run from a throwaway worktree),
+# `merge` mode, the stop-on-first-non-ship rule, stop/resume (including a resume that only repeats the PR
+# step), and the key cleanup on every exit.
 #
 # `claude` is stubbed: `agents --json --all` answers from $WORK/agents.json, and `--bg` records the dispatch,
-# then plays a `/auto <ID>` session out SYNCHRONOUSLY the way /start wt + /finish merge would — records the
-# fork point it saw (HEAD's branch, or "" when detached, start.wt-source-branch, and how many commits past
-# main HEAD sits) in $WORK/forks, writes the ledger tmp/auto-state-<id>.json with the issue in the list
+# then plays a `/auto <ID>` session out SYNCHRONOUSLY the way /start wt + /finish merge would — resolves the
+# source branch exactly as start-wt-setup.sh does (the per-issue key, else HEAD's branch, else the
+# checkout-wide key when detached) and records it with the main checkout's branch and how far the source
+# branch's REF is ahead of main in $WORK/forks, writes the ledger tmp/auto-state-<id>.json with the issue in the list
 # $WORK/outcome-<ID> names (default shipped), and for a shipped issue advances the source branch's REF by one
 # commit without touching HEAD, exactly what finish-merge.sh's compare-and-swap does under a parked
 # checkout. `none` = no ledger; `hang` = listed running forever; `busy` = shipped but listed running;
@@ -53,14 +55,19 @@ sid=\$(printf 'ab%06d' "\$n")
 last=""; name=""; prev=""; for a in "\$@"; do last="\$a"; [ "\$prev" = "-n" ] && name="\$a"; prev="\$a"; done
 state=done
 head=\$(git -C "$REPO" branch --show-current)
-src=\$(git -C "$REPO" config --get start.wt-source-branch 2>/dev/null || true); [ -n "\$src" ] || src="\$head"
 id=""
 if [ "\$last" = "/pr-update" ]; then
-  echo "pr-update head=\$head" >> "$WORK/forks"
+  # From the dispatch cwd: the branch /pr-update would read, and whether that cwd is the main checkout or a linked worktree.
+  where=main; [ "\$(git rev-parse --git-dir)" = "\$(git rev-parse --git-common-dir)" ] || where=worktree
+  echo "pr-update head=\$(git branch --show-current) cwd=\$where main=\$head" >> "$WORK/forks"
 else
   id="\${last#/auto }"
+  lower=\$(printf '%s' "\$id" | tr '[:upper:]' '[:lower:]')
+  src=\$(git -C "$REPO" config --get "start.\$lower.wt-source-branch" 2>/dev/null || true)
+  [ -n "\$src" ] || src="\$head"
+  [ -n "\$src" ] || src=\$(git -C "$REPO" config --get start.wt-source-branch 2>/dev/null || true)
   outcome=\$(cat "$WORK/outcome-\$id" 2>/dev/null || echo shipped)
-  echo "\$id head=\$head src=\$src depth=\$(git -C "$REPO" rev-list --count main..HEAD)" >> "$WORK/forks"
+  echo "\$id head=\$head src=\$src ahead=\$(git -C "$REPO" rev-list --count "main..refs/heads/\$src")" >> "$WORK/forks"
   case "\$outcome" in
     none) ;;
     hang) state=running ;;
@@ -68,7 +75,6 @@ else
       list="\$outcome"; case "\$outcome" in busy|deferred|queued|nomention) list=shipped ;; esac
       [ "\$outcome" = "busy" ] && state=running
       jq -n --arg id "\$id" --arg o "\$list" '{mode:"single",status:"active",shipped:[],canceled:[],skipped:[],failed:[]} | .[\$o] += [\$id]' > "$REPO/tmp/auto-state-\$sid.json"
-      lower=\$(printf '%s' "\$id" | tr '[:upper:]' '[:lower:]')
       case "\$outcome" in
         deferred|queued)
           git -C "$REPO" worktree add -q "$REPO/.claude/worktrees/\$lower" -b "wt-\$lower" HEAD
@@ -127,7 +133,8 @@ marker() { jq -r "$1" "$REPO/tmp/fleet-sequence.json"; }
 dispatches() { grep -c -- '/auto ' "$WORK/dispatches" 2>/dev/null || true; }
 prs_created() { local c; c=$(grep -c '^create ' "$WORK/gh-calls" 2>/dev/null); echo "${c:-0}"; }
 on_origin() { git -C "$REPO" ls-remote --heads origin "$1" 2>/dev/null | wc -l | tr -d ' '; }
-src_cfg() { git -C "$REPO" config --get start.wt-source-branch 2>/dev/null || echo "(unset)"; }
+fork_keys() { git -C "$REPO" config --get-regexp '^start\.[^.]+\.wt-source-branch$' 2>/dev/null | awk '{print $1"="$2}' | paste -sd, -; }
+worktrees() { git -C "$REPO" worktree list | wc -l | tr -d ' '; }
 setup_remote() {
   rm -rf "$REMOTE"; git init -q --bare "$REMOTE"
   git -C "$REPO" remote remove origin 2>/dev/null
@@ -141,7 +148,7 @@ reset() {
   echo '[]' > "$WORK/agents.json"
   rm -rf "$REPO/tmp" "$REPO/.claude"; mkdir -p "$REPO/tmp"
   git -C "$REPO" worktree prune
-  git -C "$REPO" config --unset start.wt-source-branch 2>/dev/null
+  for k in $(git -C "$REPO" config --name-only --get-regexp '^start\.' 2>/dev/null); do git -C "$REPO" config --unset "$k"; done
   git -C "$REPO" checkout -q main; git -C "$REPO" reset -q --hard; git -C "$REPO" clean -qfd
   for b in $(git -C "$REPO" branch --format='%(refname:short)' | grep -v '^main$'); do git -C "$REPO" branch -q -D "$b"; done
   setup_remote
@@ -186,11 +193,6 @@ ck "detached exits 1"           "1" "$(run BF-1 BF-2)"
 ck_has "names detached"         "HEAD is detached" "$WORK/out"
 git -C "$REPO" checkout -q main
 
-git -C "$REPO" config start.wt-source-branch main
-ck "another posture exits 1"    "1" "$(run BF-1 BF-2)"
-ck_has "names the config"       "start.wt-source-branch is set to 'main'" "$WORK/out"
-git -C "$REPO" config --unset start.wt-source-branch
-
 git -C "$REPO" branch seq/bf-1 main
 ck "stray branch exits 1"       "1" "$(run BF-1 BF-2)"
 ck_has "names the stray branch" "branch 'seq/bf-1' already exists but no marker records a sequence on it" "$WORK/out"
@@ -201,6 +203,16 @@ ck "no origin exits 1 in pr mode" "1" "$(run BF-1 BF-2)"
 ck_has "explains the remote"    "no 'origin' remote" "$WORK/out"
 ck "merge mode needs no origin" "0" "$(run merge BF-1)"
 setup_remote
+
+# A checkout-wide start.wt-source-branch (an epic fleet's posture, or one left behind) is no concern of this
+# runner: it reads and writes only per-issue keys, and start-wt-setup.sh consults the checkout-wide key
+# only under a detached HEAD.
+reset
+git -C "$REPO" config start.wt-source-branch main
+ck "a checkout-wide key does not block" "0" "$(run BF-1)"
+ck "children fork by the per-issue key" "BF-1 head=main src=seq/bf-1 ahead=0" "$(sed -n 1p "$WORK/forks")"
+ck "checkout-wide key left as found"    "main" "$(git -C "$REPO" config --get start.wt-source-branch)"
+git -C "$REPO" config --unset start.wt-source-branch
 
 reset
 printf '{"fleet_sessions":["fe000001"],"count":1}\n' > "$REPO/tmp/fleet-deadline.json"
@@ -220,7 +232,7 @@ ck_lacks "children never get the pr token" "/auto pr " "$WORK/dispatches"
 ck_has "sessions are named"     "-n fleet-sequence BF-2 /auto BF-2" "$WORK/dispatches"
 ck_has "default model"          "--model opus[1m]" "$WORK/dispatches"
 ck_has "default permission mode" "--permission-mode auto" "$WORK/dispatches"
-ck "every fork is detached at the branch's current tip" "BF-1 head= src=seq/bf-1 depth=0,BF-2 head= src=seq/bf-1 depth=1,BF-3 head= src=seq/bf-1 depth=2" "$(grep '^BF-' "$WORK/forks" | paste -sd, -)"
+ck "every fork is from the branch's advancing tip, main checkout untouched" "BF-1 head=main src=seq/bf-1 ahead=0,BF-2 head=main src=seq/bf-1 ahead=1,BF-3 head=main src=seq/bf-1 ahead=2" "$(grep '^BF-' "$WORK/forks" | paste -sd, -)"
 ck "marker done"                "done" "$(marker .status)"
 ck "mode recorded"              "pr" "$(marker .mode)"
 ck "branch recorded"            "seq/bf-1" "$(marker .branch)"
@@ -237,11 +249,11 @@ ck "body has no close verb before an ID" "0" "$(grep -ciE '(close|fix|resolve|co
 ck "PR url recorded"            "https://github.com/x/y/pull/1" "$(marker .pr_url)"
 ck "PR number recorded"         "1" "$(marker .pr_number)"
 ck_has "pr-update dispatched last" "-n fleet-sequence pr-update /pr-update" "$WORK/dispatches"
-ck "pr-update ran attached to the branch" "pr-update head=seq/bf-1" "$(grep '^pr-update' "$WORK/forks")"
+ck "pr-update ran from a worktree on the branch, main checkout still on main" "pr-update head=seq/bf-1 cwd=worktree main=main" "$(grep '^pr-update' "$WORK/forks")"
 ck "pr-update session recorded" "ab000004" "$(marker .pr_update_session)"
-ck "checkout restored to main"  "main" "$(git -C "$REPO" branch --show-current)"
-ck "source config unset"        "(unset)" "$(src_cfg)"
-ck "no worktrees left"          "0" "$(git -C "$REPO" worktree list | grep -c 'worktrees/bf-')"
+ck "main checkout never moved"  "main" "$(git -C "$REPO" branch --show-current)"
+ck "fork keys unset"            "" "$(fork_keys)"
+ck "no worktrees left"          "1" "$(worktrees)"
 ck_has "PR logged"              "PR #1 opened: https://github.com/x/y/pull/1 (seq/bf-1 → main)" "$WORK/out"
 ck_has "done names the PR"      "done: BF-1, BF-2, BF-3 on seq/bf-1 → main — PR https://github.com/x/y/pull/1" "$WORK/out"
 ck_lacks "no warning"           "WARN" "$WORK/out"
@@ -258,7 +270,7 @@ reset
 before=$(git -C "$REPO" rev-parse main)
 ck "merge mode exits 0"         "0" "$(run merge BF-1 BF-2)"
 ck "merge mode dispatches"      "/auto BF-1,/auto BF-2" "$(grep -o -- '/auto [A-Z]*-[0-9]*' "$WORK/dispatches" | paste -sd, -)"
-ck "forks stay attached on main" "BF-1 head=main src=main depth=0,BF-2 head=main src=main depth=0" "$(grep '^BF-' "$WORK/forks" | paste -sd, -)"
+ck "merge mode forks from the launch branch by key" "BF-1 head=main src=main ahead=0,BF-2 head=main src=main ahead=0" "$(grep '^BF-' "$WORK/forks" | paste -sd, -)"
 ck "main advanced twice"        "2" "$(git -C "$REPO" rev-list --count "$before..main")"
 ck "mode recorded as merge"     "merge" "$(marker .mode)"
 ck "no branch recorded"         "null" "$(marker .branch)"
@@ -280,8 +292,8 @@ ck "marker failed"              "failed" "$(marker .status)"
 ck_has "reason names the issue" "BF-2 ended 'failed' in session ab000002" "$WORK/out"
 ck_has "reason lists the rest"  "not started: BF-3" "$WORK/out"
 ck "BF-3 untouched"             "null" "$(marker '.issues["BF-3"]')"
-ck "failure restored main"      "main" "$(git -C "$REPO" branch --show-current)"
-ck "failure unset the config"   "(unset)" "$(src_cfg)"
+ck "failure left main alone"    "main" "$(git -C "$REPO" branch --show-current)"
+ck "failure unset the keys"     "" "$(fork_keys)"
 ck "branch keeps the first ship" "1" "$(git -C "$REPO" rev-list --count main..seq/bf-1)"
 ck "first ship was pushed"      "1" "$(on_origin seq/bf-1)"
 ck "no PR on failure"           "0" "$(prs_created)"
@@ -300,7 +312,7 @@ ck_lacks "carried issue not refused" "already Ready For Release" "$WORK/out"
 ck_has "resume announced"       "Resuming on seq/bf-1: already shipped, kept — BF-1 (landed " "$WORK/out"
 ck_has "BF-1 skipped"           "BF-1 already shipped (landed" "$WORK/out"
 ck "resume dispatched the rest" "/auto BF-2,/auto BF-3" "$(grep -o -- '/auto [A-Z]*-[0-9]*' "$WORK/dispatches" | paste -sd, -)"
-ck "resume forked BF-2 past BF-1" "BF-2 head= src=seq/bf-1 depth=1" "$(sed -n 1p "$WORK/forks")"
+ck "resume forked BF-2 past BF-1" "BF-2 head=main src=seq/bf-1 ahead=1" "$(sed -n 1p "$WORK/forks")"
 ck "resume finished"            "done" "$(marker .status)"
 ck "resume kept BF-1's session" "ab000001" "$(marker '.issues["BF-1"].session')"
 ck "resume opened one PR"       "1" "$(prs_created)"
@@ -315,7 +327,7 @@ ck_lacks "no resume on a new base" "Resuming" "$WORK/out"
 ck "fresh marker has only BF-4" "BF-4" "$(marker '.issues | keys | join(" ")')"
 ck "fresh branch named after the first issue" "seq/bf-4" "$(marker .branch)"
 ck_has "PR targets the launch branch" "create seq/bf-4 other BF-4: Title of BF-4" "$WORK/gh-calls"
-ck "restored to other"          "other" "$(git -C "$REPO" branch --show-current)"
+ck "still on other"             "other" "$(git -C "$REPO" branch --show-current)"
 ck "a shipped issue outside the marker is still refused" "1" "$(run BF-1 BF-5)"
 ck_has "refusal names the state" "BF-1 is already Ready For Release" "$WORK/out"
 
@@ -327,7 +339,8 @@ ck "both issues shipped first"  "2" "$(dispatches)"
 ck "marker failed on the PR"    "failed" "$(marker .status)"
 ck_has "reason names the PR step" "every issue shipped onto seq/bf-1 but its PR onto main could not be opened" "$WORK/out"
 ck "ships kept"                 "shipped shipped" "$(marker '[.queue[] as $id | .issues[$id].outcome] | join(" ")')"
-ck "PR failure restored main"   "main" "$(git -C "$REPO" branch --show-current)"
+ck "PR failure left main alone" "main" "$(git -C "$REPO" branch --show-current)"
+ck "PR failure left no worktree" "1" "$(worktrees)"
 rm -f "$WORK/gh-create-fail"; : > "$WORK/dispatches"
 ck "re-run exits 0"             "0" "$(run BF-1 BF-2)"
 ck "re-run dispatched no issue" "0" "$(dispatches)"
@@ -349,7 +362,7 @@ ck "deferred exits 1"           "1" "$(run BF-1 BF-2)"
 ck_has "waits for the merge"    "BF-1: ledger says shipped but 'seq/bf-1' has not moved — waiting up to 1s" "$WORK/out"
 ck_has "reason names the timeout" "'seq/bf-1' never moved within 1s" "$WORK/out"
 ck "deferred stops at once"     "1" "$(dispatches)"
-ck "deferred restored main"     "main" "$(git -C "$REPO" branch --show-current)"
+ck "deferred left main alone"   "main" "$(git -C "$REPO" branch --show-current)"
 ck "deferred worktree preserved" "1" "$(git -C "$REPO" worktree list | grep -c 'worktrees/bf-1')"
 reset
 echo queued > "$WORK/outcome-BF-1"
@@ -365,14 +378,15 @@ ck "unnamed commit exits 0"     "0" "$(run BF-1 BF-2)"
 ck_has "warns about the commit" "WARN: none of the commits seq/bf-1 gained mention BF-1" "$WORK/out"
 ck "unnamed commit still continues" "2" "$(dispatches)"
 
-# ---- a session that never ends times out; nothing is killed; checkout restored ----
+# ---- a session that never ends times out; nothing is killed; keys cleared ----
 reset
 echo hang > "$WORK/outcome-BF-1"
 export FLEET_SEQUENCE_ISSUE_TIMEOUT=1
 ck "hang exits 1"               "1" "$(run BF-1 BF-2)"
 ck_has "hang names the session" "BF-1: session ab000001 still running after 1s — not killed" "$WORK/out"
 ck "hang dispatched once"       "1" "$(dispatches)"
-ck "hang restored main"         "main" "$(git -C "$REPO" branch --show-current)"
+ck "hang left main alone"       "main" "$(git -C "$REPO" branch --show-current)"
+ck "hang unset the keys"        "" "$(fork_keys)"
 export FLEET_SEQUENCE_ISSUE_TIMEOUT=5
 
 # ---- stop requested mid-run: the in-flight issue finishes, nothing else starts, no PR ----
@@ -385,7 +399,28 @@ ck_has "reason names the rest"  "stopped before BF-2; not started: BF-2, BF-3" "
 ck "BF-1 still shipped"         "shipped" "$(marker '.issues["BF-1"].outcome')"
 ck "BF-1 stays on the branch"   "1" "$(git -C "$REPO" rev-list --count main..seq/bf-1)"
 ck "stop opened no PR"          "0" "$(prs_created)"
-ck "stop restored main"         "main" "$(git -C "$REPO" branch --show-current)"
+ck "stop left main alone"       "main" "$(git -C "$REPO" branch --show-current)"
+ck "stop unset the keys"        "" "$(fork_keys)"
+
+# ---- the main checkout is not the runner's: moved mid-run, the next fork still comes from the branch's tip,
+# and a /start wt for an issue outside the queue resolves the checkout's own branch. 2026-09-16: the old
+# detach-and-set-config posture pointed a concurrent targeted `/auto BFP-117` at seq/bfp-112. ----
+reset
+printf 'git -C "%s" checkout -q -b scratch\ngit -C "%s" config --get start.bf-9.wt-source-branch >> "%s/other-key" 2>&1 || echo unset >> "%s/other-key"\n' "$REPO" "$REPO" "$WORK" "$WORK" > "$WORK/hook-BF-1"
+ck "moved checkout exits 0"     "0" "$(run BF-1 BF-2)"
+ck "BF-2 forked from the branch, not the moved checkout" "BF-2 head=scratch src=seq/bf-1 ahead=1" "$(sed -n 2p "$WORK/forks")"
+ck "an issue outside the queue has no key" "unset" "$(cat "$WORK/other-key")"
+ck "checkout left where the human put it" "scratch" "$(git -C "$REPO" branch --show-current)"
+ck "pr-update still ran on the branch" "pr-update head=seq/bf-1 cwd=worktree main=scratch" "$(grep '^pr-update' "$WORK/forks")"
+ck "moved checkout still opened the PR" "1" "$(prs_created)"
+ck "moved checkout left no key" "" "$(fork_keys)"
+
+# ---- a per-issue key a crashed runner left behind is cleared at launch and never outlives the run ----
+reset
+git -C "$REPO" config start.bf-2.wt-source-branch stale-branch
+ck "stale key launch exits 0"   "0" "$(run BF-1 BF-2)"
+ck "stale key replaced before its dispatch" "BF-2 head=main src=seq/bf-1 ahead=1" "$(sed -n 2p "$WORK/forks")"
+ck "no keys after the run"      "" "$(fork_keys)"
 
 # ---- claude flags pass through; the pr-update child can be skipped ----
 reset
@@ -441,11 +476,11 @@ ck "unpushed created no branch"    "" "$(git -C "$REPO" branch --list 'seq/*')"
 git -C "$REPO" push -q -u origin feature
 ck "pushed launch branch exits 0"  "0" "$(run BF-1 BF-2)"
 ck_has "notes the non-default base" "NOTE: launching from 'feature', not 'main'" "$WORK/out"
-ck "forks from the branch off feature" "BF-1 head= src=seq/bf-1" "$(sed -n 1p "$WORK/forks" | cut -d' ' -f1-3)"
+ck "forks from the branch off feature" "BF-1 head=feature src=seq/bf-1" "$(sed -n 1p "$WORK/forks" | cut -d' ' -f1-3)"
 ck_has "PR targets feature"        "create seq/bf-1 feature seq/bf-1: BF-1, BF-2" "$WORK/gh-calls"
 ck "feature's commit is under the branch" "1" "$(git -C "$REPO" rev-list --count main..feature)"
 ck "branch carries feature and the ships" "3" "$(git -C "$REPO" rev-list --count main..seq/bf-1)"
-ck "restored to feature"           "feature" "$(git -C "$REPO" branch --show-current)"
+ck "still on feature"              "feature" "$(git -C "$REPO" branch --show-current)"
 git -C "$REPO" checkout -q main
 : > "$WORK/dispatches"
 ck "default branch launch has no note" "0" "$(run BF-3)"

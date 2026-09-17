@@ -6,8 +6,16 @@
 # Performs the procedural setup that was previously embedded in /start
 # Step 0's skill markdown:
 #   1. Validates issue ID format (case-insensitive; normalized to upper).
-#   2. Captures the current branch as the source branch (falls back to the common-scope git config key
-#      `start.wt-source-branch` when HEAD is detached; see the parallel-run advisory below).
+#   2. Resolves the source branch — the branch the worktree forks from and /finish merges back into:
+#        a. `start.<issue-lower>.wt-source-branch` when set — a PER-ISSUE common-scope key a runner sets
+#           before dispatching that one issue (fleet-sequence.sh: each of its issues forks from and merges
+#           into the sequence's integration branch while the main checkout stays wherever it is, so a
+#           concurrent /start wt for any OTHER issue is untouched);
+#        b. else the checkout's current branch;
+#        c. else — HEAD detached — the checkout-wide `start.wt-source-branch` (the epic-fleet posture
+#           fleet-launch.sh sets; see the parallel-run advisory below).
+#      The worktree forks from that branch's REF (start-wt-create.sh), never from HEAD, so where the
+#      main checkout is parked does not decide the fork point.
 #   3. Enables extensions.worktreeConfig (idempotent).
 #   4. Fetches the issue title; composes a kebab-case branch name following
 #      the convention <gh-username>/<id-lower>-<short-kebab-title>.
@@ -104,25 +112,33 @@ case "$repo_root" in
 esac
 
 current_branch=$(git branch --show-current)
-source_branch="$current_branch"
-if [ -z "$source_branch" ]; then
-  # Detached HEAD has no branch to fork from. The escape hatch is a user-set common-scope config key —
-  # `|| true` because an unset key exits non-zero, which under `set -eo pipefail` would otherwise abort
-  # the whole script on this assignment.
-  source_branch=$(git config --get start.wt-source-branch 2>/dev/null || true)
+# The per-issue key wins over the checkout's position: a runner that sets it for one issue (fleet-sequence.sh)
+# must not have to move the main checkout, and every other issue's /start wt must not see it. `|| true`
+# because an unset key exits non-zero, which under `set -eo pipefail` would otherwise abort the script on
+# this assignment.
+issue_fork_key="start.${issue_lower}.wt-source-branch"
+source_branch=$(git config --get "$issue_fork_key" 2>/dev/null || true)
+if [ -n "$source_branch" ]; then
+  echo "NOTE: source branch '$source_branch' comes from $issue_fork_key (set for this issue by a sequence runner)" >&2
+else
+  source_branch="$current_branch"
   if [ -z "$source_branch" ]; then
-    echo "ERROR: HEAD is detached; set the fork/merge branch explicitly with: git config start.wt-source-branch <branch>" >&2
-    exit 1
+    # Detached HEAD has no branch to fork from. The escape hatch is a checkout-wide config key.
+    source_branch=$(git config --get start.wt-source-branch 2>/dev/null || true)
+    if [ -z "$source_branch" ]; then
+      echo "ERROR: HEAD is detached; set the fork/merge branch explicitly with: git config start.wt-source-branch <branch>" >&2
+      exit 1
+    fi
   fi
-  # A typo'd config value (e.g. "mian") would otherwise propagate silently — stamped into the worktree
-  # identity, emitted as SOURCE_BRANCH=, and surfacing only as a failure at /finish merge time. Validate
-  # it names a real local branch now. Only this fallback path needs the check; a live current branch
-  # (the `git branch --show-current` case above) always exists.
-  git rev-parse --verify --quiet "refs/heads/$source_branch" >/dev/null || {
-    echo "ERROR: start.wt-source-branch names '$source_branch' but no such local branch exists" >&2
-    exit 1
-  }
 fi
+# A typo'd config value (e.g. "mian") would otherwise propagate silently — stamped into the worktree
+# identity, emitted as SOURCE_BRANCH=, and surfacing only as a failure at /finish merge time. Validate it
+# names a real local branch now. A live current branch always exists, so this only ever fires for a
+# config-sourced value.
+git rev-parse --verify --quiet "refs/heads/$source_branch" >/dev/null || {
+  echo "ERROR: the source branch '$source_branch' (from $issue_fork_key or start.wt-source-branch) is not a local branch — unset the key or restore the branch" >&2
+  exit 1
+}
 
 # Advisory (never blocks): if the main checkout is parked on the branch this
 # worktree will fork from / merge back into, AND other worktrees already exist
@@ -131,15 +147,15 @@ fi
 # the contention-free ref-only update — the exact setup behind the parallel-run
 # corruption. We only warn; auto-detaching the main checkout would mutate the
 # user's working tree, which multi-session safety forbids.
-# Gated on `current_branch` (HEAD actually on a branch) — when HEAD is detached, the source branch came
-# from the `start.wt-source-branch` fallback above, which means the user already parked the main checkout
-# off the source branch (the very advice this WARN gives); firing it anyway would be false and redundant.
+# Gated on the main checkout actually being ON the source branch — when HEAD is detached, or the per-issue
+# key named a branch other than the checked-out one, the merge already takes the ref-only path (the very
+# advice this WARN gives); firing it anyway would be false and redundant.
 # `|| true`: on a checkout that has never created a worktree, .claude/worktrees does
 # not yet exist (it's mkdir'd further down), so `find` exits non-zero. Under
 # `set -eo pipefail` an unguarded command-substitution assignment would propagate that
 # and abort the whole script silently. An empty/missing dir genuinely means 0 worktrees.
 existing_wts=$(find .claude/worktrees -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ' || true)
-if [ -n "$current_branch" ] && [ "${existing_wts:-0}" -gt 0 ]; then
+if [ -n "$current_branch" ] && [ "$current_branch" = "$source_branch" ] && [ "${existing_wts:-0}" -gt 0 ]; then
   echo "WARN: main checkout is on '$source_branch' (the shared source branch) while $existing_wts worktree(s) are active." >&2
   echo "  For parallel /full wt runs, first set 'git config start.wt-source-branch $source_branch' so this and future" >&2
   echo "  worktrees can still resolve the source branch once HEAD is detached, then park the main checkout off the" >&2

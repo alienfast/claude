@@ -23,9 +23,12 @@
 #               the checkout's branch) and records `branch` + `base` in the recommendation; when
 #               the recommendation's scope is the one launching, this script detaches the main
 #               checkout at the branch tip and sets start.wt-source-branch to it — the documented
-#               detached-HEAD posture (start-wt-setup.sh; fleet-sequence.sh does the same between
-#               issues) under which every /start wt forks from the branch and every /finish merge
-#               advances it ref-only. Both are recorded in the marker. After the fleet: open the
+#               detached-HEAD posture (start-wt-setup.sh reads that key only under a detached HEAD,
+#               and start-wt-create.sh forks from the branch's ref, so the branch advancing under
+#               the parked HEAD is what later forks see) under which every /start wt forks from the
+#               branch and every /finish merge advances it ref-only. Both are recorded in the marker.
+#               (/fleet-sequence steers its sessions with per-issue start.<id>.wt-source-branch keys
+#               instead and never parks the checkout.) After the fleet: open the
 #               epic's PR from `branch` onto `base` (integration-pr.sh, then /pr-update from the
 #               branch), then `git checkout <base>` and `git config --unset start.wt-source-branch`.
 #               A token with no matching prepared
@@ -245,6 +248,20 @@ if [ -n "$dirty" ]; then
     echo "       branch: ${branch:-(detached)}" >&2
     printf '%s\n' "$dirty" | sed 's/^/       /' >&2
     echo "       Commit or stash the above, then re-run. Nothing was dispatched." >&2
+    exit 1
+  fi
+fi
+
+# A /fleet-sequence is solo work by definition (skills/fleet-sequence/SKILL.md § Relationship to the fleet
+# skills): it refuses to start mid-fleet, and a fleet must not start mid-sequence either. The live runner
+# is the evidence — the marker outlives the run, so `running` under a dead runner pid is a crash, not a
+# sequence.
+seq_marker="$main_checkout/tmp/fleet-sequence.json"
+if [ -s "$seq_marker" ] && [ "$(jq -r '.status // empty' "$seq_marker" 2>/dev/null)" = "running" ]; then
+  seq_pid=$(jq -r '.runner_pid // empty' "$seq_marker" 2>/dev/null)
+  if [[ "$seq_pid" =~ ^[0-9]+$ ]] && kill -0 "$seq_pid" 2>/dev/null; then
+    echo "ERROR: a /fleet-sequence is running (runner pid $seq_pid: $(jq -r '(.queue // []) | join(" → ")' "$seq_marker")) — sequenced work is solo." >&2
+    echo "       Let it finish (fleet-sequence.sh status) or stop it (fleet-sequence.sh stop), then re-run. Nothing was dispatched." >&2
     exit 1
   fi
 fi

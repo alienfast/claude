@@ -36,13 +36,16 @@
 # time (measured September 2026 on three PRs stacked on `hotfixes`). One branch takes one catch-up merge and
 # one CI run, and it is the release shape an epic-scoped fleet already uses (fleet-launch.sh).
 #
-# Positioning: `/start wt` forks from the main checkout's HEAD (not from the branch ref) and `/finish`
-# merges into the recorded source branch, so before EVERY dispatch the runner detaches HEAD at the
-# integration branch's tip and sets `start.wt-source-branch` to it — the documented detached-HEAD path
-# (start-wt-setup.sh), under which finish-merge.sh advances the branch ref-only. Re-detaching per issue is
-# what makes each fork carry its predecessor: the ref moves at each merge, a detached HEAD does not. The
-# checkout is put back on the launch branch, config unset, on every exit. In `merge` mode the checkout
-# simply stays on the launch branch and each merge fast-forwards it.
+# Positioning: the runner never moves the main checkout. Before EVERY dispatch it sets the per-issue key
+# `start.<id-lower>.wt-source-branch` to the branch that issue must ship onto (the integration branch; the
+# launch branch in `merge` mode) and unsets it once the session has ended. start-wt-setup.sh resolves that
+# key ahead of the checkout's own branch, and start-wt-create.sh forks from the branch's REF — so each fork
+# carries every predecessor's merge, finish-merge.sh advances the branch ref-only while the checkout sits
+# elsewhere, and a `/start wt` for any OTHER issue running alongside (a targeted /auto, an interactive
+# /start) still forks from and merges into the checkout's own branch, as if no sequence were running.
+# (Measured 2026-09-16: the earlier posture — detach HEAD at the branch and set the checkout-wide
+# `start.wt-source-branch` — pointed a concurrent targeted `/auto BFP-117` at seq/bfp-112.) Every key the
+# run set is unset on every exit, and the closing /pr-update runs from a throwaway worktree on the branch.
 #
 # Sequencing: dispatch, wait for the session's ledger tmp/auto-state-<id>.json to record the issue (the
 # registry `claude agents --json --all` is the fallback for a session that ends without one), then
@@ -60,8 +63,9 @@
 # runs the runner inline (tests).
 #
 # Read-write: tmp/fleet-sequence.json (the marker) and tmp/fleet-sequence.log in the main checkout; creates
-# the integration branch, moves the main checkout's HEAD between issues and sets/unsets
-# `start.wt-source-branch`, pushes the branch, opens its PR, dispatches background claude sessions. Exit 1
+# the integration branch, sets/unsets the per-issue `start.<id>.wt-source-branch` keys, pushes the branch,
+# opens its PR, adds and removes a throwaway worktree at tmp/fleet-sequence-pr-update for the closing
+# /pr-update session, dispatches background claude sessions. Never moves the main checkout's HEAD. Exit 1
 # on argument/environment errors before anything is dispatched; the runner exits 1 when the sequence fails.
 
 set -eo pipefail
@@ -81,6 +85,7 @@ main_checkout=$(git worktree list --porcelain 2>/dev/null | awk '/^worktree /{pr
 mkdir -p "$main_checkout/tmp"
 marker="$main_checkout/tmp/fleet-sequence.json"
 log="$main_checkout/tmp/fleet-sequence.log"
+pr_wt="$main_checkout/tmp/fleet-sequence-pr-update"
 poll="${FLEET_SEQUENCE_POLL:-30}"
 grace="${FLEET_SEQUENCE_GRACE:-120}"
 issue_timeout="${FLEET_SEQUENCE_ISSUE_TIMEOUT:-21600}"
@@ -188,26 +193,27 @@ wait_session_end() { # <short id> <timeout seconds> → 0 when the registry list
 # ---- the main checkout's position ----
 target_branch() { jq -r 'if .mode == "merge" then .base else .branch end' "$marker"; }
 
-restore_checkout() { # back on the launch branch, config unset — best-effort, on every runner exit
-  local base
-  base=$(jq -r '.base // empty' "$marker" 2>/dev/null || true)
-  [ -n "$base" ] || return 0
-  git -C "$main_checkout" config --unset start.wt-source-branch >/dev/null 2>&1 || true
-  [ "$(git -C "$main_checkout" branch --show-current 2>/dev/null)" = "$base" ] && return 0
-  git -C "$main_checkout" checkout -q "$base" >/dev/null 2>&1 || logln "WARN: could not put the main checkout back on $base — do it by hand (git checkout $base)"
+fork_key() { printf 'start.%s.wt-source-branch' "$(lower "$1")"; } # <ISSUE-ID> → the per-issue key start-wt-setup.sh reads first
+
+clear_fork_keys() { # unset every per-issue key this run's queue could have set — best-effort, on every runner exit
+  local id
+  [ -s "$marker" ] || return 0
+  for id in $(jq -r '(.queue // [])[]' "$marker" 2>/dev/null); do
+    git -C "$main_checkout" config --unset "$(fork_key "$id")" >/dev/null 2>&1 || true
+  done
 }
 
-position_checkout() { # <ISSUE-ID> — park the checkout where the next fork and merge must happen
-  local mode branch
-  mode=$(jq -r '.mode' "$marker"); branch=$(target_branch)
+set_fork_key() { # <ISSUE-ID> — point this one issue's /start wt at the branch it forks from and merges into
+  local branch
+  branch=$(target_branch)
   git rev-parse --verify --quiet "refs/heads/$branch" >/dev/null || fail_run "branch '$branch' no longer exists — nothing to ship $1 onto; re-run once it is restored"
-  if [ "$mode" = "merge" ]; then
-    git config --unset start.wt-source-branch >/dev/null 2>&1 || true
-    [ "$(git branch --show-current 2>/dev/null)" = "$branch" ] || git checkout -q "$branch" || fail_run "could not check out $branch before $1"
-  else
-    git checkout -q --detach "$branch" || fail_run "could not detach at $branch before $1"
-    git config start.wt-source-branch "$branch"
-  fi
+  git config "$(fork_key "$1")" "$branch" || fail_run "could not set $(fork_key "$1") before $1"
+}
+
+remove_pr_worktree() { # the throwaway /pr-update worktree; a fixed path under tmp/, so the rm is bounded
+  git -C "$main_checkout" worktree remove --force "$pr_wt" >/dev/null 2>&1 || true
+  rm -rf "$pr_wt"
+  git -C "$main_checkout" worktree prune >/dev/null 2>&1 || true
 }
 
 wait_for_landing() { # <ISSUE-ID> <tip before dispatch> → 0 once the target branch's tip has moved, 1 on timeout
@@ -251,26 +257,31 @@ open_sequence_pr() { # push, open or find the PR from the branch onto the base, 
   case "$behind" in ""|0|"?") ;; *) logln "NOTE: $base has $behind commit(s) the branch lacks — one catch-up merge (Update branch on the PR) before it merges" ;; esac
 
   [ "${FLEET_SEQUENCE_PR_UPDATE:-1}" = "1" ] || return 0
-  # /pr-update reads the current branch, so the checkout is attached to the branch for this one session;
-  # the runner owns the checkout until the run ends, and restore_checkout puts it back after.
-  git config --unset start.wt-source-branch >/dev/null 2>&1 || true
-  git checkout -q "$branch" || { logln "WARN: could not check out $branch for /pr-update — run it by hand from the branch"; return 0; }
-  logln "dispatching: claude --bg ${claude_args[*]} -n 'fleet-sequence pr-update' '/pr-update'  (on $branch — the title and body come from the diff)"
-  if ! out=$(claude --bg "${claude_args[@]}" -n "fleet-sequence pr-update" "/pr-update" 2>&1); then
-    printf '%s\n' "$out"; logln "WARN: /pr-update dispatch failed — run it by hand from $branch"; return 0
+  # /pr-update reads the current branch, so it runs from a throwaway worktree on the branch — never by
+  # switching the main checkout, which stays wherever the human left it. The worktree lives under tmp/
+  # (gitignored, and outside .claude/worktrees so the reaper never sees it); a leftover is replaced.
+  remove_pr_worktree
+  git worktree add -q "$pr_wt" "$branch" >/dev/null 2>&1 \
+    || { logln "WARN: could not add a worktree on $branch at $pr_wt for /pr-update — run it by hand from the branch"; return 0; }
+  logln "dispatching: claude --bg ${claude_args[*]} -n 'fleet-sequence pr-update' '/pr-update'  (from $pr_wt on $branch — the title and body come from the diff)"
+  if ! out=$(cd "$pr_wt" && claude --bg "${claude_args[@]}" -n "fleet-sequence pr-update" "/pr-update" 2>&1); then
+    printf '%s\n' "$out"; logln "WARN: /pr-update dispatch failed — run it by hand from $branch"; remove_pr_worktree; return 0
   fi
   printf '%s\n' "$out"
   sid=$(parse_sid "$out")
-  [ -n "$sid" ] || { logln "WARN: could not read the /pr-update session id — run /pr-update by hand from $branch once it ends"; return 0; }
+  [ -n "$sid" ] || { logln "WARN: could not read the /pr-update session id — run /pr-update by hand from $branch once it ends; its worktree $pr_wt is left for it"; return 0; }
   update_marker --arg s "$sid" '.pr_update_session = $s'
-  wait_session_end "$sid" "$pr_update_timeout" \
-    || logln "WARN: /pr-update session $sid still running after ${pr_update_timeout}s — not killed; the checkout is restored under it, so re-run /pr-update from $branch once it ends"
+  if wait_session_end "$sid" "$pr_update_timeout"; then
+    remove_pr_worktree
+  else
+    logln "WARN: /pr-update session $sid still running after ${pr_update_timeout}s — not killed; its worktree $pr_wt is left in place (git worktree remove --force $pr_wt once it ends)"
+  fi
 }
 
 # =====================================================================================
 cmd_status() {
   [ -s "$marker" ] || { echo "No sequence marker at $marker — nothing launched here."; exit 0; }
-  local status base mode branch queue runner_pid runner live id sid st outcome landed pr_url ahead behind
+  local status base mode branch queue runner_pid runner live id sid st outcome landed pr_url ahead behind keys
   status=$(jq -r '.status' "$marker"); base=$(jq -r '.base' "$marker"); mode=$(jq -r '.mode // "pr"' "$marker")
   branch=$(jq -r '.branch // ""' "$marker"); pr_url=$(jq -r '.pr_url // ""' "$marker")
   queue=$(jq -r '.queue | join(" → ")' "$marker")
@@ -285,6 +296,9 @@ cmd_status() {
   [ "$(jq -r '.stop_requested' "$marker")" = "true" ] && printf ' · **stop requested**'
   printf '\n'
   [ "$(jq -r '.reason // ""' "$marker")" != "" ] && printf '**Reason:** %s\n' "$(jq -r '.reason' "$marker")"
+  keys=$(git -C "$main_checkout" config --get-regexp '^start\.[^.]+\.wt-source-branch$' 2>/dev/null \
+    | sed -E 's/^start\.([^.]+)\.wt-source-branch (.*)$/\1 → \2/' | paste -sd, - | sed 's/,/, /g' || true)
+  [ -n "$keys" ] && printf '**Fork key:** %s (per-issue `start.<id>.wt-source-branch` — only that issue'"'"'s /start wt reads it; the main checkout is not moved)\n' "$keys"
   if [ "$mode" != "merge" ]; then
     if [ -n "$pr_url" ]; then printf '**PR:** %s\n' "$pr_url"; else printf '**PR:** not opened yet (opens when the last issue ships)\n'; fi
   fi
@@ -331,7 +345,7 @@ fail_run() { # <reason> — record the failure and exit 1
 }
 on_exit_run() {
   local rc=$?
-  restore_checkout
+  clear_fork_keys
   if [ -s "$marker" ] && [ "$(jq -r '.status' "$marker")" = "running" ]; then
     update_marker --arg r "runner exited unexpectedly (exit $rc) — see $log" '.status = "failed" | .reason = $r | .current = null'
   fi
@@ -367,7 +381,7 @@ cmd_run() {
       fail_run "main checkout is dirty before $id — /auto would halt on it; resolve and re-run the same list"
     fi
 
-    position_checkout "$id"
+    set_fork_key "$id"
     before=$(git rev-parse --verify --quiet "refs/heads/$target")
     started=$(date +%s)
     update_marker --arg id "$id" --argjson now "$started" --arg b "$before" \
@@ -385,6 +399,8 @@ cmd_run() {
     if ! wait_session "$sid" "$issue_timeout" "$id" "$started"; then
       fail_run "$id: session $sid still running after ${issue_timeout}s — not killed; watch it in \`claude agents\`, then re-run the same list"
     fi
+    # The key has done its job once the session has ended — its /start wt ran at the very start.
+    git config --unset "$(fork_key "$id")" >/dev/null 2>&1 || true
     outcome=$(ledger_outcome "$sid" "$id" "$started")
     now=$(date +%s)
     update_marker --arg id "$id" --arg o "$outcome" --argjson now "$now" '.issues[$id] += {outcome: $o, ended_epoch: $now}'
@@ -409,7 +425,7 @@ cmd_run() {
   update_marker '.current = null'
   [ "$mode" = "merge" ] || open_sequence_pr
   update_marker '.status = "done"'
-  restore_checkout
+  clear_fork_keys
   if [ "$mode" = "merge" ]; then
     logln "done: $ids_csv merged into $base — $(jq -r '[.queue[] as $q | "\($q) \(.issues[$q].landed_sha // "?" | .[0:12])"] | join(", ")' "$marker")"
   else
@@ -419,7 +435,7 @@ cmd_run() {
 
 # =====================================================================================
 cmd_launch() {
-  local raw id norm prev json labels state current live k existing_issues dirty tok mode="pr" mode_set="" branch="" resume=0 carried="" src_cfg
+  local raw id norm prev json labels state current live k existing_issues dirty tok mode="pr" mode_set="" branch="" resume=0 carried=""
   local ids=()
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -494,17 +510,12 @@ cmd_launch() {
 
   dirty=$(git -C "$main_checkout" status --porcelain 2>/dev/null || true)
   if [ -n "$dirty" ]; then
-    echo "ERROR: main checkout is dirty — the runner moves HEAD between issues, and every session's /auto would halt at its Step 1 preflight." >&2
+    echo "ERROR: main checkout is dirty — every session's /auto would halt at its Step 1 preflight." >&2
     printf '%s\n' "$dirty" | sed 's/^/       /' >&2
     echo "       Commit or stash the above, then re-run. Nothing was dispatched." >&2
     exit 1
   fi
   [ -n "$current" ] || { echo "ERROR: HEAD is detached — check out the branch the sequence should ship onto, then re-run" >&2; exit 1; }
-  src_cfg=$(git -C "$main_checkout" config --get start.wt-source-branch 2>/dev/null || true)
-  if [ -n "$src_cfg" ]; then
-    echo "ERROR: start.wt-source-branch is set to '$src_cfg' — another posture (an epic fleet, an unfinished sequence) is in effect; finish it or unset it (git config --unset start.wt-source-branch), then re-run" >&2
-    exit 1
-  fi
 
   if [ "$mode" = "pr" ]; then
     # The PR's base is the launch branch, so it must exist on origin — an unpushed one would spend every
@@ -563,6 +574,8 @@ cmd_launch() {
       status: "running", reason: "", stop_requested: false, current: null, issues: $issues,
       pr_url: (if $pr == "" then null else $pr end), pr_number: null, launch_epoch: $now, log: $log, runner_pid: null}' > "$marker"
 
+  # A per-issue key a crashed runner left behind would otherwise stand until that issue's dispatch overwrote it.
+  for id in "${normalized[@]}"; do git -C "$main_checkout" config --unset "$(fork_key "$id")" >/dev/null 2>&1 || true; done
   if [ "$mode" = "merge" ]; then
     echo "Sequence: $(printf '%s' "$queue_json" | jq -r 'join(" → ")') merging into $current one issue at a time (no PR)"
   else
@@ -579,10 +592,11 @@ cmd_launch() {
   update_marker --argjson p "$pid" '.runner_pid = $p'
   echo "Runner detached (pid $pid) — log: $log"
   if [ "$mode" = "merge" ]; then
-    echo "Each issue runs in its own background session; the main checkout stays on $current and advances with every merge — leave it alone until the run ends."
+    echo "Each issue runs in its own background session and merges into $current by ref (a fast-forward touches the main checkout's tree only while it sits on $current)."
   else
-    echo "Each issue runs in its own background session; the main checkout's HEAD is parked on $branch between issues — leave it alone until the run ends."
+    echo "Each issue runs in its own background session, forking from and merging into $branch by ref; a per-issue start.<id>.wt-source-branch key steers it, set just before its dispatch."
   fi
+  echo "The main checkout is never moved, and other worktree sessions (a targeted /auto, /start wt) may run alongside — keep the main checkout clean, since a dirty tree halts /auto's preflight."
   echo "Watch with: fleet-sequence.sh status  |  claude agents"
 }
 

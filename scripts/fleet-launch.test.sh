@@ -263,6 +263,22 @@ ck "prompt override exits 0"          "0" "$(FLEET_PROMPT='/loop /auto EP' run 1
 ck_has "override dispatched as typed" "/loop /auto EP" "$WORK/dispatches"
 ck_has "override warned"              "does not carry epic:EP-3" "$WORK/out"
 
+# case 16: a /fleet-sequence whose runner is alive refuses the launch — sequenced work is solo. A crashed
+# runner (marker still `running`, pid gone) or a finished sequence does not. The scope token keeps the
+# launch on the checkout's own branch, as in case 15, so no posture is set.
+printf '{"status":"running","queue":["SQ-1","SQ-2"],"runner_pid":%s}\n' "$$" > "$REPO/tmp/fleet-sequence.json"
+: > "$WORK/dispatches"
+ck "running sequence exits 1"            "1" "$(run 1 epic:EP-3)"
+ck "running sequence dispatches nothing" "0" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
+ck_has "running sequence named"          "a /fleet-sequence is running (runner pid $$: SQ-1 → SQ-2)" "$WORK/out"
+ck_has "running sequence says nothing ran" "Nothing was dispatched." "$WORK/out"
+dead=$(sh -c 'echo $$')
+printf '{"status":"running","queue":["SQ-1"],"runner_pid":%s}\n' "$dead" > "$REPO/tmp/fleet-sequence.json"
+ck "crashed runner does not block"       "0" "$(run 1 epic:EP-3)"
+printf '{"status":"done","queue":["SQ-1"],"runner_pid":%s}\n' "$$" > "$REPO/tmp/fleet-sequence.json"
+ck "finished sequence does not block"    "0" "$(run 1 epic:EP-3)"
+rm -f "$REPO/tmp/fleet-sequence.json"
+
 echo
 echo "$PASS passed / $FAIL failed"
 [ "$FAIL" -eq 0 ]
