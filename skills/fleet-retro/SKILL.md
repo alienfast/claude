@@ -59,7 +59,9 @@ un-armed-loop findings were both artifacts, and that session wrote a correct `ha
 accurate `reason` while the report was still being drafted.
 
 The event-based flags are real either way — classifier blocks, ran without a surviving ledger, shipped
-with no persisted verdict, off-schema verdict body. Only the bookkeeping ones need this gate.
+with no persisted verdict, off-schema verdict body, drained early while siblings kept picking (it keys on
+a `drained` ledger, which a live session never has; a mid-fleet retro sees a smaller K, never a false
+one). Only the bookkeeping ones need this gate.
 
 **`wound down but never finalized its ledger` is a bookkeeping flag that is also real either way** — it
 fires only on a terminal tag or a stop-wakeup, which is exactly what a live session lacks, so its own
@@ -114,7 +116,7 @@ run keys>` and re-run, since a mis-scoped run also appends a junk row to `tmp/fl
 **Fewer than the fleet's** = a fleet session missing from discovery, which is a finding in itself — chase it;
 `--sessions` would only hide it.
 
-Three gauges ride the same run and the retro reads all three, not just the tables:
+Four gauges ride the same run and the retro reads all four, not just the tables:
 
 - **Context distribution** — share of billable prompt volume by context size at call time. This is the
   autocompact gauge: fleet-launch pins `--autocompact 500000` (150000 shipped 2026-08-14 and
@@ -135,6 +137,15 @@ Three gauges ride the same run and the retro reads all three, not just the table
   hand. Read $/issue through its two factors — ktok/issue (work per issue) x $/Mtok out (context
   weight per unit of work) — before proposing levers, since they route differently (churn/specs vs
   autocompact/model mix).
+- **Pool exhausted** — the idle-tail number Step 5's Capacity item leads with. Printed under **Totals**
+  when the last ship landed an hour or more before the deadline: hours from that landing to the deadline,
+  the session-hours the deadline-drained sessions then sat idle, and that as a share of the fleet (the
+  trend table's `idle%`; `pool_exhausted` in the JSON). Landings are git committer dates with the
+  transcript's SHIPPED tag as fallback — tags alone missed 6 of the 2026-09-16 BFP fleet's 21 ships and
+  read the tail 3h too long. An empty pool is a prep finding, not a session fault: read it beside Step 3's
+  Remaining pool census, and read the "drained early, siblings kept picking" flag as its complement — a
+  pool that was gated rather than empty. On that fleet the number was 10.4 session-hours, 28% of the
+  fleet, while every per-session row read clean and Flags said None.
 
 The review-churn table reads `tmp/quality-review-verdict-*.md`: cycles, findings by severity, the
 SEVERITY/origin split (`plan`/`impl`/`spec`/`test`/`latent` — verdicts written before 2026-08-04
@@ -253,6 +264,7 @@ The script finds *shapes*; it does not explain them. Each flag is a lead:
 | spec-heavy origin mix | the certified spec itself is what review keeps correcting — the lever is `/spec` rigor at certification time, not planning or implementation effort | the tagged findings' issues; diff each issue's Problem/Success Criteria against what the review had to restate |
 | latent-heavy origin mix | pre-existing defects the change merely surfaced — NOT a signal about this fleet's plan, code or specs, and not a lever at all. Expect it to decay across runs as the pool drains; a share that stays flat or rises means the reviewer is finding genuinely new latent surface, which is worth its own investigation | Step 3's Linear census: are these being filed, and is the filed-per-shipped rate falling run over run? |
 | high filed-per-shipped rate | each shipped issue spawns near or above one new issue — at that rate the backlog cannot drain | Step 3's Linear census: severity + certification mix of what was filed |
+| drained early, siblings kept picking | the ranking reported an empty pool for a transient reason — every remaining candidate chained behind a sibling's in-flight issue (now `BLOCKED-HOLD` in `next-candidates.sh`, which /auto must honor as a wait, not a drain), an empty fetch the double-run also hit, a label flap, or work certified after the drain — and the session latched sticky `drained`. If it recurs after the BLOCKED-HOLD fix, that prose gate lost, exactly as the deadline gate did before `auto-deadline-gate.sh` | that session's last `/next` output in its transcript; `linear-cli relations list` on the issues its siblings shipped next; the flag's K and H give the cost |
 
 **Correlate across sessions before concluding.** The 2026-08-01 run's biggest finding existed only in the
 comparison: blind-sleep burn tracked dispatch mode exactly (0% at 0 background dispatches; 55% at 32). No
@@ -351,6 +363,8 @@ Lead with where the capacity went, in hours. Then, ranked by cost:
 
 1. **Ledger** — shipped, filed, net delta, remaining certified pool.
 2. **Capacity** — total session-hours and what each fault cost, as hours and as a share of the fleet.
+   When the **Pool exhausted** line printed (Step 1's gauge), it is the first entry: capacity the fleet
+   could not have used, charged to prep — the pool — rather than to any session.
 3. **Findings** — one per fault: evidence (numbers + `file:line` or transcript timestamps), root cause,
    and the specific fix. Distinguish a **compliance failure** (the rule exists and was ignored — prose
    will not fix it again) from a **gap** (no rule covers it).

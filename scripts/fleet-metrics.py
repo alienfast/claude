@@ -388,8 +388,16 @@ def scan_transcript(path, agg, agent_type="main", description=""):
                     agg["visible_chars"][agent_type] += len(body)
                 for _tag, issue in SHIPPED_TAG.findall(body):
                     agg["ship_tags"].add(issue)
+                    # Earliest tag per issue — the RELEASED / DEFERRED-MERGE re-renders of one ship
+                    # match the same pattern later. The fallback landing time for an id git has no
+                    # commit for; git's committer date is the primary (git_merged), since 6 of the
+                    # 2026-09-16 BFP fleet's 21 ships carried no tag in any transcript.
+                    if t and (issue not in agg["ship_times"] or t < agg["ship_times"][issue]):
+                        agg["ship_times"][issue] = t
                 for issue in CANCELED_TAG.findall(body):
                     agg["cancel_tags"].add(issue)
+                    if t:
+                        agg["cancel_times"].append(t)
                 if TERMINAL_TAG.search(body):
                     agg["terminal_tags"] += 1
                 for kind in LIMIT_HIT.findall(body):
@@ -485,6 +493,10 @@ def new_agg():
         "dispatch": Counter(), "classifier_blocks": [], "gaps": [], "activity_times": [],
         "sleep_blind_s": 0.0, "sleep_blind_n": 0, "sleep_marker_s": 0.0, "sleep_marker_n": 0,
         "ship_tags": set(), "cancel_tags": set(), "subagents": 0,
+        # issue -> earliest SHIPPED-tag time, and every CANCELED-tag time: the transcript side of
+        # "when was this session last productive" (git's committer dates are the primary, see
+        # git_merged). SKIPPED/FAILED carry no timestamped tag, so a post-ship skip reads as idle.
+        "ship_times": {}, "cancel_times": [],
         "limit_hits": Counter(), "first_limit_hit": None, "limit_resets": [],
         "limit_hit_times": [], "stop_times": [],
         "tokens": Counter(), "seen_msg_ids": set(),
@@ -972,18 +984,32 @@ def parse_verdicts(checkout, cutoff, launch_epoch=None, until=None):
 
 
 def git_merged(checkout, issues):
-    """Which shipped issues have a commit in history, and which have a merge commit. A shipped issue
-    with neither is the loud case; merge-commit-absent alone is usually just a fast-forward."""
+    """Which shipped issues have a commit in history, which have a merge commit, and when each landed.
+    A shipped issue with no commit is the loud case; merge-commit-absent alone is usually just a
+    fast-forward. `landed_at` is the latest committer date over the commits the grep finds — a
+    `Merge <ID>` commit, or a fast-forward whose only commit is `<ID>: …` — and is the primary source
+    for when a session was last productive: transcript SHIPPED tags covered 15 of the 2026-09-16 BFP
+    fleet's 21 ships, and the tag-only idle tail read 13.6h where git read 10.4h."""
     out = {}
     for issue in sorted(issues):
+        landed_at = None
         try:
-            commits = subprocess.run(
-                ["git", "-C", str(checkout), "log", "--oneline", "--all", f"--grep={issue}"],
+            lines = subprocess.run(
+                ["git", "-C", str(checkout), "log", "--format=%cI%x09%s", "--all", f"--grep={issue}"],
                 capture_output=True, text=True, encoding="utf-8", timeout=30,
-            ).stdout
+            ).stdout.splitlines()
         except (subprocess.SubprocessError, OSError):
-            commits = ""
+            lines = []
+        subjects = []
+        for line in lines:
+            when, _, subject = line.partition("\t")
+            subjects.append(subject)
+            stamp = ts(when)
+            if stamp and (landed_at is None or stamp > landed_at):
+                landed_at = stamp
+        commits = "\n".join(subjects)
         out[issue] = {
+            "landed_at": landed_at,
             "commit": bool(re.search(rf"\b{issue}\b", commits)),
             # Two landing shapes, and the flag must accept both or it fires on every ship of the
             # other one: `/finish merge` writes `Merge <ID>`, while `/finish pr` lands through
@@ -1290,6 +1316,85 @@ def main():
             issue_run.setdefault(issue, s["run_key"])
     merged = git_merged(checkout, all_shipped)
 
+    # The fleet deadline, when the marker survived (fleet-stop rewrites it; a launch without a
+    # duration never wrote one). Read once for every consumer: the stall clipping below, the
+    # pool-exhausted gauge and the early-drain flag.
+    fleet_deadline_dt = None
+    try:
+        dl = json.loads((checkout / "tmp" / "fleet-deadline.json").read_text(encoding="utf-8"))
+        if isinstance(dl.get("deadline_epoch"), (int, float)):
+            fleet_deadline_dt = datetime.fromtimestamp(dl["deadline_epoch"], tz=timezone.utc)
+    except Exception:
+        pass
+
+    # When each session's ships landed: git's committer date where a commit carries the id, else the
+    # earliest SHIPPED tag. Both capacity detectors below key on this — the ledger's shipped[]
+    # survives compaction but carries no times, and the tags alone missed 6 of 21 ships on the
+    # 2026-09-16 BFP fleet.
+    landings = {}
+    for s in sessions:
+        times = {}
+        for issue in set(s["state"].get("shipped") or []) | s["agg"]["ship_tags"]:
+            when = merged.get(issue, {}).get("landed_at") or s["agg"]["ship_times"].get(issue)
+            if when:
+                times[issue] = when
+        landings[s["run_key"]] = times
+
+    # Pool exhausted: the whole fleet idling on an EMPTY certified pool after its last ship. Per
+    # deadline-drained session, the tail from its last productive moment (a landing or a canceled
+    # attempt — a cancel after the last ship is work, not idling; skips and failures carry no
+    # timestamp and still read as idle) to the deadline; a session that shipped nothing idled from
+    # its first pick. `halted`, `active` and ledger-less sessions are excluded: only a deadline drain
+    # proves the session was waiting on the pool. Measured 2026-09-16: three sessions held 4.1h, 3.3h
+    # and 3.0h on a keeper-gated Planned column (10.4 session-hours, 28% of the fleet) while every
+    # per-session row read clean and Flags said None.
+    idle_tails = {}   # run_key -> (idle hours, idled from its first pick)
+    if fleet_deadline_dt is not None:
+        for s in sessions:
+            if s["state"].get("status") != "drained" or "deadline" not in (s["state"].get("reason") or ""):
+                continue
+            times = list(landings[s["run_key"]].values()) + s["agg"]["cancel_times"]
+            if times:
+                last_productive, from_first = max(times), False
+            elif s["agg"]["first"]:
+                last_productive, from_first = s["agg"]["first"], True
+            else:
+                continue
+            idle_tails[s["run_key"]] = (
+                max(0.0, (fleet_deadline_dt - last_productive).total_seconds() / 3600), from_first)
+    pool_exhausted_h = round(min(h for h, _ in idle_tails.values()), 1) if idle_tails else None
+    idle_tail_session_hours = round(sum(h for h, _ in idle_tails.values()), 1) if idle_tails else None
+
+    # Early drain: ONE session drained while its siblings kept picking — the pool was gated, not
+    # empty (a `blocks` chain behind in-flight work, an empty fetch, a label flap, work certified
+    # after the drain), and that session's remaining hours were forfeited. Measured 2026-09-05: a
+    # session drained 10.4h before the deadline (22% of the fleet) while two siblings shipped 12
+    # more, and no flag fired. K counts each sibling's landings after the drain MINUS ONE: /auto
+    # ships one issue per invocation, so every sibling has at most one in flight at T and lands it
+    # after T even when the pool really is empty; a sibling's SECOND landing after T proves a pick
+    # after T. A compacted sibling that lost its tags and has no commit under-counts, never over.
+    early_drain = {}   # run_key -> {"hours": H, "sibling_ships": K, "horizon": "deadline" | "siblings"}
+    for s in sessions:
+        st = s["state"]
+        if st.get("status") != "drained" or "deadline" in (st.get("reason") or ""):
+            continue
+        drained_at = s["agg"]["last"]
+        if drained_at is None:
+            continue
+        others = [o for o in sessions if o is not s]
+        if fleet_deadline_dt is not None:
+            horizon, horizon_name = fleet_deadline_dt, "deadline"
+        else:
+            horizon = max((o["agg"]["last"] for o in others if o["agg"]["last"]), default=None)
+            horizon_name = "siblings"
+        if horizon is None:
+            continue
+        after = sum(max(0, sum(1 for when in landings[o["run_key"]].values() if when > drained_at) - 1)
+                    for o in others)
+        early_drain[s["run_key"]] = {
+            "hours": round(max(0.0, (horizon - drained_at).total_seconds() / 3600), 1),
+            "sibling_ships": after, "horizon": horizon_name}
+
     # Shipped-issue provenance: how much of the throughput is work the pipeline minted for itself
     # (review deferrals, /reflect filings) vs pre-existing backlog. Issues/hour looks identical
     # either way — this join is what tells a draining backlog from a treadmill.
@@ -1402,6 +1507,9 @@ def main():
         "ctx_share_ge200k": round(ctx_ge200_share, 3) if ctx_ge200_share is not None else None,
         "filed_per_shipped": filed_per_shipped,
         "fresh_shipped_share": fresh_share,
+        "pool_exhausted_h": pool_exhausted_h,
+        "idle_tail_session_hours": idle_tail_session_hours,
+        "idle_tail_share": None,  # filled below once session_hours exists
     }
 
     # Burn against the moving windows the account actually meters. /auto-prep sizes a fleet from
@@ -1412,6 +1520,8 @@ def main():
     session_hours = sum(((s["agg"]["last"] - s["agg"]["first"]).total_seconds() / 3600)
                         for s in sessions if s["agg"]["first"] and s["agg"]["last"])
     headline["session_hours"] = round(session_hours, 1)
+    headline["idle_tail_share"] = round(idle_tail_session_hours / session_hours, 3) \
+        if idle_tail_session_hours is not None and session_hours else None
     # --sessions carries NO time bound, so every ledger-less /auto session the project has ever
     # held counts as "excluded" — 18 of them on the 2026-08-25 checkout, all from earlier fleets and
     # every one a correct exclusion. Only an exclusion OVERLAPPING the measured fleet's own span can
@@ -1468,14 +1578,6 @@ def main():
     # A stall gap that straddles the fleet deadline is only "lost" up to the deadline — quiet after it
     # is wind-down the run owed anyway (2026-08-16 pm: ~0.9 of a reported 4.2 lost session-hours were
     # post-deadline; BF-1206). The marker may be gone by retro time; clipping is best-effort.
-    fleet_deadline_dt = None
-    try:
-        dl = json.loads((checkout / "tmp" / "fleet-deadline.json").read_text(encoding="utf-8"))
-        if isinstance(dl.get("deadline_epoch"), (int, float)):
-            fleet_deadline_dt = datetime.fromtimestamp(dl["deadline_epoch"], tz=timezone.utc)
-    except Exception:
-        pass
-
     def lost_seconds(g):
         """Sum of a stall group's gap seconds, each gap clipped at the fleet deadline when known."""
         total = 0
@@ -1523,6 +1625,9 @@ def main():
                 "classifier_blocks": len(s["agg"]["classifier_blocks"]),
                 "dangling_tool_calls": s["agg"]["dangling"],
                 "subagent_transcripts": s["agg"]["subagents"],
+                "drained_early_h": (early_drain.get(s["run_key"]) or {}).get("hours"),
+                "sibling_ships_after_drain": (early_drain.get(s["run_key"]) or {}).get("sibling_ships"),
+                "idle_tail_h": round(idle_tails[s["run_key"]][0], 1) if s["run_key"] in idle_tails else None,
                 "output_tokens": {f"{t}/{m}": n for (t, m), n in s["agg"]["tokens"].most_common()},
                 "usage": {f"{t}/{m}": dict(u) for (t, m), u in s["agg"]["usage"].items()},
                 "context_volume_tokens": {b: s["agg"]["ctx_volume"][b] for b in CTX_BUCKETS
@@ -1566,6 +1671,12 @@ def main():
                 "sources_read": linear_read,
             },
             "history": history,
+            "pool_exhausted": {
+                "hours_before_deadline": pool_exhausted_h,
+                "idle_tail_session_hours": idle_tail_session_hours,
+                "idle_tail_share": headline["idle_tail_share"],
+                "sessions": {k: round(h, 1) for k, (h, _) in idle_tails.items()},
+            },
             "windows": {
                 "peak_5h_output_tokens": peak_5h,
                 "peak_5h_cache_read_tokens": peak_5h_cache_read,
@@ -1598,7 +1709,9 @@ def main():
                 "cutoff_trailing_5h": [{**{k: v for k, v in c.items() if k != "at"},
                                         "at": f"{c['at']:%Y-%m-%dT%H:%M:%SZ}"} for c in cutoff_meters],
             },
-            "merge_reconciliation": merged,
+            "merge_reconciliation": {
+                i: {**m, "landed_at": m["landed_at"].isoformat() if m["landed_at"] else None}
+                for i, m in merged.items()},
             "excluded_stale": excluded_stale,
             "scope": scope,
             "single_runs_excluded": sorted(single_excluded),
@@ -1651,6 +1764,16 @@ def main():
           f"{tot['marker'] / 3600:.1f}h · dispatch {tot['bg']} background / {tot['sync']} sync{ign_note} · "
           f"{tot['cls']} classifier blocks · "
           f"{sum(fleet_tokens.values()):,} output tokens\n")
+    if pool_exhausted_h is not None and pool_exhausted_h >= 1:
+        tails = ", ".join(f"`{k}` {h:.1f}h" + (" (idle from its first pick)" if from_first else "")
+                          for k, (h, from_first) in sorted(idle_tails.items(), key=lambda kv: -kv[1][0]))
+        share = f"{100 * headline['idle_tail_share']:.0f}%" if headline["idle_tail_share"] is not None else "?"
+        print(f"**Pool exhausted** — last ship {pool_exhausted_h:.1f}h before the deadline; "
+              f"{idle_tail_session_hours:.1f} session-hours ({share} of the fleet) idle on an empty pool "
+              f"({len(idle_tails)} of {len(sessions)} sessions deadline-drained: {tails}). An empty pool "
+              f"is a prep finding, not a session fault — read it beside the Remaining pool census "
+              f"(fleet-retro Step 3). Skips and failures after the last ship carry no timestamp and "
+              f"are counted as idle.\n")
     if ctx_total_vol:
         buckets = " · ".join(f"{CTX_LABELS[b]} {100 * fleet_ctx[b] / ctx_total_vol:.0f}%"
                              for b in CTX_BUCKETS if fleet_ctx[b])
@@ -1899,8 +2022,8 @@ def main():
         def pct(v):
             return f"{round(100 * v)}%" if v is not None else "-"
         print("| fleet start | n | hours | shipped | $/issue | ktok/issue | $/Mtok out | cycles | "
-              "find/rev | C+H/rev | plan% | ctx>=200k% | filed/ship | fresh% |")
-        print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+              "find/rev | C+H/rev | plan% | ctx>=200k% | filed/ship | fresh% | idle% |")
+        print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
         for r in history[-6:]:
             mark = " ←" if r.get("session_set") == headline["session_set"] and not args.all else ""
             fs = (r.get("fleet_start") or "?")[:16].replace("T", " ")
@@ -1911,13 +2034,15 @@ def main():
                   f"{cell(r.get('avg_cycles'))} | {cell(r.get('findings_per_review'))} | "
                   f"{cell(r.get('crit_high_per_review'))} | {pct(r.get('plan_origin_share'))} | "
                   f"{pct(r.get('ctx_share_ge200k'))} | {cell(r.get('filed_per_shipped'))} | "
-                  f"{pct(r.get('fresh_shipped_share'))} |")
+                  f"{pct(r.get('fresh_shipped_share'))} | {pct(r.get('idle_tail_share'))} |")
         if len(history) > 6:
             print(f"\n({len(history) - 6} earlier row(s) in the ledger, not shown)")
         print("\nRead $/issue as its two factors: ktok/issue is work per shipped issue (churn or harder "
               "issues — cycles, find/rev and plan% say which), $/Mtok out is billable context per unit "
               "of work (ctx>=200k% names the driver — the autocompact lever). fresh% is the treadmill "
-              "gauge: the share of shipped issues created during or within 7 days before the run.\n")
+              "gauge: the share of shipped issues created during or within 7 days before the run. "
+              "idle% is the pool-exhausted gauge: session-hours the deadline-drained sessions sat on "
+              "an empty pool after their last ship, as a share of the fleet.\n")
     elif not args.all:
         print("- first recorded fleet — the trend accrues one row per windowed run in "
               "`tmp/fleet-metrics-history.jsonl`\n")
@@ -1987,6 +2112,19 @@ def main():
             print(f"- **`{s['run_key']}` shipped without recording it** — transcript shows "
                   f"{sorted(obs - rec)}, absent from the state file (recorded {sorted(rec) or '[]'}). "
                   f"Step 4 never ran; the run's own tally undercounts.")
+        # The one cross-session flag: a drain nobody else saw. Computed above (early_drain) so the JSON
+        # row carries H and K even below the emit threshold; the line fires only on a real forfeiture.
+        ed = early_drain.get(s["run_key"])
+        if ed and ed["hours"] >= 1 and ed["sibling_ships"] >= 1:
+            flagged = True
+            before = "the deadline" if ed["horizon"] == "deadline" else "its siblings' last activity"
+            print(f"- **`{s['run_key']}` drained {ed['hours']}h before {before} while siblings picked "
+                  f"and shipped {ed['sibling_ships']} more issue(s)** (reason '{st.get('reason') or ''}') "
+                  f"— the pool was gated, not empty: a `blocks` chain behind in-flight work (now "
+                  f"`BLOCKED-HOLD` in next-candidates.sh, a prose gate /auto must obey), an empty fetch "
+                  f"the double-run also hit, a label flap, or issues certified mid-run after the drain. "
+                  f"Read that session's last `/next` output and `linear-cli relations list` on the "
+                  f"issues siblings shipped next. Forfeited ≈{ed['hours']} session-hours.")
         if a["dangling"]:
             flagged = True
             print(f"- `{s['run_key']}` has {a['dangling']} tool call(s) with no result — an "

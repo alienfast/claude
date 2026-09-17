@@ -1125,6 +1125,136 @@ ck_lacks "recorded set: single run not swept in"      "\`tgt00003\`" "$MD15"
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK15" --hours 24 > "$MD15" 2>&1
 ck_has "recorded set: explicit window overrides"      "scope: --hours 24" "$MD15"
 
+at_epoch() { python3 -c "from datetime import datetime,timezone; print(datetime.fromtimestamp($1,timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))"; }
+
+# ---- 16. pool exhausted: the fleet idled on an EMPTY certified pool after its last ship ----
+# Measured 2026-09-16: the last merge landed 3h before the deadline and all three sessions held on a
+# keeper-gated Planned column until it — 10.4 session-hours (28% of the fleet), derived by hand from three
+# jq passes while every analyzer row read clean and Flags said None. Landing times come from git because
+# 6 of that fleet's 21 ships carried no SHIPPED tag in any transcript, and a tag-only tail read 3h long.
+CK16="$WORK/ck16"; mkdir -p "$CK16/tmp"
+git -C "$CK16" init -q 2>/dev/null
+git -C "$CK16" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "init"
+M16="$(git -C "$CK16" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
+T16="$WORK/projects/$M16"; mkdir -p "$T16"
+NOW16=$(python3 -c "import time; print(int(time.time()))")
+DL16=$((NOW16 - 3600))   # the deadline passed an hour ago
+echo "{\"deadline_epoch\": $DL16, \"deadline\": \"test\", \"count\": 3, \"launch_epoch\": $((DL16 - 43200))}" > "$CK16/tmp/fleet-deadline.json"
+
+# Session A recorded two ships; its transcript tags only TT-100 (5h before the deadline) while TT-101
+# exists only as a commit landing 2h before it — the untagged shape. A transcript-only tail reads 5h here.
+echo '{"status":"drained","reason":"fleet deadline reached (test)","mode":"loop","shipped":["TT-100","TT-101"],"canceled":[],"skipped":[],"failed":[]}' > "$CK16/tmp/auto-state-pxa00001.json"
+cat > "$T16/pxa00001-0000.jsonl" <<EOF
+{"type":"user","timestamp":"$(at_epoch $((DL16 - 36000)))","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"$(at_epoch $((DL16 - 18000)))","message":{"role":"assistant","id":"m_px_a1","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-100 done"}]}}
+{"type":"assistant","timestamp":"$(at_epoch $DL16)","message":{"role":"assistant","id":"m_px_a2","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"NO-CANDIDATES: fleet deadline reached"}]}}
+EOF
+GIT_COMMITTER_DATE="$(at_epoch $((DL16 - 18000)))" git -C "$CK16" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "TT-100: fix it"
+GIT_COMMITTER_DATE="$(at_epoch $((DL16 - 7200)))" git -C "$CK16" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "TT-101: land it"
+# Session B: one ship, tagged and merged 3h before the deadline.
+echo '{"status":"drained","reason":"fleet deadline reached (test)","mode":"loop","shipped":["TT-102"],"canceled":[],"skipped":[],"failed":[]}' > "$CK16/tmp/auto-state-pxb00001.json"
+cat > "$T16/pxb00001-0000.jsonl" <<EOF
+{"type":"user","timestamp":"$(at_epoch $((DL16 - 36000)))","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"$(at_epoch $((DL16 - 10800)))","message":{"role":"assistant","id":"m_px_b1","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-102 done"}]}}
+{"type":"assistant","timestamp":"$(at_epoch $DL16)","message":{"role":"assistant","id":"m_px_b2","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"NO-CANDIDATES: fleet deadline reached"}]}}
+EOF
+GIT_COMMITTER_DATE="$(at_epoch $((DL16 - 10800)))" git -C "$CK16" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "Merge TT-102"
+# Session C halted 8h before the deadline after an old ship: not a deadline drain, so it is excluded
+# from the idle tail (its 2h span still counts toward the fleet's session-hours: 10 + 10 + 2 = 22).
+echo '{"status":"halted","reason":"circuit breaker","mode":"loop","shipped":["TT-103"],"canceled":[],"skipped":[],"failed":[]}' > "$CK16/tmp/auto-state-pxc00001.json"
+cat > "$T16/pxc00001-0000.jsonl" <<EOF
+{"type":"user","timestamp":"$(at_epoch $((DL16 - 36000)))","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"$(at_epoch $((DL16 - 28800)))","message":{"role":"assistant","id":"m_px_c1","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-103 done"}]}}
+EOF
+
+J16="$WORK/out16.json"; MD16="$WORK/out16.md"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK16" --hours 24 --json > "$J16" 2>/dev/null
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK16" --hours 24 > "$MD16" 2>&1
+q16() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J16"; }
+ck "pool: last ship before the deadline"       "2.0"   "$(q16 "d['pool_exhausted']['hours_before_deadline']")"
+ck "pool: idle tail is git-backed (tags alone read 8.0)" "5.0" "$(q16 "d['pool_exhausted']['idle_tail_session_hours']")"
+ck "pool: idle tail share of the fleet"        "0.227" "$(q16 "d['pool_exhausted']['idle_tail_share']")"
+ck "pool: per-session tails"                   "{'pxa00001': 2.0, 'pxb00001': 3.0}" "$(q16 "d['pool_exhausted']['sessions']")"
+ck "pool: session row carries its tail"        "2.0"   "$(q16 "[s for s in d['sessions'] if s['run_key']=='pxa00001'][0]['idle_tail_h']")"
+ck "pool: halted session excluded"             "None"  "$(q16 "[s for s in d['sessions'] if s['run_key']=='pxc00001'][0]['idle_tail_h']")"
+ck "pool: landed_at in the reconciliation"     "True"  "$(q16 "d['merge_reconciliation']['TT-101']['landed_at'] is not None")"
+ck "pool: history row carries the gauge"       "5.0"   "$(q16 "d['history'][-1]['idle_tail_session_hours']")"
+ck_has "pool: totals line" "**Pool exhausted** — last ship 2.0h before the deadline; 5.0 session-hours (23% of the fleet) idle on an empty pool (2 of 3 sessions deadline-drained: \`pxb00001\` 3.0h, \`pxa00001\` 2.0h)" "$MD16"
+ck_has "pool: trend column"                    "| idle% |" "$MD16"
+ck_has "pool: trend cell"                      "| 23% |" "$MD16"
+# A 20-minute tail after the last landing is the deadline doing its job, not an exhausted pool.
+echo "{\"deadline_epoch\": $((DL16 - 7200 + 1200)), \"count\": 3, \"launch_epoch\": $((DL16 - 43200))}" > "$CK16/tmp/fleet-deadline.json"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK16" --hours 24 > "$MD16" 2>&1
+ck_lacks "pool: a 20-minute tail is not exhaustion" "**Pool exhausted**" "$MD16"
+# No marker, no deadline to measure against: nulls in the JSON and no line in the report.
+rm "$CK16/tmp/fleet-deadline.json"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK16" --hours 24 --json > "$J16" 2>/dev/null
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK16" --hours 24 > "$MD16" 2>&1
+ck "pool: no marker, no number"   "None" "$(q16 "d['pool_exhausted']['hours_before_deadline']")"
+ck_lacks "pool: no marker, no line" "**Pool exhausted**" "$MD16"
+
+# ---- 17. early drain: one session drained while its siblings kept picking ----
+# Measured 2026-09-05: session 7f086212 wrote `drained` 10.4h before the deadline — the pool was
+# transitively blocked behind a sibling's in-flight issue, not empty — and its two siblings shipped 12 more
+# at an unchanged rate. No flag fired; the loss was found by comparing the ledger's mtime against sibling
+# ship times by hand. K subtracts one per sibling: at T each sibling has at most one issue in flight and
+# lands it after T even on a genuinely empty pool, so only a sibling's SECOND landing proves a pick after T.
+CK17="$WORK/ck17"; mkdir -p "$CK17/tmp"
+git -C "$CK17" init -q 2>/dev/null
+git -C "$CK17" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "init"
+M17="$(git -C "$CK17" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
+T17="$WORK/projects/$M17"; mkdir -p "$T17"
+NOW17=$(python3 -c "import time; print(int(time.time()))")
+DL17=$((NOW17 - 1800))
+echo "{\"deadline_epoch\": $DL17, \"count\": 2, \"launch_epoch\": $((NOW17 - 43200))}" > "$CK17/tmp/fleet-deadline.json"
+drained17() { # drained17 <reason> — dr000001's ledger
+  echo "{\"status\":\"drained\",\"reason\":\"$1\",\"mode\":\"loop\",\"shipped\":[],\"canceled\":[],\"skipped\":[],\"failed\":[]}" > "$CK17/tmp/auto-state-dr000001.json"
+}
+drained17 "TT backlog drained of certified issues — 1/0/0/0 this run"
+cat > "$T17/dr000001-0000.jsonl" <<EOF
+{"type":"user","timestamp":"$(at_epoch $((NOW17 - 9000)))","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"$(at_epoch $((NOW17 - 7200)))","message":{"role":"assistant","id":"m_dr_1","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"NO-CANDIDATES: backlog drained of certified issues"}]}}
+EOF
+# The sibling: TT-40 before the drain, TT-41 and TT-42 after it (no commits — the tag fallback), then its
+# own deadline drain half an hour ago, a 0.5h tail that keeps the pool-exhausted gauge silent here.
+echo '{"status":"drained","reason":"fleet deadline reached (test)","mode":"loop","shipped":["TT-40","TT-41","TT-42"],"canceled":[],"skipped":[],"failed":[]}' > "$CK17/tmp/auto-state-sb000001.json"
+cat > "$T17/sb000001-0000.jsonl" <<EOF
+{"type":"user","timestamp":"$(at_epoch $((NOW17 - 9000)))","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"$(at_epoch $((NOW17 - 8000)))","message":{"role":"assistant","id":"m_sb_1","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-40 done"}]}}
+{"type":"assistant","timestamp":"$(at_epoch $((NOW17 - 5400)))","message":{"role":"assistant","id":"m_sb_2","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-41 done"}]}}
+{"type":"assistant","timestamp":"$(at_epoch $((NOW17 - 3600)))","message":{"role":"assistant","id":"m_sb_3","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-42 done"}]}}
+{"type":"assistant","timestamp":"$(at_epoch $DL17)","message":{"role":"assistant","id":"m_sb_4","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"NO-CANDIDATES: fleet deadline reached"}]}}
+EOF
+
+J17="$WORK/out17.json"; MD17="$WORK/out17.md"
+run17() {
+  CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK17" --hours 24 --json > "$J17" 2>/dev/null
+  CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK17" --hours 24 > "$MD17" 2>&1
+}
+q17() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J17"; }
+run17
+ck "early drain: hours before the deadline"      "1.5"  "$(q17 "[s for s in d['sessions'] if s['run_key']=='dr000001'][0]['drained_early_h']")"
+ck "early drain: sibling ships minus in-flight"  "1"    "$(q17 "[s for s in d['sessions'] if s['run_key']=='dr000001'][0]['sibling_ships_after_drain']")"
+ck "early drain: a deadline drain carries null"  "None" "$(q17 "[s for s in d['sessions'] if s['run_key']=='sb000001'][0]['drained_early_h']")"
+ck_has "early drain: flag line" "**\`dr000001\` drained 1.5h before the deadline while siblings picked and shipped 1 more issue(s)** (reason 'TT backlog drained of certified issues — 1/0/0/0 this run')" "$MD17"
+ck_has "early drain: forfeit named"              "Forfeited ≈1.5 session-hours" "$MD17"
+ck_lacks "early drain: 0.5h tail is not exhaustion" "**Pool exhausted**" "$MD17"
+# A deadline drain is never an early drain, whatever the siblings did after it.
+drained17 "fleet deadline reached (test)"
+run17
+ck_lacks "early drain: deadline reason never flags" "drained 1.5h before the deadline while siblings" "$MD17"
+drained17 "TT backlog drained of certified issues — 1/0/0/0 this run"
+# No marker: the horizon is the siblings' last activity, and the line says so.
+mv "$CK17/tmp/fleet-deadline.json" "$CK17/tmp/fleet-deadline.json.off"
+run17
+ck_has "early drain: sibling horizon without a marker" "drained 1.5h before its siblings' last activity while siblings picked and shipped 1 more issue(s)" "$MD17"
+mv "$CK17/tmp/fleet-deadline.json.off" "$CK17/tmp/fleet-deadline.json"
+# Drop TT-42: the sibling's single after-T landing is its in-flight issue, not a pick after the drain.
+grep -v 'TT-42' "$T17/sb000001-0000.jsonl" > "$T17/sb.tmp" && mv "$T17/sb.tmp" "$T17/sb000001-0000.jsonl"
+run17
+ck "early drain: one after-T landing is in-flight, K=0" "0" "$(q17 "[s for s in d['sessions'] if s['run_key']=='dr000001'][0]['sibling_ships_after_drain']")"
+ck_lacks "early drain: no flag on K=0" "drained 1.5h before the deadline while siblings" "$MD17"
+
 echo
 echo "$PASS passed / $FAIL failed / $SKIP skipped"
 [ "$FAIL" -eq 0 ]
