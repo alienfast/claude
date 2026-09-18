@@ -4,6 +4,7 @@
 set -e
 
 source "$HOME/.claude/lib/lint.sh"
+source "$HOME/.claude/lib/pnpm.sh"
 
 # OS detection drives the package-manager branches below. Git Bash / MSYS2 on Windows reports
 # OSTYPE=msys (uname → MINGW64_NT / MSYS_NT); macOS is darwin*. macOS installs system tools via
@@ -64,9 +65,10 @@ claude plugin marketplace update claude-plugins-official
 echo "Installing lsp servers..."
 claude plugin install typescript-lsp
 
-# Ensure pnpm's global bin directory ($PNPM_HOME/bin as of pnpm 11) is on PATH — `pnpm
-# add -g` refuses to run when it isn't. Augment PATH unconditionally (the parent shell
-# always exports PNPM_HOME, so a `-z "$PNPM_HOME"` guard would skip this every time).
+# Ensure pnpm's global bin directory is on PATH — `pnpm add -g` refuses to run when it isn't. pnpm 11 keeps it at
+# $PNPM_HOME/bin, pnpm 10 at $PNPM_HOME itself (measured), and the standalone installer's rc snippet adds only the
+# latter, so add both. Augment PATH unconditionally (the parent shell always exports PNPM_HOME, so a `-z "$PNPM_HOME"`
+# guard would skip this every time).
 if [ -z "$PNPM_HOME" ]; then
   case "$CLAUDE_OS" in
     macos)   export PNPM_HOME="$HOME/Library/pnpm" ;;
@@ -82,10 +84,14 @@ if [ -z "$PNPM_HOME" ]; then
     *)       export PNPM_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/pnpm" ;;
   esac
 fi
-case ":$PATH:" in
-  *":$PNPM_HOME/bin:"*) ;;
-  *) export PATH="$PNPM_HOME/bin:$PATH" ;;
-esac
+for pnpm_bin_dir in "$PNPM_HOME/bin" "$PNPM_HOME"; do
+  case ":$PATH:" in
+    *":$pnpm_bin_dir:"*) ;;
+    *) export PATH="$pnpm_bin_dir:$PATH" ;;
+  esac
+done
+# A Corepack shim asks before downloading a version it has not cached; nothing is at the keyboard in a /update run.
+export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 
 # Install a Homebrew formula if missing, upgrade it if present. Idempotent: present-and-current is a no-op.
 # Branch on `brew list` because `brew install` never upgrades and `brew upgrade` errors on a not-installed formula.
@@ -195,6 +201,9 @@ else
   echo "        gh auth login"
   echo "        gh auth status   # confirm"
 fi
+
+# Both repos pin the same pnpm in package.json; lib/pnpm.sh explains why the machine's own copy still has to match it.
+converge_pnpm "$claude_repo/package.json"
 
 echo ""
 echo "Installing skills helper..."

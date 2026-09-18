@@ -332,6 +332,7 @@ This installs:
 
 - The TypeScript LSP plugin
 - `gh` and `jq` via Homebrew (installed or upgraded), then runs `gh auth login` if you aren't already authenticated
+- pnpm brought up to the version this repo pins (`packageManager` in `package.json`, the same pin the projects carry), through whichever installer owns it — Corepack, Homebrew, the standalone installer, or npm
 - Vercel agent-browser and skill-creator
 - Vercel React best practices and composition patterns
 - `npm-check-updates` (`ncu`) as a pnpm global — required by the dependency-updater skill
