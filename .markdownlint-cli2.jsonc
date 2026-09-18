@@ -49,6 +49,9 @@
     // Vendored skills installed via update.sh (vercel-labs/*) — update.sh overwrites them, so linting/fixing here is churn that gets blown away. Authored skills under skills/ are linted.
     "skills/agent-browser/**",
     "skills/skill-creator/**",
+    // Claude Code syncs claude.ai skill buckets into skills/synced/<uuid>_<uuid>/ (gitignored, each with a manifest.json) and
+    // rewrites them on its next sync — --fix here reformatted 22 of them on a contributor machine, all of it churn.
+    "skills/synced/**",
     "skills/vercel-composition-patterns/**",
     "skills/vercel-react-best-practices/**",
     "tasks/**",
