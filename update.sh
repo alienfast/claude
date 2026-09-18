@@ -478,17 +478,22 @@ else
   echo "  skipped (macOS/launchd-only; this is $OSTYPE)."
 fi
 
-# Reconcile ~/.claude's own devDependencies (markdownlint-cli2, typescript) against the committed lockfile before the
-# lint step below relies on them — a fresh clone has no node_modules, and a git pull can bump the lockfile out from under
-# a stale install. --frozen-lockfile keeps it deterministic. Pinned to $claude_repo with -C: this script also runs from a
-# project directory (/update) and from a home directory (sync-main.sh's one-liner), where a cwd-relative install either
-# touches the wrong project or, under set -e, ends the whole run — measured on a contributor machine: "No package.json
-# found in C:\Users\<user>" was the last line before the run's final steps went missing.
+# Reconcile ~/.claude's own devDependencies (markdownlint-cli2) against the committed lockfile before the lint step below
+# relies on them — a fresh clone has no node_modules, and a git pull can bump the lockfile out from under a stale install.
+# --frozen-lockfile keeps it deterministic. Run FROM the repo, never through `-C`: this script also runs from a project
+# directory (/update) and from a home directory (sync-main.sh's one-liner, /update in a non-project session), and Corepack
+# picks the pnpm version from the cwd — `-C` is invisible to it, and pnpm does not switch versions under Corepack. From a
+# home directory `pnpm -C ~/.claude install` therefore ran Corepack's default pnpm against a node_modules the pinned
+# 11.21.0 had built and refused, without a TTY, to replace it (ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY — the /update
+# failure on a contributor machine, 2026-09-18; a default newer than the pin fails a step earlier with
+# ERR_PNPM_BAD_PM_VERSION). It never showed on the keeper's machine, whose Corepack default equals the pin. The cd also
+# puts lint_and_fix's headless Claude where markdownlint's relative paths resolve; nothing after this needs the old cwd.
 echo ""
 echo "Installing ~/.claude devDependencies..."
-pnpm -C "$claude_repo" install --frozen-lockfile
+cd "$claude_repo"
+pnpm install --frozen-lockfile
 
-lint_and_fix "pnpm -C \"$claude_repo\" check-markdown"
+lint_and_fix "pnpm check-markdown"
 
 echo ""
 echo ""
