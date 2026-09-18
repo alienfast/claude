@@ -5,7 +5,9 @@ description: |
   issues by users affected and event volume, deep-dive each, and drive the queue to zero through
   dispositions: file a spec-shaped Linear issue on the project's team ($LINEAR_TEAM), archive noise,
   resolve already-fixed, merge duplicates, or hand off to the project's /investigate skill. Also syncs
-  the loop closed: shipped Linear issues get their Sentry issue resolved in-release. Resolves the Sentry
+  the loop closed: shipped Linear issues get their Sentry issue resolved in-release, and every open
+  sentry-labeled issue's placement (Planned/Backlog) is reconciled against the ranked queue — moves are
+  applied, not proposed. The report ends with what needs working now. Resolves the Sentry
   org/project from the checkout (the CLI's own DSN auto-detection, or the project's
   .claude/rules/sentry.md) and reads that rule for the project's environments, release model, and
   attribution notes. Reads and mutations both run unconfirmed and are reported after the fact. Uses
@@ -18,7 +20,7 @@ description: |
 
 Work the Sentry unresolved queue to zero, most-impactful first, with Linear as the system of record for anything needing a fix. Linear drives the workflow (`/auto`, `/start`, `/finish` pick up from there); Sentry state (archive/resolve/merge) tracks what needs no code. The skill is the judgment filter between Sentry's alert stream and the kanban the business watches — alert-rule auto-filing is deliberately not used.
 
-**Safety stance:** Sentry reads and **mutations** (resolve, archive, merge, linking a Linear issue) both run as ordinary skill work — nothing is held for approval, and the disposition table is a report, not a request. What makes that safe is reversibility, measured against this CLI: `resolve` has a first-class inverse (`unresolve`, alias `reopen`), `archive` (alias `ignore`) is reversed the same way, an `--until <cond>` archive un-archives itself on escalation, and an external-issue link is idempotent (a repeat returns the existing record) and has a documented `DELETE`. `merge` is the one-way door — `sentry issue --help` lists no `unmerge` — so choose the canonical issue deliberately and name the children in the report; it is a caution, not a gate. Linear filing is normal skill work.
+**Safety stance:** Sentry reads and **mutations** (resolve, archive, merge, linking a Linear issue) both run as ordinary skill work — nothing is held for approval, and the disposition table is a report, not a request. What makes that safe is reversibility, measured against this CLI: `resolve` has a first-class inverse (`unresolve`, alias `reopen`), `archive` (alias `ignore`) is reversed the same way, an `--until <cond>` archive un-archives itself on escalation, and an external-issue link is idempotent (a repeat returns the existing record) and has a documented `DELETE`. `merge` is the one-way door — `sentry issue --help` lists no `unmerge` — so choose the canonical issue deliberately and name the children in the report; it is a caution, not a gate. Linear filing is normal skill work, and so are the Linear state moves and `related` edges Step 6 applies — a state move is one `issues update --state` away from undone, and an edge is `relations remove`.
 
 The harness gates what this prose cannot: in auto mode every `sentry issue resolve | archive | merge` and `sentry api` call is classified as an external write and refused unless a permission rule allows the command, and in default mode each one prompts. The mutation batch therefore needs `Bash(sentry issue resolve:*)`, `Bash(sentry issue archive:*)`, `Bash(sentry issue merge:*)` and `Bash(sentry api:*)` in `~/.claude/settings.json`, beside the Linear rules — `sentry api` whole, since a rule cannot see the `-X POST` flag, and no rule for reads, which pass the classifier on their own. Measured 2026-09-16 on bfp-control-panel, where a user-authorised `sentry issue resolve` was refused mid-run with `[External System Writes]`.
 
@@ -32,7 +34,7 @@ Without a rule, the defaults are: the target is whatever the CLI resolves on its
 
 - `/sentry` or `/sentry next` — sync pass, ranked queue, then deep-dive + disposition the **top** unhandled issue.
 - `/sentry <issue>` — deep-dive + disposition one issue (short id, numeric id, or Sentry URL).
-- `/sentry sweep` — sync pass, then walk the ranked queue dispositioning until the list is drained or the user stops.
+- `/sentry sweep` — sync pass, then walk the ranked queue dispositioning until the list is drained or the user stops, then reconcile every open `sentry` issue's placement against the ranked queue (Step 6) and end on what needs working now.
 
 Optional argument `period:<spec>` overrides the ranking window (`14d` default; `>=YYYY-MM-DD` after a release — see Ranking). Optional `env:<name>` widens scope to a non-production environment the rule describes.
 
@@ -96,7 +98,19 @@ Exactly one per issue (definitions and edge cases: [triage.md](./references/tria
 
 In `sweep`, collect dispositions across the walk; in `next`, it's a table of one plus anything the sync pass queued.
 
-### 6. Execute
+### 6. Reconcile priority
+
+Step 5 decides *whether* an issue exists in Linear; this step decides *where it sits* — across every open `sentry`-labeled issue the ranked queues resolve to, not only the ones this run filed. A prior run's filing is the usual candidate: it was placed on the evidence of its day, and the queue has moved since (BF-1892 owned the queue's 627-span outlier from Backlog for a week while its siblings at 20 spans sat beside it). Apply the moves. Do not ask, and do not report an issue that stays put.
+
+Walk both ranked tables from Step 3 top-down, resolve each row to its owning Linear issue (the Step 3 dedup already did this), and compare the issue's state to the row's rank:
+
+- **Up — Backlog → Planned** when the issue owns the top row of either queue on that queue's ranking key (the error queue's top user count; the performance queue's top span count), or an **outlier** on that key — a count ≥ 3× the next row's. Also up when the issue is the standing fix for a class that has now cost three or more manual archives (a `source:runner` family, a recurring transient): the fix has started paying for itself whatever its user count. Certification is Step 5's bar and is not lowered here — an uncertified move-up is normal, and it is what *Needs work now* exists to name.
+- **Down — Planned → Backlog** when a Planned issue is uncertified AND its evidence sits at the floor (one user or none, single-digit events, no auth / data-integrity / security class) AND the fix is not in flight. An open `blocks` edge into it is a second reason down on its own: it cannot be picked regardless, so it only holds the Planned gate.
+- **Bundle** when two open issues share a fix mechanism and a file — two per-row policy predicates served by the same request cache, two fingerprints under one resolver: wire `related` and name the pair in *Needs work now* as one pick. Merging them is content work, `/spec`'s and not this step's.
+
+Everything else stays where it is, silently. Verify each state move with a `--no-cache` re-read — the `/linear` skill's gotcha #8 is that `issues update --state` can report success without the state changing.
+
+### 7. Execute
 
 Execute the dispositions straight through: the Sentry mutations, then the Linear filings, then link each filed or matched Linear issue onto its Sentry issue as an **External Link** — the sidebar's "+ Link issue", which also gives the Linear issue a `sentry` attachment:
 
@@ -106,15 +120,25 @@ Execute the dispositions straight through: the Sentry mutations, then the Linear
 
 The script resolves the org's installed `linear` Sentry app, asks its search hook for the Linear issue's uuid, POSTs the same `external-issue-actions` link the UI form submits, and confirms it on the issue's `external-issues` listing; it prints `linked: … (external issue <id>, shown as BF#1939)` and exits non-zero with the reason otherwise. Re-running it is safe — Sentry returns the existing record rather than a second one. **Never post the mapping as a comment instead**: a note lands in Activity, leaves External Links empty, and reaches nothing on the Linear side (this skill did exactly that until 2026-09-16). **A performance issue cannot be linked** — the script refuses it with exit 3, because the action endpoint answers `Could not find the corresponding issue for the given groupId` and its `external-issues` listing 403s (measured 2026-09-16, alongside the same refusal on its comments endpoint) — so its mapping lives in the Linear description alone, per [triage.md § Dispositioning a performance issue](./references/triage.md#dispositioning-a-performance-issue).
 
-### 7. Report
+### 8. Report
 
-Chat summary: queue depth before/after, dispositions taken, Linear issues filed (with links), what remains and why. No findings file — Linear issues and Sentry state *are* the durable record.
+Chat summary, in this order: queue depth before and after, the dispositions taken, the Linear issues filed (with links), the priority moves applied. **Only what changed.** An issue the ranked table already showed as filed and that this run left where it was is not reported again — the operator has seen the table, and a "fine where they are" list is noise that buries the moves. No findings file — Linear issues and Sentry state *are* the durable record.
 
 **Every narrative finding carries its own Linear key inline — a summary table upstream does not discharge this.** A prose section explaining a root cause is the part a reader acts on, so it must name the issue that finding was filed as, in that paragraph, not one section away. Putting the identifiers in a "Filed" table and then writing the findings as pure mechanism commentary makes the reader join the two by hand, and the join is exactly what a skim drops.
 
 **Label any issue that is referenced but is NOT the finding's own issue.** A related, prior-art, or same-mechanism-different-subject issue must be marked as such (`related — different policy`, `prior art, Done`), never dropped in bare. The failure mode was observed: a findings section named a pre-existing Backlog issue on a *different* policy while the issue actually filed for that finding went unnamed, so the section's only key pointed away from the deliverable and the filed work read as unfiled. One bare key in a paragraph is read as *the* issue for that paragraph.
 
 When a finding has no Linear issue (dispositioned **Noise**, **Duplicate**, or **Needs investigation**), say so explicitly — `not filed: <disposition>, because <reason>` — so an absent key is never ambiguous with an omitted one.
+
+**End with `## Needs work now` — always the last section, and always present.** It is the run's answer to "what do I need to be on top of," so it is what the operator reads last and acts on. One line per item: the Linear key, the single action, and why the queue will not bring it back on its own. What belongs there, and nothing else:
+
+- an uncertified Planned filing — this run's or a prior run's, including anything Step 6 moved up — holding the `/auto` gate; the action is `/spec`
+- a bundle Step 6 wired `related`; the action is the merge
+- an issue that needs a human decision rather than code and is generating the queue's loudest daily alert (a sweep adjudication, a `needs decision` label)
+- a fingerprint with users affected whose owning issue is blocked, stranded (Triage, an orphaned state), or unassigned
+- a **Needs investigation** disposition's correlation identifiers, so they are not lost with the transcript
+
+Write `## Needs work now — nothing` when the set is empty. An absent section must never be ambiguous with a forgotten one.
 
 ## What this skill is not
 
