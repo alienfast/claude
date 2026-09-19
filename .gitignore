@@ -46,3 +46,4 @@ daemon-auth-*
 /gh-pr-status-cache.json
 /scripts/__pycache__
 /skills/synced
+/skills/.trash
