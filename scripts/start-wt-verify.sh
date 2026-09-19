@@ -19,7 +19,10 @@
 #   VERIFIED                            exit 0
 #   FAILED-USAGE: <reason>              exit 1   (stage 1: bad args)
 #   FAILED-CWD: <reason>                exit 1   (stage 2: cwd confirm)
-#   FAILED-CLAIM: <reason>              exit 1   (stage 3: linear-cli claim)
+#   FAILED-CLAIM: <reason>              exit 1   (stage 3: verified claim — the write was CONFIRMED not to
+#                                                 land. A claim that could not be CONFIRMED either way —
+#                                                 the read-back itself failed — is a `WARN:` on stderr and
+#                                                 proceeds; it is not a failed claim. See linear-claim.sh.)
 #   FAILED-SOURCE-BRANCH: <reason>      exit 1   (stage 4: source-branch probe)
 #   FAILED-CHECK: <reason>              exit 1   (stage 5: pnpm check)
 #
@@ -100,26 +103,26 @@ if [ "$claim_flag" = "claim" ]; then
   echo "== claim ==" >&2
   # linear-cli installs to ~/.cargo/bin, which is not on a non-interactive PATH.
   export PATH="$HOME/.cargo/bin:$PATH"
-  # Redirect linear-cli's own stdout to our stderr — it must never leak onto this script's
-  # single-line stdout verdict contract. Its stderr is captured and re-emitted so a plainly transient
-  # failure (5xx / timeout — never auth, permissions, or an unknown state name) can be retried once
-  # behind a successful read probe (the machinery half of /start's FAILED-CLAIM transient-5xx exception).
-  claim_err=$(mktemp)
-  trap 'rm -f "$claim_err"' EXIT
-  if ! linear-cli issues update "$issue_id" --assignee me --state "In Progress" >&2 2>"$claim_err"; then
-    cat "$claim_err" >&2
-    if grep -qiE 'HTTP 5[0-9][0-9]|Service Unavailable|timed? ?out' "$claim_err" \
-      && linear-cli issues get "$issue_id" >/dev/null 2>&1; then
-      echo "== claim retry (transient 5xx/timeout) ==" >&2
-      sleep 2
-      linear-cli issues update "$issue_id" --assignee me --state "In Progress" >&2 \
-        || fail "FAILED-CLAIM: claim update failed — do not proceed unclaimed"
-    else
-      fail "FAILED-CLAIM: claim update failed — do not proceed unclaimed"
-    fi
-  else
-    cat "$claim_err" >&2
-  fi
+  # The claim is VERIFIED, not reported. `issues update`'s exit status is not evidence that either field
+  # was written — it reports the mutation call and names only the issue, intermittently at exit 0 with
+  # nothing written (skills/linear/SKILL.md gotcha #8) — and this stage used to gate on that alone while
+  # promising "do not proceed unclaimed". linear-claim.sh owns the write and the read-back; the policy for
+  # each of its three outcomes is here, because routing them is the skill's concern, not the helper's.
+  # Its stdout is the verdict (captured); its stderr — linear-cli's own output and stage markers — flows
+  # straight through to ours and so can never land on this script's single-line stdout contract.
+  claim_verdict=$("$SCRIPT_DIR/linear-claim.sh" "$issue_id" --state "In Progress")
+  claim_rc=$?
+  case "$claim_rc" in
+    0) : ;;
+    3)
+      # Could not confirm: the READ failed, so the write may well have landed. That is not a failed claim
+      # and must not be reported as one — failing here would turn a transient network blip into a dead
+      # session. Proceeding matches the pre-verification behaviour exactly; what is new is that a
+      # CONFIRMED miss (exit 2) no longer reaches this branch, and the operator gets a line either way.
+      echo "WARN: ${claim_verdict:-claim could not be confirmed} — proceeding; re-check the claim if siblings contend for this issue" >&2
+      ;;
+    *) fail "FAILED-CLAIM: ${claim_verdict:-claim failed} — do not proceed unclaimed" ;;
+  esac
 fi
 
 echo "== source-branch probe ==" >&2

@@ -43,7 +43,31 @@ Auth: `linear-cli auth oauth` (browser) or `LINEAR_API_KEY`; check with `linear-
 
 7. **Labels are typed, can be team-scoped, and `-l` REPLACES.** `labels list` and `labels create` default to `--type project` — pass `-t issue` for issue labels (a project label can't be attached to an issue; probe with `linear-cli labels list -t issue -o json`). `issues update -l` **sets the entire label set** (no add/remove subcommand) — to add one label without clobbering the rest, use `~/.claude/scripts/linear-add-label.sh <ID> <label>` (read-merge-set + verified attach); `issues list -l <name>` filters by label name. Issue labels can be **team-scoped**: attaching one to an issue in another team fails with GraphQL `labelIds for incorrect team`, and `labels create` has **no `--team` flag**, so it provisions workspace-level labels only (team-scoped ones must be created in the Linear UI). The `specified` certification label is deliberately workspace-level so it attaches across all teams (`standards/issue-spec.md`); `scripts/linear-file-improvement.sh` keeps a best-effort attach (exit 2 + WARN) for the day a conflicting team-scoped label appears.
 
-8. **`issues update --state` can report success without the state actually changing.** Exit code 0 and the printed `+ Updated issue` message are not confirmation — a follow-up `issues get --no-cache` may still show the old state, even after retries and even when passing the state's UUID directly instead of its name. If a state update doesn't seem to have taken effect after a `--no-cache` re-check, fall back to the raw mutation (gotcha #6) and trust its own response over the wrapped command: `linear-cli api mutate 'mutation($id: String!, $stateId: String!) { issueUpdate(id: $id, input: { stateId: $stateId }) { success issue { id identifier state { id name } } } }' --variable id=<issue-uuid> --variable stateId=<state-uuid>` — its response includes the resulting `issue.state`, so you can confirm the change immediately without a separate `get`.
+8. **`issues update` can report success without writing the field — and its success line names the ISSUE, never the field, in every output mode.** Exit code 0 and the
+    printed `+ Updated issue: <ID> <title>` are not confirmation: the mutation selects `issue { identifier title }` and nothing else, so `-o json`, `-q` and `--id-only`
+    cannot confirm either — they print less, not more. Measured on both fields it is used to write. `--state`: a follow-up `issues get --no-cache` still showing the old
+    state, even after retries and even when passing the state's UUID directly instead of its name. `--assignee`: on 2026-09-19 the command printed the success line at
+    exit 0 and left `assignee` null — confirmed by `issues get --no-cache` ten minutes later and independently by the issue's own Linear UI — while the identical
+    command re-run afterwards wrote it normally. Intermittent, which is what makes it dangerous: it survives every retry you run to reproduce it.
+
+    **For the assignee, use `issues assign <ID> me`.** `--help` calls it "a shortcut for update --assignee", and the difference it glosses over is the whole point: its
+    mutation selects `assignee { name }` and it prints the server's resulting value — `+ Assigned <ID> to <name>`, or `+ Unassigned <ID>` when the response carries no
+    assignee — so a write that did not land appears in the output instead of reading as success. It cannot set state; pair it with a separate `-s` update. **Do not
+    reach for `issues start`**: it selects both fields but renders them as the *intended* values when the response is null (the assignee defaulted to `"me"`, the state
+    name computed locally), manufacturing a confirmation, and it picks whichever `started`-type state the API returns first — which on a team whose In Review is also
+    type `started` (`standards/linear-workflow.md`) need not be In Progress.
+
+    **For the state**, re-check with `--no-cache` and then fall back to the raw mutation (gotcha #6), trusting its own response over the wrapped command:
+    `linear-cli api mutate 'mutation($id: String!, $stateId: String!) { issueUpdate(id: $id, input: { stateId: $stateId }) { success issue { id identifier state { id name } } } }' --variable id=<issue-uuid> --variable stateId=<state-uuid>`
+    — its response includes the resulting `issue.state`, so you confirm without a separate `get`. `scripts/linear-set-state.sh` and `scripts/mark-ready-for-release.sh`
+    automate exactly this; `scripts/linear-claim.sh` does the assignee-and-state pair a claim needs, with the three outcomes below kept distinct.
+
+    **Where this bites hardest is a claim**, and a read-back is the only confirmation available. Verify `.assignee` on a fresh `issues get --no-cache` — the payload
+    exposes an assignee as `{name}` alone, no id and no email, so that is the field to compare, and on a viewer whose display name is not their email a naive
+    email comparison never matches. Never verify through `next-candidates.sh`'s `hidden as claimed by a person` note: its count excludes self-assignments, so your own
+    claim never moves it (`standards/linear-workflow.md` § A self-claim does not hide an issue — it promotes it). Keep three outcomes apart, because they route
+    differently: **confirmed landed**; **confirmed not landed** (a good read showing the old value — retryable, the write is idempotent); and **could not confirm** (the
+    read command itself failed — network, auth), which is not a failed claim and must not be reported as one.
 
 9. **`comments list` needs `-o json` — its table output is empty, and the JSON is a nested envelope.** The default table prints a header row and ZERO data rows for every issue (`| Author | Created | Body | ID |`, then `N comments`), so the bare command reads as "no comments" on an issue that has several — and `/start` Step 4 sends you here precisely for full standalone bodies, which the digest truncates to 140 chars. Always pass `-o json`; the payload is `{"comments":{"nodes":[{"body":…}]},"id","identifier","title"}`:
 
