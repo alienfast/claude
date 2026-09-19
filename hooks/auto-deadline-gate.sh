@@ -150,6 +150,12 @@ On the 2026-08-18 fleet this exact step ran 62 minutes past the deadline and cos
 unbudgeted burn on a machine the operator had asked back. Two sibling sessions read the deadline
 file and drained correctly; this gate is what makes that outcome not depend on remembering to.
 
+Push first, if the project grants it — the wind-down half of /auto Step 2's lazy push:
+  0. Run ~/.claude/scripts/auto-push-main.sh from the main checkout. Under AUTO_PUSH_MAIN=lazy (the
+     project's .claude/settings.json) it pushes main fast-forward only and prints one line; elsewhere
+     the line is DISABLED and nothing moves. Either way origin then does not lag Linear overnight —
+     on the 2026-09-18 BFP fleet, 16 unpushed merges gated the one pickable issue for the whole run.
+
 Drain instead — /auto Step 4:
   1. Record the outcome in tmp/auto-state-<runKey>.json:
        status "drained", reason "fleet deadline <time> passed; no further pick eligible"
