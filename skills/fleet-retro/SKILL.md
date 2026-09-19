@@ -76,8 +76,14 @@ embeds the *fleet root* pid (`skills/auto/SKILL.md` Step 0 and Step 4), so it an
 of them and can go empty mid-run. `/fleet-status` no longer inherits that limitation — its liveness
 column joins the session registry (`claude agents --json`) on the ledger key and degrades to `unknown`,
 never `dead`, when the registry is unavailable — but a registry answers whether a session is *running*,
-not whether it has finished writing, so it does not settle this gate either. Compare the newest
-transcript `mtime` against now instead — and stale is not finished either: a quota-stalled session
+not whether it has finished writing, so it does not settle this gate either. Compare each
+transcript's last TIMESTAMPED record against now instead — never its `mtime`: the harness keeps
+appending untimestamped bookkeeping rows to a finished session, so mtime tracks the harness, not the
+loop. `scripts/auto-stall-watch.sh`'s header measured it 2026-08-29 on `last-prompt` and `cost-state`
+rows; re-measured 2026-09-19, where three transcripts read an mtime one minute old while their last
+turns were 4.5, 6.7 and 9.3 hours old, behind trailing `last-prompt`, `cost-state`, `ai-title` and
+`agent-name` rows. `tail -200 <transcript> | jq -r 'select(.timestamp) | .timestamp' | tail -1` is the
+read. And stale is not finished either: a quota-stalled session
 resumes hours later on a pending wakeup, so cross-check `tmp/fleet-deadline.json` (passed, or `stopped`)
 and the sessions' harness limit messages. When a session may still be writing, either wait for it or mark
 its row provisional — never file a bookkeeping finding against it. `/fleet-status` is the read-only skill
