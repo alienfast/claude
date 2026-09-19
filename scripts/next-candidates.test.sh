@@ -78,6 +78,15 @@ mkdir -p "$FIX" "$WORK/bin" "$WORK/home"
 #   TT-29 Backlog None, CHILD of epic TT-27, blocked by TT-20 -> hidden by default (open blocker);
 #                                     inherits the Planned stage via its parent under --include-blocked;
 #                                     with TT-20 it makes TT-27's graph the --root fixture (below)
+#   TT-40 Backlog None, CHILD of Ready-for-Release TT-41, itself a child of epic TT-27 -> inherits the
+#                                     Planned stage THROUGH the shipped parent (keeper ruling 2026-09-19).
+#                                     TT-41 is absent from this page, as the real pool fetch omits every
+#                                     completed-type issue; the terminal-ancestor fetch reads its node file
+#   TT-42 Backlog None, CHILD of Ready-for-Release TT-43, which has NO parent -> inherits nothing: the
+#                                     climb lifts a candidate only when it reaches Planned/Todo work
+#   TT-44 Backlog None, CHILD of TT-45, which the API cannot return (no node file) -> inherits nothing,
+#                                     and the run still exits 0 — an unreadable ancestor ends its chain
+#   (fixture ids from TT-40 up on purpose: `ck_lacks "TT-3"` and its siblings are SUBSTRING matches)
 cat > "$FIX/issues-page.json" <<'EOF'
 {"data":{"issues":{"nodes":[
  {"identifier":"TT-1","title":"urgent backlog","estimate":null,"priority":1,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[]},"parent":null},
@@ -108,7 +117,10 @@ cat > "$FIX/issues-page.json" <<'EOF'
  {"identifier":"TT-26","title":"backlog child of planned epic","estimate":null,"priority":0,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[]},"parent":{"identifier":"TT-27"}},
  {"identifier":"TT-27","title":"planned epic","estimate":null,"priority":0,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[{"name":"epic"}]},"parent":null},
  {"identifier":"TT-28","title":"planned high related to in-flight","estimate":null,"priority":2,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[]},"parent":null},
- {"identifier":"TT-29","title":"backlog child behind member blocker","estimate":null,"priority":0,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[]},"parent":{"identifier":"TT-27"}}
+ {"identifier":"TT-29","title":"backlog child behind member blocker","estimate":null,"priority":0,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[]},"parent":{"identifier":"TT-27"}},
+ {"identifier":"TT-40","title":"backlog grandchild under shipped parent","estimate":null,"priority":0,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[]},"parent":{"identifier":"TT-41"}},
+ {"identifier":"TT-42","title":"backlog child under shipped parent with nothing planned above","estimate":null,"priority":0,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[]},"parent":{"identifier":"TT-43"}},
+ {"identifier":"TT-44","title":"backlog child under unreadable parent","estimate":null,"priority":0,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[]},"parent":{"identifier":"TT-45"}}
 ],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
 EOF
 
@@ -129,8 +141,9 @@ cat > "$FIX/deps-page.json" <<'EOF'
 EOF
 
 # Per-issue nodes for epic-graph.sh's walk (the --root fixture), in the raw `issue(id:)` shape and
-# consistent with the two pages above: TT-27's graph is itself, its children TT-26 and TT-29, and
-# TT-20 (a member because it blocks TT-29). TT-21 is fetched only as TT-20's outside dependent;
+# consistent with the two pages above: TT-27's graph is itself, its children TT-26, TT-29 and the
+# shipped TT-41 (walked, not a member — its child TT-40 IS one), and TT-20 (a member because it
+# blocks TT-29). TT-21 is fetched only as TT-20's outside dependent;
 # TT-5 is a non-epic root for the refusal case; anything else answers not-found.
 gnode() { # gnode <ID> <state> <type> <labels-json> <parent|null> <children-json> <relations-json> <inverse-json>
   local parent='null'
@@ -138,7 +151,10 @@ gnode() { # gnode <ID> <state> <type> <labels-json> <parent|null> <children-json
   printf '{"data":{"issue":{"identifier":"%s","title":"%s","state":{"name":"%s","type":"%s"},"team":{"key":"TT"},"labels":{"nodes":%s},"parent":%s,"children":{"nodes":%s},"relations":{"nodes":%s},"inverseRelations":{"nodes":%s}}}}\n' \
     "$1" "$1" "$2" "$3" "$4" "$parent" "$6" "$7" "$8" > "$FIX/node-$1.json"
 }
-gnode TT-27 Planned unstarted '[{"name":"epic"}]' null '[{"identifier":"TT-26"},{"identifier":"TT-29"}]' '[]' '[]'
+gnode TT-27 Planned unstarted '[{"name":"epic"}]' null '[{"identifier":"TT-26"},{"identifier":"TT-29"},{"identifier":"TT-41"}]' '[]' '[]'
+gnode TT-41 "Ready for Release" completed '[]' TT-27 '[{"identifier":"TT-40"}]' '[]' '[]'
+gnode TT-40 Backlog backlog '[]' TT-41 '[]' '[]' '[]'
+gnode TT-43 "Ready for Release" completed '[]' null '[{"identifier":"TT-42"}]' '[]' '[]'
 gnode TT-26 Backlog backlog '[]' TT-27 '[]' '[]' '[]'
 gnode TT-29 Backlog backlog '[]' TT-27 '[]' '[]' '[{"type":"blocks","issue":{"identifier":"TT-20"}}]'
 gnode TT-20 Backlog backlog '[]' null '[]' '[{"type":"blocks","relatedIssue":{"identifier":"TT-21"}},{"type":"blocks","relatedIssue":{"identifier":"TT-29"}}]' '[]'
@@ -147,8 +163,8 @@ gnode TT-5  Planned unstarted '[]' null '[]' '[]' '[]'
 
 # linear-cli shim: `api query` dispatches on the query text (its last argument) — the graph walk's
 # query is the only one carrying `inverseRelations`, and it is matched FIRST because it also carries
-# `relatedIssue` like the deps page; the parent walk's `issues get` no-ops (empty output is a
-# tolerated skip in the walk).
+# `relatedIssue` like the deps page; the terminal-ancestor fetch's `query ancestor` reads the same
+# node files; the parent walk's `issues get` no-ops (empty output is a tolerated skip in the walk).
 cat > "$WORK/bin/linear-cli" <<EOF
 #!/bin/bash
 FIX="$FIX"
@@ -156,6 +172,10 @@ if [ "\${1:-}" != "api" ]; then exit 0; fi
 q="\${@: -1}"
 case "\$q" in
   *viewer\{email\}*) printf '%s' '{"data":{"viewer":{"email":"t@t.test"}}}' ;;
+  *"query ancestor"*)
+    id=""; for a in "\$@"; do case "\$a" in id=*) id="\${a#id=}" ;; esac; done
+    if [ -f "\$FIX/node-\$id.json" ]; then cat "\$FIX/node-\$id.json"
+    else printf '%s' '{"code":2,"details":[{"message":"Entity not found: Issue"}],"error":true}'; exit 2; fi ;;
   *inverseRelations*)
     id=""; for a in "\$@"; do case "\$a" in id=*) id="\${a#id=}" ;; esac; done
     if [ -f "\$FIX/node-\$id.json" ]; then cat "\$FIX/node-\$id.json"
@@ -185,12 +205,13 @@ run "$OUT" --limit 20 || { echo "FAIL: default run exited $?"; cat "$OUT.err"; e
 grep -E '^[0-9]+\. ' "$OUT" > "$WORK/ranked.txt"
 
 # The Planned column is not drained, so every Backlog candidate — TT-17 (tier 1, assigned to the
-# viewer), TT-1 (Urgent), TT-6 (security), TT-22 — is withheld; inherited-stage TT-20/TT-23 stay.
-ck "stage-first order under the gate" "TT-3 TT-2 TT-4 TT-5 TT-28 TT-7 TT-18 TT-20 TT-23 TT-26" "$(order_of "$OUT")"
+# viewer), TT-1 (Urgent), TT-6 (security), TT-22, TT-42, TT-44 — is withheld; inherited-stage
+# TT-20/TT-23 and the epic's descendants TT-26/TT-40 stay.
+ck "stage-first order under the gate" "TT-3 TT-2 TT-4 TT-5 TT-28 TT-7 TT-18 TT-20 TT-23 TT-26 TT-40" "$(order_of "$OUT")"
 ck_has  "related partner in flight annotated" 'Spread: `related` partner TT-10 is in flight — soft de-rank to reduce file collisions' "$OUT"
 ck_has  "epic note" '1 issue(s) hidden as delegated epics (`epic` label' "$OUT"
 ck_lacks "epic hidden" "TT-27" "$WORK/ranked.txt"
-ck_has  "planned-hold note" "_PLANNED-HOLD: Backlog withheld — the Planned/Todo column is not drained (14 issue(s) hold the gate: 7 pickable now; 3 will release on their own — TT-9, TT-21, TT-25; 4 need the keeper — TT-11 [needs decision], TT-12 [solo], TT-13 [human], TT-27 [epic — certify per child; it closes itself when they release]). 4 Backlog candidate(s) wait behind the gate; it opens when the column drains — pass --no-stage-gate to list them._" "$OUT"
+ck_has  "planned-hold note" "_PLANNED-HOLD: Backlog withheld — the Planned/Todo column is not drained (14 issue(s) hold the gate: 7 pickable now; 3 will release on their own — TT-9, TT-21, TT-25; 4 need the keeper — TT-11 [needs decision], TT-12 [solo], TT-13 [human], TT-27 [epic — certify per child; it closes itself when they release]). 6 Backlog candidate(s) wait behind the gate; it opens when the column drains — pass --no-stage-gate to list them._" "$OUT"
 ck_lacks "claimed planned does not hold the gate" "TT-16 [" "$OUT"
 ck_has  "rfr blocker resolved"  "TT-7" "$OUT"
 ck_has  "in-review blocker resolved" "TT-18" "$OUT"
@@ -207,17 +228,25 @@ ck_lacks "human hidden"         "TT-13" "$WORK/ranked.txt"
 # ---- inherited stage: a Backlog issue that transitively blocks Planned work ranks in the
 # ---- Planned stage (annotated), its blocked dependents stay hidden, and a chain through a
 # ---- terminal blocker inherits nothing ----
-ck "inherited-stage annotations" "3" "$(grep -c 'Stage inherited: Backlog, but it gates Planned/Todo' "$OUT")"
+ck "inherited-stage annotations" "4" "$(grep -c 'Stage inherited: Backlog, but it gates Planned/Todo' "$OUT")"
 ck_has  "direct blocker annotated"  "Stage inherited: Backlog, but it gates Planned/Todo TT-21 (as blocker or child)" "$OUT"
 ck_has  "chain head names the planned tail only" "Stage inherited: Backlog, but it gates Planned/Todo TT-25 (as blocker or child)" "$OUT"
 ck_has  "epic child annotated" "Stage inherited: Backlog, but it gates Planned/Todo TT-27 (as blocker or child)" "$OUT"
+# A Backlog child of a SHIPPED issue under a Planned epic still inherits the stage (keeper ruling 2026-09-19).
+# The pool omits the Ready-for-Release parent, so this climb depends on the terminal-ancestor fetch: measured
+# on BFP, nine certified candidates of this shape sat withheld for a 12-hour fleet. A shipped parent with no
+# Planned work above it lifts nothing, and an ancestor the API cannot return ends its chain without failing.
+ck_has  "grandchild through a shipped parent ranked under the gate" "TT-40" "$WORK/ranked.txt"
+ck "both epic descendants annotated" "2" "$(grep -c 'gates Planned/Todo TT-27 (as blocker or child)' "$OUT")"
+ck_lacks "shipped parent with nothing planned above it lifts nothing" "TT-42" "$WORK/ranked.txt"
+ck_lacks "unreadable ancestor lifts nothing" "TT-44" "$WORK/ranked.txt"
 ck_lacks "blocked planned dependent hidden" "TT-21" "$WORK/ranked.txt"
 ck_lacks "blocked chain members hidden"     "TT-24" "$WORK/ranked.txt"
 
 # ---- --include-blocked: TT-9 restored (Low outranks TT-7's None), everything else unchanged ----
 OUT2="$WORK/out2.md"
-run "$OUT2" --limit 20 --include-blocked || { echo "FAIL: include-blocked run exited $?"; cat "$OUT2.err"; exit 1; }
-ck "blocked order" "TT-17 TT-3 TT-2 TT-4 TT-5 TT-28 TT-25 TT-9 TT-21 TT-7 TT-18 TT-20 TT-23 TT-24 TT-26 TT-29 TT-1 TT-6 TT-22" "$(order_of "$OUT2")"
+run "$OUT2" --limit 30 --include-blocked || { echo "FAIL: include-blocked run exited $?"; cat "$OUT2.err"; exit 1; }
+ck "blocked order" "TT-17 TT-3 TT-2 TT-4 TT-5 TT-28 TT-25 TT-9 TT-21 TT-7 TT-18 TT-20 TT-23 TT-24 TT-26 TT-29 TT-40 TT-1 TT-6 TT-22 TT-42 TT-44" "$(order_of "$OUT2")"
 ck_lacks "discovery listing is gate-exempt" "PLANNED-HOLD" "$OUT2"
 
 # ---- label filter: only the security-labeled issues, stage-first within the filter ----
@@ -236,7 +265,7 @@ ck_lacks "no epic note on its own listing" "hidden as delegated epics" "$OUT3b"
 ck_lacks "triage absent by default" "TT-14" "$OUT"
 OUT5="$WORK/out5.md"
 run "$OUT5" --limit 20 --include-triage || { echo "FAIL: include-triage run exited $?"; cat "$OUT5.err"; exit 1; }
-ck "triage ranks last" "TT-17 TT-3 TT-2 TT-4 TT-5 TT-28 TT-7 TT-18 TT-20 TT-23 TT-26 TT-1 TT-6 TT-22 TT-14 TT-15" "$(order_of "$OUT5")"
+ck "triage ranks last" "TT-17 TT-3 TT-2 TT-4 TT-5 TT-28 TT-7 TT-18 TT-20 TT-23 TT-26 TT-40 TT-1 TT-6 TT-22 TT-42 TT-44 TT-14 TT-15" "$(order_of "$OUT5")"
 ck_lacks "triage listing is gate-exempt" "PLANNED-HOLD" "$OUT5"
 
 # ---- assignment is a claim: a foreign assignee hides the issue from every ranking (with the
@@ -245,7 +274,7 @@ ck_lacks "foreign-claimed hidden" "TT-16" "$OUT"
 ck_has  "claimed note"  "1 issue(s) hidden as claimed by a person" "$OUT"
 OUT6="$WORK/out6.md"
 run "$OUT6" --limit 20 --include-claimed || { echo "FAIL: include-claimed run exited $?"; cat "$OUT6.err"; exit 1; }
-ck "claimed restored in place" "TT-3 TT-2 TT-4 TT-5 TT-28 TT-16 TT-7 TT-18 TT-20 TT-23 TT-26" "$(order_of "$OUT6")"
+ck "claimed restored in place" "TT-3 TT-2 TT-4 TT-5 TT-28 TT-16 TT-7 TT-18 TT-20 TT-23 TT-26 TT-40" "$(order_of "$OUT6")"
 ck_has  "restored claim counts as pickable" "15 issue(s) hold the gate: 8 pickable now" "$OUT6"
 ck_lacks "no claimed note when included" "hidden as claimed" "$OUT6"
 
@@ -254,15 +283,15 @@ ck_lacks "no claimed note when included" "hidden as claimed" "$OUT6"
 # ---- while the Backlog tail stays cut ----
 OUT4="$WORK/out4.md"
 run "$OUT4" --limit 1 || { echo "FAIL: limit-floor run exited $?"; cat "$OUT4.err"; exit 1; }
-ck "planned never hidden"   "TT-3 TT-2 TT-4 TT-5 TT-28 TT-7 TT-18 TT-20 TT-23 TT-26" "$(order_of "$OUT4")"
+ck "planned never hidden"   "TT-3 TT-2 TT-4 TT-5 TT-28 TT-7 TT-18 TT-20 TT-23 TT-26 TT-40" "$(order_of "$OUT4")"
 ck_has  "planned-below section" "### Planned/Todo below the cut — always surfaced" "$OUT4"
 ck_has  "inherited blocker surfaces below the cut" "| Gates Planned/Todo: TT-21" "$OUT4"
-ck_has  "remaining note"        "9 more workable candidate(s) available" "$OUT4"
+ck_has  "remaining note"        "10 more workable candidate(s) available" "$OUT4"
 
 # ---- --no-stage-gate lifts the filter: the withheld Backlog tail returns, stage-first, no note ----
 OUT7="$WORK/out7.md"
 run "$OUT7" --limit 20 --no-stage-gate || { echo "FAIL: no-stage-gate run exited $?"; cat "$OUT7.err"; exit 1; }
-ck "gate lifted order" "TT-17 TT-3 TT-2 TT-4 TT-5 TT-28 TT-7 TT-18 TT-20 TT-23 TT-26 TT-1 TT-6 TT-22" "$(order_of "$OUT7")"
+ck "gate lifted order" "TT-17 TT-3 TT-2 TT-4 TT-5 TT-28 TT-7 TT-18 TT-20 TT-23 TT-26 TT-40 TT-1 TT-6 TT-22 TT-42 TT-44" "$(order_of "$OUT7")"
 ck_lacks "no note when lifted" "PLANNED-HOLD" "$OUT7"
 
 # ---- gate OPEN: the Planned column holds only a claimed issue, so Backlog is offered normally ----
@@ -369,12 +398,13 @@ ck_has  "keeper-only note" "_1 issue(s) hidden behind unresolved blockers — 1 
 cp "$FIX/issues-main.json" "$FIX/issues-page.json"; cp "$FIX/deps-main.json" "$FIX/deps-page.json"
 
 # ---- --root: the ranking scoped to an epic's graph. TT-27's graph is itself, its children TT-26
-# ---- and TT-29, and TT-20 (a member because it blocks TT-29); every other fixture issue sits
+# ---- and TT-29, TT-40 (reached through the shipped child TT-41, which is walked but is no member),
+# ---- and TT-20 (a member because it blocks TT-29); every other fixture issue sits
 # ---- outside it, so no hidden or hold note may count one — the cut lands before the notes ----
 OUTR="$WORK/outr.md"
 run "$OUTR" --limit 20 --root TT-27 || { echo "FAIL: root run exited $?"; cat "$OUTR.err"; exit 1; }
-ck "scoped order (TT-29 blocked, TT-20 withheld as Backlog, TT-27 hidden as the epic)" "TT-26" "$(order_of "$OUTR")"
-ck_has  "scope line"        "_Scope: epic TT-27 — 4 non-terminal member(s) across TT; ranking limited to the graph._" "$OUTR"
+ck "scoped order (TT-29 blocked, TT-20 withheld as Backlog, TT-27 hidden as the epic)" "TT-26 TT-40" "$(order_of "$OUTR")"
+ck_has  "scope line"        "_Scope: epic TT-27 — 5 non-terminal member(s) across TT; ranking limited to the graph._" "$OUTR"
 ck_has  "scoped planned-hold counts members only" "_PLANNED-HOLD: Backlog withheld — the Planned/Todo column is not drained (1 issue(s) hold the gate: 0 pickable now; 1 need the keeper — TT-27 [epic — certify per child; it closes itself when they release]). 1 Backlog candidate(s) wait behind the gate; it opens when the column drains — pass --no-stage-gate to list them._" "$OUTR"
 ck_has  "scoped epic note"  "1 issue(s) hidden as delegated epics" "$OUTR"
 ck_lacks "scoped: no needs-decision note (TT-11 is outside)" "hidden awaiting a human decision" "$OUTR"
@@ -385,12 +415,12 @@ ck_lacks "scoped: outside Planned Urgent absent"             "TT-3" "$OUTR"
 
 OUTR2="$WORK/outr2.md"
 run "$OUTR2" --limit 20 --root TT-27 --no-stage-gate || { echo "FAIL: root no-gate run exited $?"; cat "$OUTR2.err"; exit 1; }
-ck "scoped gate lifted" "TT-26 TT-20" "$(order_of "$OUTR2")"
+ck "scoped gate lifted" "TT-26 TT-40 TT-20" "$(order_of "$OUTR2")"
 ck_has  "scoped blocked note names the member chain only" "_1 issue(s) hidden behind unresolved blockers — 1 will release on their own (TT-29 behind TT-20 [Backlog]). Pass --include-blocked to list them._" "$OUTR2"
 
 OUTR3="$WORK/outr3.md"
 run "$OUTR3" --limit 20 --root TT-27 --include-blocked || { echo "FAIL: root include-blocked run exited $?"; cat "$OUTR3.err"; exit 1; }
-ck "scoped listing (TT-29 inherits the Planned stage from its epic, TT-20 stays Backlog)" "TT-26 TT-29 TT-20" "$(order_of "$OUTR3")"
+ck "scoped listing (TT-29 inherits the Planned stage from its epic, TT-20 stays Backlog)" "TT-26 TT-29 TT-40 TT-20" "$(order_of "$OUTR3")"
 
 OUTR4="$WORK/outr4.md"
 run "$OUTR4" --limit 20 --root TT-27 --label specified || { echo "FAIL: root label run exited $?"; cat "$OUTR4.err"; exit 1; }
@@ -401,7 +431,7 @@ ck_has  "scoped hold keeps the scope line" "_Scope: epic TT-27" "$OUTR4"
 # The graph's teams replace workspace discovery when nothing else is pinned.
 OUTR5="$WORK/outr5.md"
 run_noteam "$OUTR5" --limit 20 --root TT-27 || { echo "FAIL: root no-team run exited $?"; cat "$OUTR5.err"; exit 1; }
-ck "scoped run without --team resolves the team from the graph" "TT-26" "$(order_of "$OUTR5")"
+ck "scoped run without --team resolves the team from the graph" "TT-26 TT-40" "$(order_of "$OUTR5")"
 
 # Fail closed: a root that is not an epic, a missing root, and a malformed one all refuse — never an
 # unscoped ranking in the scope's place.

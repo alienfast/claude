@@ -51,8 +51,11 @@
 # Stage is INHERITED down a blocking chain: a Backlog issue that transitively blocks a
 # Planned/Todo issue ranks in the Planned stage (release scope by implication — an issue is
 # scoped by what it gates, not by its column: keeper ruling 2026-08-13,
-# standards/linear-workflow.md § Stage Priorities). The walk stops at terminal blockers and
-# never lifts Triage. Without it a fleet drained every other Planned issue and then picked
+# standards/linear-workflow.md § Stage Priorities). The blocker walk stops at terminal blockers
+# and never lifts Triage; the PARENT walk climbs THROUGH a terminal parent — a Backlog child of a
+# shipped issue under a Planned epic is still that epic's scope (keeper ruling 2026-09-19) — and
+# fetches the terminal ancestors the pool fetch omits (the "terminal ancestors" step below).
+# Without it a fleet drained every other Planned issue and then picked
 # Backlog work by class and priority while the one issue gating a Planned item sat at Backlog
 # rank — /auto-prep's PROMOTE-SET batch fixes the column at prep time, but chains wired
 # between preps (review filings, a hand promotion of the dependent alone) re-created the
@@ -393,6 +396,50 @@ if [ -n "$root" ]; then
   mv "$list_file.scoped" "$list_file"
 fi
 
+# ---------- terminal ancestors ----------
+#
+# The pool carries only non-terminal issues, so a Backlog child whose parent has shipped (Ready For
+# Release, Done) has no path in the lineage walk to the Planned epic above it and never inherits the
+# stage — measured 2026-09-19 on BFP: nine certified candidates under shipped parents of a Planned
+# epic sat behind PLANNED-HOLD for a 12-hour fleet that idled 69% of its capacity, while their one
+# direct-child sibling ranked. Climb from every Backlog issue whose parent the pool lacks — one API
+# call per missing ancestor, a level at a time in parallel — until each chain reaches the pool or
+# ends; the records feed $parent_of in the ranking program and nothing else. Depth-capped like
+# lineage(). An unreadable ancestor simply ends its chain, which answers as the walk did before
+# this step existed.
+ancestors_file="$tmpdir/ancestors.json"
+printf '[]' > "$ancestors_file"
+anc_q='query ancestor($id:String!){issue(id:$id){identifier state{name type} parent{identifier}}}'
+anc_dir="$tmpdir/anc"
+mkdir -p "$anc_dir"
+jq -r '.[].identifier' "$list_file" > "$anc_dir/seen"
+jq -r '[ .[] | select((.state_type == "backlog") or ((.state // "") | ascii_downcase) == "backlog") | .parent // empty ] | unique | .[]' \
+  "$list_file" > "$anc_dir/want"
+anc_depth=0
+while [ -s "$anc_dir/want" ] && [ "$anc_depth" -lt 10 ]; do
+  : > "$anc_dir/next"
+  anc_pids=()
+  while IFS= read -r aid; do
+    [ -n "$aid" ] || continue
+    grep -qxF -- "$aid" "$anc_dir/seen" && continue
+    printf '%s\n' "$aid" >> "$anc_dir/seen"
+    (linear-cli api query -q -o json -v id="$aid" "$anc_q" > "$anc_dir/$aid.json" 2>/dev/null || true) &
+    anc_pids+=($!)
+  done < "$anc_dir/want"
+  if [ "${#anc_pids[@]}" -gt 0 ]; then for p in "${anc_pids[@]}"; do wait "$p" || true; done; fi
+  for f in "$anc_dir"/*.json; do
+    [ -e "$f" ] || continue
+    rec=$(jq -c '.data.issue // empty | select(.identifier != null)
+      | {identifier, state:(.state.name // "?"), state_type:(.state.type // "?"), parent:(.parent.identifier // null)}' "$f" 2>/dev/null) || rec=''
+    rm -f "$f"
+    [ -n "$rec" ] || continue
+    printf '%s' "$rec" | jq -c --slurpfile a "$ancestors_file" '$a[0] + [.]' > "$ancestors_file.tmp" && mv "$ancestors_file.tmp" "$ancestors_file"
+    printf '%s' "$rec" | jq -r '.parent // empty' >> "$anc_dir/next"
+  done
+  sort -u "$anc_dir/next" > "$anc_dir/want"
+  anc_depth=$((anc_depth + 1))
+done
+
 # ---------- my email ----------
 
 me_email=$(linear-cli api query -q -o json 'query{viewer{email}}' 2>/dev/null | jq -r '.data.viewer.email // empty' || true)
@@ -518,6 +565,7 @@ eligible_json=$(jq \
   --slurpfile rbm_doc "$reverse_blocker_map_file" \
   --slurpfile rm_doc "$related_map_file" \
   --slurpfile newly_doc "$newly_unblocked_file" \
+  --slurpfile anc_doc "$ancestors_file" \
   --arg me "${me_email:-}" \
   --arg label "$label" \
   --arg xlabel "$exclude_label" \
@@ -533,7 +581,9 @@ eligible_json=$(jq \
     # Stage by identifier for the inherited-stage walk: the fetch carries every non-terminal
     # team issue, so a Planned dependent is present whether or not it is itself a candidate.
     | (map({key: .identifier, value: {t: .state_type, s: .state}}) | from_entries) as $stage
-    | (map({key: .identifier, value: .parent}) | from_entries) as $parent_of
+    # Parents by identifier, from the pool PLUS the terminal ancestors fetched above: a shipped parent
+    # is not in the pool, and without it the lineage walk would stop one hop short of the Planned epic.
+    | ((. + ($anc_doc[0] // [])) | map({key: .identifier, value: .parent}) | from_entries) as $parent_of
     # Hot parents: a sibling In Progress/In Review under the same parent means a live
     # session is likely editing nearby files — feeds the soft spread de-rank below.
     | ([ .[] | select(.state_type == "started" and (.parent != null)) | .parent ] | unique) as $hot
