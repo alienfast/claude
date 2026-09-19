@@ -1211,7 +1211,9 @@ ck "pool: session row carries its tail"        "2.0"   "$(q16 "[s for s in d['se
 ck "pool: halted session excluded"             "None"  "$(q16 "[s for s in d['sessions'] if s['run_key']=='pxc00001'][0]['idle_tail_h']")"
 ck "pool: landed_at in the reconciliation"     "True"  "$(q16 "d['merge_reconciliation']['TT-101']['landed_at'] is not None")"
 ck "pool: history row carries the gauge"       "5.0"   "$(q16 "d['history'][-1]['idle_tail_session_hours']")"
-ck_has "pool: totals line" "**Pool exhausted** — last ship 2.0h before the deadline; 5.0 session-hours (23% of the fleet) idle on an empty pool (2 of 3 sessions deadline-drained: \`pxb00001\` 3.0h, \`pxa00001\` 2.0h)" "$MD16"
+ck_has "pool: totals line" "**Pool exhausted** — last ship 2.0h before the deadline; 5.0 session-hours (23% of the fleet) idle on an empty or gated pool (2 of 3 sessions deadline-drained: \`pxb00001\` 3.0h, \`pxa00001\` 2.0h)" "$MD16"
+ck_lacks "pool: no held clause when every admitted session drained" "held to the end" "$MD16"
+ck "pool: no held sessions, nothing forfeited" "{} None" "$(q16 "str(d['pool_exhausted']['held_sessions']) + ' ' + str(d['pool_exhausted']['forfeited_session_hours'])")"
 ck_has "pool: trend column"                    "| idle% |" "$MD16"
 ck_has "pool: trend cell"                      "| 23% |" "$MD16"
 # A 20-minute tail after the last landing is the deadline doing its job, not an exhausted pool.
@@ -1224,6 +1226,76 @@ CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK16" --hours 24 --j
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK16" --hours 24 > "$MD16" 2>&1
 ck "pool: no marker, no number"   "None" "$(q16 "d['pool_exhausted']['hours_before_deadline']")"
 ck_lacks "pool: no marker, no line" "**Pool exhausted**" "$MD16"
+
+# ---- 16b. held to the end: a session that died HOLDING on the pool never wrote `drained` ----
+# Measured 2026-09-19: PLANNED-HOLD and BLOCKED-HOLD never write `drained`, so three sessions that held on a gated
+# pool and were then retired by the daemon (an armed wakeup that never fired) all read `active` — the gauge printed
+# nothing and idle% was `-`, while the fleet shipped nothing in its last 24.8 of 36 session-hours. The admission test
+# is structural: the kill flag's own condition, a passed deadline, a FINAL wakeup with noop:true, and no Agent
+# dispatch after the last landing. The tail is split at the last turn: before it is pool idle, after it is FORFEITED.
+CK16H="$WORK/ck16h"; mkdir -p "$CK16H/tmp"
+git -C "$CK16H" init -q 2>/dev/null
+git -C "$CK16H" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "init"
+M16H="$(git -C "$CK16H" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
+T16H="$WORK/projects/$M16H"; mkdir -p "$T16H"
+DL16H=$(( $(python3 -c "import time; print(int(time.time()))") - 3600 ))   # the deadline passed an hour ago
+echo "{\"deadline_epoch\": $DL16H, \"deadline\": \"test\", \"count\": 3, \"launch_epoch\": $((DL16H - 43200))}" > "$CK16H/tmp/fleet-deadline.json"
+HOLD_WAKE='{"type":"tool_use","id":"tu_h","name":"ScheduleWakeup","input":{"delaySeconds":1800,"prompt":"/loop /auto","reason":"PLANNED-HOLD with only keeper-owned entries; re-checking in 30 minutes.","noop":true}}'
+
+# pxh00001 HELD: shipped 6h before the deadline, then held on noop wakeups; its last turn is 4h before the deadline
+# and no `drained` was ever written. 2.0h is pool idle, 4.0h is forfeited.
+echo '{"status":"active","reason":"","mode":"loop","shipped":["TT-200"],"canceled":[],"skipped":[],"failed":[]}' > "$CK16H/tmp/auto-state-pxh00001.json"
+cat > "$T16H/pxh00001-0000.jsonl" <<EOF
+{"type":"user","timestamp":"$(at_epoch $((DL16H - 36000)))","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"$(at_epoch $((DL16H - 21600)))","message":{"role":"assistant","id":"m_h_a1","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-200 done"}]}}
+{"type":"assistant","timestamp":"$(at_epoch $((DL16H - 14400)))","message":{"role":"assistant","id":"m_h_a2","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[$HOLD_WAKE]}}
+EOF
+GIT_COMMITTER_DATE="$(at_epoch $((DL16H - 21600)))" git -C "$CK16H" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "TT-200: fix it"
+# pxi00001 DELEGATE WAIT: the same ledger and the same final noop wakeup, but it dispatched an Agent AFTER its last
+# landing — a noop wakeup is also what a session arms while review delegates run, and that is work in flight, not a
+# hold. Excluded from the gauge; its dead hours are still forfeited.
+echo '{"status":"active","reason":"","mode":"loop","shipped":["TT-201"],"canceled":[],"skipped":[],"failed":[]}' > "$CK16H/tmp/auto-state-pxi00001.json"
+cat > "$T16H/pxi00001-0000.jsonl" <<EOF
+{"type":"user","timestamp":"$(at_epoch $((DL16H - 36000)))","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"$(at_epoch $((DL16H - 21600)))","message":{"role":"assistant","id":"m_h_b1","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-201 done"}]}}
+{"type":"assistant","timestamp":"$(at_epoch $((DL16H - 18000)))","message":{"role":"assistant","id":"m_h_b2","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"tool_use","id":"tu_h_ag","name":"Agent","input":{"description":"review","prompt":"review the delta","subagent_type":"quality-verifier"}}]}}
+{"type":"assistant","timestamp":"$(at_epoch $((DL16H - 14400)))","message":{"role":"assistant","id":"m_h_b3","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[$HOLD_WAKE]}}
+EOF
+GIT_COMMITTER_DATE="$(at_epoch $((DL16H - 21600)))" git -C "$CK16H" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "TT-201: fix it"
+# pxj00001 DRAINED control: shipped 2h before the deadline and drained on it.
+echo '{"status":"drained","reason":"fleet deadline reached (test)","mode":"loop","shipped":["TT-202"],"canceled":[],"skipped":[],"failed":[]}' > "$CK16H/tmp/auto-state-pxj00001.json"
+cat > "$T16H/pxj00001-0000.jsonl" <<EOF
+{"type":"user","timestamp":"$(at_epoch $((DL16H - 36000)))","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"$(at_epoch $((DL16H - 7200)))","message":{"role":"assistant","id":"m_h_c1","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-202 done"}]}}
+{"type":"assistant","timestamp":"$(at_epoch $DL16H)","message":{"role":"assistant","id":"m_h_c2","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"NO-CANDIDATES: fleet deadline reached (test) — 1/0/0/0 this run."},{"type":"tool_use","id":"tu_h_c","name":"ScheduleWakeup","input":{"stop":true}}]}}
+EOF
+GIT_COMMITTER_DATE="$(at_epoch $((DL16H - 7200)))" git -C "$CK16H" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "TT-202: fix it"
+
+J16H="$WORK/out16h.json"; MD16H="$WORK/out16h.md"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK16H" --hours 24 --json > "$J16H" 2>/dev/null
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK16H" --hours 24 > "$MD16H" 2>&1
+q16h() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J16H"; }
+ck "held: admitted with its tail CLIPPED at the last turn" "{'pxh00001': {'held_h': 2.0, 'forfeited_h': 4.0}}" "$(q16h "d['pool_exhausted']['held_sessions']")"
+ck "held: a delegate wait is not a hold"                  "False" "$(q16h "'pxi00001' in d['pool_exhausted']['held_sessions']")"
+ck "held: the drained control keeps its own map"          "{'pxj00001': 2.0}" "$(q16h "d['pool_exhausted']['sessions']")"
+ck "held: idle tail = drained 2.0 + held 2.0"             "4.0"   "$(q16h "d['pool_exhausted']['idle_tail_session_hours']")"
+ck "held: every kill-shaped session forfeits its dead hours" "8.0" "$(q16h "d['pool_exhausted']['forfeited_session_hours']")"
+ck "held: keyed on the fleet-wide last landing, not the smallest tail" "2.0" "$(q16h "d['pool_exhausted']['hours_before_deadline']")"
+ck "held: share stays on the span denominator (4.0 / 22.0)" "0.182" "$(q16h "d['pool_exhausted']['idle_tail_share']")"
+ck "held: the share never exceeds 100%"                   "True"  "$(q16h "d['pool_exhausted']['idle_tail_share'] <= 1")"
+ck "held: session row carries the held tail"              "2.0 4.0" "$(q16h "' '.join(str(x) for s in d['sessions'] if s['run_key']=='pxh00001' for x in (s['idle_tail_h'], s['forfeited_h']))")"
+ck "held: the delegate-wait row forfeits but idles nothing" "None 4.0" "$(q16h "' '.join(str(x) for s in d['sessions'] if s['run_key']=='pxi00001' for x in (s['idle_tail_h'], s['forfeited_h']))")"
+ck "held: history row carries the forfeited hours"        "8.0"   "$(q16h "d['history'][-1]['forfeited_session_hours']")"
+ck_has "held: totals line names both kinds" "(1 of 3 sessions deadline-drained, 1 held to the end without a terminal write: \`pxj00001\` 2.0h, \`pxh00001\` 2.0h held)" "$MD16H"
+ck_has "held: totals line separates the forfeited hours" "a further 4.0 session-hours after those last turns were FORFEITED" "$MD16H"
+ck_has "held: kill flag carries the forfeited hours and the held hours" "\`pxh00001\` ended without recording an outcome" "$MD16H"
+ck_has "held: ... forfeited"    "Its last turn was 4.0h before the fleet deadline — FORFEITED session-hours, a session fault; the 2.0h before that it spent holding on the pool" "$MD16H"
+ck_has "held: the delegate-wait flag forfeits without a held clause" "Its last turn was 4.0h before the fleet deadline — FORFEITED session-hours, a session fault. Check for" "$MD16H"
+ck_has "held: the flag points at the daemon log" "\`~/.claude/daemon.log\` separates the two" "$MD16H"
+# A deadline still in the FUTURE proves nothing about a dead-looking session: admit no one, forfeit nothing.
+echo "{\"deadline_epoch\": $((DL16H + 7200)), \"count\": 3, \"launch_epoch\": $((DL16H - 43200))}" > "$CK16H/tmp/fleet-deadline.json"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK16H" --hours 24 --json > "$J16H" 2>/dev/null
+ck "held: a future deadline admits no held session" "{} None" "$(q16h "str(d['pool_exhausted']['held_sessions']) + ' ' + str(d['pool_exhausted']['forfeited_session_hours'])")"
 
 # ---- 17. early drain: one session drained while its siblings kept picking ----
 # Measured 2026-09-05: session 7f086212 wrote `drained` 10.4h before the deadline — the pool was

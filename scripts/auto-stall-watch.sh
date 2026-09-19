@@ -106,14 +106,65 @@ state_file_for() {
   return 1
 }
 
+# pending_wakeup <transcript> -> "<armed-epoch> <delaySeconds>" when the last non-stop ScheduleWakeup is still PENDING,
+# empty otherwise. Pending means no record has OPENED A TURN since it was armed: a fired wakeup
+# (system/scheduled_task_fire), a queue-operation, a user record carrying text (a /loop delivery, a task
+# notification, a prompt — a tool_result carries none), or a later assistant tool_use. "No later timestamped record"
+# is NOT the test: every healthy arm is followed IN THE SAME TURN by its tool_result, an attachment, the closing
+# assistant text, stop_hook_summary and turn_duration. The LAST arm is the one to read — bursts of two or three within
+# seconds occur, and each arm cancels the previous. A consumed wakeup is no exemption: a quota kill mid-iteration
+# almost always has one in its tail, and that kill is what this script was built to catch.
+pending_wakeup() {
+  tail -n 200 "$1" 2>/dev/null | jq -nR -r '
+    [ inputs | fromjson? | select(type == "object") | select(.isSidechain != true) ] as $L
+    | def utext($c):
+        if ($c | type) == "string" then $c
+        elif ($c | type) == "array"
+          then ([$c[] | select((type == "object") and (.type == "text")) | (.text // "")] | join(" "))
+        else "" end;
+    def tooluse($r; $stopless):
+        [ ($r.message.content // []) | select(type == "array") | .[]
+          | select((type == "object") and (.type == "tool_use"))
+          | select(($stopless | not) or ((.name == "ScheduleWakeup") and (.input.stop != true)
+                                        and ((.input.delaySeconds | type) == "number"))) ];
+    ($L | to_entries) as $E
+    | ([ $E[] | select(.value.type == "assistant") | select((tooluse(.value; true) | length) > 0) | .key ] | last) as $k
+    | if $k == null then empty
+      else
+        ([ $E[] | select(.key > $k) | .value
+           | select(((.type == "system") and (.subtype == "scheduled_task_fire"))
+                    or (.type == "queue-operation")
+                    or ((.type == "user") and ((utext(.message.content // "") | length) > 0))
+                    or ((.type == "assistant") and ((tooluse(.; false) | length) > 0))) ] | length) as $opened
+        | if $opened > 0 then empty
+          else $L[$k] as $r
+            | (try ($r.timestamp | sub("\\.[0-9]+"; "") | fromdateiso8601) catch null) as $at
+            | if $at == null then empty
+              else "\($at) \(tooluse($r; true) | last | .input.delaySeconds | floor)" end
+          end
+      end' 2>/dev/null
+}
+
 # classify <transcript> <state-file|""> <silence-seconds> <threshold-seconds>
 #   -> "<verdict>\t<detail>"
 # Verdicts: ok | terminal | stalled | stalled-quota
 #
 # ORDER MATTERS. A deliberately-ended loop goes quiet forever and that is its contract, so every terminal
-# signal is checked BEFORE the silence threshold. The state file is authoritative when it carries a
+# signal is checked BEFORE any silence test. The state file is authoritative when it carries a
 # terminal status; the transcript tail is the fallback for a session that died before Step 4 could write
 # one (which is exactly the shape this script exists to catch, so it must not be the only check).
+#
+# THEN THE PENDING WAKEUP, before the flat threshold. /auto prescribes 1800s wakeups — the keeper-only PLANNED-HOLD
+# wait, the fleet headroom park, the mid-iteration fallback heartbeat — so a flat 25-minute rule flags a healthy
+# session for the last five minutes of every such hold. Measured 2026-09-19: 8 of 9 completed 1800s holds were
+# flagged while the session was fine, one of them 1h34m before that session's real last turn, each raising its own
+# desktop alert (the wrapper de-duplicates on transcript mtime, and every wake rewrites the transcript) — on the same
+# night three sessions really did die behind a wakeup that never fired. With a wakeup pending, the session is stalled
+# only once that wakeup is WAKE_GRACE_S overdue: observed fire lateness was 2-57s, and the runtime rounds an arm up to
+# the next minute. That also catches a lost short wakeup SOONER (a lost 600s one at ~15 minutes, not 25), at the cost
+# of catching a lost 1800s one ~10 minutes later (35, not 25). hooks/auto-rewake.sh makes the same overdue test from
+# inside the session and wakes it; a flag here means that hook did not.
+WAKE_GRACE_S=300
 classify() {
   local transcript="$1" state="$2" silence="$3" threshold="$4"
   local status="" asst_txt=""
@@ -147,6 +198,14 @@ classify() {
     printf 'terminal\ttag'; return 0
   fi
 
+  local pend armed delay
+  pend=$(pending_wakeup "$transcript")
+  if [ -n "$pend" ]; then
+    armed=${pend%% *}; delay=${pend##* }
+    [ "$NOW" -gt $(( armed + delay + WAKE_GRACE_S )) ] || { printf 'ok\t-'; return 0; }
+    printf 'stalled\twakeup overdue %sm (armed %ss)' "$(( (NOW - armed - delay) / 60 ))" "$delay"; return 0
+  fi
+
   [ "$silence" -ge "$threshold" ] || { printf 'ok\t-'; return 0; }
 
   # A quota cutoff is the diagnosable case: name it separately so the operator knows the session is
@@ -157,7 +216,7 @@ classify() {
     printf 'stalled-quota\t%s' "${resets:-quota limit}"; return 0
   fi
 
-  printf 'stalled\tno terminal tag, no wakeup evidence'
+  printf 'stalled\tno terminal tag, no wakeup pending'
 }
 
 agents=""
@@ -209,7 +268,7 @@ if [ "$AS_JSON" = "1" ]; then
 fi
 
 if [ -z "$rows" ]; then
-  echo "no stalled /auto sessions (threshold ${THRESHOLD_MIN}m, ${INSCOPE} in scope)"
+  echo "no stalled /auto sessions (a pending wakeup ${WAKE_GRACE_S}s overdue, else ${THRESHOLD_MIN}m silent; ${INSCOPE} in scope)"
   exit 0
 fi
 

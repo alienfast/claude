@@ -99,6 +99,39 @@ tail_dead() {
 EOF
 }
 
+# A HEALTHY HOLD, in the real shape of fleet session 12106d2b's final turn (2026-09-19): a fired wakeup opens the
+# turn, the arm is followed IN THE SAME TURN by its tool_result, an attachment, the closing assistant text,
+# stop_hook_summary and turn_duration — five timestamped records, which is why "no later timestamped record" can
+# never be the pending test — and the harness's untimestamped bookkeeping trails after. <delay> is the armed wakeup.
+tail_hold() { # <age of the last timestamped record> <delaySeconds>
+  local a="$1" d="$2"; cat <<EOF
+{"type":"system","subtype":"scheduled_task_fire","timestamp":"$(iso_ago $((a+26)))","cronKind":"wakeup","prompt":"/loop /auto"}
+{"type":"user","timestamp":"$(iso_ago $((a+26)))","message":{"role":"user","content":"<command-message>loop</command-message>\n<command-name>/loop</command-name>\n<command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"$(iso_ago $((a+4)))","message":{"role":"assistant","content":[{"type":"tool_use","name":"ScheduleWakeup","input":{"delaySeconds":$d,"prompt":"/loop /auto","reason":"PLANNED-HOLD with only keeper-owned entries; re-checking in 30 minutes.","noop":true}}]}}
+{"type":"user","timestamp":"$(iso_ago $((a+3)))","message":{"role":"user","content":[{"type":"tool_result","content":"Next wakeup scheduled for 04:41:00 (in 1837s). Nothing more to do this turn"}]}}
+{"type":"attachment","timestamp":"$(iso_ago $((a+3)))","attachment":{"type":"todo_reminder"}}
+{"type":"assistant","timestamp":"$(iso_ago $((a+1)))","message":{"role":"assistant","content":[{"type":"text","text":"Still holding: nothing can ship until you act on the held Planned issues. Next check is at 04:41."}]}}
+{"type":"system","subtype":"stop_hook_summary","timestamp":"$(iso_ago "$a")","preventedContinuation":false}
+{"type":"system","subtype":"turn_duration","timestamp":"$(iso_ago "$a")","durationMs":4500}
+{"type":"last-prompt","lastPrompt":"/loop /auto","sessionId":"12106d2b-995e-492c-9a78-911492ef957d"}
+{"type":"cost-state","totalCostUSD":330.06,"sessionId":"12106d2b-995e-492c-9a78-911492ef957d"}
+EOF
+}
+tail_hold_1800() { tail_hold "$1" 1800; }
+tail_hold_600()  { tail_hold "$1" 600; }
+
+# A CONSUMED wakeup is no exemption: a 60s tick fired, opened its turn, and the limit message killed it. This is the
+# script's founding shape with an arm in the tail, and it must stay reachable past the pending-wakeup branch.
+tail_fired_quota() {
+  local a="$1"; cat <<EOF
+{"type":"assistant","timestamp":"$(iso_ago $((a+200)))","message":{"role":"assistant","content":[{"type":"tool_use","name":"ScheduleWakeup","input":{"delaySeconds":60,"prompt":"/loop /auto","reason":"BF-988 shipped; picking the next certified issue right away.","noop":false}}]}}
+{"type":"system","subtype":"stop_hook_summary","timestamp":"$(iso_ago $((a+196)))","preventedContinuation":false}
+{"type":"system","subtype":"scheduled_task_fire","timestamp":"$(iso_ago $((a+120)))","cronKind":"wakeup","prompt":"/loop /auto"}
+{"type":"user","timestamp":"$(iso_ago $((a+120)))","message":{"role":"user","content":"<command-message>loop</command-message>\n<command-name>/loop</command-name>\n<command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"$(iso_ago "$a")","message":{"role":"assistant","content":[{"type":"text","text":"You've hit your session limit · resets 5:10am (America/Chicago)"}]}}
+EOF
+}
+
 run_case() { # <name> <tail-fn> <status> <age-seconds> <expected-verdict-or-none> [mtime-age-seconds]
   local name="$1" tailfn="$2" status="$3" age="$4" want="$5" mage="${6:-$4}"
   local id="aaaaaaaa" sid="aaaaaaaa-0000-0000-0000-000000000000"
@@ -149,6 +182,27 @@ run_case "same, mtime fresh (bookkeeping rewrite)         -> stalled" tail_dead 
 
 # The reverse: fresh entries under a stale mtime are a session at work, not a stall.
 run_case "no tag, entries 10m old, mtime 2h old            -> none"    tail_armed active 600 "none" 7200
+
+# THE PENDING WAKEUP (2026-09-19). A flat 25-minute rule flagged 8 of 9 healthy 1800s holds on one fleet, each
+# raising its own alert, on the night three sessions really died behind a wakeup that never fired. A session with a
+# wakeup pending is stalled only once that wakeup is 300s overdue; one without is judged by the flat rule as before.
+detail() { "$SCRIPT" --agents-json "$TMP/agents.json" --now "$NOW" --json 2>/dev/null | jq -r '.stalled[0].detail // "none"'; }
+ck_detail() { # <name> <want>  — reads the files the preceding run_case left in place
+  local got; got=$(detail)
+  if [ "$got" = "$2" ]; then echo "  PASS  $1"; PASS=$((PASS+1)); else echo "  FAIL  $1 — expected '$2', got '$got'"; FAIL=$((FAIL+1)); fi
+}
+run_case "healthy 1800s hold at minute 27 (flat rule flagged it)   -> none"    tail_hold_1800 active 1620 "none"
+run_case "the same hold at minute 36: the wakeup is 6m overdue     -> stalled" tail_hold_1800 active 2160 "stalled"
+ck_detail "  ... and the detail names the overdue wakeup" "wakeup overdue 6m (armed 1800s)"
+run_case "a lost 600s wakeup at minute 16 (flat rule missed it)    -> stalled" tail_hold_600  active  960 "stalled"
+ck_detail "  ... flagged 9 minutes sooner than 25m of silence would" "wakeup overdue 6m (armed 600s)"
+run_case "a 600s hold at minute 14, inside the grace               -> none"    tail_hold_600  active  840 "none"
+run_case "a CONSUMED wakeup never exempts: fired, then quota-killed, 30m -> stalled-quota" tail_fired_quota active 1800 "stalled-quota"
+run_case "  ... and under the flat threshold it is still a turn at work  -> none" tail_fired_quota active 600 "none"
+run_case "no tag, 60m silent: the armed fixture now reads as overdue     -> stalled" tail_armed active 3600 "stalled"
+ck_detail "  ... by 30m" "wakeup overdue 30m (armed 1800s)"
+run_case "dead after notification: no wakeup PENDING, flat rule decides  -> stalled" tail_dead active 3600 "stalled"
+ck_detail "  ... and says so" "no terminal tag, no wakeup pending"
 
 # A session with no /auto run-state file is somebody else's session, not fleet work. The state file is
 # the ONLY scope filter — kind must play no part (the live schema reports every session interactive).

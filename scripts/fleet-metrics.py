@@ -441,8 +441,15 @@ def scan_transcript(path, agg, agent_type="main", description=""):
                 # result discriminates what actually happened (an "Async agent launched successfully"
                 # line vs the agent's report inline). Dispatches whose result never arrives fall back
                 # to the typed value at end-of-transcript, below.
+                # The pool-exhausted gauge's "held to the end" test reads both (main loop only — a
+                # subagent arms no wakeups, and its dispatches are not this session's delegate waits).
+                if name == "Agent" and agent_type == "main" and t \
+                        and (agg["last_agent_dispatch"] is None or t > agg["last_agent_dispatch"]):
+                    agg["last_agent_dispatch"] = t
                 if name == "ScheduleWakeup":
                     agg["wakeups"] += 1
+                    if t and agent_type == "main" and (agg["last_wakeup"] is None or t >= agg["last_wakeup"][0]):
+                        agg["last_wakeup"] = (t, inp.get("noop") is True)
                     if inp.get("stop") is True:
                         agg["wakeup_stops"] += 1
                         if t:
@@ -511,6 +518,10 @@ def new_agg():
         # "when was this session last productive" (git's committer dates are the primary, see
         # git_merged). SKIPPED/FAILED carry no timestamped tag, so a post-ship skip reads as idle.
         "ship_times": {}, "cancel_times": [],
+        # The main loop's last ScheduleWakeup as (time, noop) and its last Agent dispatch time: a
+        # final `noop: true` wakeup with no dispatch after the last landing is a HOLD, which is how
+        # the pool-exhausted gauge admits a session that died before it could write `drained`.
+        "last_wakeup": None, "last_agent_dispatch": None,
         # name -> subagent_type from this session's own Agent tool_use inputs, and how many
         # dispatches carried a name at all.
         "named_types": {}, "named_dispatches": 0,
@@ -1360,30 +1371,81 @@ def main():
                 times[issue] = when
         landings[s["run_key"]] = times
 
-    # Pool exhausted: the whole fleet idling on an EMPTY certified pool after its last ship. Per
-    # deadline-drained session, the tail from its last productive moment (a landing or a canceled
+    # Pool exhausted: the whole fleet idling on an empty or GATED certified pool after its last ship.
+    # Per deadline-drained session, the tail from its last productive moment (a landing or a canceled
     # attempt — a cancel after the last ship is work, not idling; skips and failures carry no
     # timestamp and still read as idle) to the deadline; a session that shipped nothing idled from
-    # its first pick. `halted`, `active` and ledger-less sessions are excluded: only a deadline drain
-    # proves the session was waiting on the pool. Measured 2026-09-16: three sessions held 4.1h, 3.3h
-    # and 3.0h on a keeper-gated Planned column (10.4 session-hours, 28% of the fleet) while every
-    # per-session row read clean and Flags said None.
+    # its first pick. A deadline drain proves the session was alive and polling the pool right
+    # through the deadline, so its whole tail is pool idle. `halted` and ledger-less sessions are
+    # excluded. Measured 2026-09-16: three sessions held 4.1h, 3.3h and 3.0h on a keeper-gated Planned
+    # column (10.4 session-hours, 28% of the fleet) while every per-session row read clean and Flags
+    # said None.
+    def last_productive_of(s):
+        times = list(landings[s["run_key"]].values()) + s["agg"]["cancel_times"]
+        if times:
+            return max(times), False
+        if s["agg"]["first"]:
+            return s["agg"]["first"], True
+        return None, False
+
     idle_tails = {}   # run_key -> (idle hours, idled from its first pick)
     if fleet_deadline_dt is not None:
         for s in sessions:
             if s["state"].get("status") != "drained" or "deadline" not in (s["state"].get("reason") or ""):
                 continue
-            times = list(landings[s["run_key"]].values()) + s["agg"]["cancel_times"]
-            if times:
-                last_productive, from_first = max(times), False
-            elif s["agg"]["first"]:
-                last_productive, from_first = s["agg"]["first"], True
-            else:
+            last_productive, from_first = last_productive_of(s)
+            if last_productive is None:
                 continue
             idle_tails[s["run_key"]] = (
                 max(0.0, (fleet_deadline_dt - last_productive).total_seconds() / 3600), from_first)
-    pool_exhausted_h = round(min(h for h, _ in idle_tails.values()), 1) if idle_tails else None
-    idle_tail_session_hours = round(sum(h for h, _ in idle_tails.values()), 1) if idle_tails else None
+
+    # HELD TO THE END: a session that was holding on the pool and then DIED before the deadline gate
+    # could write `drained`. PLANNED-HOLD and BLOCKED-HOLD never write `drained`, by design, so a
+    # holding session that is killed, reaped or loses a wakeup used to fall out of this gauge — and
+    # the gauge went blank on exactly the runs a gated pool dominates. Measured 2026-09-19: all three
+    # ledgers read `active`, no Pool exhausted line printed and idle% was `-`, while the fleet shipped
+    # nothing in its last 24.8 of 36 session-hours. The test is STRUCTURAL, never prose: the kill
+    # flag's own condition (an `active` ledger, wakeups armed, no stop-wakeup, no terminal tag, not
+    # alive), the fleet deadline passed, the FINAL wakeup `noop: true` (a hold tick), and no Agent
+    # dispatch after the last productive moment — a noop wakeup is also what a session arms while it
+    # waits on review delegates, and that is work in flight, not a hold. Not the wakeup's reason
+    # text, and not an `AUTO-CONTINUE: no pick` tag: on that run no session emitted the tag in its
+    # final iteration, and the three final reasons shared no token.
+    #
+    # The tail is SPLIT at the last turn. Last productive moment -> last turn is pool idle and joins
+    # the gauge. Last turn -> deadline is FORFEITED: a dead session's evidence says nothing about the
+    # pool after its last turn (one session's final hold named an issue that a sibling released 26
+    # minutes later — a chained pool, not an empty one), so those hours are a session fault, printed
+    # on the kill flag and never counted as pool idle. Clipping at the last turn is also what keeps
+    # the share under 100%: its denominator is the summed transcript span, and an unclipped tail on
+    # that run would have printed 149%.
+    forfeited = {}    # run_key -> hours from its last turn to the deadline, every kill-shaped session
+    held_tails = {}   # run_key -> (held hours, idled from its first pick); a subset of `forfeited`
+    if fleet_deadline_dt is not None and fleet_deadline_dt <= datetime.now(timezone.utc):
+        for s in sessions:
+            st, a = s["state"], s["agg"]
+            if not (st.get("status") == "active" and a["wakeups"] > 0 and a["wakeup_stops"] == 0
+                    and a["terminal_tags"] == 0 and a["last"]) \
+                    or session_alive(st.get("pid"), st.get("pidStart")):
+                continue
+            last_turn = min(a["last"], fleet_deadline_dt)
+            forfeited[s["run_key"]] = max(0.0, (fleet_deadline_dt - last_turn).total_seconds() / 3600)
+            last_productive, from_first = last_productive_of(s)
+            final_wakeup = a.get("last_wakeup")
+            if last_productive is None or not (final_wakeup and final_wakeup[1]):
+                continue
+            if a.get("last_agent_dispatch") and a["last_agent_dispatch"] > last_productive:
+                continue
+            held_tails[s["run_key"]] = (
+                max(0.0, (last_turn - last_productive).total_seconds() / 3600), from_first)
+
+    # Keyed on the FLEET-WIDE last productive moment, not on the smallest tail: a held session's
+    # clipped tail can be minutes long (0.3h on that run) and would otherwise suppress the line.
+    to_deadline = [h for h, _ in idle_tails.values()] + [held_tails[k][0] + forfeited[k] for k in held_tails]
+    pool_exhausted_h = round(min(to_deadline), 1) if to_deadline else None
+    idle_tail_session_hours = round(sum(h for h, _ in idle_tails.values())
+                                    + sum(h for h, _ in held_tails.values()), 1) if to_deadline else None
+    forfeited_session_hours = round(sum(forfeited.values()), 1) if forfeited else None
 
     # Early drain: ONE session drained while its siblings kept picking — the pool was gated, not
     # empty (a `blocks` chain behind in-flight work, an empty fetch, a label flap, work certified
@@ -1529,6 +1591,7 @@ def main():
         "fresh_shipped_share": fresh_share,
         "pool_exhausted_h": pool_exhausted_h,
         "idle_tail_session_hours": idle_tail_session_hours,
+        "forfeited_session_hours": forfeited_session_hours,
         "idle_tail_share": None,  # filled below once session_hours exists
     }
 
@@ -1648,7 +1711,9 @@ def main():
                 "named_dispatches": s["agg"]["named_dispatches"],
                 "drained_early_h": (early_drain.get(s["run_key"]) or {}).get("hours"),
                 "sibling_ships_after_drain": (early_drain.get(s["run_key"]) or {}).get("sibling_ships"),
-                "idle_tail_h": round(idle_tails[s["run_key"]][0], 1) if s["run_key"] in idle_tails else None,
+                "idle_tail_h": round(idle_tails[s["run_key"]][0], 1) if s["run_key"] in idle_tails
+                else round(held_tails[s["run_key"]][0], 1) if s["run_key"] in held_tails else None,
+                "forfeited_h": round(forfeited[s["run_key"]], 1) if s["run_key"] in forfeited else None,
                 "output_tokens": {f"{t}/{m}": n for (t, m), n in s["agg"]["tokens"].most_common()},
                 "usage": {f"{t}/{m}": dict(u) for (t, m), u in s["agg"]["usage"].items()},
                 "context_volume_tokens": {b: s["agg"]["ctx_volume"][b] for b in CTX_BUCKETS
@@ -1697,6 +1762,11 @@ def main():
                 "idle_tail_session_hours": idle_tail_session_hours,
                 "idle_tail_share": headline["idle_tail_share"],
                 "sessions": {k: round(h, 1) for k, (h, _) in idle_tails.items()},
+                # Died holding on the pool, before the deadline gate could write `drained`: held_h joins
+                # the idle tail, forfeited_h (its last turn -> the deadline) never does.
+                "held_sessions": {k: {"held_h": round(h, 1), "forfeited_h": round(forfeited[k], 1)}
+                                  for k, (h, _) in held_tails.items()},
+                "forfeited_session_hours": forfeited_session_hours,
             },
             "windows": {
                 "peak_5h_output_tokens": peak_5h,
@@ -1787,15 +1857,24 @@ def main():
           f"{named} named dispatches · {tot['cls']} classifier blocks · "
           f"{sum(fleet_tokens.values()):,} output tokens\n")
     if pool_exhausted_h is not None and pool_exhausted_h >= 1:
-        tails = ", ".join(f"`{k}` {h:.1f}h" + (" (idle from its first pick)" if from_first else "")
-                          for k, (h, from_first) in sorted(idle_tails.items(), key=lambda kv: -kv[1][0]))
+        tails = ", ".join(
+            [f"`{k}` {h:.1f}h" + (" (idle from its first pick)" if from_first else "")
+             for k, (h, from_first) in sorted(idle_tails.items(), key=lambda kv: -kv[1][0])]
+            + [f"`{k}` {h:.1f}h held" + (" (idle from its first pick)" if from_first else "")
+               for k, (h, from_first) in sorted(held_tails.items(), key=lambda kv: -kv[1][0])])
         share = f"{100 * headline['idle_tail_share']:.0f}%" if headline["idle_tail_share"] is not None else "?"
+        held_clause = f", {len(held_tails)} held to the end without a terminal write" if held_tails else ""
+        held_note = (
+            f" The held session(s) died before the deadline gate could write `drained`: only the hours "
+            f"up to each one's last turn are pool idle, and a further "
+            f"{sum(forfeited[k] for k in held_tails):.1f} session-hours after those last turns were "
+            f"FORFEITED — a session fault, not a prep finding (see Flags).") if held_tails else ""
         print(f"**Pool exhausted** — last ship {pool_exhausted_h:.1f}h before the deadline; "
-              f"{idle_tail_session_hours:.1f} session-hours ({share} of the fleet) idle on an empty pool "
-              f"({len(idle_tails)} of {len(sessions)} sessions deadline-drained: {tails}). An empty pool "
-              f"is a prep finding, not a session fault — read it beside the Remaining pool census "
-              f"(fleet-retro Step 3). Skips and failures after the last ship carry no timestamp and "
-              f"are counted as idle.\n")
+              f"{idle_tail_session_hours:.1f} session-hours ({share} of the fleet) idle on an empty or "
+              f"gated pool ({len(idle_tails)} of {len(sessions)} sessions deadline-drained{held_clause}: "
+              f"{tails}). An empty or gated pool is a prep finding, not a session fault — read it "
+              f"beside the Remaining pool census (fleet-retro Step 3). Skips and failures after the "
+              f"last ship carry no timestamp and are counted as idle.{held_note}\n")
     if ctx_total_vol:
         buckets = " · ".join(f"{CTX_LABELS[b]} {100 * fleet_ctx[b] / ctx_total_vol:.0f}%"
                              for b in CTX_BUCKETS if fleet_ctx[b])
@@ -2063,8 +2142,9 @@ def main():
               "issues — cycles, find/rev and plan% say which), $/Mtok out is billable context per unit "
               "of work (ctx>=200k% names the driver — the autocompact lever). fresh% is the treadmill "
               "gauge: the share of shipped issues created during or within 7 days before the run. "
-              "idle% is the pool-exhausted gauge: session-hours the deadline-drained sessions sat on "
-              "an empty pool after their last ship, as a share of the fleet.\n")
+              "idle% is the pool-exhausted gauge: session-hours sessions sat on an empty or gated pool "
+              "after their last ship — a deadline-drained session to the deadline, one that died "
+              "holding only to its last turn — as a share of the fleet's summed transcript span.\n")
     elif not args.all:
         print("- first recorded fleet — the trend accrues one row per windowed run in "
               "`tmp/fleet-metrics-history.jsonl`\n")
@@ -2102,7 +2182,16 @@ def main():
             flagged = True
             print(f"- **`{s['run_key']}` ended without recording an outcome** — ledger still "
                   f"`active` after {a['wakeups']} wakeup(s) and no stop-wakeup, so it was killed "
-                  f"mid-loop or died. Check for a stranded Linear claim and a preserved worktree.")
+                  f"mid-loop or died. `~/.claude/daemon.log` separates the two (`bg settled <id> "
+                  f"(killed)` for an operator kill; `bg retire <id>: … idle 60m|61m` for a session "
+                  f"whose armed wakeup never fired), and `~/.claude/logs/auto-rewake.log` says what "
+                  f"the recovery hook did about it."
+                  + (f" Its last turn was {forfeited[s['run_key']]:.1f}h before the fleet deadline — "
+                     f"FORFEITED session-hours, a session fault"
+                     + (f"; the {held_tails[s['run_key']][0]:.1f}h before that it spent holding on the "
+                        f"pool, which the Pool exhausted line counts" if s["run_key"] in held_tails else "")
+                     + "." if s["run_key"] in forfeited else "")
+                  + " Check for a stranded Linear claim and a preserved worktree.")
         # The complement of the kill shape above: the loop ENDED correctly — a terminal tag and/or
         # ScheduleWakeup(stop: true) — and only the ledger's terminal-status write was dropped.
         # Measured 2026-08-22 (3-session fleet): one session emitted `NO-CANDIDATES: fleet deadline
