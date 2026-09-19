@@ -49,6 +49,8 @@
 #   "asyncRewake": true   without it the hook's exit code wakes nothing.
 #   "timeout": 4200       command hooks default to 600s, and `timeout` DOES govern an asyncRewake hook: at timeout 3 an
 #                         8s wait was killed and nothing woke; at 30 it woke. 4200 clears a 3600s wakeup plus the grace.
+#                         The long wait itself was soaked the same day: a hook that waited 2100s under timeout 4200
+#                         woke its session at t=2100.3s (headless, against a mock API — not yet a `--bg` session).
 #
 # EVERY decision for an in-scope session is one line in ~/.claude/logs/auto-rewake.log — that file is how a retro
 # tells "the hook revived it" from "the hook stood down" from "the hook was never registered".
