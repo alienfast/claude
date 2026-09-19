@@ -7,12 +7,18 @@
 #     mid-turn"), so an iteration in progress has NO wakeup pending to fire once the limit resets;
 #   - a turn killed by an API error fires no Stop hook at all — verified on the 2026-08-14 fleet, where
 #     the limit message is the last transcript entry with no stop_hook_summary after it — so
-#     hooks/auto-heartbeat.sh, the guard for every other silent-loop-death shape, cannot see it.
+#     hooks/auto-heartbeat.sh, the guard for a turn that ends mid-iteration with no wakeup armed, cannot see it.
+#     (Nor can it see a wakeup that was armed and never fired — it passes that turn, correctly, and no Stop event
+#     follows when no turn follows: skills/fleet-retro/SKILL.md Step 2, the idle-death row.)
 # Measured that run: of three sessions cut off at 10:05 UTC against a 10:10 reset, the one with a wakeup
 # already pending resumed at 10:17; the two without stayed dead 2h29m each until a human typed at them.
 # 4.85 session-hours and ~2 issues, on a fleet whose deadline expired while they sat idle.
 #
-# WHY THIS ONLY ALERTS: there is no scriptable way to hand a prompt to a live background agent.
+# WHY THIS ONLY ALERTS: there is no scriptable way to hand a prompt to a live background agent FROM OUTSIDE it.
+# (From inside there is: a command hook marked `asyncRewake: true` that exits 2 wakes its own session with its
+# stderr as a system reminder — measured 2026-09-19 on a real `claude --bg` session idle at its prompt, and on a
+# StopFailure hook after a 429. hooks/auto-rewake.sh does exactly that for both silent deaths, which makes this
+# watcher the BACKSTOP for a hook that failed, was capped, or was never registered — not the only line of defense.)
 # `claude --resume <id>` is REFUSED for one ("currently running as a background agent"), `--fork-session`
 # branches a COPY — which for /auto means a second loop sharing one run-state file and one worktree, worse
 # than the stall — and `claude attach` needs a TTY. `claude logs` is read-only. So the recoverable half is

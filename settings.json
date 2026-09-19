@@ -211,6 +211,25 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/auto-heartbeat.sh"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/auto-rewake.sh",
+            "asyncRewake": true,
+            "timeout": 4200
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "matcher": "rate_limit|overloaded|server_error|unknown",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/auto-rewake.sh",
+            "asyncRewake": true,
+            "timeout": 1500
           }
         ]
       }
