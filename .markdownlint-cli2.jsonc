@@ -46,6 +46,11 @@
     "session-env/**",
     "sessions/**",
     "shell-snapshots/**",
+    // Removed skills the harness parks under a timestamped trash dir. They are deleted content kept only for recovery, so every
+    // finding here is unfixable-by-design churn on files nobody will read — and because `--fix` is a WRITE, linting them edits
+    // the trashed copy and defeats the point of keeping it verbatim. 16 pre-existing errors lived here, failing `pnpm check`
+    // for reasons no authored file could ever cause.
+    "skills/.trash/**",
     // Vendored skills installed via update.sh (vercel-labs/*) — update.sh overwrites them, so linting/fixing here is churn that gets blown away. Authored skills under skills/ are linted.
     "skills/agent-browser/**",
     "skills/skill-creator/**",
