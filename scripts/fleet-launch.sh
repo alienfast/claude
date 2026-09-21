@@ -252,25 +252,25 @@ if [ -n "$dirty" ]; then
   fi
 fi
 
-# A /fleet-sequence is solo work by definition (skills/fleet-sequence/SKILL.md § Relationship to the fleet
-# skills): it refuses to start mid-fleet, and a fleet must not start mid-sequence either. The live runner
-# is the evidence — the marker outlives the run, so `running` under a dead runner pid is a crash, not a
-# sequence. Each sequence keeps its own marker (tmp/fleet-sequence-<slug>.json), and any live one refuses.
+# A /fleet-sequence may be running alongside (skills/fleet-sequence/SKILL.md § Relationship to the fleet
+# skills): keeping its queued issues out of this fleet's picks is next-candidates.sh's job, and its runner
+# reads each child's ledger tmp/auto-state-<session>.json TWICE across a poll after the child has ended — so
+# the ledger expiry below must leave every session a live sequence names alone, or a launch between the two
+# reads fails the sequence.
+seq_sessions=""
 for seq_marker in "$main_checkout"/tmp/fleet-sequence-*.json; do
   [ -s "$seq_marker" ] || continue
   [ "$(jq -r '.status // empty' "$seq_marker" 2>/dev/null)" = "running" ] || continue
   seq_pid=$(jq -r '.runner_pid // empty' "$seq_marker" 2>/dev/null)
-  if [[ "$seq_pid" =~ ^[0-9]+$ ]] && kill -0 "$seq_pid" 2>/dev/null; then
-    echo "ERROR: a /fleet-sequence is running (runner pid $seq_pid: $(jq -r '(.queue // []) | join(" → ")' "$seq_marker")) — sequenced work is solo." >&2
-    echo "       Let it finish (fleet-sequence.sh status) or stop it (fleet-sequence.sh stop), then re-run. Nothing was dispatched." >&2
-    exit 1
-  fi
+  [[ "$seq_pid" =~ ^[0-9]+$ ]] && kill -0 "$seq_pid" 2>/dev/null || continue
+  seq_sessions="$seq_sessions $(jq -r '[(.issues // {})[] | .session // empty, .pr_update_session // empty] | join(" ")' "$seq_marker" 2>/dev/null)"
+  echo "NOTE: a /fleet-sequence is running alongside ($(jq -r '(.queue // []) | join(" → ")' "$seq_marker")) — its queued issues are hidden from this fleet's picks; fleet-sequence.sh status reads it"
 done
 
 # Prior-run ledgers (tmp/auto-state-*.json) deliberately persist after a fleet ends so the
 # operator and /fleet-retro can examine them; a NEW launch is where they expire. Clear the
 # dead ones now so /fleet-status shows only this fleet's sessions. A ledger whose session the
-# registry still lists as running is kept; with no registry every ledger is kept. A kept LOOP
+# registry still lists as running is kept, as is one a running sequence names; with no registry every ledger is kept. A kept LOOP
 # ledger pulls launch_epoch back to its mtime so a top-up launch never hides a running
 # sibling's ledger from /fleet-status, and its session is carried into fleet_sessions. A kept
 # single-run ledger (`mode: single` — a targeted or one-shot /auto, skills/auto/SKILL.md
@@ -282,6 +282,7 @@ carried=""
 for sf in "$main_checkout"/tmp/auto-state-*.json; do
   [ -f "$sf" ] || continue
   key=$(basename "$sf" | sed 's/auto-state-//;s/\.json//')
+  case " $seq_sessions " in *" $key "*) continue ;; esac
   if [ -z "$agents_json" ] || registry_alive "$key"; then
     [ "$(jq -r '.mode // "loop"' "$sf" 2>/dev/null)" = "single" ] && continue
     mt=$(stat -c %Y "$sf" 2>/dev/null || stat -f %m "$sf" 2>/dev/null || echo "")

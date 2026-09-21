@@ -187,13 +187,18 @@ esac
 EOF
 chmod +x "$WORK/bin/linear-cli"
 
+# Runs happen inside a fixture checkout: the sequence-held gate reads tmp/fleet-sequence-*.json from the main
+# checkout of the cwd, so the case below can plant a marker where the script looks and nowhere real.
+REPO="$WORK/repo"
+mkdir -p "$REPO/tmp"
+git -C "$REPO" init -q
 run() { # run <outfile> <extra args...>
   local out="$1"; shift
-  HOME="$WORK/home" PATH="$WORK/bin:$PATH" LINEAR_TEAM="" "$SCRIPT" --team TT "$@" > "$out" 2>"$out.err"
+  ( cd "$REPO" && HOME="$WORK/home" PATH="$WORK/bin:$PATH" LINEAR_TEAM="" "$SCRIPT" --team TT "$@" ) > "$out" 2>"$out.err"
 }
 run_noteam() { # run_noteam <outfile> <extra args...> — no --team and no $LINEAR_TEAM (discovery is a no-op in the shim)
   local out="$1"; shift
-  HOME="$WORK/home" PATH="$WORK/bin:$PATH" LINEAR_TEAM="" "$SCRIPT" "$@" > "$out" 2>"$out.err"
+  ( cd "$REPO" && HOME="$WORK/home" PATH="$WORK/bin:$PATH" LINEAR_TEAM="" "$SCRIPT" "$@" ) > "$out" 2>"$out.err"
 }
 
 order_of() { grep -E '^[0-9]+\. ' "$1" | grep -oE 'TT-[0-9]+' | tr '\n' ' ' | sed 's/ $//'; }
@@ -447,6 +452,23 @@ ck "missing root exits 1" "1" "$rc"
 ck_has  "missing root names the miss" "issue 'TT-99' not found" "$OUTR7.err"
 run "$OUTR7" --limit 20 --root foo; rc=$?
 ck "malformed root exits 1" "1" "$rc"
+
+# ---- sequence-held: a running /fleet-sequence's queue is hidden from every ranking (its runner dispatches
+# ---- each in turn — a fleet picker taking one would ship it twice), the note names the sequence, and the
+# ---- Planned gate counts a held issue as releasing on its own. A marker whose runner is gone holds nothing.
+OUTS="$WORK/outs.md"
+printf '{"status":"running","queue":["TT-5","TT-6"],"runner_pid":%s,"issues":{"TT-5":{"session":"ab000009"}}}\n' "$$" > "$REPO/tmp/fleet-sequence-tt-5.json"
+run "$OUTS" --limit 20 --no-stage-gate || { echo "FAIL: sequence-held run exited $?"; cat "$OUTS.err"; exit 1; }
+ck "held issues absent from the ranking" "TT-17 TT-3 TT-2 TT-4 TT-28 TT-7 TT-18 TT-20 TT-23 TT-26 TT-40 TT-1 TT-22 TT-42 TT-44" "$(order_of "$OUTS")"
+ck_has  "sequence note"   "_2 issue(s) hidden as held by a running /fleet-sequence (TT-5 → TT-6) — the sequence ships them in order; fleet-sequence.sh status reads it._" "$OUTS"
+run "$OUTS" --limit 20 || { echo "FAIL: sequence-held gate run exited $?"; cat "$OUTS.err"; exit 1; }
+ck_has  "held issue counted as releasing, not pickable" "14 issue(s) hold the gate: 6 pickable now; 4 will release on their own — TT-5, TT-9, TT-21, TT-25" "$OUTS"
+ck_lacks "held issue not called filtered out" "TT-5 [filtered out]" "$OUTS"
+printf '{"status":"running","queue":["TT-5","TT-6"],"runner_pid":%s}\n' "$(sh -c 'echo $$')" > "$REPO/tmp/fleet-sequence-tt-5.json"
+run "$OUTS" --limit 20 --no-stage-gate || { echo "FAIL: dead-sequence run exited $?"; cat "$OUTS.err"; exit 1; }
+ck "a dead runner holds nothing" "TT-17 TT-3 TT-2 TT-4 TT-5 TT-28 TT-7 TT-18 TT-20 TT-23 TT-26 TT-40 TT-1 TT-6 TT-22 TT-42 TT-44" "$(order_of "$OUTS")"
+ck_lacks "no note for a dead runner" "held by a running /fleet-sequence" "$OUTS"
+rm -f "$REPO/tmp/fleet-sequence-tt-5.json"
 
 echo
 echo "$PASS passed / $FAIL failed"

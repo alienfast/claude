@@ -103,6 +103,14 @@
 # itself is human-performed (standards/issue-spec.md), so unlike `solo` there is no
 # targeted-mode carve-out: /auto refuses a human-labeled target in any mode.
 #
+# Issues a running /fleet-sequence holds — every queue member of a `running` marker under a live
+# runner pid in this checkout's tmp/fleet-sequence-<slug>.json (the main checkout's, from any
+# worktree) — are hidden from every ranking: the sequence dispatches each in turn, so a fleet
+# picker taking one would ship it twice. No label lists them; the trailing note names the
+# sequence. Outside a git checkout nothing is held. This is what lets a fleet run alongside a
+# sequence (skills/fleet-sequence/SKILL.md § Relationship to the fleet skills). For the hold
+# classifiers a held issue, and a chain through one, releases on its own — the sequence ships it.
+#
 # `epic`-labeled issues are hidden the same way and surfaced via --label epic: a delegated
 # container whose children carry the work (BF-95 — certify per child; the epic closes itself when
 # the last child releases, mark-ready-for-release.sh), so it never counts fleet-workable, certified or not. fleet-blockers.sh and
@@ -554,6 +562,23 @@ fi
 # outside the keeper's review flow), with a trailing note so the hiding is never silent.
 is_keeper=$(git -C "$HOME/.claude" config --get reflect.keeper 2>/dev/null || true)
 
+# Sequence-held issues (header): the queue of every running /fleet-sequence in this checkout. The marker
+# outlives the run, so `running` under a dead runner pid holds nothing.
+seq_held_json='[]'
+seq_held_desc=""
+seq_main=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && seq_main=$(dirname "$seq_main") || seq_main=""
+if [ -n "$seq_main" ]; then
+  for sqf in "$seq_main"/tmp/fleet-sequence-*.json; do
+    [ -s "$sqf" ] || continue
+    [ "$(jq -r '.status // ""' "$sqf" 2>/dev/null)" = "running" ] || continue
+    sqp=$(jq -r '.runner_pid // empty' "$sqf" 2>/dev/null)
+    [[ "$sqp" =~ ^[0-9]+$ ]] && kill -0 "$sqp" 2>/dev/null || continue
+    seq_held_json=$(jq -c --argjson h "$seq_held_json" '($h + (.queue // [])) | unique' "$sqf" 2>/dev/null || printf '%s' "$seq_held_json")
+    seq_held_desc="$seq_held_desc; $(jq -r '(.queue // []) | join(" → ")' "$sqf" 2>/dev/null)"
+  done
+fi
+seq_held_desc="${seq_held_desc#; }"
+
 # Every issue that passes the state, claim, label, and gate-label filters — blocked or not — with
 # its per-candidate ranking metadata. The blocker filter is applied afterwards, so the Planned gate
 # below can classify a blocked Planned issue by its chain.
@@ -572,7 +597,8 @@ eligible_json=$(jq \
   --arg triage "$include_triage" \
   --arg blocked "$include_blocked" \
   --arg claimed "$include_claimed" \
-  --arg iskeeper "$is_keeper" '
+  --arg iskeeper "$is_keeper" \
+  --argjson seqheld "$seq_held_json" '
     ($sm_doc[0]) as $sm
     | ($bm_doc[0]) as $bm
     | ($rbm_doc[0]) as $rbm
@@ -634,6 +660,8 @@ eligible_json=$(jq \
       | select(($label == "") or (any(($i.labels // [])[]; ascii_downcase == ($label | ascii_downcase))))
       | select(($xlabel == "") or (all(($i.labels // [])[]; ascii_downcase != ($xlabel | ascii_downcase))))
       | select(($iskeeper == "true") or (all(($i.labels // [])[]; ascii_downcase != "keeper")))
+      # sequence-held gate (header): a running /fleet-sequence dispatches it itself.
+      | select(($seqheld | index($id)) == null)
       # needs-decision gate: a human must step in first (standards/issue-spec.md) —
       # hidden from every ranking unless the caller asked for this label itself, or for
       # the human label (both listings are human-facing discovery views and an issue can
@@ -762,6 +790,7 @@ CHAIN_DEFS='def is_terminal($x): ((($terminal | map(ascii_downcase)) | index((($
         elif lbl($i; "human") then "human"
         elif lbl($i; "solo") then "solo"
         elif (($iskeeper != "true") and lbl($i; "keeper")) then "keeper-gated"
+        elif (($seqheld | index($i.identifier)) != null) then ""
         elif ($el[$i.identifier] == null) then (if ($label != "") then "lacks label \($label)" else "filtered out" end)
         else "" end;
       # Walk the unresolved blocker chain: a blocker in flight (started, not stalled) or fleet-eligible
@@ -772,6 +801,7 @@ CHAIN_DEFS='def is_terminal($x): ((($terminal | map(ascii_downcase)) | index((($
           | (if (($seen | index($b)) != null) or is_terminal($b) then ""
              elif $bi == null then "blocked by \($b) (outside the fetched teams)"
              elif ($bi.state_type == "started") then (if lbl($bi; "stalled") then "blocked by \($b) [stalled]" else "" end)
+             elif (($seqheld | index($b)) != null) then ""
              elif ($el[$b] != null) and (lbl($bi; "epic") | not) then chain_reason(($bm[$b] // []); $seen + [$b])
              else "blocked by \($b) [\(self_reason($bi) | if . == "" then ($bi.state // "?") else . end)]" end) as $r
           | if $r != "" then $r else chain_reason($ids[1:]; $seen + [$b]) end
@@ -786,7 +816,8 @@ if [ "$gate_on" -eq 1 ]; then
     --slurpfile bm_doc "$blocker_map_file" \
     --slurpfile el_doc "$eligible_map_file" \
     --slurpfile pk_doc "$pickable_file" \
-    --arg me "${me_email:-}" --arg claimed "$include_claimed" --arg label "$label" --arg iskeeper "$is_keeper" '
+    --arg me "${me_email:-}" --arg claimed "$include_claimed" --arg label "$label" --arg iskeeper "$is_keeper" \
+    --argjson seqheld "$seq_held_json" '
     ($sm_doc[0]) as $sm | ($bm_doc[0]) as $bm | ($el_doc[0]) as $el | ($pk_doc[0]) as $pk
     | (map({key: .identifier, value: .}) | from_entries) as $m
     | '"$CHAIN_DEFS"'
@@ -868,7 +899,15 @@ if [ "$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')" != "solo" ]; then
   solo_hidden=$(jq '[.[] | select(any((.labels // [])[]; ascii_downcase == "solo"))] | length' "$list_file" 2>/dev/null || echo 0)
 fi
 solo_note() {
-  [ "$solo_hidden" -gt 0 ] && printf '\n_%s issue(s) hidden as fleet-hostile (`solo` label) — list with --label solo, ship one at a time via /auto <ID> or /full <ID> while no fleet is running._\n' "$solo_hidden"
+  [ "$solo_hidden" -gt 0 ] && printf '\n_%s issue(s) hidden as fleet-hostile (`solo` label) — list with --label solo; ship one via /auto <ID> or /full <ID>, several in order via /fleet-sequence._\n' "$solo_hidden"
+  return 0
+}
+
+# Same visibility contract for sequence-held issues (header); counted from the fetched list so an epic scope
+# counts members only, and a shipped queue member is terminal and already absent from it.
+seq_hidden=$(jq --argjson h "$seq_held_json" '[.[] | select(.identifier as $i | ($h | index($i)) != null)] | length' "$list_file" 2>/dev/null || echo 0)
+seq_note() {
+  [ "$seq_hidden" -gt 0 ] && printf '\n_%s issue(s) hidden as held by a running /fleet-sequence (%s) — the sequence ships them in order; fleet-sequence.sh status reads it._\n' "$seq_hidden" "$seq_held_desc"
   return 0
 }
 
@@ -927,7 +966,8 @@ if [ "$include_blocked" -eq 0 ] && [ "$gate_closed" -eq 0 ]; then
     --slurpfile sm_doc "$state_map_file" \
     --slurpfile bm_doc "$blocker_map_file" \
     --slurpfile el_doc "$eligible_map_file" \
-    --arg me "${me_email:-}" --arg label "$label" --arg iskeeper "$is_keeper" '
+    --arg me "${me_email:-}" --arg label "$label" --arg iskeeper "$is_keeper" \
+    --argjson seqheld "$seq_held_json" '
     ($sm_doc[0]) as $sm | ($bm_doc[0]) as $bm | ($el_doc[0]) as $el
     | (map({key: .identifier, value: .}) | from_entries) as $m
     | '"$CHAIN_DEFS"'
@@ -982,6 +1022,7 @@ if [ "$candidate_count" -eq 0 ]; then
   solo_note
   human_note
   epic_note
+  seq_note
   exit 0
 fi
 
@@ -1234,3 +1275,4 @@ claimed_note
 solo_note
 human_note
 epic_note
+seq_note

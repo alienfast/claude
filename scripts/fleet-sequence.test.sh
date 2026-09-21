@@ -224,14 +224,14 @@ ck "children fork by the per-issue key" "BF-1 head=main src=seq/bf-1 ahead=0" "$
 ck "checkout-wide key left as found"    "main" "$(git -C "$REPO" config --get start.wt-source-branch)"
 git -C "$REPO" config --unset start.wt-source-branch
 
+# A fleet and a sequence are discrete: a live fleet never blocks a launch (its pickers cannot take a queued
+# issue — next-candidates.sh hides what a running sequence holds — and neither parks the other's checkout).
 reset
-printf '{"fleet_sessions":["fe000001"],"count":1}\n' > "$REPO/tmp/fleet-deadline.json"
-printf '[{"id":"fe000001","kind":"background"}]\n' > "$WORK/agents.json"
-ck "live fleet exits 1"         "1" "$(run BF-1 BF-2)"
-ck_has "names the fleet"        "a fleet is running (sessions: fe000001)" "$WORK/out"
-printf '[{"id":"fe000001","kind":"background","state":"done"}]\n' > "$WORK/agents.json"
-ck "dead fleet does not block"  "0" "$(run BF-1 BF-2)"
-ck "refusal-free run dispatched" "2" "$(dispatches)"
+printf '{"fleet_sessions":["fe000001"],"count":1,"deadline_epoch":%s}\n' "$(( $(date +%s) + 3600 ))" > "$REPO/tmp/fleet-deadline.json"
+printf '[{"id":"fe000001","kind":"background","state":"working"}]\n' > "$WORK/agents.json"
+ck "live fleet does not block"  "0" "$(run BF-1 BF-2)"
+ck "alongside a fleet, both dispatched" "2" "$(dispatches)"
+ck "fleet marker left as found" "fe000001" "$(jq -r '.fleet_sessions[0]' "$REPO/tmp/fleet-deadline.json")"
 
 # ---- happy path: three issues onto seq/bf-1, each forked from the branch's advanced tip, one PR at the end ----
 reset

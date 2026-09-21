@@ -227,7 +227,7 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 **When Invoked**:
 
 - User says "run these in sequence", "ship BF-1 then BF-2 then BF-3", "sequential auto", or "solo batch"
-- Several `solo`-labeled (or order-dependent, oversized) issues are ready and no fleet is running
+- Several `solo`-labeled (or order-dependent, oversized) issues are ready — a fleet may run alongside; its pickers never take a sequence's queued issues
 
 **Key Features**:
 

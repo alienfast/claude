@@ -35,7 +35,9 @@
 # Sequences are discrete: state is keyed by the sequence's slug — the lowercased first ID of the list that
 # created it, the suffix of its seq/ branch — so no two share a marker, a log, a branch, or a /pr-update
 # worktree, and several may run at once (each strictly serial within itself; an issue belongs to one live
-# sequence, and two `merge` sequences never share a launch branch). 2026-09-21: with one marker per checkout
+# sequence, and two `merge` sequences never share a launch branch). A fleet may run alongside too: its
+# pickers cannot take a queued issue (next-candidates.sh hides every issue a running sequence holds), and
+# neither side parks the checkout the other needs. 2026-09-21: with one marker per checkout
 # and a resume decided by launch branch and mode alone, `BF-2034 BF-1794` launched from the branch an earlier
 # `BF-2022 …` sequence had used — its runner dead, its BF-2022 session still working — was read as a resume,
 # shipped onto seq/bf-2022, and rewrote that sequence's marker and log.
@@ -538,7 +540,7 @@ cmd_run() { # [<slug>] — the launch passes it to the detached runner; a foregr
 
 # =====================================================================================
 cmd_launch() {
-  local raw id norm prev json labels state current live k existing_issues dirty tok mode="pr" mode_set="" branch="" resume=0 carried=""
+  local raw id norm prev json labels state current existing_issues dirty tok mode="pr" mode_set="" branch="" resume=0 carried=""
   local ids=()
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -641,18 +643,6 @@ cmd_launch() {
       Done|Canceled|Duplicate|"Ready For Release") echo "ERROR: $id is already $state — nothing to ship" >&2; exit 1 ;;
     esac
   done
-
-  # Never alongside a fleet: its pickers choose their own issues, and `solo` work wants none of them running.
-  if [ -s "$main_checkout/tmp/fleet-deadline.json" ]; then
-    live=""
-    for k in $(jq -r '(.fleet_sessions // [])[]' "$main_checkout/tmp/fleet-deadline.json" 2>/dev/null); do
-      registry_alive "$k" && live="$live $k"
-    done
-    if [ -n "$live" ]; then
-      echo "ERROR: a fleet is running (sessions:$live) — sequenced work never runs mid-fleet. /fleet-stop and wait for it to drain, then re-run." >&2
-      exit 1
-    fi
-  fi
 
   dirty=$(git -C "$main_checkout" status --porcelain 2>/dev/null || true)
   if [ -n "$dirty" ]; then

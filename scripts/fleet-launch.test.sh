@@ -263,23 +263,29 @@ ck "prompt override exits 0"          "0" "$(FLEET_PROMPT='/loop /auto EP' run 1
 ck_has "override dispatched as typed" "/loop /auto EP" "$WORK/dispatches"
 ck_has "override warned"              "does not carry epic:EP-3" "$WORK/out"
 
-# case 16: a /fleet-sequence whose runner is alive refuses the launch — sequenced work is solo. A crashed
-# runner (marker still `running`, pid gone) or a finished sequence does not. The scope token keeps the
-# launch on the checkout's own branch, as in case 15, so no posture is set.
-# Each sequence has its own marker, so the live one is found among finished and crashed siblings.
+# case 16: a /fleet-sequence running alongside is discrete from the fleet — the launch proceeds with a NOTE,
+# and the ledger expiry leaves the sequence's child sessions alone: its runner re-reads a child's ledger
+# across a poll after the child has ended (unlisted in the registry by then), and a launch landing between
+# the two reads would otherwise clear it and fail the sequence. A crashed sequence (marker `running`, pid
+# gone) protects nothing. The scope token keeps the launch on the checkout's own branch, as in case 15.
+rm -f "$REPO"/tmp/auto-state-*.json
 dead=$(sh -c 'echo $$')
 printf '{"status":"done","queue":["SQ-7"],"runner_pid":%s}\n' "$$" > "$REPO/tmp/fleet-sequence-sq-7.json"
-printf '{"status":"running","queue":["SQ-1","SQ-2"],"runner_pid":%s}\n' "$$" > "$REPO/tmp/fleet-sequence-sq-1.json"
+printf '{"status":"running","queue":["SQ-1","SQ-2"],"runner_pid":%s,"issues":{"SQ-1":{"session":"cafe0002"}}}\n' "$$" > "$REPO/tmp/fleet-sequence-sq-1.json"
+echo '{"status":"active","mode":"single","shipped":["SQ-1"]}' > "$REPO/tmp/auto-state-cafe0002.json"
+echo '{"status":"active","shipped":["XX-9"]}' > "$REPO/tmp/auto-state-dead0002.json"
+echo '[]' > "$WORK/agents.json"
 : > "$WORK/dispatches"
-ck "running sequence exits 1"            "1" "$(run 1 epic:EP-3)"
-ck "running sequence dispatches nothing" "0" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
-ck_has "running sequence named"          "a /fleet-sequence is running (runner pid $$: SQ-1 → SQ-2)" "$WORK/out"
-ck_has "running sequence says nothing ran" "Nothing was dispatched." "$WORK/out"
-printf '{"status":"running","queue":["SQ-1"],"runner_pid":%s}\n' "$dead" > "$REPO/tmp/fleet-sequence-sq-1.json"
-ck "crashed runner does not block"       "0" "$(run 1 epic:EP-3)"
-printf '{"status":"done","queue":["SQ-1"],"runner_pid":%s}\n' "$$" > "$REPO/tmp/fleet-sequence-sq-1.json"
-ck "finished sequence does not block"    "0" "$(run 1 epic:EP-3)"
-rm -f "$REPO/tmp/fleet-sequence-sq-1.json" "$REPO/tmp/fleet-sequence-sq-7.json"
+ck "running sequence does not block"     "0" "$(run 1 epic:EP-3)"
+ck "launch alongside dispatched"         "1" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
+ck_has "running sequence noted"          "NOTE: a /fleet-sequence is running alongside (SQ-1 → SQ-2)" "$WORK/out"
+ck "sequence child's ledger kept"        "yes" "$([ -f "$REPO/tmp/auto-state-cafe0002.json" ] && echo yes || echo no)"
+ck "unrelated dead ledger still cleared" "no" "$([ -f "$REPO/tmp/auto-state-dead0002.json" ] && echo yes || echo no)"
+printf '{"status":"running","queue":["SQ-1"],"runner_pid":%s,"issues":{"SQ-1":{"session":"cafe0002"}}}\n' "$dead" > "$REPO/tmp/fleet-sequence-sq-1.json"
+ck "crashed sequence launches too"       "0" "$(run 1 epic:EP-3)"
+ck_lacks "crashed sequence not noted"    "running alongside" "$WORK/out"
+ck "crashed sequence protects no ledger" "no" "$([ -f "$REPO/tmp/auto-state-cafe0002.json" ] && echo yes || echo no)"
+rm -f "$REPO/tmp/fleet-sequence-sq-1.json" "$REPO/tmp/fleet-sequence-sq-7.json" "$REPO"/tmp/auto-state-*.json
 
 echo
 echo "$PASS passed / $FAIL failed"
