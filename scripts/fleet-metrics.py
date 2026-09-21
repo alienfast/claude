@@ -132,6 +132,22 @@ LOOP_CMD = re.compile(r"<command-name>/loop</command-name>")
 LOOP_AUTO_ARGS = re.compile(r"<command-args>[^<]*/auto")
 GAP_MIN = 240  # seconds; a tool call slower than this is worth naming, not necessarily a fault
 
+# hooks/auto-rewake.sh's decision log, overridable through the hook's OWN variable so one export
+# points the hook and this gauge at the same place (as CLAUDE_PROJECTS_DIR does for transcripts).
+REWAKE_LOG = Path(os.environ.get("AUTO_REWAKE_LOG_DIR",
+                                 str(Path.home() / ".claude" / "logs"))) / "auto-rewake.log"
+# `<iso> <run key> <event> rewake kind=<stop|api> …` — field 2 is the session id's leading 8
+# characters, which is the run key everything else here is keyed on.
+REWAKE_LINE = re.compile(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ) (\S+) \S+ rewake kind=(stop|api)\b(.*)$")
+REWAKE_ARMED = re.compile(r"\barmed_at=(\d\d:\d\d:\d\d)Z")
+REWAKE_DELAY = re.compile(r"\bdelay=(\d+)")
+# The hook's RENDERED stderr, never the bare opening it shares with its own source: auto-rewake.sh's
+# heredoc reads `armed at $ARMED_ISO for ${DELAY}s never fired`, and a session that Read the hook
+# carries that text verbatim. Matching the hook's NAME instead matched 102 user records against 48
+# real injections on the 2026-09-19 fleet — skill files and compaction summaries name it too.
+INJECTED_STOP = re.compile(r"armed at \d\d:\d\d:\d\dZ for \d+s never fired")
+INJECTED_API = "killed by an API error ("
+
 # $/MTok (input, output) at Claude API list prices, cached from the claude-api skill 2026-08-05.
 # Sonnet 5 has a $2/$10 intro rate through 2026-08-31 — the sticker is used so fleets stay comparable
 # across that boundary; current 1M-context models carry no long-context premium, so no per-request
@@ -377,6 +393,29 @@ def scan_transcript(path, agg, agent_type="main", description=""):
             if r.get("origin", {}).get("kind") == "human":
                 agg["human_prompts"] += 1
 
+        # The rewake gauge's transcript side (rewake_gauge): a turn OPENER as hooks/auto-rewake.sh's
+        # turn_wakeup() defines one, and every record carrying a rendered rewake message — the
+        # injection a rewake caused, which dates that rewake's window by identity rather than by
+        # clock. A rewake's own injection arrives as origin.kind "task-notification", never "human",
+        # so it folds into main-loop output everywhere else in this report and is counted only here.
+        if agent_type == "main" and t and not r.get("isSidechain"):
+            kind = r.get("type")
+            if kind == "user":
+                body = text_of(content)
+            elif kind == "queue-operation":
+                body = r.get("content") or ""
+            else:
+                body = ""
+            if kind == "system" and r.get("subtype") == "scheduled_task_fire":
+                agg["turn_openers"].append(t)
+            elif kind == "user" and body:
+                agg["turn_openers"].append(t)
+                if r.get("origin", {}).get("kind") == "task-notification" \
+                        and (INJECTED_STOP.search(body) or INJECTED_API in body):
+                    agg["injected_turns"] += 1
+            if body and "never fired" in body:
+                agg["rewake_marks"].append((t, kind, r.get("operation"), body))
+
         if not isinstance(content, list):
             continue
         # visible_chars backs the thinking-share estimate: assistant-emitted text + tool inputs are
@@ -525,6 +564,10 @@ def new_agg():
         # name -> subagent_type from this session's own Agent tool_use inputs, and how many
         # dispatches carried a name at all.
         "named_types": {}, "named_dispatches": 0,
+        # Turn-opening record times, records carrying a rendered rewake message as
+        # (time, type, operation, text), and how many injected turns actually landed — see
+        # rewake_gauge. Main-loop transcripts only: a subagent is never rewoken.
+        "turn_openers": [], "rewake_marks": [], "injected_turns": 0,
         "limit_hits": Counter(), "first_limit_hit": None, "limit_resets": [],
         "limit_hit_times": [], "stop_times": [],
         "tokens": Counter(), "seen_msg_ids": set(),
@@ -801,6 +844,90 @@ def quota_stalls(sessions, cluster_s=120, min_silence_s=1800):
     return sorted((sorted(g, key=lambda m: m[0]) for g in groups.values()
                    if len({id(m[1]) for m in g}) >= 2),
                   key=lambda g: g[0][0])
+
+
+def resolve_armed_at(line_at, clock):
+    """The latest instant with clock time `clock` (HH:MM:SS) that is not after `line_at`.
+
+    The hook logs `armed_at` with no date, and its registered timeout caps a wait at 4200s, so the
+    arm is never more than one day back. Pasting the LINE's date on instead is wrong for every wait
+    that crossed 00:00Z: on the 2026-09-19 fleet the shortcut placed 5 of 74 arms a day in the
+    future, which empties the classification window and reads a spurious rewake as a save."""
+    h, m, s = (int(x) for x in clock.split(":"))
+    at = line_at.replace(hour=h, minute=m, second=s, microsecond=0)
+    return at - timedelta(days=1) if at > line_at else at
+
+
+def read_rewake_log():
+    """Every `rewake` decision in hooks/auto-rewake.sh's log as (at, run_key, kind, line), or None
+    when the log is absent — a fleet the hook never watched must read as unmeasured, not as a fleet
+    it never woke."""
+    try:
+        raw = REWAKE_LOG.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    rows = []
+    for line in raw.splitlines():
+        m = REWAKE_LINE.match(line.strip())
+        if m and ts(m.group(1)):
+            rows.append((ts(m.group(1)), m.group(2), m.group(3), line.strip()))
+    return rows
+
+
+def rewake_gauge(agg, run_key, rows):
+    """Split one session's `rewake kind=stop` decisions into the ones that revived a dead session
+    and the ones that told a working session to run another iteration.
+
+    A rewake is SPURIOUS when a turn opened between the arm the hook waited on and the injection the
+    rewake itself produced. The opener definition is turn_wakeup()'s, not turns_since()'s any-record
+    one: the hook only ever waits on an arm no opener follows at launch, so an opener after that arm
+    can only have been written while it waited, and the arming turn's own trailing records — which a
+    fixed slack after the arm would have to absorb — are not openers at all.
+
+    The window CLOSES at the rewake's own injection, found by its rendered text rather than by a
+    clock offset. The log line is stamped in whole seconds and the injection lands inside that same
+    second (0.01-1.06s later across the 2026-09-19 fleet's 74 rewakes), so any whole-second bound
+    counts the rewake's own turn as proof of health and reads every genuine save as spurious. The
+    queue operation is preferred over the user record because a rewake whose injection was removed
+    unread has no user record at all — 26 of those 74.
+
+    `kind=api` rewakes are counted but not classified: the line carries no arm to anchor a window on.
+
+    No token cost is reported here, deliberately. The figure is set by where an injected turn is said
+    to END, and on that fleet the per-rewake reading ranged from 61k to 1.14M output tokens — a
+    single number would be invented rather than measured."""
+    out = {"stop": 0, "api": 0, "save": 0, "spurious": 0,
+           "injected": agg["injected_turns"], "spurious_lines": []}
+    first, last = agg["first"], agg["last"]
+    if first is None or last is None:
+        return out
+    openers = sorted(agg["turn_openers"])
+    marks = sorted(agg["rewake_marks"], key=lambda m: m[0])
+    for at, key, kind, line in rows:
+        if key != run_key or not first <= at <= last:
+            continue
+        if kind == "api":
+            out["api"] += 1
+            continue
+        out["stop"] += 1
+        armed_m, delay_m = REWAKE_ARMED.search(line), REWAKE_DELAY.search(line)
+        # A stop line the hook always writes both fields on; one missing them is a damaged log line,
+        # counted but classified as neither, so save + spurious falls visibly short of stop rather
+        # than a guess landing in one of the two columns.
+        if not (armed_m and delay_m):
+            continue
+        armed = resolve_armed_at(at, armed_m.group(1))
+        needle = f"armed at {armed_m.group(1)}Z for {delay_m.group(1)}s never fired"
+        cand = [m for m in marks if m[0] >= at - timedelta(seconds=1) and needle in m[3]]
+        close = next((m[0] for m in cand if m[1] == "queue-operation" and m[2] == "enqueue"), None) \
+            or next((m[0] for m in cand if m[1] == "user"), None) \
+            or at + timedelta(seconds=1)
+        if any(armed + timedelta(seconds=1) < t < close for t in openers):
+            out["spurious"] += 1
+            out["spurious_lines"].append(line)
+        else:
+            out["save"] += 1
+    return out
 
 
 def price_of(model):
@@ -1338,6 +1465,13 @@ def main():
               file=sys.stderr)
         return 1
 
+    rewake_rows = read_rewake_log()
+    rewakes = {s["run_key"]: rewake_gauge(s["agg"], s["run_key"], rewake_rows)
+               for s in sessions} if rewake_rows is not None else {}
+    rewake_tot = {k: sum(r[k] for r in rewakes.values())
+                  for k in ("stop", "api", "save", "spurious", "injected")} \
+        if rewake_rows is not None else None
+
     all_shipped = set()
     issue_run = {}
     for s in sessions:
@@ -1714,6 +1848,8 @@ def main():
                 "idle_tail_h": round(idle_tails[s["run_key"]][0], 1) if s["run_key"] in idle_tails
                 else round(held_tails[s["run_key"]][0], 1) if s["run_key"] in held_tails else None,
                 "forfeited_h": round(forfeited[s["run_key"]], 1) if s["run_key"] in forfeited else None,
+                "rewakes": {k: v for k, v in rewakes[s["run_key"]].items()
+                            if k != "spurious_lines"} if s["run_key"] in rewakes else None,
                 "output_tokens": {f"{t}/{m}": n for (t, m), n in s["agg"]["tokens"].most_common()},
                 "usage": {f"{t}/{m}": dict(u) for (t, m), u in s["agg"]["usage"].items()},
                 "context_volume_tokens": {b: s["agg"]["ctx_volume"][b] for b in CTX_BUCKETS
@@ -1757,6 +1893,7 @@ def main():
                 "sources_read": linear_read,
             },
             "history": history,
+            "rewakes": rewake_tot,
             "pool_exhausted": {
                 "hours_before_deadline": pool_exhausted_h,
                 "idle_tail_session_hours": idle_tail_session_hours,
@@ -1856,6 +1993,10 @@ def main():
           f"{tot['marker'] / 3600:.1f}h · dispatch {tot['bg']} background / {tot['sync']} sync{ign_note} · "
           f"{named} named dispatches · {tot['cls']} classifier blocks · "
           f"{sum(fleet_tokens.values()):,} output tokens\n")
+    if rewake_tot is not None:
+        print(f"rewakes {rewake_tot['stop']} stop ({rewake_tot['save']} save / "
+              f"{rewake_tot['spurious']} spurious) + {rewake_tot['api']} api · "
+              f"{rewake_tot['injected']} injected turns\n")
     if pool_exhausted_h is not None and pool_exhausted_h >= 1:
         tails = ", ".join(
             [f"`{k}` {h:.1f}h" + (" (idle from its first pick)" if from_first else "")
@@ -2244,6 +2385,18 @@ def main():
             flagged = True
             print(f"- `{s['run_key']}` hit {len(a['classifier_blocks'])} classifier block(s):")
             for c in a["classifier_blocks"][:3]:
+                print(f"    - `{c}`")
+        rw = rewakes.get(s["run_key"])
+        if rw and rw["spurious"]:
+            flagged = True
+            print(f"- **`{s['run_key']}` was rewoken {rw['spurious']} time(s) while it was already "
+                  f"working** — of {rw['stop']} `rewake kind=stop` decision(s) in "
+                  f"`{REWAKE_LOG}`, {rw['spurious']} had a turn open between the arm "
+                  f"hooks/auto-rewake.sh waited on and the injection that rewake produced, so the "
+                  f"session was never silent. {rw['injected']} injected turn(s) landed here, each "
+                  f"telling a healthy loop to run another iteration; they arrive as "
+                  f"`task-notification` and are main-loop output in every other table.")
+            for c in rw["spurious_lines"][:3]:
                 print(f"    - `{c}`")
     missing = [i for i, m in merged.items() if not m["commit"]]
     if missing:

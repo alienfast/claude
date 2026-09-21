@@ -22,7 +22,10 @@
 #   Stop         the turn now ending armed a non-stop ScheduleWakeup -> wait until its due time (record timestamp +
 #                delaySeconds) plus AUTO_REWAKE_GRACE, then exit 2 iff no turn followed. The grace is 300s: the runtime
 #                rounds an arm up to the next minute (a requested 1800s was scheduled "in 1837s") and observed fire
-#                lateness was 2-57s.
+#                lateness was 2-57s. An arm already past due when its turn ends waits the grace from NOW: that
+#                wakeup was held back by the running turn, not lost, and fires as the turn ends. Measured
+#                2026-09-20: a 60s arm at 03:59:51Z in a turn that ran to 04:16:12Z fired 33ms after the stop
+#                summary, and the hook, launched with a zero wait, rewoke the session 458ms later as well.
 #   StopFailure  a transient API error (rate_limit, overloaded, server_error, unknown) -> wait AUTO_REWAKE_API_DELAY
 #                (900s, /auto's own API-error retry cadence), then exit 2 iff no turn followed. If the limit still
 #                holds, the woken request fails the same way, StopFailure fires again, and the next instance waits
@@ -204,7 +207,10 @@ decision() {
   n=$(counter stop_rewakes)
   [[ "$n" -ge "$STOP_MAX" ]] && { jq -nc --argjson n "$n" '{action:"skip", reason:"stop-cap", n:$n, in_scope:true}'; return; }
   due=$(( at + ${delay%.*} ))
-  wait=$(( due + GRACE - $(now) )); [[ "$wait" -lt 0 ]] && wait=0
+  # A wakeup cannot fire while the turn that armed it still runs, so one already past due at the turn's end is not lost —
+  # it fires as the turn ends. The grace runs from whichever is later, due or now: a zero wait asks for records newer
+  # than STARTED + 2 at STARTED itself, which can never see any, and so always rewakes.
+  wait=$(( due + GRACE - $(now) )); [[ "$wait" -lt "$GRACE" ]] && wait=$GRACE
   jq -nc --argjson w "$wait" --argjson due "$due" --argjson at "$at" --argjson d "${delay%.*}" --argjson n "$n" \
     --arg r "$(jq -r '.reason' <<<"$W")" '{action:"wait", kind:"stop", wait_s:$w, due:$due, armed_at:$at, delay:$d, n:$n, armed_reason:$r, in_scope:true}'
 }

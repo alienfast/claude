@@ -10,6 +10,11 @@ SCRIPT="$(cd "$(dirname "$0")" && pwd)/fleet-metrics.py"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 PASS=0 FAIL=0
+# The rewake gauge reads $AUTO_REWAKE_LOG_DIR/auto-rewake.log. Point every case at a suite-owned
+# directory that stays EMPTY, or each one inherits this machine's own fleet history and the numbers
+# below move with it; case 18 overrides the variable per invocation with a log of its own.
+export AUTO_REWAKE_LOG_DIR="$WORK/logs"
+mkdir -p "$AUTO_REWAKE_LOG_DIR"
 
 ck() { # ck <label> <expected> <actual>
   if [ "$2" = "$3" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL: $1 — expected [$2] got [$3]"; fi
@@ -244,6 +249,13 @@ ck_has "prov pointer"        "no Linear export found" "$MD"
 # history: --all sweeps are never recorded (an all-time pool is not a fleet).
 ck "no history on --all" "0"       "$(q "len(d['history'])")"
 ck_has "trend not recorded"  "not recorded for --all sweeps" "$MD"
+
+# rewakes: no auto-rewake.log at all. A fleet the hook never watched is UNMEASURED, not a fleet the
+# hook never woke, so the totals line is omitted and the JSON fields are null rather than zero.
+ck "rewake: json null with no log"    "None" "$(q "d['rewakes']")"
+ck "rewake: session null with no log" "None" "$(q "d['sessions'][0]['rewakes']")"
+ck_lacks "rewake: no totals line with no log" "rewakes 0 stop" "$MD"
+ck_lacks "rewake: no flag with no log"        "was rewoken" "$MD"
 
 # ---- total-loss fixture: every ledger GC'd, transcripts intact ----
 # Opens with /loop /auto, as a fleet session does: a bare `/auto` opening turn is a SINGLE run (targeted
@@ -1358,6 +1370,120 @@ grep -v 'TT-42' "$T17/sb000001-0000.jsonl" > "$T17/sb.tmp" && mv "$T17/sb.tmp" "
 run17
 ck "early drain: one after-T landing is in-flight, K=0" "0" "$(q17 "[s for s in d['sessions'] if s['run_key']=='dr000001'][0]['sibling_ships_after_drain']")"
 ck_lacks "early drain: no flag on K=0" "drained 1.5h before the deadline while siblings" "$MD17"
+
+# ---- 18. rewake gauge: the hook woke sessions that were already working ----
+# Measured 2026-09-19/20 on a three-session fleet: hooks/auto-rewake.sh logged 74 `rewake kind=stop`
+# decisions, a turn had run inside every one of them, and 48 produced an injected turn telling a
+# healthy session to run another iteration. This report said nothing about it — the injection arrives
+# as origin.kind "task-notification", never "human", so it folds into main-loop output everywhere
+# else. Log lines, record shapes and timestamps come from that fleet so the fixtures replay the real
+# history; only the message text is trimmed to what the classifier matches on.
+CK18="$WORK/ck18"; mkdir -p "$CK18/tmp"
+git -C "$CK18" init -q 2>/dev/null
+git -C "$CK18" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "init"
+M18="$(git -C "$CK18" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
+T18="$WORK/projects/$M18"; mkdir -p "$T18"
+RW18="$WORK/rewake-logs"; mkdir -p "$RW18"
+for run in e389cd26 9e5a95bb b1cd9259; do
+  echo '{"status":"drained","reason":"fleet deadline reached","mode":"loop","shipped":[],"canceled":[],"skipped":[],"failed":[]}' > "$CK18/tmp/auto-state-$run.json"
+done
+
+# e389cd26 carries two spurious rewakes. The first is the ordinary shape: the armed wakeup fired at
+# 21:08:00.787, a minute inside the grace, and the hook gave up at 21:09:00 anyway. The second is the
+# ZERO-WAIT RACE — a 60s arm at 03:59:51 in a turn that ran past it, so the hook waited 0s, and the
+# wakeup fired 458ms before the rewake's own injection was queued. Both injections were queued and
+# later removed unread, so neither has a `user` record: the queue operation is the only record that
+# dates them, which is why it is preferred over the user record rather than the other way round.
+cat > "$T18/e389cd26-0000.jsonl" <<'EOF'
+{"type":"user","timestamp":"2026-09-19T19:42:36.766Z","isSidechain":false,"message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"system","subtype":"scheduled_task_fire","timestamp":"2026-09-19T21:08:00.787Z","isSidechain":false,"content":"Claude resuming /loop wakeup"}
+{"type":"queue-operation","operation":"enqueue","timestamp":"2026-09-19T21:09:00.453Z","content":"auto-rewake: the ScheduleWakeup this session armed at 20:34:00Z for 1800s never fired"}
+{"type":"system","subtype":"scheduled_task_fire","timestamp":"2026-09-20T04:16:14.422Z","isSidechain":false,"content":"Claude resuming /loop wakeup"}
+{"type":"queue-operation","operation":"enqueue","timestamp":"2026-09-20T04:16:14.880Z","content":"auto-rewake: the ScheduleWakeup this session armed at 03:59:51Z for 60s never fired"}
+{"type":"assistant","timestamp":"2026-09-20T16:22:25.822Z","isSidechain":false,"message":{"role":"assistant","id":"msg_rw_e","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"AUTO-HALTED: fleet deadline"}]}}
+EOF
+
+# 9e5a95bb crosses midnight: the arm is stamped 23:58:31Z and the decision 00:04:31Z the NEXT day.
+# Pasting the line's date onto the clock time puts the arm a day in the future, which empties the
+# window and reads this spurious rewake as a save — the shape that mislabelled 5 of the real 74. It
+# also carries the API-error injection, whose delivered form differs only in its opening words, and
+# beside it the hook's own source text, which a session that Read the hook holds as an origin-less
+# user record — two of that fleet's three transcripts carry one.
+cat > "$T18/9e5a95bb-0000.jsonl" <<'EOF'
+{"type":"user","timestamp":"2026-09-19T19:43:57.556Z","isSidechain":false,"message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"system","subtype":"scheduled_task_fire","timestamp":"2026-09-19T23:59:33.844Z","isSidechain":false,"content":"Claude resuming /loop wakeup"}
+{"type":"queue-operation","operation":"enqueue","timestamp":"2026-09-20T00:04:31.406Z","content":"auto-rewake: the ScheduleWakeup this session armed at 23:58:31Z for 60s never fired"}
+{"type":"user","timestamp":"2026-09-20T07:40:00.000Z","isSidechain":false,"origin":{"kind":"task-notification"},"message":{"role":"user","content":"<task-notification><summary>Stop hook feedback</summary></task-notification> auto-rewake: the previous turn of this /loop /auto run was killed by an API error (server_error) 15 min ago"}}
+{"type":"user","timestamp":"2026-09-20T07:41:00.000Z","isSidechain":false,"message":{"role":"user","content":"auto-rewake.sh reads: the previous turn of this /loop /auto run was killed by an API error ($API_ERROR) ${WAITED_MIN} min ago"}}
+{"type":"assistant","timestamp":"2026-09-20T15:56:05.207Z","isSidechain":false,"message":{"role":"assistant","id":"msg_rw_9","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"AUTO-HALTED: fleet deadline"}]}}
+EOF
+
+# b1cd9259 carries the SAVE — the shape the hook exists for: nothing opened a turn between the arm and
+# the rewake's injection, which is queued 300ms after the whole-second log stamp and delivered 40ms
+# after that. Closing the window anywhere later in that second — at the second's end, or at the
+# stamp + 1s — counts the rewake's own injected turn as proof of health and reads this save as
+# spurious. Then three injected-turn decoys, all after the save's window: a task-notification
+# carrying the hook's UNRENDERED source text (given the real origin, so only the rendered-form regex
+# can reject it); a compaction summary quoting a rendered message verbatim, which only the
+# task-notification origin can reject; and a skill-file read that merely names the hook. The last two
+# are the ordinary shape — 102 user records named the hook on the real fleet against 48 injections.
+cat > "$T18/b1cd9259-0000.jsonl" <<'EOF'
+{"type":"user","timestamp":"2026-09-19T19:41:25.971Z","isSidechain":false,"message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"queue-operation","operation":"enqueue","timestamp":"2026-09-20T02:05:00.300Z","content":"auto-rewake: the ScheduleWakeup this session armed at 01:30:00Z for 1800s never fired"}
+{"type":"user","timestamp":"2026-09-20T02:05:00.340Z","isSidechain":false,"origin":{"kind":"task-notification"},"message":{"role":"user","content":"<task-notification><summary>Stop hook feedback</summary></task-notification> auto-rewake: the ScheduleWakeup this session armed at 01:30:00Z for 1800s never fired"}}
+{"type":"user","timestamp":"2026-09-20T03:00:00.000Z","isSidechain":false,"origin":{"kind":"task-notification"},"message":{"role":"user","content":"auto-rewake: the ScheduleWakeup this session armed at $ARMED_ISO for ${DELAY}s never fired"}}
+{"type":"user","timestamp":"2026-09-20T03:01:00.000Z","isSidechain":false,"message":{"role":"user","content":"This session is being continued from a previous conversation that ran out of context. Summary: a rewake said the ScheduleWakeup this session armed at 00:11:00Z for 60s never fired."}}
+{"type":"user","timestamp":"2026-09-20T03:02:00.000Z","isSidechain":false,"message":{"role":"user","content":"Base directory for this skill: ~/.claude/skills/auto — hooks/auto-rewake.sh wakes a silent loop."}}
+{"type":"assistant","timestamp":"2026-09-20T19:11:27.857Z","isSidechain":false,"message":{"role":"assistant","id":"msg_rw_b","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"AUTO-HALTED: fleet deadline"}]}}
+EOF
+
+# The log. Non-`rewake` decisions are the bulk of the real file and must not be counted; the last
+# e389cd26 line is stamped a day after that session's transcript ends, so it belongs to a later run
+# and is out of its span.
+cat > "$RW18/auto-rewake.log" <<'EOF'
+2026-09-19T20:00:00Z 9e5a95bb Stop stood-down kind=stop records_since=4
+2026-09-19T21:03:00Z e389cd26 Stop wait kind=stop wait_s=360
+2026-09-19T21:09:00Z e389cd26 Stop rewake kind=stop armed_at=20:34:00Z delay=1800 overdue_min=5 n=1/12
+2026-09-20T00:04:31Z 9e5a95bb Stop rewake kind=stop armed_at=23:58:31Z delay=60 overdue_min=5 n=1/12
+2026-09-20T02:05:00Z b1cd9259 Stop rewake kind=stop armed_at=01:30:00Z delay=1800 overdue_min=5 n=1/12
+2026-09-20T04:16:14Z e389cd26 Stop rewake kind=stop armed_at=03:59:51Z delay=60 overdue_min=15 n=1/12
+2026-09-20T07:32:50Z e389cd26 StopFailure rewake kind=api error=server_error n=1/24 waited_min=15
+2026-09-20T17:30:21Z b1cd9259 Stop skip reason=loop-ended
+2026-09-21T10:00:00Z e389cd26 Stop rewake kind=stop armed_at=09:30:00Z delay=1800 overdue_min=5 n=2/12
+EOF
+
+J18="$WORK/out18.json"; MD18="$WORK/out18.md"
+AUTO_REWAKE_LOG_DIR="$RW18" CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK18" --all --json > "$J18" 2>/dev/null
+AUTO_REWAKE_LOG_DIR="$RW18" CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK18" --all > "$MD18" 2>&1
+q18() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J18"; }
+r18() { q18 "[s for s in d['sessions'] if s['run_key']=='$1'][0]['rewakes']['$2']"; }
+ck "rewake: followed-turn and zero-wait both spurious" "2" "$(r18 e389cd26 spurious)"
+ck "rewake: neither of them a save"                    "0" "$(r18 e389cd26 save)"
+ck "rewake: out-of-span line not counted"              "2" "$(r18 e389cd26 stop)"
+ck "rewake: api counted, never classified"             "1" "$(r18 e389cd26 api)"
+ck "rewake: midnight-crossing arm resolves to the previous day" "1" "$(r18 9e5a95bb spurious)"
+ck "rewake: midnight crossing is not a save"           "0" "$(r18 9e5a95bb save)"
+ck "rewake: same-second injection is a save"           "1" "$(r18 b1cd9259 save)"
+ck "rewake: the save is not spurious"                  "0" "$(r18 b1cd9259 spurious)"
+ck "rewake: only the rendered task-notification counts" "1" "$(r18 b1cd9259 injected)"
+ck "rewake: the API-error injection counts too"        "1" "$(r18 9e5a95bb injected)"
+ck "rewake: a queued-then-removed injection lands no turn" "0" "$(r18 e389cd26 injected)"
+REWAKE_TOT_EXPR="' '.join(str(d['rewakes'][k]) for k in ('stop','save','spurious','api','injected'))"
+ck "rewake: fleet totals" "4 1 3 1 2" "$(q18 "$REWAKE_TOT_EXPR")"
+ck_has "rewake: totals line" "rewakes 4 stop (1 save / 3 spurious) + 1 api · 2 injected turns" "$MD18"
+ck_has "rewake: flag names the session"   "**\`e389cd26\` was rewoken 2 time(s) while it was already working**" "$MD18"
+ck_has "rewake: flag quotes the ordinary line" "    - \`2026-09-19T21:09:00Z e389cd26 Stop rewake kind=stop armed_at=20:34:00Z delay=1800 overdue_min=5 n=1/12\`" "$MD18"
+ck_has "rewake: flag quotes the zero-wait line" "    - \`2026-09-20T04:16:14Z e389cd26 Stop rewake kind=stop armed_at=03:59:51Z delay=60 overdue_min=15 n=1/12\`" "$MD18"
+ck_has "rewake: midnight session flagged too" "**\`9e5a95bb\` was rewoken 1 time(s)" "$MD18"
+ck_lacks "rewake: the saved session is not flagged" "\`b1cd9259\` was rewoken" "$MD18"
+# A log with no rewake for any measured session is measured-and-zero, not unmeasured: the line still
+# prints. The injected-turn count survives because it is read from the TRANSCRIPT, not the log — a
+# rotated or truncated log leaves the injections themselves on the record, and reporting zero there
+# would hide the one half of the gauge that survived.
+: >| "$RW18/auto-rewake.log"
+AUTO_REWAKE_LOG_DIR="$RW18" CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK18" --all > "$MD18" 2>&1
+ck_has "rewake: empty log still prints the line" "rewakes 0 stop (0 save / 0 spurious) + 0 api · 2 injected turns" "$MD18"
+ck_lacks "rewake: empty log raises no flag" "was rewoken" "$MD18"
 
 echo
 echo "$PASS passed / $FAIL failed / $SKIP skipped"

@@ -11,9 +11,10 @@
 # 429 produced against a mock API the same day. Re-snapshot them from a live transcript when the harness changes.
 #
 # The load-bearing cases are #1/#2 (the lost wakeup, with and without the ending turn's summary on disk — #1 is the
-# ordering hazard that makes auto-heartbeat.sh's `armed` verdict unusable here), #21 and #27 (a turn DID follow: never
-# wake a live session — #27 is the shape where the hook cannot see that it did) and the registration block (a missing
-# `timeout` or `asyncRewake` disables the hook without a sound).
+# ordering hazard that makes auto-heartbeat.sh's `armed` verdict unusable here), #21, #27 and #30 (a turn DID follow:
+# never wake a live session — #27 is the shape where the hook cannot see that it did, #30 the one where it looked before
+# anything could have been written) and the registration block (a missing `timeout` or `asyncRewake` disables the hook
+# without a sound).
 #
 # GROW THIS SUITE, NEVER PRUNE IT. Every newly observed silent-death shape becomes a numbered case, added WITH its fix.
 
@@ -111,7 +112,9 @@ ck "10 human prompt after the anchor -> skip human-override"   human-override "$
 f=$(tfile); { rec_loop $((B-300)); rec_wake_nodelay "$B"; rec_text $((B+2)); } > "$f"
 ck "11 wakeup with no delaySeconds -> skip no-delay"           no-delay "$(dec "$(ev Stop "$f" s-eleven)" .reason)"
 f=$(tfile); { rec_loop $((B-30000)); rec_fire $((B-22)); rec_wake "$B" 1800; rec_text $((B+2)); } > "$f"
-ck "12 already past due + grace -> wait 0 (check at once)"     0 "$(dec "$(ev Stop "$f" s-twelve)" .wait_s $((B+9000)))"
+ck "12 already past due + grace -> the grace runs from now, never 0"  300 "$(dec "$(ev Stop "$f" s-twelve)" .wait_s $((B+9000)))"
+ck "12 ... past due but inside the grace -> still the whole grace"    300 "$(dec "$(ev Stop "$f" s-twelve)" .wait_s $((B+1900)))"
+ck "12 ... not yet due -> due + grace, unchanged"                     310 "$(dec "$(ev Stop "$f" s-twelve)" .wait_s $((B+1790)))"
 
 # 13. A turn longer than the tail: no opening record in view, so the whole tail is the turn — never "unarmed".
 f=$(tfile); { rec_loop $((B-90000)); jq -nc --arg t "$(iso $((B-500)))" 'range(650) | {type:"assistant",isSidechain:false,timestamp:$t,message:{role:"assistant",content:[{type:"tool_use",id:"toolu_b",name:"Bash",input:{command:"true"}}]}}'; rec_wake "$B" 1800; rec_text $((B+2)); } > "$f"
@@ -225,6 +228,21 @@ wait
 ck "29 cap reached while the instance slept -> exit 0"         0 "$RC"
 ck "29 ... nothing is said to the model"                       0 "$(wc -c < "$TMP/err" | tr -d ' ')"
 ck "29 ... the log names the cap"                              1 "$(grep -c 's-e2e-ca Stop stood-down kind=stop reason=stop-cap n=12' "$LOGS/auto-rewake.log")"
+
+# 30. THE ZERO WAIT (2026-09-20): a 60s arm inside a turn that ran sixteen minutes more. A wakeup cannot fire while the
+#     turn that armed it still runs, so it fired as that turn ended — 33ms after the stop summary — and the hook, launched
+#     past due + grace with nothing to wait out, looked before that record could exist and rewoke the session as well.
+#     The fire lands at +5s under a 7s grace: its whole-second stamp has to clear the hook's 2s slack, and 21b flaked
+#     about one run in four while its record sat on that boundary.
+N=$(date +%s); f=$(tfile); { rec_loop $((N-3000)); rec_fire $((N-1020)); rec_loop $((N-1020)); rec_wake $((N-1000)) 60; rec_result $((N-999)); rec_work $((N-5)); rec_text "$N"; rec_stopsum "$N"; } > "$f"
+( sleep 5; M=$(date +%s); { rec_fire "$M"; rec_loop "$M"; } >> "$f" ) &
+run_hook "$(ev Stop "$f" s-e2e-zero '{"stop_hook_active":false}')" 7 900
+wait
+ck "30 overdue wakeup fires as its turn ends -> exit 0"        0 "$RC"
+ck "30 ... nothing is said to the model"                       0 "$(wc -c < "$TMP/err" | tr -d ' ')"
+ck "30 ... it waited out the grace, not zero"                  1 "$(grep -c 's-e2e-ze Stop wait kind=stop wait_s=7$' "$LOGS/auto-rewake.log")"
+ck "30 ... the log says it stood down"                         1 "$(grep -c 's-e2e-ze Stop stood-down kind=stop records_since=' "$LOGS/auto-rewake.log")"
+ck "30 ... no rewake was counted"                              0 "$(get_state s-e2e-zero stop_rewakes)"
 
 echo "auto-rewake.sh — registration (../settings.json):"
 # Both fields are load-bearing and both fail silently. Measured 2026-09-19: without asyncRewake the exit code wakes
