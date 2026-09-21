@@ -83,4 +83,15 @@ Do not hand-roll create-then-link in a skill (`linear-cli issues create ...` fol
 
 If the originating context has no issue ID, file the new issue without `--parent` — never invent a parent.
 
-Parent linkage does not make the parent an epic. The workspace `epic` label marks issues deliberately decomposed into sub-issues that carry the work — `/prd` batch runs and `/spec` breakdowns attach it. A worked issue that accumulates deferred-item children stays unlabeled.
+Parent linkage does not make the parent an epic. The workspace `epic` label marks issues deliberately decomposed into sub-issues that carry the work — `/prd` batch runs and `/spec` breakdowns attach it. A worked issue that accumulates deferred-item children takes no `epic` label.
+
+## Every Agent Filing Takes the Filing Recipe
+
+Any issue an agent files on its own initiative — a deferred review item, a `/finish` promise, a record a project convention asks for ("file the flake you re-ran past"), an ad-hoc follow-up noticed on the way out — goes through `/quality-review` Step 6 sub-step 6's recipe, whether or not that skill is what prompted it. The recipe is the only place the four obligations live together, and a filing made outside it routinely drops all four at once:
+
+- **Search before filing** — one distinctive token per call, and on a same-defect hit append the evidence instead of creating.
+- **`linear-create-child.sh`**, never a raw create, under the parent rule above.
+- **Class labels and a priority** at create.
+- **A routing label before the filing is done** — `specified` by default, `needs decision` or `human` when a person genuinely gates it. An issue with no routing label is read by nothing ([issue-spec.md](issue-spec.md) § An agent filing never lands unrouted).
+
+A one-line project convention that says *file it* names the trigger, never the procedure: it does not license a bare create, a `-` label slot, or a body whose own criteria leave a question open.
