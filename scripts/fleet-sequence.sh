@@ -6,14 +6,16 @@
 # straight into the launch branch, the shape an unscoped fleet ships in.
 #
 # Usage: fleet-sequence.sh [pr|merge] <ISSUE-ID>... [-- <claude flags...>]
-#        fleet-sequence.sh status
-#        fleet-sequence.sh stop
-#        fleet-sequence.sh run            (internal: the detached runner; reads tmp/fleet-sequence.json)
+#        fleet-sequence.sh status [<ISSUE-ID>]
+#        fleet-sequence.sh stop [<ISSUE-ID>]
+#        fleet-sequence.sh run <slug>     (internal: the detached runner; reads tmp/fleet-sequence-<slug>.json)
 #
 #   <ISSUE-ID>...  The issues in the order they must ship. Each must carry `specified` and not `human`
 #                  (the same probe /auto's targeted mode runs), and must not already be terminal or
 #                  Ready For Release — unless the marker records it shipped on this launch branch, which
 #                  a resume skips unprobed. `solo` is expressly fine — this is the runner for it.
+#                  A list that shares an issue with an earlier sequence (same launch branch and mode, its
+#                  branch still there) RESUMES that sequence; a list sharing none is a NEW sequence.
 #   pr | merge     pr (default): create `seq/<first-id>` from the launch branch, ship every issue onto it,
 #                  push it after each ship, open one PR onto the launch branch at the end, then run
 #                  /pr-update on it. merge: no branch, no PR — each issue merges into the launch branch.
@@ -21,12 +23,22 @@
 #                  (--model 'opus[1m]' --effort xhigh --autocompact 500000 --permission-mode auto —
 #                  skills/auto/SKILL.md's unattended-run prerequisites, same as fleet-launch.sh).
 #
-#   status         One-screen readout of the marker: mode, branch, PR, per-issue session, liveness,
+#   status         One-screen readout of a marker: mode, branch, PR, per-issue session, liveness,
 #                  outcome and where it landed, the branch's position against its base, the runner's
-#                  liveness. Read-only.
+#                  liveness. Read-only. With an ID, the sequence naming that issue; without, every
+#                  running sequence — or the latest one when none is running.
 #   stop           Ask the runner to stop after the issue in flight; nothing is killed, what shipped stays
 #                  on the branch, and no PR is opened (re-run the list, or integration-pr.sh by hand).
-#                  Killing the in-flight session is `claude agents`, never this.
+#                  Killing the in-flight session is `claude agents`, never this. An ID is needed only
+#                  when several sequences are running.
+#
+# Sequences are discrete: state is keyed by the sequence's slug — the lowercased first ID of the list that
+# created it, the suffix of its seq/ branch — so no two share a marker, a log, a branch, or a /pr-update
+# worktree, and several may run at once (each strictly serial within itself; an issue belongs to one live
+# sequence, and two `merge` sequences never share a launch branch). 2026-09-21: with one marker per checkout
+# and a resume decided by launch branch and mode alone, `BF-2034 BF-1794` launched from the branch an earlier
+# `BF-2022 …` sequence had used — its runner dead, its BF-2022 session still working — was read as a resume,
+# shipped onto seq/bf-2022, and rewrote that sequence's marker and log.
 #
 # Why sessions and not one loop: a targeted `/auto <ID>` is one-shot and a `/loop /auto` never picks
 # `solo` work, and a big issue wants a fresh context of its own. Why one branch and not a stack of PRs:
@@ -53,7 +65,10 @@
 # up to FLEET_SEQUENCE_MERGE_TIMEOUT. Any other outcome stops the sequence with the remaining issues
 # untouched — /auto already commented and labeled the issue. Re-running the same list resumes: issues the
 # marker recorded as shipped are skipped, the branch is kept, and a list whose every issue has shipped
-# goes straight to the PR step — which is also how a run whose PR could not be opened is completed.
+# goes straight to the PR step — which is also how a run whose PR could not be opened is completed. A
+# resume also ADOPTS a session an earlier run dispatched that is still working (or shipped with its landing
+# unrecorded) — a runner can die under a harness restart its child survives — waiting on it, never
+# dispatching the issue twice.
 #
 # Env: FLEET_SEQUENCE_POLL (seconds between reads, default 30), FLEET_SEQUENCE_GRACE (default 120),
 # FLEET_SEQUENCE_ISSUE_TIMEOUT (default 21600 — 6h per issue; on expiry the sequence fails and the session
@@ -62,16 +77,17 @@
 # closing /pr-update session, FLEET_SEQUENCE_PR_UPDATE_TIMEOUT (default 1800), FLEET_SEQUENCE_FOREGROUND=1
 # runs the runner inline (tests).
 #
-# Read-write: tmp/fleet-sequence.json (the marker) and tmp/fleet-sequence.log in the main checkout; creates
-# the integration branch, sets/unsets the per-issue `start.<id>.wt-source-branch` keys, pushes the branch,
-# opens its PR, adds and removes a throwaway worktree at tmp/fleet-sequence-pr-update for the closing
-# /pr-update session, dispatches background claude sessions. Never moves the main checkout's HEAD. Exit 1
-# on argument/environment errors before anything is dispatched; the runner exits 1 when the sequence fails.
+# Read-write: tmp/fleet-sequence-<slug>.json (the marker) and tmp/fleet-sequence-<slug>.log in the main
+# checkout; creates the integration branch, sets/unsets the per-issue `start.<id>.wt-source-branch` keys,
+# pushes the branch, opens its PR, adds and removes a throwaway worktree at tmp/fleet-sequence-pr-update-<slug>
+# for the closing /pr-update session, dispatches background claude sessions. Never moves the main checkout's
+# HEAD. Exit 1 on argument/environment errors before anything is dispatched; the runner exits 1 when the
+# sequence fails.
 
 set -eo pipefail
 
 usage() {
-  echo "usage: fleet-sequence.sh [pr|merge] <ISSUE-ID>... [-- <claude flags...>] | fleet-sequence.sh status | stop" >&2
+  echo "usage: fleet-sequence.sh [pr|merge] <ISSUE-ID>... [-- <claude flags...>] | fleet-sequence.sh status [<ISSUE-ID>] | stop [<ISSUE-ID>]" >&2
   exit 1
 }
 
@@ -83,9 +99,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 main_checkout=$(git worktree list --porcelain 2>/dev/null | awk '/^worktree /{print substr($0,10); exit}')
 [ -n "$main_checkout" ] || { echo "ERROR: not inside a git repository — run from the project the sequence should work on" >&2; exit 1; }
 mkdir -p "$main_checkout/tmp"
-marker="$main_checkout/tmp/fleet-sequence.json"
-log="$main_checkout/tmp/fleet-sequence.log"
-pr_wt="$main_checkout/tmp/fleet-sequence-pr-update"
+marker=""; log=""; pr_wt="" # per sequence — set by use_sequence before anything reads them
 poll="${FLEET_SEQUENCE_POLL:-30}"
 grace="${FLEET_SEQUENCE_GRACE:-120}"
 issue_timeout="${FLEET_SEQUENCE_ISSUE_TIMEOUT:-21600}"
@@ -100,6 +114,37 @@ update_marker() { # <jq args...> — rewrite the marker through a jq filter
   local out
   out=$(jq "$@" "$marker") || return 1
   printf '%s\n' "$out" > "$marker"
+}
+
+# ---- one marker per sequence ----
+use_sequence() { # <slug> — point marker, log and the /pr-update worktree at one sequence's own files
+  marker="$main_checkout/tmp/fleet-sequence-$1.json"
+  log="$main_checkout/tmp/fleet-sequence-$1.log"
+  pr_wt="$main_checkout/tmp/fleet-sequence-pr-update-$1"
+}
+slug_of() { local b; b=$(basename "$1" .json); printf '%s' "${b#fleet-sequence-}"; } # <marker path> → its slug
+all_markers() { # every sequence marker in this checkout, newest launch first
+  local f
+  for f in "$main_checkout"/tmp/fleet-sequence-*.json; do
+    if [ -s "$f" ]; then printf '%s\t%s\n' "$(jq -r '.launch_epoch // 0' "$f" 2>/dev/null || echo 0)" "$f"; fi
+  done | sort -rn | cut -f2-
+}
+runner_alive() { # <marker> — `running` under a live runner pid; the marker outlives the run, so `running` under a dead pid is a crash
+  local k
+  [ "$(jq -r '.status // ""' "$1" 2>/dev/null)" = "running" ] || return 1
+  k=$(jq -r '.runner_pid // empty' "$1" 2>/dev/null)
+  [[ "$k" =~ ^[0-9]+$ ]] && kill -0 "$k" 2>/dev/null
+}
+names_issue() { # <marker> <ISSUE-ID> — the sequence lists the issue, or recorded it on an earlier run
+  jq -e --arg id "$2" '((.queue // []) + ((.issues // {}) | keys)) | index($id) != null' "$1" >/dev/null 2>&1
+}
+marker_naming() { # <ISSUE-ID as typed> → the newest marker naming it, or "" when none does; returns 1 on a malformed ID
+  local id f
+  id=$("$here/detect-issue-id.sh" --validate-only --input "$1" 2>/dev/null) || { echo "ERROR: '$1' is not an issue ID (expected e.g. BF-123)" >&2; return 1; }
+  while IFS= read -r f; do
+    if names_issue "$f" "$id"; then printf '%s' "$f"; return 0; fi
+  done < <(all_markers)
+  return 0
 }
 
 # ---- session registry ----
@@ -279,9 +324,35 @@ open_sequence_pr() { # push, open or find the PR from the branch onto the base, 
 }
 
 # =====================================================================================
-cmd_status() {
-  [ -s "$marker" ] || { echo "No sequence marker at $marker — nothing launched here."; exit 0; }
-  local status base mode branch queue runner_pid runner live id sid st outcome landed pr_url ahead behind keys
+cmd_status() { # [<ISSUE-ID>] — that issue's sequence; without one, every running sequence, else the latest
+  local f n=0 shown=() rest=""
+  if [ -n "${1:-}" ]; then
+    f=$(marker_naming "$1") || exit 1
+    [ -n "$f" ] || { echo "No sequence here names $1 — nothing launched for it from $main_checkout."; exit 0; }
+    shown=("$f")
+  else
+    while IFS= read -r f; do
+      if runner_alive "$f"; then shown+=("$f"); fi
+    done < <(all_markers)
+    if [ ${#shown[@]} -eq 0 ]; then
+      f=""; IFS= read -r f < <(all_markers) || true
+      [ -n "$f" ] || { echo "No sequence marker under $main_checkout/tmp — nothing launched here."; exit 0; }
+      shown=("$f")
+    fi
+  fi
+  for f in "${shown[@]}"; do
+    [ "$n" -eq 0 ] || printf '\n---\n\n'
+    use_sequence "$(slug_of "$f")"; print_status; n=$((n+1))
+  done
+  while IFS= read -r f; do
+    case " ${shown[*]} " in *" $f "*) ;; *) rest="$rest, $(jq -r '.queue | join(" → ")' "$f") ($(jq -r '.status' "$f"))" ;; esac
+  done < <(all_markers)
+  [ -z "$rest" ] || printf '\n**Other sequences here:** %s — `fleet-sequence.sh status <ISSUE-ID>` reads one.\n' "${rest#, }"
+  return 0
+}
+
+print_status() { # the readout of the sequence use_sequence selected
+  local status base mode branch queue runner_pid runner live id sid st outcome landed pr_url ahead behind keys k
   status=$(jq -r '.status' "$marker"); base=$(jq -r '.base' "$marker"); mode=$(jq -r '.mode // "pr"' "$marker")
   branch=$(jq -r '.branch // ""' "$marker"); pr_url=$(jq -r '.pr_url // ""' "$marker")
   queue=$(jq -r '.queue | join(" → ")' "$marker")
@@ -296,8 +367,12 @@ cmd_status() {
   [ "$(jq -r '.stop_requested' "$marker")" = "true" ] && printf ' · **stop requested**'
   printf '\n'
   [ "$(jq -r '.reason // ""' "$marker")" != "" ] && printf '**Reason:** %s\n' "$(jq -r '.reason' "$marker")"
-  keys=$(git -C "$main_checkout" config --get-regexp '^start\.[^.]+\.wt-source-branch$' 2>/dev/null \
-    | sed -E 's/^start\.([^.]+)\.wt-source-branch (.*)$/\1 → \2/' | paste -sd, - | sed 's/,/, /g' || true)
+  keys=""
+  for id in $(jq -r '.queue[]' "$marker"); do
+    k=$(git -C "$main_checkout" config --get "$(fork_key "$id")" 2>/dev/null || true)
+    [ -z "$k" ] || keys="$keys, $(lower "$id") → $k"
+  done
+  keys="${keys#, }"
   [ -n "$keys" ] && printf '**Fork key:** %s (per-issue `start.<id>.wt-source-branch` — only that issue'"'"'s /start wt reads it; the main checkout is not moved)\n' "$keys"
   if [ "$mode" != "merge" ]; then
     if [ -n "$pr_url" ]; then printf '**PR:** %s\n' "$pr_url"; else printf '**PR:** not opened yet (opens when the last issue ships)\n'; fi
@@ -327,13 +402,29 @@ cmd_status() {
   return 0
 }
 
-cmd_stop() {
-  [ -s "$marker" ] || { echo "No sequence marker at $marker — nothing to stop."; exit 0; }
-  local status
-  status=$(jq -r '.status' "$marker")
-  if [ "$status" != "running" ]; then echo "Sequence is already $status — nothing to stop."; exit 0; fi
+cmd_stop() { # [<ISSUE-ID>] — needed only to choose among several running sequences
+  local f latest="" running=()
+  if [ -n "${1:-}" ]; then
+    f=$(marker_naming "$1") || exit 1
+    [ -n "$f" ] || { echo "No sequence here names $1 — nothing to stop."; exit 0; }
+    latest="$f"
+    if [ "$(jq -r '.status' "$f")" = "running" ]; then running=("$f"); fi
+  else
+    while IFS= read -r f; do
+      [ -n "$latest" ] || latest="$f"
+      if [ "$(jq -r '.status' "$f")" = "running" ]; then running+=("$f"); fi
+    done < <(all_markers)
+    [ -n "$latest" ] || { echo "No sequence marker under $main_checkout/tmp — nothing to stop."; exit 0; }
+  fi
+  if [ ${#running[@]} -eq 0 ]; then echo "Sequence is already $(jq -r '.status' "$latest") — nothing to stop."; exit 0; fi
+  if [ ${#running[@]} -gt 1 ]; then
+    echo "ERROR: ${#running[@]} sequences are running — name an issue of the one to stop: fleet-sequence.sh stop <ISSUE-ID>" >&2
+    for f in "${running[@]}"; do echo "       $(jq -r '.queue | join(" → ")' "$f")" >&2; done
+    exit 1
+  fi
+  use_sequence "$(slug_of "${running[0]}")"
   update_marker '.stop_requested = true'
-  echo "Stop requested: the runner finishes the issue in flight, then stops; what shipped stays on the branch and no PR is opened."
+  echo "Stop requested for $(jq -r '.queue | join(" → ")' "$marker"): the runner finishes the issue in flight, then stops; what shipped stays on the branch and no PR is opened."
   echo "Nothing is killed — to abort the in-flight session use \`claude agents\`. Re-run the same list to continue and open the PR."
 }
 
@@ -351,8 +442,9 @@ on_exit_run() {
   fi
 }
 
-cmd_run() {
-  [ -s "$marker" ] || { echo "ERROR: no marker at $marker — the runner only runs under a launch" >&2; exit 1; }
+cmd_run() { # [<slug>] — the launch passes it to the detached runner; a foreground launch has already selected the sequence
+  [ -z "${1:-}" ] || use_sequence "$1"
+  [ -s "$marker" ] || { echo "ERROR: no marker at ${marker:-tmp/fleet-sequence-<slug>.json} — the runner only runs under a launch" >&2; exit 1; }
   cd "$main_checkout"
   trap on_exit_run EXIT
   local base mode target ids_csv id sid out outcome remaining now started before after count
@@ -381,21 +473,32 @@ cmd_run() {
       fail_run "main checkout is dirty before $id — /auto would halt on it; resolve and re-run the same list"
     fi
 
-    set_fork_key "$id"
-    before=$(git rev-parse --verify --quiet "refs/heads/$target")
-    started=$(date +%s)
-    update_marker --arg id "$id" --argjson now "$started" --arg b "$before" \
-      '.current = $id | .issues[$id] = {started_epoch: $now, tip_before: $b}'
-    logln "[$i/${#queue[@]}] dispatching: claude --bg ${claude_args[*]} -n 'fleet-sequence $id' '/auto $id'  (forks from $target at ${before:0:12})"
-    if ! out=$(claude --bg "${claude_args[@]}" -n "fleet-sequence $id" "/auto $id" 2>&1); then
+    # The launch carries a non-shipped entry only for a session it found still working (or shipped with its
+    # landing unrecorded), so a session recorded here is one to wait on — dispatching again would start a
+    # second /auto on an issue already in flight.
+    sid=$(jq -r --arg id "$id" '.issues[$id].session // ""' "$marker")
+    if [ -n "$sid" ]; then
+      started=$(jq -r --arg id "$id" '.issues[$id].started_epoch // 0' "$marker")
+      before=$(jq -r --arg id "$id" '.issues[$id].tip_before // ""' "$marker")
+      update_marker --arg id "$id" '.current = $id'
+      logln "[$i/${#queue[@]}] $id was dispatched by an earlier run of this sequence (session $sid) — waiting on that session, not dispatching again"
+    else
+      set_fork_key "$id"
+      before=$(git rev-parse --verify --quiet "refs/heads/$target")
+      started=$(date +%s)
+      update_marker --arg id "$id" --argjson now "$started" --arg b "$before" \
+        '.current = $id | .issues[$id] = {started_epoch: $now, tip_before: $b}'
+      logln "[$i/${#queue[@]}] dispatching: claude --bg ${claude_args[*]} -n 'fleet-sequence $id' '/auto $id'  (forks from $target at ${before:0:12})"
+      if ! out=$(claude --bg "${claude_args[@]}" -n "fleet-sequence $id" "/auto $id" 2>&1); then
+        printf '%s\n' "$out"
+        fail_run "dispatch of $id failed — see the claude output above in $log"
+      fi
       printf '%s\n' "$out"
-      fail_run "dispatch of $id failed — see the claude output above in $log"
+      sid=$(parse_sid "$out")
+      [ -n "$sid" ] || fail_run "could not read the session id from the claude --bg output for $id — cannot wait on an unknown session; find it in \`claude agents\`, let it finish, then re-run the same list"
+      update_marker --arg id "$id" --arg s "$sid" '.issues[$id].session = $s'
+      logln "[$i/${#queue[@]}] $id running in session $sid"
     fi
-    printf '%s\n' "$out"
-    sid=$(parse_sid "$out")
-    [ -n "$sid" ] || fail_run "could not read the session id from the claude --bg output for $id — cannot wait on an unknown session; find it in \`claude agents\`, let it finish, then re-run the same list"
-    update_marker --arg id "$id" --arg s "$sid" '.issues[$id].session = $s'
-    logln "[$i/${#queue[@]}] $id running in session $sid"
     if ! wait_session "$sid" "$issue_timeout" "$id" "$started"; then
       fail_run "$id: session $sid still running after ${issue_timeout}s — not killed; watch it in \`claude agents\`, then re-run the same list"
     fi
@@ -465,20 +568,70 @@ cmd_launch() {
     normalized+=("$norm")
   done
 
-  # A re-run on the same base in the same mode resumes the marker's run (onto a branch: only while that
-  # branch still exists). Its shipped issues sit at Ready For Release and are skipped by the runner, so they
-  # are not probed — the refusals below are for issues that would be dispatched.
+  # Which sequence is this list? The one it SHARES AN ISSUE with — launched from this branch in this mode, its
+  # integration branch still there — and a list sharing none is a new sequence with a branch, marker and log
+  # of its own. The launch branch and mode alone never identify a sequence: every sequence launched from one
+  # branch shares them. An issue a live runner already holds is refused outright.
   current=$(git -C "$main_checkout" branch --show-current 2>/dev/null || true)
-  if [ -s "$marker" ] && [ -n "$current" ] && [ "$(jq -r '.base // ""' "$marker")" = "$current" ] && [ "$(jq -r '.mode // "pr"' "$marker")" = "$mode" ]; then
-    if [ "$mode" = "merge" ]; then resume=1
-    else
-      branch=$(jq -r '.branch // ""' "$marker")
-      if [ -n "$branch" ] && git -C "$main_checkout" rev-parse --verify --quiet "refs/heads/$branch" >/dev/null; then resume=1; else branch=""; fi
+  local f shared b sid since list_json adopted="" matches=()
+  list_json=$(printf '%s\n' "${normalized[@]}" | jq -R . | jq -s .)
+  while IFS= read -r f; do
+    shared=$(jq -r --argjson l "$list_json" '[((.queue // []) + ((.issues // {}) | keys))[] | select(. as $x | $l | index($x) != null)] | unique | join(", ")' "$f" 2>/dev/null || true)
+    [ -n "$shared" ] || continue
+    if runner_alive "$f"; then
+      echo "ERROR: $shared already in a running sequence ($(jq -r '.queue | join(" → ")' "$f"), runner pid $(jq -r '.runner_pid' "$f")) — an issue ships in one sequence at a time; fleet-sequence.sh status / stop $(jq -r '.queue[0]' "$f") first" >&2
+      exit 1
+    fi
+    [ -n "$current" ] && [ "$(jq -r '.base // ""' "$f")" = "$current" ] && [ "$(jq -r '.mode // "pr"' "$f")" = "$mode" ] || continue
+    if [ "$mode" != "merge" ]; then
+      b=$(jq -r '.branch // ""' "$f")
+      [ -n "$b" ] && git -C "$main_checkout" rev-parse --verify --quiet "refs/heads/$b" >/dev/null || continue
+    fi
+    matches+=("$f")
+  done < <(all_markers)
+  if [ ${#matches[@]} -gt 1 ]; then
+    echo "ERROR: this list shares issues with ${#matches[@]} earlier sequences from '$current' — a list resumes the ONE sequence it shares an issue with. Split it:" >&2
+    for f in "${matches[@]}"; do echo "       $(jq -r '.queue | join(" → ")' "$f") ($(jq -r '.status' "$f"), onto $(jq -r '.branch // .base' "$f"))" >&2; done
+    exit 1
+  fi
+  if [ ${#matches[@]} -eq 1 ]; then
+    resume=1; use_sequence "$(slug_of "${matches[0]}")"; branch=$(jq -r '.branch // ""' "$marker")
+  else
+    use_sequence "$(lower "${normalized[0]}")"
+    if [ -s "$marker" ] && runner_alive "$marker"; then
+      echo "ERROR: a running sequence already owns the name '$(slug_of "$marker")' ($(jq -r '.queue | join(" → ")' "$marker")) — fleet-sequence.sh status / stop first, or lead this list with another issue" >&2
+      exit 1
     fi
   fi
-  [ "$resume" -eq 1 ] && carried=$(jq -r '(.issues // {}) | to_entries[] | select(.value.outcome == "shipped") | .key' "$marker" | paste -sd' ' -)
+  # Two merge-mode runners on one launch branch would each read the other's merge as its own landing.
+  if [ "$mode" = "merge" ]; then
+    while IFS= read -r f; do
+      [ "$f" != "$marker" ] || continue
+      if runner_alive "$f" && [ "$(jq -r '.mode // "pr"' "$f")" = "merge" ] && [ "$(jq -r '.base // ""' "$f")" = "$current" ]; then
+        echo "ERROR: a merge-mode sequence is already merging into '$current' ($(jq -r '.queue | join(" → ")' "$f")) — each would read the other's merges as its own landings. Let it finish, or drop 'merge' to ship this list onto a branch of its own." >&2
+        exit 1
+      fi
+    done < <(all_markers)
+  fi
+
+  # A resume keeps what the marker recorded as shipped, and ADOPTS a session an earlier run dispatched that
+  # is still working or shipped with its landing unrecorded (the runner died under it). Neither is probed:
+  # a shipped issue sits at Ready For Release. An adoptable issue left off the list is refused — its session
+  # would still merge onto the branch, under a runner that is not waiting for it.
+  if [ "$resume" -eq 1 ]; then
+    carried=$(jq -r '(.issues // {}) | to_entries[] | select(.value.outcome == "shipped") | .key' "$marker" | paste -sd' ' -)
+    while IFS=$'\t' read -r id sid since; do
+      [ -n "$sid" ] || continue
+      if registry_alive "$sid" || [ "$(ledger_outcome "$sid" "$id" "$since")" = "shipped" ]; then
+        case " ${normalized[*]} " in
+          *" $id "*) adopted="$adopted $id" ;;
+          *) echo "ERROR: $id was dispatched by an earlier run of this sequence (session $sid) and is still in flight, or shipped with its landing unrecorded — list it so the runner waits for it, or stop it in \`claude agents\` first" >&2; exit 1 ;;
+        esac
+      fi
+    done < <(jq -r '(.issues // {}) | to_entries[] | select(.value.outcome != "shipped" and (.value.session // "") != "") | [.key, .value.session, (.value.started_epoch // 0)] | @tsv' "$marker")
+  fi
   for id in "${normalized[@]}"; do
-    case " $carried " in *" $id "*) continue ;; esac
+    case " $carried $adopted " in *" $id "*) continue ;; esac
     json=$(linear-cli issues get "$id" -o json 2>/dev/null) || { echo "ERROR: could not read $id from Linear (linear-cli issues get failed)" >&2; exit 1; }
     labels=$(printf '%s' "$json" | jq -r '.labels.nodes[].name' 2>/dev/null || true)
     state=$(printf '%s' "$json" | jq -r '.state.name // ""' 2>/dev/null || true)
@@ -489,7 +642,7 @@ cmd_launch() {
     esac
   done
 
-  # A sequence is solo work by definition: never alongside a fleet, never alongside another sequence.
+  # Never alongside a fleet: its pickers choose their own issues, and `solo` work wants none of them running.
   if [ -s "$main_checkout/tmp/fleet-deadline.json" ]; then
     live=""
     for k in $(jq -r '(.fleet_sessions // [])[]' "$main_checkout/tmp/fleet-deadline.json" 2>/dev/null); do
@@ -497,13 +650,6 @@ cmd_launch() {
     done
     if [ -n "$live" ]; then
       echo "ERROR: a fleet is running (sessions:$live) — sequenced work never runs mid-fleet. /fleet-stop and wait for it to drain, then re-run." >&2
-      exit 1
-    fi
-  fi
-  if [ -s "$marker" ] && [ "$(jq -r '.status' "$marker")" = "running" ]; then
-    k=$(jq -r '.runner_pid // empty' "$marker")
-    if [ -n "$k" ] && kill -0 "$k" 2>/dev/null; then
-      echo "ERROR: a sequence is already running (runner pid $k, $(jq -r '.queue | join(" → ")' "$marker")) — fleet-sequence.sh status / stop first" >&2
       exit 1
     fi
   fi
@@ -534,7 +680,7 @@ cmd_launch() {
     if [ "$resume" -eq 0 ]; then
       branch="seq/$(lower "${normalized[0]}")"
       if git -C "$main_checkout" rev-parse --verify --quiet "refs/heads/$branch" >/dev/null; then
-        echo "ERROR: branch '$branch' already exists but no marker records a sequence on it from '$current' — delete it (git branch -D $branch) or re-run the list that created it" >&2
+        echo "ERROR: branch '$branch' already exists but no marker records a sequence on it from '$current' that shares an issue with this list — delete it (git branch -D $branch), or name an issue of the sequence that created it to resume that one" >&2
         exit 1
       fi
       git -C "$main_checkout" branch "$branch" "$current" || { echo "ERROR: could not create $branch from $current" >&2; exit 1; }
@@ -545,9 +691,15 @@ cmd_launch() {
 
   existing_issues='{}'
   if [ "$resume" -eq 1 ]; then
-    existing_issues=$(jq -c '(.issues // {}) | with_entries(select(.value.outcome == "shipped"))' "$marker")
-    if [ "$(printf '%s' "$existing_issues" | jq 'length')" -gt 0 ]; then
-      echo "Resuming on ${branch:-$current}: already shipped, kept — $(printf '%s' "$existing_issues" | jq -r 'to_entries | map("\(.key) (landed \(.value.landed_sha // "unrecorded" | .[0:12]))") | join(", ")')"
+    # shellcheck disable=SC2086
+    existing_issues=$(jq -c --argjson a "$(printf '%s\n' $adopted | jq -R . | jq -s 'map(select(length > 0))')" \
+      '(.issues // {}) | with_entries(select(.value.outcome == "shipped" or (.key as $k | $a | index($k) != null)))
+       | with_entries(if .value.outcome == "shipped" then . else .value |= {session, started_epoch, tip_before} end)' "$marker")
+    if [ "$(printf '%s' "$existing_issues" | jq '[.[] | select(.outcome == "shipped")] | length')" -gt 0 ]; then
+      echo "Resuming on ${branch:-$current}: already shipped, kept — $(printf '%s' "$existing_issues" | jq -r 'to_entries | map(select(.value.outcome == "shipped") | "\(.key) (landed \(.value.landed_sha // "unrecorded" | .[0:12]))") | join(", ")')"
+    fi
+    if [ -n "$adopted" ]; then
+      echo "Resuming on ${branch:-$current}: still in its earlier session, waited on and not dispatched again — $(printf '%s' "$existing_issues" | jq -r 'to_entries | map(select(.value.outcome != "shipped") | "\(.key) (session \(.value.session))") | join(", ")')"
     fi
   fi
 
@@ -564,13 +716,14 @@ cmd_launch() {
     claude_args+=(--permission-mode auto)
   fi
 
-  local queue_json args_json pr_url
-  queue_json=$(printf '%s\n' "${normalized[@]}" | jq -R . | jq -s .)
+  local queue_json args_json pr_url slug
+  slug=$(slug_of "$marker")
+  queue_json="$list_json"
   args_json=$(printf '%s\n' "${claude_args[@]}" | jq -R . | jq -s 'map(select(length > 0))')
   pr_url=""; [ "$resume" -eq 1 ] && pr_url=$(jq -r '.pr_url // ""' "$marker")
-  jq -n --argjson q "$queue_json" --arg base "$current" --arg mode "$mode" --arg branch "$branch" --argjson a "$args_json" \
+  jq -n --arg slug "$slug" --argjson q "$queue_json" --arg base "$current" --arg mode "$mode" --arg branch "$branch" --argjson a "$args_json" \
         --argjson now "$(date +%s)" --arg log "$log" --argjson issues "$existing_issues" --arg pr "$pr_url" \
-    '{queue: $q, base: $base, mode: $mode, branch: (if $branch == "" then null else $branch end), claude_args: $a,
+    '{slug: $slug, queue: $q, base: $base, mode: $mode, branch: (if $branch == "" then null else $branch end), claude_args: $a,
       status: "running", reason: "", stop_requested: false, current: null, issues: $issues,
       pr_url: (if $pr == "" then null else $pr end), pr_number: null, launch_epoch: $now, log: $log, runner_pid: null}' > "$marker"
 
@@ -585,9 +738,12 @@ cmd_launch() {
     cmd_run
     return
   fi
-  ( cd "$main_checkout" && nohup "$here/fleet-sequence.sh" run > "$log" 2>&1 < /dev/null & echo $! > "$main_checkout/tmp/fleet-sequence.pid" )
+  # A resume appends: the log it continues is the only record of why the earlier run stopped.
+  [ "$resume" -eq 1 ] || : > "$log"
+  local pidfile="$main_checkout/tmp/fleet-sequence-$slug.pid"
+  ( cd "$main_checkout" && nohup "$here/fleet-sequence.sh" run "$slug" >> "$log" 2>&1 < /dev/null & echo $! > "$pidfile" )
   local pid
-  pid=$(cat "$main_checkout/tmp/fleet-sequence.pid" 2>/dev/null || true); rm -f "$main_checkout/tmp/fleet-sequence.pid"
+  pid=$(cat "$pidfile" 2>/dev/null || true); rm -f "$pidfile"
   [[ "$pid" =~ ^[0-9]+$ ]] || { echo "ERROR: runner did not start — see $log" >&2; update_marker '.status = "failed" | .reason = "runner did not start"'; exit 1; }
   update_marker --argjson p "$pid" '.runner_pid = $p'
   echo "Runner detached (pid $pid) — log: $log"
@@ -596,14 +752,14 @@ cmd_launch() {
   else
     echo "Each issue runs in its own background session, forking from and merging into $branch by ref; a per-issue start.<id>.wt-source-branch key steers it, set just before its dispatch."
   fi
-  echo "The main checkout is never moved, and other worktree sessions (a targeted /auto, /start wt) may run alongside — keep the main checkout clean, since a dirty tree halts /auto's preflight."
-  echo "Watch with: fleet-sequence.sh status  |  claude agents"
+  echo "The main checkout is never moved, and other worktree sessions (another sequence, a targeted /auto, /start wt) may run alongside — keep the main checkout clean, since a dirty tree halts /auto's preflight."
+  echo "Watch with: fleet-sequence.sh status ${normalized[0]}  |  claude agents"
 }
 
 case "${1:-}" in
-  status) [ $# -eq 1 ] || usage; cmd_status ;;
-  stop)   [ $# -eq 1 ] || usage; cmd_stop ;;
-  run)    [ $# -eq 1 ] || usage; cmd_run ;;
+  status) [ $# -le 2 ] || usage; cmd_status "${2:-}" ;;
+  stop)   [ $# -le 2 ] || usage; cmd_stop "${2:-}" ;;
+  run)    [ $# -eq 2 ] || usage; cmd_run "$2" ;;
   "")     usage ;;
   *)      cmd_launch "$@" ;;
 esac

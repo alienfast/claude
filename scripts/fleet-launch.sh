@@ -255,16 +255,17 @@ fi
 # A /fleet-sequence is solo work by definition (skills/fleet-sequence/SKILL.md § Relationship to the fleet
 # skills): it refuses to start mid-fleet, and a fleet must not start mid-sequence either. The live runner
 # is the evidence — the marker outlives the run, so `running` under a dead runner pid is a crash, not a
-# sequence.
-seq_marker="$main_checkout/tmp/fleet-sequence.json"
-if [ -s "$seq_marker" ] && [ "$(jq -r '.status // empty' "$seq_marker" 2>/dev/null)" = "running" ]; then
+# sequence. Each sequence keeps its own marker (tmp/fleet-sequence-<slug>.json), and any live one refuses.
+for seq_marker in "$main_checkout"/tmp/fleet-sequence-*.json; do
+  [ -s "$seq_marker" ] || continue
+  [ "$(jq -r '.status // empty' "$seq_marker" 2>/dev/null)" = "running" ] || continue
   seq_pid=$(jq -r '.runner_pid // empty' "$seq_marker" 2>/dev/null)
   if [[ "$seq_pid" =~ ^[0-9]+$ ]] && kill -0 "$seq_pid" 2>/dev/null; then
     echo "ERROR: a /fleet-sequence is running (runner pid $seq_pid: $(jq -r '(.queue // []) | join(" → ")' "$seq_marker")) — sequenced work is solo." >&2
     echo "       Let it finish (fleet-sequence.sh status) or stop it (fleet-sequence.sh stop), then re-run. Nothing was dispatched." >&2
     exit 1
   fi
-fi
+done
 
 # Prior-run ledgers (tmp/auto-state-*.json) deliberately persist after a fleet ends so the
 # operator and /fleet-retro can examine them; a NEW launch is where they expire. Clear the

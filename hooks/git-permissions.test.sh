@@ -234,9 +234,9 @@ assert_blocked_in "$R" "git checkout feature" "a fleet launched with no time bud
 printf 'not json' > "$R/tmp/fleet-deadline.json"
 assert_blocked_in "$R" "git checkout feature" "an unreadable marker fails closed"
 rm -f "$R/tmp/fleet-deadline.json"
-printf '{"status": "running", "queue": ["TT-1"]}\n' > "$R/tmp/fleet-sequence.json"
+printf '{"status": "running", "queue": ["TT-1"]}\n' > "$R/tmp/fleet-sequence-tt-1.json"
 assert_allowed_in "$R" "git checkout feature" "a running /fleet-sequence never parks the checkout, so it gates nothing"
-rm -f "$R/tmp/fleet-sequence.json"
+rm -f "$R/tmp/fleet-sequence-tt-1.json"
 echo "== 12e. from a linked worktree, the markers are read from the MAIN checkout"
 WT="$WORK/r1-wt"; git -C "$R" worktree add -q "$WT" feature
 assert_allowed_in "$WT" "git checkout main" "hook allows; git itself refuses a branch checked out elsewhere"

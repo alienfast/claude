@@ -266,18 +266,20 @@ ck_has "override warned"              "does not carry epic:EP-3" "$WORK/out"
 # case 16: a /fleet-sequence whose runner is alive refuses the launch — sequenced work is solo. A crashed
 # runner (marker still `running`, pid gone) or a finished sequence does not. The scope token keeps the
 # launch on the checkout's own branch, as in case 15, so no posture is set.
-printf '{"status":"running","queue":["SQ-1","SQ-2"],"runner_pid":%s}\n' "$$" > "$REPO/tmp/fleet-sequence.json"
+# Each sequence has its own marker, so the live one is found among finished and crashed siblings.
+dead=$(sh -c 'echo $$')
+printf '{"status":"done","queue":["SQ-7"],"runner_pid":%s}\n' "$$" > "$REPO/tmp/fleet-sequence-sq-7.json"
+printf '{"status":"running","queue":["SQ-1","SQ-2"],"runner_pid":%s}\n' "$$" > "$REPO/tmp/fleet-sequence-sq-1.json"
 : > "$WORK/dispatches"
 ck "running sequence exits 1"            "1" "$(run 1 epic:EP-3)"
 ck "running sequence dispatches nothing" "0" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
 ck_has "running sequence named"          "a /fleet-sequence is running (runner pid $$: SQ-1 → SQ-2)" "$WORK/out"
 ck_has "running sequence says nothing ran" "Nothing was dispatched." "$WORK/out"
-dead=$(sh -c 'echo $$')
-printf '{"status":"running","queue":["SQ-1"],"runner_pid":%s}\n' "$dead" > "$REPO/tmp/fleet-sequence.json"
+printf '{"status":"running","queue":["SQ-1"],"runner_pid":%s}\n' "$dead" > "$REPO/tmp/fleet-sequence-sq-1.json"
 ck "crashed runner does not block"       "0" "$(run 1 epic:EP-3)"
-printf '{"status":"done","queue":["SQ-1"],"runner_pid":%s}\n' "$$" > "$REPO/tmp/fleet-sequence.json"
+printf '{"status":"done","queue":["SQ-1"],"runner_pid":%s}\n' "$$" > "$REPO/tmp/fleet-sequence-sq-1.json"
 ck "finished sequence does not block"    "0" "$(run 1 epic:EP-3)"
-rm -f "$REPO/tmp/fleet-sequence.json"
+rm -f "$REPO/tmp/fleet-sequence-sq-1.json" "$REPO/tmp/fleet-sequence-sq-7.json"
 
 echo
 echo "$PASS passed / $FAIL failed"

@@ -129,7 +129,17 @@ export FLEET_SEQUENCE_POLL=0 FLEET_SEQUENCE_GRACE=0 FLEET_SEQUENCE_FOREGROUND=1 
        FLEET_SEQUENCE_MERGE_TIMEOUT=1 FLEET_SEQUENCE_PR_UPDATE_TIMEOUT=5
 
 run() { ( cd "$REPO" && "$SCRIPT" "$@" ) >"$WORK/out" 2>&1; echo $?; }
-marker() { jq -r "$1" "$REPO/tmp/fleet-sequence.json"; }
+marker() { jq -r "$1" "$REPO/tmp/fleet-sequence-${2:-bf-1}.json"; } # marker <jq filter> [<slug>, default bf-1]
+# An earlier sequence's marker as a crashed or still-live runner leaves it. A pr-mode one is resumable only while its branch exists.
+mk_marker() { # mk_marker <slug> <status> <runner pid|null> <pr|merge> <base> <queue json> [<issues json>]
+  local branch="\"seq/$1\"" issues="${7:-}"
+  [ "$4" = "merge" ] && branch=null
+  [ -n "$issues" ] || issues='{}'
+  jq -n --arg slug "$1" --arg st "$2" --argjson pid "$3" --arg mode "$4" --arg base "$5" --argjson q "$6" --argjson i "$issues" --argjson br "$branch" \
+    '{slug: $slug, queue: $q, base: $base, mode: $mode, branch: $br, claude_args: [], status: $st, reason: "", stop_requested: false,
+      current: null, issues: $i, pr_url: null, pr_number: null, launch_epoch: 1, runner_pid: $pid}' > "$REPO/tmp/fleet-sequence-$1.json"
+}
+dead_pid() { sh -c 'echo $$'; }
 dispatches() { grep -c -- '/auto ' "$WORK/dispatches" 2>/dev/null || true; }
 prs_created() { local c; c=$(grep -c '^create ' "$WORK/gh-calls" 2>/dev/null); echo "${c:-0}"; }
 on_origin() { git -C "$REPO" ls-remote --heads origin "$1" 2>/dev/null | wc -l | tr -d ' '; }
@@ -324,8 +334,9 @@ git -C "$REPO" push -q -u origin other
 : > "$WORK/dispatches"
 ck "other base exits 0"         "0" "$(run BF-4)"
 ck_lacks "no resume on a new base" "Resuming" "$WORK/out"
-ck "fresh marker has only BF-4" "BF-4" "$(marker '.issues | keys | join(" ")')"
-ck "fresh branch named after the first issue" "seq/bf-4" "$(marker .branch)"
+ck "fresh marker has only BF-4" "BF-4" "$(marker '.issues | keys | join(" ")' bf-4)"
+ck "fresh branch named after the first issue" "seq/bf-4" "$(marker .branch bf-4)"
+ck "the earlier sequence's marker is kept" "BF-1 BF-2 BF-3" "$(marker '.queue | join(" ")')"
 ck_has "PR targets the launch branch" "create seq/bf-4 other BF-4: Title of BF-4" "$WORK/gh-calls"
 ck "still on other"             "other" "$(git -C "$REPO" branch --show-current)"
 ck "a shipped issue outside the marker is still refused" "1" "$(run BF-1 BF-5)"
@@ -391,7 +402,7 @@ export FLEET_SEQUENCE_ISSUE_TIMEOUT=5
 
 # ---- stop requested mid-run: the in-flight issue finishes, nothing else starts, no PR ----
 reset
-printf 'tmp=$(jq ".stop_requested = true" "%s/tmp/fleet-sequence.json"); printf "%%s\\n" "$tmp" > "%s/tmp/fleet-sequence.json"\n' "$REPO" "$REPO" > "$WORK/hook-BF-1"
+printf 'tmp=$(jq ".stop_requested = true" "%s/tmp/fleet-sequence-bf-1.json"); printf "%%s\\n" "$tmp" > "%s/tmp/fleet-sequence-bf-1.json"\n' "$REPO" "$REPO" > "$WORK/hook-BF-1"
 ck "stop exits 0"               "0" "$(run BF-1 BF-2 BF-3)"
 ck "stop dispatched once"       "1" "$(dispatches)"
 ck "marker stopped"             "stopped" "$(marker .status)"
@@ -485,6 +496,120 @@ git -C "$REPO" checkout -q main
 : > "$WORK/dispatches"
 ck "default branch launch has no note" "0" "$(run BF-3)"
 ck_lacks "no note on the default branch" "NOTE: launching from" "$WORK/out"
+
+# ---- sequences are discrete: a list sharing no issue with an earlier sequence from the same branch is a NEW one ----
+# 2026-09-21: `BF-2034 BF-1794` launched from the branch an earlier `BF-2022 …` sequence had used — its runner
+# dead, its BF-2022 session still working — was read as a resume, shipped onto seq/bf-2022, and rewrote that
+# sequence's marker and log.
+reset
+echo failed > "$WORK/outcome-BF-2"
+ck "earlier sequence fails"          "1" "$(run BF-1 BF-2 BF-3)"
+tmpm=$(jq --argjson p "$(dead_pid)" '.status = "running" | .runner_pid = $p' "$REPO/tmp/fleet-sequence-bf-1.json"); printf '%s\n' "$tmpm" > "$REPO/tmp/fleet-sequence-bf-1.json"
+: > "$WORK/forks"; : > "$WORK/gh-calls"
+ck "disjoint list exits 0"           "0" "$(run BF-7 BF-8)"
+ck_lacks "disjoint list is no resume" "Resuming" "$WORK/out"
+ck "disjoint list gets its own branch" "seq/bf-7" "$(marker .branch bf-7)"
+ck "its forks never touch the earlier branch" "BF-7 head=main src=seq/bf-7 ahead=0,BF-8 head=main src=seq/bf-7 ahead=1" "$(grep '^BF-' "$WORK/forks" | paste -sd, -)"
+ck "earlier branch keeps only its own ship" "1" "$(git -C "$REPO" rev-list --count main..seq/bf-1)"
+ck "earlier marker's queue untouched" "BF-1 BF-2 BF-3" "$(marker '.queue | join(" ")')"
+ck "earlier marker's ship untouched" "shipped" "$(marker '.issues["BF-1"].outcome')"
+ck_has "its PR carries only its own issues" "create seq/bf-7 main seq/bf-7: BF-7, BF-8" "$WORK/gh-calls"
+ck "status names the other sequence" "0" "$(run status)"
+ck_has "status lists the earlier one" "**Other sequences here:** BF-1 → BF-2 → BF-3 (running)" "$WORK/out"
+ck "status by issue reads the earlier one" "0" "$(run status BF-2)"
+ck_has "status by issue shows its branch" "**branch:** \`seq/bf-1\`" "$WORK/out"
+ck "status for an unknown issue exits 0" "0" "$(run status BF-99)"
+ck_has "status says no sequence names it" "No sequence here names BF-99" "$WORK/out"
+
+# A finished sequence is not reopened either: the next list from the same branch gets its own branch and its own PR.
+reset
+ck "first sequence done"             "0" "$(run BF-1 BF-2)"
+ck "second sequence done"            "0" "$(run BF-5)"
+ck "second PR is its own"            "https://github.com/x/y/pull/2" "$(marker .pr_url bf-5)"
+ck "first PR untouched"              "https://github.com/x/y/pull/1" "$(marker .pr_url)"
+ck "first branch untouched"          "2" "$(git -C "$REPO" rev-list --count main..seq/bf-1)"
+
+# ---- a list resumes the sequence it shares an issue with — even with the first issue dropped ----
+reset
+echo failed > "$WORK/outcome-BF-1"
+ck "first issue fails"               "1" "$(run BF-1 BF-2 BF-3)"
+: > "$WORK/forks"
+ck "dropping the failed head resumes" "0" "$(run BF-2 BF-3)"
+ck "resumed onto the same branch"    "seq/bf-1" "$(marker .branch)"
+ck "no second branch"                "seq/bf-1" "$(git -C "$REPO" branch --list 'seq/*' --format='%(refname:short)' | paste -sd, -)"
+ck "no second marker"                "1" "$(ls "$REPO"/tmp/fleet-sequence-*.json | wc -l | tr -d ' ')"
+ck "resumed forks from the kept branch" "BF-2 head=main src=seq/bf-1 ahead=0" "$(sed -n 1p "$WORK/forks")"
+
+# A list sharing issues with two earlier sequences cannot say which one it resumes.
+reset
+echo failed > "$WORK/outcome-BF-2"; echo failed > "$WORK/outcome-BF-6"
+ck "sequence one fails"              "1" "$(run BF-1 BF-2)"
+ck "sequence two fails"              "1" "$(run BF-5 BF-6)"
+: > "$WORK/dispatches"
+ck "ambiguous list exits 1"          "1" "$(run BF-2 BF-6)"
+ck_has "names the ambiguity"         "shares issues with 2 earlier sequences" "$WORK/out"
+ck "ambiguous list dispatched nothing" "0" "$(dispatches)"
+
+# ---- a live sequence: its issues are refused, a disjoint list runs alongside, two merge runs never share a base ----
+reset
+mk_marker bf-1 running $$ pr main '["BF-1","BF-2"]'
+ck "an issue in a live sequence exits 1" "1" "$(run BF-2 BF-5)"
+ck_has "names the live sequence"     "BF-2 already in a running sequence (BF-1 → BF-2, runner pid $$)" "$WORK/out"
+ck "refusal created no branch"       "" "$(git -C "$REPO" branch --list 'seq/*')"
+ck "a disjoint list runs alongside"  "0" "$(run BF-5)"
+ck "alongside, on its own branch"    "seq/bf-5" "$(marker .branch bf-5)"
+ck "live marker untouched"           "running" "$(marker .status)"
+reset
+mk_marker bf-1 running $$ merge main '["BF-1","BF-2"]'
+ck "second merge run on the same base exits 1" "1" "$(run merge BF-5)"
+ck_has "explains the ambiguity"      "a merge-mode sequence is already merging into 'main'" "$WORK/out"
+ck "a pr-mode list still runs alongside it" "0" "$(run BF-5)"
+
+# ---- stop / status choose among several ----
+reset
+mk_marker bf-1 running $$ pr main '["BF-1","BF-2"]'
+mk_marker bf-5 running $$ pr main '["BF-5"]'
+ck "bare stop with two running exits 1" "1" "$(run stop)"
+ck_has "asks for an issue"           "2 sequences are running" "$WORK/out"
+ck "stop by issue exits 0"           "0" "$(run stop BF-5)"
+ck "that sequence is stopping"       "true" "$(marker .stop_requested bf-5)"
+ck "the other is not"                "false" "$(marker .stop_requested)"
+ck "bare status exits 0"             "0" "$(run status)"
+ck_has "bare status shows one running sequence" "**Sequence:** BF-1 → BF-2" "$WORK/out"
+ck_has "and the other"               "**Sequence:** BF-5" "$WORK/out"
+
+# ---- a resume adopts the session an earlier run dispatched: a runner can die under a restart its child survives ----
+# The adopted session is waited on, never dispatched twice; its issue may already sit at Ready For Release.
+reset
+git -C "$REPO" branch seq/bf-1 main
+tip=$(git -C "$REPO" rev-parse seq/bf-1)
+mk_marker bf-1 failed null pr main '["BF-1","BF-2"]' "{\"BF-1\":{\"session\":\"ab000009\",\"started_epoch\":1,\"tip_before\":\"$tip\",\"outcome\":\"unknown\"}}"
+printf '[{"id":"ab000009","kind":"background","state":"running"}]\n' > "$WORK/agents.json"
+ck "unlisted in-flight issue exits 1" "1" "$(run BF-2)"
+ck_has "asks for it to be listed"    "BF-1 was dispatched by an earlier run of this sequence (session ab000009)" "$WORK/out"
+export FLEET_SEQUENCE_ISSUE_TIMEOUT=1
+ck "adopted session still working times out" "1" "$(run BF-1 BF-2)"
+ck "and was never dispatched again"  "0" "$(dispatches)"
+ck_has "the wait names the adopted session" "BF-1: session ab000009 still running after 1s" "$WORK/out"
+export FLEET_SEQUENCE_ISSUE_TIMEOUT=5
+# The adopted session ships: its ledger appears and the branch moves, as /finish merge would leave them.
+jq -n '{mode:"single",status:"active",shipped:["BF-1"],canceled:[],skipped:[],failed:[]}' > "$REPO/tmp/auto-state-ab000009.json"
+new=$(git -C "$REPO" -c user.email=t@t -c user.name=t commit-tree -p "$tip" -m "BF-1: work" "$tip^{tree}"); git -C "$REPO" update-ref refs/heads/seq/bf-1 "$new"
+printf '{"labels":{"nodes":[{"name":"specified"}]},"state":{"name":"Ready For Release"}}\n' > "$WORK/issue-BF-1.json"
+: > "$WORK/dispatches"; : > "$WORK/forks"
+ck "adopting resume exits 0"         "0" "$(run BF-1 BF-2)"
+ck_has "adoption announced"          "still in its earlier session, waited on and not dispatched again — BF-1 (session ab000009)" "$WORK/out"
+ck "only the rest was dispatched"    "/auto BF-2" "$(grep -o -- '/auto [A-Z]*-[0-9]*' "$WORK/dispatches" | paste -sd, -)"
+ck "adopted outcome recorded"        "shipped ab000009" "$(marker '.issues["BF-1"] | "\(.outcome) \(.session)"')"
+ck "adopted landing recorded"        "$new" "$(marker '.issues["BF-1"].landed_sha')"
+ck "the next issue forks past it"    "BF-2 head=main src=seq/bf-1 ahead=1" "$(sed -n 1p "$WORK/forks")"
+ck_has "PR roster carries the adopted issue" "seq/bf-1: BF-1, BF-2" "$WORK/gh-calls"
+# A recorded session that ended without shipping is a retry, exactly as re-listing a failed issue always was.
+reset
+git -C "$REPO" branch seq/bf-1 main
+mk_marker bf-1 failed null pr main '["BF-1","BF-2"]' "{\"BF-1\":{\"session\":\"ab000009\",\"started_epoch\":1,\"tip_before\":\"$(git -C "$REPO" rev-parse main)\",\"outcome\":\"unknown\"}}"
+ck "ended session is re-dispatched"  "0" "$(run BF-1 BF-2)"
+ck "both issues dispatched"          "/auto BF-1,/auto BF-2" "$(grep -o -- '/auto [A-Z]*-[0-9]*' "$WORK/dispatches" | paste -sd, -)"
 
 # ---- status / stop with no marker ----
 reset

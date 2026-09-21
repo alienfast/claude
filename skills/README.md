@@ -236,12 +236,13 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 - When the list completes, `scripts/integration-pr.sh` pushes and opens the PR with a roster body (bare IDs, no close keywords), then a last `/pr-update` child writes the real description; the base moving during the run costs one catch-up merge, reported when the PR opens
 - Why not a PR stack: GitHub stacks assume rebase-and-restack; this house merges only, so a moved base meant re-merging every level with its own CI run (September 2026)
 - The wait ends on the session's ledger outcome, not the registry — a session can sit busy for hours after shipping; a stale ledger from an earlier run is ignored by mtime
-- `status` / `stop` forms; re-running the same list resumes, skipping what already shipped (a list whose every issue shipped repeats only the PR step); every key it set is unset on every exit; sessions are never killed
+- Sequences are discrete: the list decides which sequence a launch is — one sharing an issue with an earlier sequence resumes it, one sharing none is a new sequence with its own branch, marker, log and PR — and several may run at once, an issue belonging to one live sequence
+- `status` / `stop` forms (an optional issue ID picks the sequence); re-running the same list resumes, skipping what already shipped (a list whose every issue shipped repeats only the PR step) and adopting a session that outlived its runner instead of dispatching its issue twice; every key it set is unset on every exit; sessions are never killed
 
 **Structure**:
 
 - All logic in `~/.claude/scripts/fleet-sequence.sh` (PR opening shared with the epic fleet in `scripts/integration-pr.sh`); `SKILL.md` dispatches and narrates
-- Marker `tmp/fleet-sequence.json`, log `tmp/fleet-sequence.log`; each child session is named `fleet-sequence <ID>` in `claude agents`, the closing one `fleet-sequence pr-update`
+- One marker and log per sequence, keyed by the lowercased first ID of the list that created it: `tmp/fleet-sequence-<slug>.json`, `tmp/fleet-sequence-<slug>.log`; each child session is named `fleet-sequence <ID>` in `claude agents`, the closing one `fleet-sequence pr-update`
 
 ### fleet-forecast
 
