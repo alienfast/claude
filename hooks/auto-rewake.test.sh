@@ -11,8 +11,9 @@
 # 429 produced against a mock API the same day. Re-snapshot them from a live transcript when the harness changes.
 #
 # The load-bearing cases are #1/#2 (the lost wakeup, with and without the ending turn's summary on disk — #1 is the
-# ordering hazard that makes auto-heartbeat.sh's `armed` verdict unusable here), #21 (a turn DID follow: never wake a
-# live session) and the registration block (a missing `timeout` or `asyncRewake` disables the hook without a sound).
+# ordering hazard that makes auto-heartbeat.sh's `armed` verdict unusable here), #21 and #27 (a turn DID follow: never
+# wake a live session — #27 is the shape where the hook cannot see that it did) and the registration block (a missing
+# `timeout` or `asyncRewake` disables the hook without a sound).
 #
 # GROW THIS SUITE, NEVER PRUNE IT. Every newly observed silent-death shape becomes a numbered case, added WITH its fix.
 
@@ -157,8 +158,10 @@ ck "21a ... the counter moved"                                 1 "$(get_state s-
 ck "21a ... the log records the rewake"                        1 "$(grep -c 's-e2e-lo Stop rewake kind=stop' "$LOGS/auto-rewake.log")"
 
 # 21b. The wakeup fires (late) while the hook waits: a turn followed, so stand down in silence.
-N=$(date +%s); f=$(tfile); { rec_loop $((N-3000)); rec_fire $((N-20)); rec_loop $((N-20)); rec_wake $((N-1)) 4; rec_result "$N"; rec_text "$N"; rec_stopsum "$N"; } > "$f"
-( sleep 3; M=$(date +%s); { rec_fire "$M"; rec_loop "$M"; } >> "$f" ) &
+#      The appended records carry whole-second stamps and must clear the hook's 2s slack with room to spare: appended
+#      at +3 they sat on that boundary, and this case flaked whenever the hook's start crossed a second.
+N=$(date +%s); f=$(tfile); { rec_loop $((N-3000)); rec_fire $((N-20)); rec_loop $((N-20)); rec_wake $((N-1)) 7; rec_result "$N"; rec_text "$N"; rec_stopsum "$N"; } > "$f"
+( sleep 5; M=$(date +%s); { rec_fire "$M"; rec_loop "$M"; } >> "$f" ) &
 run_hook "$(ev Stop "$f" s-e2e-live)" 2 900
 wait
 ck "21b a turn followed during the wait -> exit 0"             0 "$RC"
@@ -187,6 +190,41 @@ f=$(tfile); { rec_plain $((B-60)); rec_text "$B"; } > "$f"
 run_hook "$(ev Stop "$f" s-ordinary)" 1 1
 ck "24 ordinary session -> exit 0"                             0 "$RC"
 ck "24 ... and no log line"                                    0 "$(grep -c 's-ordina' "$LOGS/auto-rewake.log")"
+
+# 27. THE FALSE WAKE (fleet of 2026-09-19/20): the session leaves its worktree while an instance sleeps, and the harness
+#     re-keys the project directory — the transcript MOVES, the old directory stays behind empty, and the turn carries on
+#     in the new file. The instance still holds the old path. It must read that as "cannot measure", never as "silent".
+P="$TMP/projects"; WT="$P/-work--claude-worktrees-bfp-137"; MAIN="$P/-work"; mkdir -p "$WT" "$MAIN"
+N=$(date +%s); f="$WT/s-e2e-rekey.jsonl"; { rec_loop $((N-3000)); rec_fire $((N-20)); rec_loop $((N-20)); rec_wake $((N-1)) 1; rec_result "$N"; rec_text "$N"; rec_stopsum "$N"; } > "$f"
+( sleep 1; mv "$f" "$MAIN/"; M=$(date +%s); { rec_work "$M"; rec_text "$M"; } >> "$MAIN/s-e2e-rekey.jsonl" ) &
+run_hook "$(ev Stop "$f" s-e2e-rekey '{"stop_hook_active":false}')" 3 900
+wait
+ck "27 transcript re-keyed during the wait -> exit 0"          0 "$RC"
+ck "27 ... nothing is said to the model"                       0 "$(wc -c < "$TMP/err" | tr -d ' ')"
+ck "27 ... the log names why it stood down"                    1 "$(grep -c 's-e2e-re Stop stood-down kind=stop reason=transcript-unreadable' "$LOGS/auto-rewake.log")"
+ck "27 ... no rewake was counted"                              0 "$(get_state s-e2e-rekey stop_rewakes)"
+
+# 28. Instances OVERLAP on a busy session (each turn end launches one, and most wakeups are superseded), so the count is
+#     read when it is used: two that both launched at 0 are rewakes 1 and 2, never 1 and 1. stop_hook_active keeps the
+#     launch-time reset out of the way — what is under test is the read at wake.
+N=$(date +%s); f=$(tfile); { rec_loop $((N-3000)); rec_fire $((N-20)); rec_loop $((N-20)); rec_wake $((N-1)) 1; rec_result "$N"; rec_text "$N"; rec_stopsum "$N"; } > "$f"
+E=$(ev Stop "$f" s-e2e-overlap '{"stop_hook_active":true}')
+for g in 1 4; do
+  ( printf '%s' "$E" | AUTO_REWAKE_GRACE="$g" AUTO_REWAKE_SETTLE=1 AUTO_REWAKE_LOG_DIR="$LOGS" "$HOOK" > /dev/null 2> "$TMP/err.$g" ) &
+done
+wait
+ck "28 overlapping instances: the first is rewake 1"           1 "$(grep -c 'rewake 1 of 12' "$TMP/err.1")"
+ck "28 ... the second is rewake 2, not a second 1"             1 "$(grep -c 'rewake 2 of 12' "$TMP/err.4")"
+ck "28 ... and the counter holds both"                         2 "$(get_state s-e2e-overlap stop_rewakes)"
+
+# 29. The cap is re-tested at the wake: an instance that launched under it does not rewake once others have reached it.
+N=$(date +%s); f=$(tfile); { rec_loop $((N-3000)); rec_fire $((N-20)); rec_loop $((N-20)); rec_wake $((N-1)) 1; rec_result "$N"; rec_text "$N"; rec_stopsum "$N"; } > "$f"
+( sleep 1; set_state s-e2e-capwake '{"stop_rewakes":12}' ) &
+run_hook "$(ev Stop "$f" s-e2e-capwake '{"stop_hook_active":true}')" 3 900
+wait
+ck "29 cap reached while the instance slept -> exit 0"         0 "$RC"
+ck "29 ... nothing is said to the model"                       0 "$(wc -c < "$TMP/err" | tr -d ' ')"
+ck "29 ... the log names the cap"                              1 "$(grep -c 's-e2e-ca Stop stood-down kind=stop reason=stop-cap n=12' "$LOGS/auto-rewake.log")"
 
 echo "auto-rewake.sh — registration (../settings.json):"
 # Both fields are load-bearing and both fail silently. Measured 2026-09-19: without asyncRewake the exit code wakes

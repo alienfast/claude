@@ -349,6 +349,20 @@ Filed issues are output too, and they fail in ways the metrics cannot see. Check
   filing into `Planned` at birth, so audit a Planned filing against that rule before flagging it),
   and anything in the team's default/Triage state is a stranded filing — a raw `issues create`
   without `--state` — to move to Backlog and trace to its filing path.
+  **An issue's state at retro time is not its state at birth — read its `history` before calling a Planned issue
+  misplaced.** The keeper curates while a fleet runs — by hand, or through an interactive skill that promotes on the
+  keeper's approval — so a pipeline filing found in Planned may have been filed to Backlog correctly and promoted
+  afterwards, which is the keeper's call and not a filing fault: never propose moving it back. The state transitions
+  show it:
+  `linear-cli api query 'query { issue(id: "<ID>") { createdAt history(first: 100) { nodes { createdAt fromState { name } toState { name } } } } }' -o json | jq -r '.data.issue | "created \(.createdAt)", (.history.nodes[] | select(.toState) | "\(.createdAt) \(.fromState.name) -> \(.toState.name)")'`
+  — a `Backlog -> Planned` row later than `createdAt` is a promotion, and a filing born in Planned has no such row: its
+  first transition, if it has one, starts from `Planned`. Rows come newest-first and most carry no state change at
+  all (label, relation and assignee edits), so a short `first:` drops a busy issue's oldest rows — the promotion among
+  them — and the issue then reads as born in Planned. Where the fleet runs on the keeper's own Linear login the row's
+  `actor` cannot say who moved it, since every row carries the one identity; the run's transcripts can, because a
+  session that wrote the state shows the call. Measured on two consecutive retros (2026-09-19, 2026-09-20) — one
+  flagged a High-priority filing the sanctioned routing had placed, the next flagged two that the keeper had promoted
+  by hand an hour after they were filed to Backlog, and proposed moving them back.
 - **Missing collision edges.** Group the run's filings by mechanism/file (their titles and bodies name
   it) and check `linear-cli relations list` on each same-mechanism sibling pair: two fleet-pickable
   `specified` siblings editing one method body, or one a prerequisite of the other, need a `blocks`

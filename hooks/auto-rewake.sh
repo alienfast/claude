@@ -42,6 +42,8 @@
 #   - A non-transient API error (authentication, billing, invalid request, ...): a retry cannot fix it; a human must.
 #   - A turn DID follow — the wakeup fired late, a task notification landed, an operator attached, or a synchronous
 #     Stop hook blocked this very stop. Anything newer than this hook's start means the session is not dead.
+#   - The transcript cannot be read after the wait (`stood-down … reason=transcript-unreadable`). Being unable to measure
+#     is not evidence of silence, and waking a healthy session is the costlier mistake: it is told to run an iteration.
 #   - The per-session caps (AUTO_REWAKE_STOP_MAX 12 consecutive rewakes, AUTO_REWAKE_API_MAX 24 = six hours of retries),
 #     so a session whose scheduler is simply broken, or a multi-day quota block, cannot be revived forever.
 #
@@ -120,17 +122,30 @@ turn_wakeup() {
 
 # How many main-loop records that START or CARRY a turn are newer than <epoch>: a fired wakeup opens with a
 # scheduled_task_fire system record, everything else with a user record, and any assistant record means work ran.
+# FAILS when the count cannot be measured, and never answers with a guessed 0: the caller wakes the session on a 0.
+# A `|| echo 0` hung off this pipeline did exactly that under pipefail — tail failed, jq had already printed its own 0,
+# and the two-line "0\n0" killed the caller's -gt test, which reads as false. The file test is explicit so that the
+# contract does not rest on a shell option.
 turns_since() {
-  tail -n "$TAIL_LINES" "$TRANSCRIPT_PATH" 2>/dev/null | jq -nR --argjson since "$1" '
+  local n
+  [[ -f "$TRANSCRIPT_PATH" && -r "$TRANSCRIPT_PATH" ]] || return 1
+  n=$(tail -n "$TAIL_LINES" "$TRANSCRIPT_PATH" 2>/dev/null | jq -nR --argjson since "$1" '
     [ inputs | fromjson? | select(type == "object") | select(.isSidechain != true)
       | select((.type == "user") or (.type == "assistant")
                or ((.type == "system") and (.subtype == "scheduled_task_fire")))
       | (try (.timestamp | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) catch null)
-      | select((. != null) and (. > $since)) ] | length' 2>/dev/null || echo 0
+      | select((. != null) and (. > $since)) ] | length' 2>/dev/null) || return 1
+  [[ "$n" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "$n"
 }
 
 state_file() { printf '%s/auto-rewake/%s.json' "$LOG_DIR" "$SESSION"; }
-counter() { jq -r --arg k "$1" '.[$k] // 0' "$(state_file)" 2>/dev/null || echo 0; }
+# Unlike turns_since, an unreadable count answers 0: a lost count must not cost a rewake (set_counter, below).
+counter() {
+  local v
+  v=$(jq -r --arg k "$1" '.[$k] // 0' "$(state_file)" 2>/dev/null) || v=0
+  [[ "$v" =~ ^[0-9]+$ ]] && printf '%s\n' "$v" || echo 0
+}
 set_counter() { # set_counter <key> <value> — atomic, and never fatal: a lost count must not cost a rewake
   local f tmp; f=$(state_file); tmp="$f.$$"
   mkdir -p "$(dirname "$f")" 2>/dev/null || return 0
@@ -212,15 +227,28 @@ if [[ "$ACTION" != "wait" ]]; then
   exit 0
 fi
 
-KIND=$(jq -r '.kind' <<<"$DEC"); WAIT=$(jq -r '.wait_s' <<<"$DEC"); N=$(jq -r '.n' <<<"$DEC")
+KIND=$(jq -r '.kind' <<<"$DEC"); WAIT=$(jq -r '.wait_s' <<<"$DEC")
 STARTED=$(date +%s)
 log "wait kind=$KIND wait_s=$WAIT"
 [[ "$WAIT" -gt 0 ]] && sleep "$WAIT"
 
+# A transcript this instance can no longer read is NOT an idle session. The harness re-keys a session's project directory
+# when it enters or leaves a worktree, moving the transcript out from under the path captured at launch — and the session
+# does that from inside a turn, so the move is itself evidence one followed; that turn's end launched its own instance.
+# Measured 2026-09-20 on a three-session fleet: all 74 stop rewakes were of sessions a turn HAD followed in.
 # 2s of slack: the records of the turn that just ended are stamped before this hook started, but only just.
-FOLLOWED=$(turns_since $(( STARTED + 2 )))
-if [[ "${FOLLOWED:-0}" -gt 0 ]]; then
+FOLLOWED=$(turns_since $(( STARTED + 2 ))) || { log "stood-down kind=$KIND reason=transcript-unreadable"; exit 0; }
+if [[ "$FOLLOWED" -gt 0 ]]; then
   log "stood-down kind=$KIND records_since=$FOLLOWED"
+  exit 0
+fi
+
+# The count is read HERE, not carried from launch: a busy session supersedes its wakeups, so instances overlap, and each
+# would otherwise add one to the same stale number. The cap is re-tested for the same reason.
+N=$(counter "${KIND}_rewakes")
+MAX=$STOP_MAX; [[ "$KIND" == "api" ]] && MAX=$API_MAX
+if [[ "$N" -ge "$MAX" ]]; then
+  log "stood-down kind=$KIND reason=$KIND-cap n=$N"
   exit 0
 fi
 
