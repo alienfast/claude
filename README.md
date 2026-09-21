@@ -264,7 +264,7 @@ Automatic quality checks that run without manual invocation.
 |------|---------|-------------|
 | [git-permissions](hooks/git-permissions.sh) | Before git commands | Blocks destructive operations (`reset --hard`/`--mixed`, `restore`/`checkout <file>`, `clean -f`, `--force`) |
 | [scratch-path-guard](hooks/scratch-path-guard.sh) | Before bash commands | Denies scratch writes to bare root paths and system `/tmp` (session scratchpads exempt), steering to project-relative `tmp/` — the model self-corrects instead of stalling an autonomous run on a dangerous-path prompt |
-| [full-continue](hooks/full-continue.sh) | On stop | Keeps `/full` going: re-dispatches `/finish` if the macro stalls after `READY-FOR-FINISH` |
+| [full-continue](hooks/full-continue.sh) | On stop | Keeps `/full` going: re-dispatches `/finish` if the macro stalls at a passing review verdict or after `READY-FOR-FINISH` |
 | [auto-heartbeat](hooks/auto-heartbeat.sh) | On stop | Keeps a self-paced `/loop /auto` alive — blocks a turn that ended without arming the next wakeup, which otherwise kills the loop silently |
 | [auto-rewake](hooks/auto-rewake.sh) | On stop and on stop-failure, in the background (`asyncRewake`) | Wakes a self-paced `/loop /auto` session that went silent: an armed wakeup that never fired, or a turn a transient API error killed. Waits out the wakeup (or the retry delay), and wakes the session only if no turn followed |
 | [no-blind-sleep](hooks/no-blind-sleep.sh) | Before bash commands | Refuses a `sleep` wait that cannot end early; marker-polling loops with an exit condition still run |
@@ -370,7 +370,7 @@ No manual intervention needed — hooks run behind the scenes:
 - Destructive git commands are blocked before execution (`reset`, `restore`/`checkout <file>`, `clean -f`, `--force`)
 - Scratch writes to bare root paths or system `/tmp` are denied with redirect-to-`tmp/` guidance
 - Biome and markdownlint run after every file edit
-- On stop, `full-continue` keeps `/full` going — re-dispatching `/finish` if the macro stalls after `READY-FOR-FINISH`
+- On stop, `full-continue` keeps `/full` going — re-dispatching `/finish` if the macro stalls at a passing review verdict or after `READY-FOR-FINISH`
 
 ## Customization
 

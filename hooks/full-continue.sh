@@ -9,7 +9,11 @@
 # but has not yet dispatched Skill(finish), it blocks the stop and re-issues the
 # dispatch. It ALSO fires one step UPSTREAM of READY — at a passing /quality-review
 # verdict inside /start, before Step 10 emits the tag (BF-392, the $upstream_fire
-# branch) — the same stop-and-re-drive, keyed off the verdict instead of the tag.
+# branch) — the same stop-and-re-drive, keyed off the verdict instead of the tag. That
+# verdict is read from every carrier the transcript holds it in: the Output block as
+# assistant text, or the body staged/piped through a Write, Edit or Bash tool_use for
+# quality-review-write-verdict.sh (BF-1957: a run that persisted the verdict but only
+# ever mentioned it in prose stalled for three days — see $verdicts in decide()).
 # Self-clearing (stops firing once Skill(finish) appears) and hard-bounded (gives up
 # after a few attempts).
 #
@@ -75,6 +79,30 @@ decide() {
           + $issue
           + (if ($fa | test(" pr ")) then " pr" elif ($fa | test(" wt ")) then " merge" else "" end)
           + (if (($fa | test("no[- ]?push|don.t push|skip push")) and (($fa | test(" pr ")) | not)) then " no push" else "" end);
+      # A resolved PASSING verdict line somewhere in $s. Line-split because jq `^` is whole-string-only. The tail
+      # rejects a `|` on the line, so the unsubstituted schema (`Verdict: passed-clean | passed-after-fixes | …`)
+      # never counts — the same guard quality-review-write-verdict.sh applies to the persisted file. One def for
+      # every carrier in $verdicts below, so the enum can never drift between them.
+      def hasverdict($s):
+        any(($s | tostring | split("\n"))[] | rtrimstr("\r");
+            test("^Verdict:\\s*(passed-clean|passed-after-fixes)(\\s[^|]*)?$"));
+      # The verdict BODY as a Write/Edit tool_use input — the staged file quality-review SKILL prescribes when the
+      # stdin heredoc is refused (`tmp/verdict-body-<issue>.md`). Gated to a tmp/ path: three committed files carry
+      # a column-0 passing Verdict line (the SKILL doc, this suite, fleet-metrics.test.sh), so a /full editing one
+      # of them would otherwise read as a passing review — and the staged body never lives anywhere but tmp/.
+      def fileverdict($inp):
+        (if ($inp | type) == "object" then $inp else {} end) as $o
+        | (($o.file_path // "") | tostring | test("(^|/)tmp/"))
+          and hasverdict($o.content // $o.new_string // "");
+      # The verdict body inside a Bash command: the stdin heredoc quality-review SKILL prefers
+      # (`quality-review-write-verdict.sh <ID> - <<VERDICT_EOF`), or a heredoc staging it under tmp/ (auto mode
+      # prefers shell heredocs over Write). A column-0 `Verdict: passed-…` line inside a shell command is a heredoc
+      # body — nothing else puts one there — and the script-name/tmp/ token is what excludes a heredoc rewrite of a
+      # doc that carries the example line.
+      def bashverdict($inp):
+        (if ($inp | type) == "object" then $inp else {} end) as $o
+        | (($o.command // "") | tostring) as $c
+        | ($c | test("quality-review-write-verdict|tmp/")) and hasverdict($c);
 
       ($L | to_entries) as $E
 
@@ -154,24 +182,33 @@ decide() {
             and (([ $usercmds[] | select(.i > $lastfull.i) ] | length) == 0)
        end) as $pending
 
-    # $verdicts — non-sidechain main-conversation assistant TEXT blocks holding a PASSING /quality-review verdict
-    # line. WHY (BF-392): /full -> /start Step 9 runs /quality-review inline; it emits `Verdict: passed-clean` /
-    # `passed-after-fixes` as assistant text, then /start Step 10 is supposed to emit READY-FOR-FINISH. If the
-    # model STOPS at that verdict block (before Step 10 emits the tag) there is NO tag, $tags is empty, the READY
-    # branch never fires, and the run silently stalls In Progress with a clean-looking verdict — the BF-321 stop,
-    # one step UPSTREAM of the READY trigger. The `Verdict:` line is NOT the last line of its block (Findings/
-    # Cycles/Open items follow), so lastline anchoring cannot see it; and since jq `^` is whole-string-only, we
-    # split each block into lines and test per line. Only the two PASSING enums match — a non-passing verdict must not
-    # auto-drive to /finish. Keyed on the canonical persisted `Verdict:` Output line (quality-review SKILL Output
-    # block) — NOT the interactive `Quality review verdict:` header spelling, which is a mid-run prompt, not a stop
-    # point. Sidechain excluded: the quality-reviewer/developer delegations run as sidechains.
+    # $verdicts — non-sidechain main-conversation assistant records carrying a PASSING /quality-review verdict, by
+    # any of three carriers: (1) a TEXT block holding the Output block (the BF-392 shape); (2) a Write/Edit tool_use
+    # staging the verdict body under tmp/; (3) a Bash tool_use feeding the body to quality-review-write-verdict.sh
+    # on stdin or staging it under tmp/ by heredoc. WHY (BF-392): /full -> /start Step 9 runs /quality-review inline;
+    # it emits `Verdict: passed-clean` / `passed-after-fixes` as assistant text, then /start Step 10 is supposed to
+    # emit READY-FOR-FINISH. If the model STOPS at that verdict block (before Step 10 emits the tag) there is NO tag,
+    # $tags is empty, the READY branch never fires, and the run silently stalls In Progress with a clean-looking
+    # verdict — the BF-321 stop, one step UPSTREAM of the READY trigger. WHY carriers 2 and 3 (BF-1957, 2026-09-18):
+    # a background /auto run composed the block straight into the Write of tmp/verdict-body-bf-1957.md, persisted it
+    # with the script, and reported to the user in prose — `verdict **passed-after-fixes**` — so no text block ever
+    # carried the canonical line; twelve stops in that session and this hook fired on none, and the fully verified
+    # issue sat In Progress for three days. The persisted body is the mandated step and the transcript carries its
+    # tool_use input verbatim, so it is the stronger carrier; prose is deliberately NOT one (suite case 29b). The
+    # `Verdict:` line is NOT the last line of its block (Findings/Cycles/Open items follow), so lastline anchoring
+    # cannot see it, and hasverdict splits lines because jq `^` is whole-string-only. Only the two PASSING enums
+    # match — a non-passing verdict must not auto-drive to /finish. Keyed on the canonical persisted `Verdict:` Output
+    # line (quality-review SKILL Output block) — NOT the interactive `Quality review verdict:` header spelling, which
+    # is a mid-run prompt, not a stop point. Sidechain excluded: the quality-reviewer/developer delegations run as
+    # sidechains.
     | [ $E[]
         | .key as $i | .value as $v
         | select($v.type == "assistant" and ($v.isSidechain != true))
         | ($v.message.content // [])[]?
-        | select((type == "object") and .type == "text")
-        | select(any(.text | split("\n")[] | rtrimstr("\r");
-                     test("^Verdict:\\s*(passed-clean|passed-after-fixes)(?=\\s|$)")))
+        | select(type == "object")
+        | select( (.type == "text" and hasverdict(.text // ""))
+                  or (.type == "tool_use" and (.name == "Write" or .name == "Edit") and fileverdict(.input))
+                  or (.type == "tool_use" and .name == "Bash" and bashverdict(.input)) )
         | {i: $i} ] as $verdicts
 
     # A /quality-review dispatch (Skill tool_use skill=="quality-review", or the slash form) in the window. This

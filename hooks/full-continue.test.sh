@@ -9,7 +9,8 @@
 #
 # GROW THIS SUITE, NEVER PRUNE IT. This hook has failed in a NEW way repeatedly (READY-as-summary across
 # PL-347/349/351/353; the transcript-flush race PL-401/402; the BF-391 recovered-terminal-tag close; BF-379's
-# fenced tag; BF-321's upstream verdict stop). The durable fix is not any single patch — it is that every
+# fenced tag; BF-321's upstream verdict stop; BF-1957's verdict carried only by a Write/Bash tool_use and
+# reported in prose). The durable fix is not any single patch — it is that every
 # newly-observed real-world /full stop failure becomes a captured fixture HERE, added WITH its fix, so each mode
 # is fixed and STAYS fixed. When you discover a new stop mode, reproduce its transcript shape as a new numbered
 # case below before/with the decide() change that catches it. The suite grows monotonically; it is the gate for
@@ -96,6 +97,12 @@ asidechain() { printf '{"type":"assistant","isSidechain":true,"message":{"conten
 # The hook's own block-reason record, as the harness persists it (type:user, isMeta:true, string content). The
 # upstream attempts counter counts these by the shared REASON marker "executing the /full macro" (see the hook).
 ublock() { printf '{"type":"user","isMeta":true,"message":{"content":%s}}\n' "$(jq -Rn --arg s "You are executing the /full macro. $1" '$s')"; }
+# Tool-use carriers of the verdict body (the BF-1957 shape): a Write/Edit staging it under tmp/, a Bash call
+# piping it to quality-review-write-verdict.sh or staging it by heredoc. Inputs are JSON-quoted through jq so a
+# fixture body can carry newlines, backticks and quotes exactly as a real transcript does.
+awrite() { printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Write","input":{"file_path":%s,"content":%s}}]}}\n' "$(jq -Rn --arg s "$1" '$s')" "$(jq -Rn --arg s "$2" '$s')"; }
+aedit()  { printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":%s,"old_string":%s,"new_string":%s}}]}}\n' "$(jq -Rn --arg s "$1" '$s')" "$(jq -Rn --arg s "$2" '$s')" "$(jq -Rn --arg s "$3" '$s')"; }
+abash()  { printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":%s}}]}}\n' "$(jq -Rn --arg s "$1" '$s')"; }
 
 pass=0
 fail=0
@@ -373,6 +380,112 @@ check verdict-noqr.jsonl .pending true pending
   atext "SHIPPED-MERGE: merged into main, Ready For Release."
   atext "READY-FOR-FINISH: PL-1 — done. Run /finish PL-1 merge"; } > "$TMP/offconv-close.jsonl"
 check offconv-close.jsonl .fire false fire
+
+# 29. BF-1957 PRODUCTION SHAPE (2026-09-18, background /auto BF-1957, transcript 958cfd77): the verdict block was
+#     composed straight into the Write of tmp/verdict-body-bf-1957.md, persisted with the script, and the only text
+#     mention was prose — `verdict **passed-after-fixes**` — so the text carrier never saw the canonical line. Twelve
+#     stops, zero fires, and a fully verified issue sat In Progress for three days. The Write is the carrier here;
+#     finishargs reconstruct from the Skill(full) args /auto dispatched, exactly as recorded.
+{ askill full "auto wt BF-1957"
+  askill start "auto wt BF-1957"
+  askill quality-review "auto BF-1957"
+  awrite "/Users/x/projects/basefund/.claude/worktrees/bf-1957/tmp/verdict-body-bf-1957.md" 'Verdict: passed-after-fixes
+Cycles: 2 (initial + 1 re-review)
+Findings resolved: 8 (CRIT/impl: CreateAccessContent and EditAccessContent still hardcoded refetchQueries at stx(id:); HIGH/test: the refetchDocument threading was pinned by nothing)
+Deferred fixed in-session: 9 (get_stx_policy.rb stale alias count; ragged comment reflow across six files)
+Deferred filed as issues: BF-1991 (sub-issues of BF-1957)
+Collision edges: BF-1957 blocks BF-1991
+Deferred dropped: 2
+Open items: none'
+  abash '~/.claude/scripts/quality-review-write-verdict.sh BF-1957 tmp/verdict-body-bf-1957.md 2>&1 | tail -10; echo "EXIT=$?"'
+  atext 'BF-1957: quality review complete — verdict **`passed-after-fixes`**, persisted to both the worktree and the main checkout (so it survives `/finish merge` removing the worktree). No warnings.
+
+**2 cycles, 8 findings resolved.** The headline was a **Critical** the client reviewer caught.'; } > "$TMP/bf1957.jsonl"
+check bf1957.jsonl .fire true fire
+check bf1957.jsonl .upstream true upstream
+check bf1957.jsonl .attempts 0 attempts
+check bf1957.jsonl .finishargs "auto BF-1957 merge" finishargs
+
+# 29b. The SAME session with the two tool_use records removed — prose alone. Must NOT fire: prose is deliberately
+#      not a carrier (a `verdict passed-after-fixes` phrase in a mid-run summary is not a stop-point signal), and
+#      this is the fixture that makes #29 DISCRIMINATING — the only difference between the two is the Write/Bash
+#      carrier, so #29 fires because of it and for no other reason.
+{ askill full "auto wt BF-1957"
+  askill start "auto wt BF-1957"
+  askill quality-review "auto BF-1957"
+  atext 'BF-1957: quality review complete — verdict **`passed-after-fixes`**, persisted to both the worktree and the main checkout. No warnings.'; } > "$TMP/bf1957-prose.jsonl"
+check bf1957-prose.jsonl .fire false fire
+check bf1957-prose.jsonl .pending true pending
+
+# 30. The stdin heredoc form the quality-review SKILL PREFERS: the whole body rides inside one Bash command as the
+#     heredoc for quality-review-write-verdict.sh, and the text turn that follows is a one-line summary. Fires.
+{ ucmd /full "wt PL-1"
+  askill quality-review "PL-1"
+  abash "~/.claude/scripts/quality-review-write-verdict.sh PL-1 - <<'VERDICT_EOF'
+Verdict: passed-clean
+Cycles: 1 (initial + 0 re-reviews)
+Findings resolved: none
+Deferred fixed in-session: none
+Deferred filed as issues: none
+Deferred dropped: none
+Open items: none
+VERDICT_EOF"
+  atext "Review passed clean; verdict persisted to both tmp/ copies."; } > "$TMP/verdict-heredoc.jsonl"
+check verdict-heredoc.jsonl .fire true fire
+check verdict-heredoc.jsonl .upstream true upstream
+check verdict-heredoc.jsonl .finishargs "PL-1 merge" finishargs
+
+# 31. tmp/ PATH GUARD on the Write carrier: three committed files carry a column-0 passing Verdict line (the
+#     quality-review SKILL doc, this suite, fleet-metrics.test.sh). A /full that Writes one of them, whose review
+#     then FAILS, must NOT fire off the doc example — DISCRIMINATING: drop the `(^|/)tmp/` test in fileverdict and
+#     this flips to fire=true, driving /finish on a failed review.
+{ ucmd /full "wt PL-1"
+  awrite "/Users/x/.claude/skills/quality-review/SKILL.md" "A concrete passing example:
+Verdict: passed-after-fixes
+Cycles: 3 (initial + 2 re-reviews)
+Open items: none"
+  askill quality-review "PL-1"
+  atext "Verdict: terminated-with-open-items
+Cycles: 5
+Open items: HIGH/impl: the example block now contradicts the schema above it"; } > "$TMP/verdict-docwrite.jsonl"
+check verdict-docwrite.jsonl .fire false fire
+check verdict-docwrite.jsonl .pending true pending
+
+# 32. SCRIPT/tmp TOKEN GUARD on the Bash carrier: a heredoc rewriting a doc that carries the example line, with no
+#     quality-review-write-verdict.sh call and no tmp/ path in the command, must NOT fire when the review then
+#     FAILS — DISCRIMINATING: drop the token test in bashverdict and this flips to fire=true.
+{ ucmd /full "wt PL-1"
+  abash "cat >| standards/review-example.md <<'EOF'
+Verdict: passed-clean
+Cycles: 1 (initial + 0 re-reviews)
+EOF"
+  askill quality-review "PL-1"
+  atext "Verdict: terminated-with-open-items
+Cycles: 2
+Open items: MED/plan: the example file duplicates the SKILL Output block"; } > "$TMP/verdict-docheredoc.jsonl"
+check verdict-docheredoc.jsonl .fire false fire
+check verdict-docheredoc.jsonl .pending true pending
+
+# 33. An UNSUBSTITUTED schema line staged under tmp/ must NOT count as a passing verdict: the pipe-carrying
+#     `Verdict: passed-clean | passed-after-fixes | …` is exactly what quality-review-write-verdict.sh rejects as
+#     off-schema, and finish-read-verdict.sh would read its first token as passed-clean — the most permissive value.
+#     DISCRIMINATING for the `(\s[^|]*)?$` tail: revert it to the old `(?=\s|$)` lookahead and this fires.
+{ ucmd /full "wt PL-1"
+  askill quality-review "PL-1"
+  awrite "/Users/x/wt/tmp/verdict-body-pl-1.md" "Verdict: passed-clean | passed-after-fixes | terminated-with-open-items | escalated-to-architect
+Cycles: N (initial + N-1 re-reviews)
+Open items: none"; } > "$TMP/verdict-schema.jsonl"
+check verdict-schema.jsonl .fire false fire
+check verdict-schema.jsonl .pending true pending
+
+# 34. The Edit carrier: a staged body under tmp/ whose Verdict line is corrected to passing by an Edit (the last
+#     re-review closed the last open item) fires off new_string. In-place /full, so finishargs is the bare id.
+{ ucmd /full "PL-1"
+  askill quality-review "PL-1"
+  aedit "/Users/x/repo/tmp/verdict-body-pl-1.md" "Verdict: terminated-with-open-items" "Verdict: passed-after-fixes"
+  atext "Corrected the verdict line after the final re-review closed the last open item; re-persisting."; } > "$TMP/verdict-edit.jsonl"
+check verdict-edit.jsonl .fire true fire
+check verdict-edit.jsonl .finishargs "PL-1" finishargs
 
 echo "----------------------------------------"
 printf '%d passed, %d failed\n' "$pass" "$fail"
