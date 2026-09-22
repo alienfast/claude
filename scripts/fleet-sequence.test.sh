@@ -14,10 +14,13 @@
 # $WORK/outcome-<ID> names (default shipped), and for a shipped issue advances the source branch's REF by one
 # commit without touching HEAD, exactly what finish-merge.sh's compare-and-swap does under a parked
 # checkout. `none` = no ledger; `hang` = listed running forever; `busy` = shipped but listed running;
+# `listed-idle` / `listed-blocked` = no ledger, listed in that state forever (a turn an API error ended; a
+# permission decision); `listed-failed` / `listed-stopped` = no ledger, listed in that terminal state;
 # `deferred` = shipped with the ref unmoved and the worktree left; `queued` = deferred plus a merge-queue
 # marker; `nomention` = shipped with a commit that never names the issue. A `/pr-update` dispatch records the
 # branch it ran on. `gh pr create` numbers PRs from $WORK/prseq and records the call; a bare remote backs
-# every push.
+# every push. One case launches a real detached runner to measure its process group; everything else runs
+# the runner inline.
 set -uo pipefail
 
 SCRIPT="$(cd "$(dirname "$0")" && pwd)/fleet-sequence.sh"
@@ -71,6 +74,7 @@ else
   case "\$outcome" in
     none) ;;
     hang) state=running ;;
+    listed-*) state="\${outcome#listed-}" ;;
     *)
       list="\$outcome"; case "\$outcome" in busy|deferred|queued|nomention) list=shipped ;; esac
       [ "\$outcome" = "busy" ] && state=running
@@ -399,6 +403,49 @@ ck "hang dispatched once"       "1" "$(dispatches)"
 ck "hang left main alone"       "main" "$(git -C "$REPO" branch --show-current)"
 ck "hang unset the keys"        "" "$(fork_keys)"
 export FLEET_SEQUENCE_ISSUE_TIMEOUT=5
+
+# ---- a session the registry lists failed or stopped ended without a ledger: no timeout wait, the reason names the state ----
+for st in failed stopped; do
+  reset
+  echo "listed-$st" > "$WORK/outcome-BF-1"
+  export FLEET_SEQUENCE_ISSUE_TIMEOUT=30
+  t0=$(date +%s)
+  ck "$st exits 1"                      "1" "$(run BF-1 BF-2)"
+  ck "$st did not wait out the timeout" "1" "$(( $(date +%s) - t0 < 20 ))"
+  ck_has "$st names the registry state" "BF-1 ended without a ledger — the registry lists session ab000001 as $st" "$WORK/out"
+  ck "$st dispatched once"              "1" "$(dispatches)"
+  ck "$st unset the keys"               "" "$(fork_keys)"
+done
+export FLEET_SEQUENCE_ISSUE_TIMEOUT=5
+
+# ---- a session listed idle with no ledger (2026-09-21: an API 500 ended its turn) is waited on, logged once, and named on timeout ----
+reset
+echo listed-idle > "$WORK/outcome-BF-1"
+export FLEET_SEQUENCE_ISSUE_TIMEOUT=1
+ck "idle exits 1"                    "1" "$(run BF-1 BF-2)"
+ck_has "idle is logged when seen"    "BF-1: session ab000001 is idle — its turn ended without a ledger" "$WORK/out"
+ck "idle is logged once"             "1" "$(grep -c 'is idle — its turn ended' "$WORK/out")"
+ck_has "idle timeout names the state" "BF-1: session ab000001 still idle after 1s — its turn ended without a ledger and no rewake followed" "$WORK/out"
+ck_has "idle timeout says how to recover" "claude attach ab000001 and prompt it forward" "$WORK/out"
+ck "idle unset the keys"             "" "$(fork_keys)"
+reset
+echo listed-blocked > "$WORK/outcome-BF-1"
+ck "blocked exits 1"                 "1" "$(run BF-1 BF-2)"
+ck_has "blocked timeout names the state" "BF-1: session ab000001 still blocked after 1s — waiting on a decision only a human can give" "$WORK/out"
+export FLEET_SEQUENCE_ISSUE_TIMEOUT=5
+
+# ---- the detached runner leads a session of its own, outside the launching shell's process group ----
+reset
+echo hang > "$WORK/outcome-BF-1"
+ck "detached launch exits 0"         "0" "$(FLEET_SEQUENCE_FOREGROUND=0 FLEET_SEQUENCE_POLL=1 FLEET_SEQUENCE_ISSUE_TIMEOUT=60 run BF-1 BF-2)"
+rp=$(marker .runner_pid)
+sleep 1
+ck "detached runner is alive"        "0" "$(kill -0 "$rp" 2>/dev/null; echo $?)"
+ck "detached runner leads its own group" "$rp" "$(ps -o pgid= -p "$rp" | tr -d ' ')"
+ck "detached runner is outside this shell's group" "1" "$(( $(ps -o pgid= -p "$rp" | tr -d ' ') != $(ps -o pgid= -p $$ | tr -d ' ') ))"
+ck_has "detached runner logged its start" "sequence started: BF-1, BF-2 onto seq/bf-1" "$REPO/tmp/fleet-sequence-bf-1.log"
+kill "$rp" 2>/dev/null; sleep 2
+ck "detached runner is gone once killed" "1" "$(kill -0 "$rp" 2>/dev/null; echo $?)"
 
 # ---- stop requested mid-run: the in-flight issue finishes, nothing else starts, no PR ----
 reset

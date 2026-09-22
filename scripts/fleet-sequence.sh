@@ -62,7 +62,8 @@
 # run set is unset on every exit, and the closing /pr-update runs from a throwaway worktree on the branch.
 #
 # Sequencing: dispatch, wait for the session's ledger tmp/auto-state-<id>.json to record the issue (the
-# registry `claude agents --json --all` is the fallback for a session that ends without one), then
+# registry `claude agents --json --all` is the fallback for a session that ends without one: listed done,
+# failed or stopped, or dropped from the listing), then
 # require the target branch's tip to have moved — a `shipped` whose merge the queue deferred is waited on
 # up to FLEET_SEQUENCE_MERGE_TIMEOUT. Any other outcome stops the sequence with the remaining issues
 # untouched — /auto already commented and labeled the issue. Re-running the same list resumes: issues the
@@ -70,11 +71,16 @@
 # goes straight to the PR step — which is also how a run whose PR could not be opened is completed. A
 # resume also ADOPTS a session an earlier run dispatched that is still working (or shipped with its landing
 # unrecorded) — a runner can die under a harness restart its child survives — waiting on it, never
-# dispatching the issue twice.
+# dispatching the issue twice. A child listed `idle` with no ledger is one whose turn ended without
+# finishing — an API error kills a turn that way (2026-09-21: a 500 mid-review left `fleet-sequence BF-2034`
+# idle 13 hours and this runner timed out behind it) — and its recovery is hooks/auto-rewake.sh, which retries a
+# one-shot /auto session every ~15 minutes for six hours; the runner logs the transition, keeps waiting, and a
+# timeout names the state it saw last.
 #
 # Env: FLEET_SEQUENCE_POLL (seconds between reads, default 30), FLEET_SEQUENCE_GRACE (default 120),
-# FLEET_SEQUENCE_ISSUE_TIMEOUT (default 21600 — 6h per issue; on expiry the sequence fails and the session
-# is left running), FLEET_SEQUENCE_MERGE_TIMEOUT (default 1800 — how long a shipped issue may take to land
+# FLEET_SEQUENCE_ISSUE_TIMEOUT (default 43200 — 12h per issue, this being the runner for big and `solo`
+# work: BF-2022 took 7h54m of healthy work on 2026-09-21, past the 6h the default used to be; on expiry the
+# sequence fails and the session is left running), FLEET_SEQUENCE_MERGE_TIMEOUT (default 1800 — how long a shipped issue may take to land
 # on the branch; the merge-queue drainer runs every 15 minutes), FLEET_SEQUENCE_PR_UPDATE=0 skips the
 # closing /pr-update session, FLEET_SEQUENCE_PR_UPDATE_TIMEOUT (default 1800), FLEET_SEQUENCE_FOREGROUND=1
 # runs the runner inline (tests).
@@ -104,7 +110,7 @@ mkdir -p "$main_checkout/tmp"
 marker=""; log=""; pr_wt="" # per sequence — set by use_sequence before anything reads them
 poll="${FLEET_SEQUENCE_POLL:-30}"
 grace="${FLEET_SEQUENCE_GRACE:-120}"
-issue_timeout="${FLEET_SEQUENCE_ISSUE_TIMEOUT:-21600}"
+issue_timeout="${FLEET_SEQUENCE_ISSUE_TIMEOUT:-43200}"
 merge_timeout="${FLEET_SEQUENCE_MERGE_TIMEOUT:-1800}"
 pr_update_timeout="${FLEET_SEQUENCE_PR_UPDATE_TIMEOUT:-1800}"
 claude_args=()
@@ -199,9 +205,26 @@ parse_sid() { # <claude --bg output> → the short id, or ""
   return 0
 }
 
+last_state="" # what the registry last listed for the session being waited on; a timeout and a missing ledger name it
+note_state() { # <ISSUE-ID> <short id> <state> — the transitions a human reading the log needs to see
+  case "$3" in
+    idle) logln "$1: session $2 is idle — its turn ended without a ledger (an API error kills a turn this way); hooks/auto-rewake.sh retries a one-shot /auto session every ~15 min for up to six hours, so waiting" ;;
+    blocked) logln "$1: session $2 is blocked — waiting on a decision only a human can give (claude attach $2)" ;;
+    *) [ -z "$last_state" ] || logln "$1: session $2 is $3 again" ;;
+  esac
+}
+timeout_reason() { # <short id> <seconds> — the state the registry last showed decides what the human does next
+  case "$last_state" in
+    idle) echo "session $1 still idle after ${2}s — its turn ended without a ledger and no rewake followed (hooks/auto-rewake.sh gives up after six hours of retries, and stands down on a non-transient error or a human prompt); claude attach $1 and prompt it forward" ;;
+    blocked) echo "session $1 still blocked after ${2}s — waiting on a decision only a human can give; claude attach $1" ;;
+    *) echo "session $1 still ${last_state:-running} after ${2}s" ;;
+  esac
+}
+
 wait_session() { # <short id> <timeout seconds> <ISSUE-ID> <since epoch> → 0 when the work has ended, 1 on timeout
   local sid="$1" limit="$2" id="$3" since="$4" waited=0 seen=0 st rc step
   step=$(( poll > 0 ? poll : 1 ))
+  last_state=""
   while :; do
     # The ledger is /auto Step 4's LAST act — Linear comment, label, ownership release, then the state
     # file — so an outcome recorded for this issue means the work is over whatever the registry says.
@@ -210,27 +233,32 @@ wait_session() { # <short id> <timeout seconds> <ISSUE-ID> <since epoch> → 0 w
     if [ "$(ledger_outcome "$sid" "$id" "$since")" != "unknown" ]; then sleep "$poll"; return 0; fi
     rc=0; st=$(registry_state "$sid") || rc=$?
     if [ "$rc" -ne 2 ]; then
-      # A session that ends without a ledger (crashed, refused) still ends: registry done, or absent
-      # after it was seen (or after the grace when it was never seen).
-      if [ "$st" = "done" ]; then return 0
-      elif [ -n "$st" ]; then seen=1
-      elif [ "$seen" -eq 1 ] || [ "$waited" -ge "$grace" ]; then return 0
-      fi
+      # A session that ends without a ledger (crashed, refused, stopped from `claude agents`) still ends: registry
+      # done, failed or stopped, or absent after it was seen (or after the grace when it was never seen). Any other
+      # listed state — working, idle, blocked — is a session still there to wait on.
+      case "$st" in
+        done|failed|stopped) last_state="$st"; return 0 ;;
+        "") if [ "$seen" -eq 1 ] || [ "$waited" -ge "$grace" ]; then return 0; fi ;;
+        *) seen=1; [ "$st" = "$last_state" ] || note_state "$id" "$sid" "$st"; last_state="$st" ;;
+      esac
     fi
     [ "$waited" -ge "$limit" ] && return 1
     sleep "$poll"; waited=$((waited + step))
   done
 }
 
-wait_session_end() { # <short id> <timeout seconds> → 0 when the registry lists the session done or drops it, 1 on timeout
+wait_session_end() { # <short id> <timeout seconds> → 0 when the registry lists the session ended or drops it, 1 on timeout
   local sid="$1" limit="$2" waited=0 seen=0 st rc step
   step=$(( poll > 0 ? poll : 1 ))
   while :; do
     rc=0; st=$(registry_state "$sid") || rc=$?
     if [ "$rc" -eq 2 ]; then [ "$waited" -ge "$grace" ] && return 0
-    elif [ "$st" = "done" ]; then return 0
-    elif [ -n "$st" ]; then seen=1
-    elif [ "$seen" -eq 1 ] || [ "$waited" -ge "$grace" ]; then return 0
+    else
+      case "$st" in
+        done|failed|stopped) return 0 ;;
+        "") if [ "$seen" -eq 1 ] || [ "$waited" -ge "$grace" ]; then return 0; fi ;;
+        *) seen=1 ;;
+      esac
     fi
     [ "$waited" -ge "$limit" ] && return 1
     sleep "$poll"; waited=$((waited + step))
@@ -502,7 +530,7 @@ cmd_run() { # [<slug>] — the launch passes it to the detached runner; a foregr
       logln "[$i/${#queue[@]}] $id running in session $sid"
     fi
     if ! wait_session "$sid" "$issue_timeout" "$id" "$started"; then
-      fail_run "$id: session $sid still running after ${issue_timeout}s — not killed; watch it in \`claude agents\`, then re-run the same list"
+      fail_run "$id: $(timeout_reason "$sid" "$issue_timeout") — not killed; watch it in \`claude agents\`, then re-run the same list"
     fi
     # The key has done its job once the session has ended — its /start wt ran at the very start.
     git config --unset "$(fork_key "$id")" >/dev/null 2>&1 || true
@@ -512,6 +540,10 @@ cmd_run() { # [<slug>] — the launch passes it to the detached runner; a foregr
     logln "[$i/${#queue[@]}] $id → $outcome (session $sid)"
     if [ "$outcome" != "shipped" ]; then
       remaining=$(printf '%s\n' "${queue[@]:$i}" | paste -sd, - | sed 's/,/, /g')
+      case "$outcome:$last_state" in
+        unknown:failed|unknown:stopped)
+          fail_run "$id ended without a ledger — the registry lists session $sid as $last_state (claude logs $sid) — not started: ${remaining:-none}. Fix or drop it, then re-run the same list" ;;
+      esac
       fail_run "$id ended '$outcome' in session $sid (claude logs $sid; /auto's Linear comment names the cause) — not started: ${remaining:-none}. Fix or drop it, then re-run the same list"
     fi
 
@@ -535,6 +567,35 @@ cmd_run() { # [<slug>] — the launch passes it to the detached runner; a foregr
     logln "done: $ids_csv merged into $base — $(jq -r '[.queue[] as $q | "\($q) \(.issues[$q].landed_sha // "?" | .[0:12])"] | join(", ")' "$marker")"
   else
     logln "done: $ids_csv on $target → $base — PR $(jq -r '.pr_url // "?"' "$marker")"
+  fi
+}
+
+start_runner() { # <slug> <pidfile> — the detached runner, in a session of its own
+  # The harness starts every Bash tool command in a fresh process group, and a `nohup … &` child stays in that group after
+  # the tool shell exits (measured 2026-09-22: the child's pgid was the tool shell's pid, the harness sat in another group).
+  # That group is the harness's handle on what it spawned: runner 11121 died in the 2026-09-21 14:18 harness restart eight
+  # minutes after launch, while its child session — which the harness itself resumes — worked on for eight hours with nobody
+  # waiting. A fork that calls setsid() leaves the group and drops the controlling terminal, so neither a group kill nor a
+  # terminal hangup reaches the runner; nohup stays on for a SIGHUP sent by name. python3 first, perl (shipped with macOS) next.
+  local slug="$1" pidfile="$2" prog
+  if command -v python3 >/dev/null 2>&1; then
+    prog='import os, sys
+script, sub, slug, pidfile = sys.argv[1:5]
+pid = os.fork()
+if pid == 0:
+    os.setsid()
+    os.execv(script, [script, sub, slug])
+with open(pidfile, "w") as f:
+    f.write(str(pid))'
+    ( cd "$main_checkout" && nohup python3 -c "$prog" "$here/fleet-sequence.sh" run "$slug" "$pidfile" >> "$log" 2>&1 < /dev/null ) || true
+  elif command -v perl >/dev/null 2>&1; then
+    prog='use POSIX qw(setsid); my ($s, $sub, $slug, $pf) = @ARGV; my $pid = fork(); die "fork: $!" unless defined $pid;
+if ($pid == 0) { setsid(); exec($s, $sub, $slug) or die "exec: $!"; }
+open(my $f, ">", $pf) or die "$pf: $!"; print $f $pid; close $f;'
+    ( cd "$main_checkout" && nohup perl -e "$prog" -- "$here/fleet-sequence.sh" run "$slug" "$pidfile" >> "$log" 2>&1 < /dev/null ) || true
+  else
+    logln "WARN: neither python3 nor perl on PATH — the runner shares this shell's process group, and a harness restart ends it" >> "$log"
+    ( cd "$main_checkout" && nohup "$here/fleet-sequence.sh" run "$slug" >> "$log" 2>&1 < /dev/null & echo $! > "$pidfile" ) || true
   fi
 }
 
@@ -731,7 +792,7 @@ cmd_launch() {
   # A resume appends: the log it continues is the only record of why the earlier run stopped.
   [ "$resume" -eq 1 ] || : > "$log"
   local pidfile="$main_checkout/tmp/fleet-sequence-$slug.pid"
-  ( cd "$main_checkout" && nohup "$here/fleet-sequence.sh" run "$slug" >> "$log" 2>&1 < /dev/null & echo $! > "$pidfile" )
+  start_runner "$slug" "$pidfile"
   local pid
   pid=$(cat "$pidfile" 2>/dev/null || true); rm -f "$pidfile"
   [[ "$pid" =~ ^[0-9]+$ ]] || { echo "ERROR: runner did not start — see $log" >&2; update_marker '.status = "failed" | .reason = "runner did not start"'; exit 1; }
