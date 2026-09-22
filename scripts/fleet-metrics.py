@@ -337,15 +337,33 @@ def scan_transcript(path, agg, agent_type="main", description=""):
         msg = r.get("message")
         content = msg.get("content") if isinstance(msg, dict) else None
 
-        # A message's usage repeats verbatim on every transcript row sharing its message id, so a
-        # row-wise sum double-counts — credit each id once. `<synthetic>` rows carry no API usage.
+        # A message's rows share one id, so a row-wise sum double-counts — credit each id once. The
+        # prompt-side fields repeat verbatim across those rows, but output_tokens does NOT in a subagent
+        # transcript: each streamed row carries the count so far (2–8 tokens on the thinking row), and
+        # only the row stamped `stop_reason` carries the whole message. Crediting the first row read the
+        # 2026-09-21 fleet's subagents at 714k output tokens against 6.68M on their final rows, which
+        # is why the count credits the LARGEST value seen and tracks how many subagent messages have a
+        # final row at all — 80% of this checkout's 2026-09-22 subagent messages never got one written,
+        # so their totals are a lower bound (reported as such). `<synthetic>` rows carry no API usage.
         if isinstance(msg, dict):
             usage = msg.get("usage") or {}
             mid = msg.get("id")
             model = msg.get("model") or "?"
-            if usage.get("output_tokens") is not None and mid and mid not in agg["seen_msg_ids"] \
-                    and not model.startswith("<"):
-                agg["seen_msg_ids"].add(mid)
+            credited = usage.get("output_tokens") is not None and mid and not model.startswith("<")
+            if credited and agent_type != "main":
+                agg["sub_msgs"][mid] = agg["sub_msgs"].get(mid, False) or bool(msg.get("stop_reason"))
+            if credited and mid in agg["seen_msg_ids"] and usage["output_tokens"] > agg["seen_msg_ids"][mid]:
+                delta = usage["output_tokens"] - agg["seen_msg_ids"][mid]
+                agg["seen_msg_ids"][mid] = usage["output_tokens"]
+                agg["tokens"][(agent_type, model)] += delta
+                if t:
+                    agg["token_events"].append((t.timestamp(), delta))
+                    agg["cache_events"].append((t.timestamp(), 0, delta))
+                agg["usage"].setdefault((agent_type, model), Counter())["output"] += delta
+                if agent_type != "main":
+                    d_out += delta
+            elif credited and mid not in agg["seen_msg_ids"]:
+                agg["seen_msg_ids"][mid] = usage["output_tokens"]
                 agg["tokens"][(agent_type, model)] += usage["output_tokens"]
                 if t:
                     agg["token_events"].append((t.timestamp(), usage["output_tokens"]))
@@ -570,7 +588,9 @@ def new_agg():
         "turn_openers": [], "rewake_marks": [], "injected_turns": 0,
         "limit_hits": Counter(), "first_limit_hit": None, "limit_resets": [],
         "limit_hit_times": [], "stop_times": [],
-        "tokens": Counter(), "seen_msg_ids": set(),
+        # message id -> largest output_tokens credited so far (scan_transcript), and for subagent
+        # messages only, whether any row carried stop_reason — the final-row coverage gauge.
+        "tokens": Counter(), "seen_msg_ids": {}, "sub_msgs": {},
         # (epoch_seconds, output_tokens) per credited message — the time dimension the
         # (agent, model) Counter above throws away. Rolling-window burn needs it: the
         # account's rate limits meter a moving window, so a total tells you nothing about
@@ -1687,6 +1707,12 @@ def main():
             fleet_usage.setdefault(k, Counter()).update(u)
     fleet_cost, unpriced = est_cost(fleet_usage)
     fleet_think = thinking_share([s["agg"] for s in sessions])
+    # Subagent messages with a final usage row, fleet-wide. Below 100% every subagent output figure
+    # in this report is a lower bound — the missing rows would only raise them. The share travels
+    # on the history row so a trend read knows which fleets' ktok/issue and $/Mtok are floors.
+    sub_msgs_total = sum(len(s["agg"]["sub_msgs"]) for s in sessions)
+    sub_msgs_final = sum(sum(s["agg"]["sub_msgs"].values()) for s in sessions)
+    sub_final_share = round(sub_msgs_final / sub_msgs_total, 3) if sub_msgs_total else None
     out_per_shipped = round(sum(fleet_tokens.values()) / len(all_shipped)) if all_shipped else None
     cost_per_shipped = round(fleet_cost / len(all_shipped), 2) if all_shipped else None
 
@@ -1713,6 +1739,7 @@ def main():
         "cost_per_shipped_usd": cost_per_shipped,
         "output_tokens_per_shipped": out_per_shipped,
         "usd_per_mtok_output": round(fleet_cost / total_out * 1e6, 2) if total_out else None,
+        "subagent_final_row_share": sub_final_share,
         "avg_cycles": round(sum(cyc_all) / len(cyc_all), 2) if cyc_all else None,
         "findings_per_review": round(resolved_all / len(verdicts), 1) if verdicts else None,
         "crit_high_per_review": round(sum(v["sev"]["CRIT"] + v["sev"]["HIGH"] for v in verdicts)
@@ -1851,6 +1878,8 @@ def main():
                 "rewakes": {k: v for k, v in rewakes[s["run_key"]].items()
                             if k != "spurious_lines"} if s["run_key"] in rewakes else None,
                 "output_tokens": {f"{t}/{m}": n for (t, m), n in s["agg"]["tokens"].most_common()},
+                "subagent_final_rows": {"messages": len(s["agg"]["sub_msgs"]),
+                                        "with_final_row": sum(s["agg"]["sub_msgs"].values())},
                 "usage": {f"{t}/{m}": dict(u) for (t, m), u in s["agg"]["usage"].items()},
                 "context_volume_tokens": {b: s["agg"]["ctx_volume"][b] for b in CTX_BUCKETS
                                           if s["agg"]["ctx_volume"][b]},
@@ -1880,6 +1909,8 @@ def main():
             "est_cost_usd": round(fleet_cost, 4),
             "unpriced_models": sorted(unpriced),
             "main_thinking_share_est": fleet_think,
+            "subagent_final_rows": {"messages": sub_msgs_total, "with_final_row": sub_msgs_final,
+                                    "share": sub_final_share},
             "per_shipped": {"output_tokens": out_per_shipped, "est_cost_usd": cost_per_shipped},
             "context_distribution": {
                 "volume_tokens": {b: fleet_ctx[b] for b in CTX_BUCKETS if fleet_ctx[b]},
@@ -2110,6 +2141,14 @@ def main():
         unpriced_note = f" · excluded from $ (no price row): {', '.join(sorted(unpriced))}" if unpriced else ""
         print(f"\n**Cost estimate** — ${fleet_cost:,.2f} at list prices (input + cache + output; cache "
               f"writes at the 1h-TTL rate) · {per_ship} · {think}{unpriced_note}\n")
+        if sub_msgs_total:
+            bound = ("" if sub_msgs_final == sub_msgs_total else
+                     " — every subagent output figure above is a LOWER BOUND: a message with no final "
+                     "row is credited its largest streamed count, a placeholder of a few tokens, so "
+                     "the missing rows could only raise the subagent rows, ktok/issue and the burn "
+                     "rates, and lower $/Mtok out")
+            print(f"**Subagent usage rows** — {sub_msgs_final:,} of {sub_msgs_total:,} subagent messages "
+                  f"({100 * sub_msgs_final / sub_msgs_total:.0f}%) carry a final usage row{bound}.\n")
         if any(lanes.values()):
             def lane_cell(c):
                 return ", ".join(f"{m} {n:,}" for m, n in c.most_common()) or "none"
@@ -2263,9 +2302,9 @@ def main():
 
         def pct(v):
             return f"{round(100 * v)}%" if v is not None else "-"
-        print("| fleet start | n | hours | shipped | $/issue | ktok/issue | $/Mtok out | cycles | "
-              "find/rev | C+H/rev | plan% | ctx>=200k% | filed/ship | fresh% | idle% |")
-        print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+        print("| fleet start | n | hours | shipped | $/issue | ktok/issue | $/Mtok out | sub-final% | "
+              "cycles | find/rev | C+H/rev | plan% | ctx>=200k% | filed/ship | fresh% | idle% |")
+        print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
         for r in history[-6:]:
             mark = " ←" if r.get("session_set") == headline["session_set"] and not args.all else ""
             fs = (r.get("fleet_start") or "?")[:16].replace("T", " ")
@@ -2273,6 +2312,7 @@ def main():
             print(f"| {fs}{mark} | {cell(r.get('sessions'))} | {cell(r.get('session_hours'))} | "
                   f"{cell(r.get('shipped'))} | {cell(r.get('cost_per_shipped_usd'), '${}')} | "
                   f"{cell(ktok)} | {cell(r.get('usd_per_mtok_output'), '${}')} | "
+                  f"{pct(r.get('subagent_final_row_share'))} | "
                   f"{cell(r.get('avg_cycles'))} | {cell(r.get('findings_per_review'))} | "
                   f"{cell(r.get('crit_high_per_review'))} | {pct(r.get('plan_origin_share'))} | "
                   f"{pct(r.get('ctx_share_ge200k'))} | {cell(r.get('filed_per_shipped'))} | "
@@ -2281,7 +2321,10 @@ def main():
             print(f"\n({len(history) - 6} earlier row(s) in the ledger, not shown)")
         print("\nRead $/issue as its two factors: ktok/issue is work per shipped issue (churn or harder "
               "issues — cycles, find/rev and plan% say which), $/Mtok out is billable context per unit "
-              "of work (ctx>=200k% names the driver — the autocompact lever). fresh% is the treadmill "
+              "of work (ctx>=200k% names the driver — the autocompact lever). sub-final% is the share of "
+              "subagent messages whose final usage row was written: below 100% that row's ktok/issue is a "
+              "floor and its $/Mtok out a ceiling, and a `-` is a row measured before the gauge existed. "
+              "fresh% is the treadmill "
               "gauge: the share of shipped issues created during or within 7 days before the run. "
               "idle% is the pool-exhausted gauge: session-hours sessions sat on an empty or gated pool "
               "after their last ship — a deadline-drained session to the deadline, one that died "

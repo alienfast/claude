@@ -1485,6 +1485,63 @@ AUTO_REWAKE_LOG_DIR="$RW18" CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --che
 ck_has "rewake: empty log still prints the line" "rewakes 0 stop (0 save / 0 spurious) + 0 api · 2 injected turns" "$MD18"
 ck_lacks "rewake: empty log raises no flag" "was rewoken" "$MD18"
 
+# ---- 19. streamed subagent usage rows: credit the FINAL row's count, and say when it is missing ----
+# A subagent transcript writes one row per streamed content block, all sharing the message id, and
+# output_tokens on each is the count SO FAR — 3 on the thinking row, 412 on the row stamped
+# stop_reason. Crediting the first row read the 2026-09-21 BFP fleet's subagents at 714k output
+# tokens against 6.68M on their final rows. Rows below are two real messages from that checkout's
+# 2026-09-22 fleet (agent-abf1c2f081891a45c, content trimmed): EtifZVHb reached its final row,
+# ep5nFLGK never did — 80% of that fleet's subagent messages never got one, so what that message
+# is credited (8, its largest placeholder) is a lower bound the report has to say so about.
+CK19="$WORK/ck19"; mkdir -p "$CK19/tmp"
+git -C "$CK19" init -q 2>/dev/null
+git -C "$CK19" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "TT-19: streamed rows"
+M19="$(git -C "$CK19" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
+T19="$WORK/projects/$M19"; S19="$T19/abf00001-0000/subagents"; mkdir -p "$S19"
+echo '{"status":"drained","reason":"fleet deadline reached","mode":"loop","shipped":["TT-19"],"canceled":[],"skipped":[],"failed":[]}' > "$CK19/tmp/auto-state-abf00001.json"
+cat > "$T19/abf00001-0000.jsonl" <<'EOF'
+{"type":"user","timestamp":"2026-09-22T04:40:00.000Z","isSidechain":false,"message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"2026-09-22T04:40:10.000Z","isSidechain":false,"message":{"role":"assistant","id":"msg_main19","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"tool_use","id":"toolu_019QuAtcm1GYqCKU5MPWWd3f","name":"Agent","input":{"subagent_type":"developer","model":"sonnet","description":"Fix metrics review findings","prompt":"x"}}]}}
+{"type":"user","timestamp":"2026-09-22T04:40:11.000Z","isSidechain":false,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_019QuAtcm1GYqCKU5MPWWd3f","content":"Async agent launched successfully (agentId: abf1c2f081891a45c)"}]}}
+{"type":"assistant","timestamp":"2026-09-22T05:00:00.000Z","isSidechain":false,"message":{"role":"assistant","id":"msg_main19b","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-19 done"},{"type":"text","text":"AUTO-HALTED: fleet deadline"}]}}
+EOF
+cat > "$S19/agent-abf1c2f081891a45c.meta.json" <<'EOF'
+{"agentType":"developer","description":"Fix metrics review findings","toolUseId":"toolu_019QuAtcm1GYqCKU5MPWWd3f","spawnDepth":1,"requestShape":"background","requestNonInteractive":true,"model":"sonnet"}
+EOF
+SUB19_STREAMED='{"type":"assistant","timestamp":"2026-09-22T04:40:20.704Z","agentId":"abf1c2f081891a45c","isSidechain":true,"message":{"role":"assistant","id":"msg_011CfHryd5N32WcGEtifZVHb","model":"claude-sonnet-5","stop_reason":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":82773,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":82773,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"not_available"},"content":[{"type":"thinking","thinking":"…"}]}}
+{"type":"assistant","timestamp":"2026-09-22T04:40:21.375Z","agentId":"abf1c2f081891a45c","isSidechain":true,"message":{"role":"assistant","id":"msg_011CfHryd5N32WcGEtifZVHb","model":"claude-sonnet-5","stop_reason":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":82773,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":82773,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"not_available"},"content":[{"type":"tool_use","id":"toolu_01NH9guPAFziJjrQkphNwKTV","name":"Read","input":{"file_path":"a.ts"}}]}}
+{"type":"assistant","timestamp":"2026-09-22T04:40:21.919Z","agentId":"abf1c2f081891a45c","isSidechain":true,"message":{"role":"assistant","id":"msg_011CfHryd5N32WcGEtifZVHb","model":"claude-sonnet-5","stop_reason":"tool_use","usage":{"input_tokens":2,"cache_creation_input_tokens":82773,"cache_read_input_tokens":0,"output_tokens":412,"output_tokens_details":{"thinking_tokens":204},"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard","cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":82773},"inference_geo":"not_available","iterations":[{"input_tokens":2,"output_tokens":412,"cache_read_input_tokens":0,"cache_creation_input_tokens":82773,"cache_creation":{"ephemeral_5m_input_tokens":82773,"ephemeral_1h_input_tokens":0},"type":"message"}],"speed":"standard"},"content":[{"type":"tool_use","id":"toolu_01TXC2J6T314ArXfGJGasUF4","name":"Read","input":{"file_path":"b.ts"}}]}}
+{"type":"assistant","timestamp":"2026-09-22T04:40:44.324Z","agentId":"abf1c2f081891a45c","isSidechain":true,"message":{"role":"assistant","id":"msg_011CfHs1QVss8RuXep5nFLGK","model":"claude-sonnet-5","stop_reason":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":186,"cache_read_input_tokens":195285,"cache_creation":{"ephemeral_5m_input_tokens":186,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"not_available"},"content":[{"type":"thinking","thinking":"…"}]}}
+{"type":"assistant","timestamp":"2026-09-22T04:40:45.869Z","agentId":"abf1c2f081891a45c","isSidechain":true,"message":{"role":"assistant","id":"msg_011CfHs1QVss8RuXep5nFLGK","model":"claude-sonnet-5","stop_reason":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":186,"cache_read_input_tokens":195285,"cache_creation":{"ephemeral_5m_input_tokens":186,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"not_available"},"content":[{"type":"tool_use","id":"toolu_01CT1gjD3uZ4vP8wCXUgRSNP","name":"Bash","input":{"command":"ls"}}]}}'
+printf '%s\n' "$SUB19_STREAMED" > "$S19/agent-abf1c2f081891a45c.jsonl"
+
+J19="$WORK/out19.json"; MD19="$WORK/out19.md"
+# --sessions, not --all: the history row is the thing under test, and --all never records one.
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK19" --sessions abf00001 --json > "$J19" 2>/dev/null
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK19" --sessions abf00001 > "$MD19" 2>&1
+q19() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J19"; }
+ck "streamed: final row's count credited, placeholder for the rest" "420" "$(q19 "d['sessions'][0]['output_tokens']['developer/claude-sonnet-5']")"
+ck "streamed: prompt-side fields credited once per message"        "82959 195285" "$(q19 "' '.join(str(d['sessions'][0]['usage']['developer/claude-sonnet-5'][k]) for k in ('cache_write','cache_read'))")"
+ck "streamed: usage output agrees with the token table"             "420" "$(q19 "d['sessions'][0]['usage']['developer/claude-sonnet-5']['output']")"
+ck "streamed: main-loop rows unaffected"                            "200" "$(q19 "d['sessions'][0]['output_tokens']['main/claude-opus-5']")"
+ck "streamed: per-dispatch output reads the final row too"          "420" "$(q19 "d['developer_lanes']['unattributed']['claude-sonnet-5']")"
+ck "streamed: session coverage counts messages, not rows"           "{'messages': 2, 'with_final_row': 1}" "$(q19 "d['sessions'][0]['subagent_final_rows']")"
+ck "streamed: fleet coverage share"                                 "0.5" "$(q19 "d['subagent_final_rows']['share']")"
+ck "streamed: share rides the history row"                          "0.5" "$(q19 "d['history'][-1]['subagent_final_row_share']")"
+ck_has "streamed: coverage line names the bound" "**Subagent usage rows** — 1 of 2 subagent messages (50%) carry a final usage row — every subagent output figure above is a LOWER BOUND" "$MD19"
+ck_has "streamed: trend column"                  "| sub-final% |" "$MD19"
+ck_has "streamed: trend cell"                    "| \$915.73 | 50% | - |" "$MD19"
+# Control: the same transcript once ep5nFLGK's final row lands — full coverage drops the bound
+# clause and the count rises to what that row carries, replacing the fleet's history row in place.
+printf '%s\n' "$SUB19_STREAMED" '{"type":"assistant","timestamp":"2026-09-22T04:40:46.500Z","agentId":"abf1c2f081891a45c","isSidechain":true,"message":{"role":"assistant","id":"msg_011CfHs1QVss8RuXep5nFLGK","model":"claude-sonnet-5","stop_reason":"tool_use","usage":{"input_tokens":2,"cache_creation_input_tokens":186,"cache_read_input_tokens":195285,"output_tokens":132,"service_tier":"standard"},"content":[{"type":"tool_use","id":"toolu_01CT1gjD3uZ4vP8wCXUgRSNP","name":"Bash","input":{"command":"ls"}}]}}' > "$S19/agent-abf1c2f081891a45c.jsonl"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK19" --sessions abf00001 --json > "$J19" 2>/dev/null
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK19" --sessions abf00001 > "$MD19" 2>&1
+ck "streamed control: late final row raises the count"     "544" "$(q19 "d['sessions'][0]['output_tokens']['developer/claude-sonnet-5']")"
+ck "streamed control: full coverage"                       "1.0" "$(q19 "d['subagent_final_rows']['share']")"
+ck "streamed control: history row replaced, not appended"  "1"   "$(wc -l < "$CK19/tmp/fleet-metrics-history.jsonl" | tr -d ' ')"
+ck_has   "streamed control: coverage line without the bound" "**Subagent usage rows** — 2 of 2 subagent messages (100%) carry a final usage row." "$MD19"
+ck_lacks "streamed control: no bound clause"                 "LOWER BOUND" "$MD19"
+
 echo
 echo "$PASS passed / $FAIL failed / $SKIP skipped"
 [ "$FAIL" -eq 0 ]
