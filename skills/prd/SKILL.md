@@ -107,7 +107,7 @@ linear-cli search issues "authentication"
 
 # Look for related work / potential blockers, then inspect dependencies via the graph
 linear-cli search issues "user database"
-~/.claude/scripts/linear-deps-graph.sh --team ENG    # {nodes, edges} — see /triage for jq recipes
+~/.claude/scripts/linear-deps-graph.sh --team ENG    # {nodes, edges} — filter with jq (linear skill gotcha #2); blocked chains: scripts/fleet-blockers.sh
 ```
 
 **Pro tip:** After creating tickets, establish dependencies directly with `linear-cli relations add <BLOCKER> <BLOCKED> -r blocks` (blocker first; the `blocked-by` enum is broken in every published version through 0.3.27).
