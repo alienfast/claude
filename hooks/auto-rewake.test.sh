@@ -16,6 +16,10 @@
 # anything could have been written) and the registration block (a missing `timeout` or `asyncRewake` disables the hook
 # without a sound).
 #
+# The one-shot cases (#31-#38) are the 2026-09-21 fleet-sequence death: a targeted `/auto <ID>` session — no /loop anywhere,
+# its `claude --bg` delivery stamped origin.kind "human" like a typed one — killed by an API 500, with the hook standing down
+# as not-auto-loop while the sequence runner timed out behind it.
+#
 # GROW THIS SUITE, NEVER PRUNE IT. Every newly observed silent-death shape becomes a numbered case, added WITH its fix.
 
 set -uo pipefail
@@ -46,6 +50,11 @@ rec_nudge()  { jq -nc --arg t "$(iso "$1")" '{type:"user",isSidechain:false,isMe
 rec_human()  { jq -nc --arg t "$(iso "$1")" '{type:"user",isSidechain:false,origin:{kind:"human"},timestamp:$t,message:{role:"user",content:"discontinue the outer loop after completing this issue"}}'; }
 rec_apierr() { jq -nc --arg t "$(iso "$1")" '{type:"assistant",isSidechain:false,timestamp:$t,isApiErrorMessage:true,error:"rate_limit",apiErrorStatus:429,apiErrorIsTransient:true,message:{role:"assistant",content:[{type:"text",text:"API Error: Request rejected (429) · This request would exceed your account rate limit. Please try again later."}]}}'; }
 rec_plain()  { jq -nc --arg t "$(iso "$1")" '{type:"user",isSidechain:false,origin:{kind:"human"},timestamp:$t,message:{role:"user",content:"fix the failing test"}}'; }
+# A `claude --bg "/auto BF-2034"` delivery as fleet-sequence session 5f071ea8 recorded it (2026-09-21): origin.kind "human", as typed.
+rec_auto()   { jq -nc --arg t "$(iso "$1")" --arg a "${2-BF-2034}" '{type:"user",isSidechain:false,origin:{kind:"human"},timestamp:$t,message:{role:"user",content:("<command-message>auto</command-message>\n<command-name>/auto</command-name>\n<command-args>" + $a + "</command-args>")}}'; }
+rec_cont()   { jq -nc --arg t "$(iso "$1")" '{type:"user",isSidechain:false,origin:{kind:"human"},timestamp:$t,message:{role:"user",content:"continue"}}'; }
+rec_quote()  { jq -nc --arg t "$(iso "$1")" '{type:"user",isSidechain:false,timestamp:$t,message:{role:"user",content:[{type:"tool_result",tool_use_id:"toolu_b",content:"<command-name>/auto</command-name> quoted from a transcript this session read"}]}}'; }
+rec_500()    { jq -nc --arg t "$(iso "$1")" '{type:"assistant",isSidechain:false,timestamp:$t,isApiErrorMessage:true,error:"server_error",apiErrorStatus:500,apiErrorIsTransient:true,message:{role:"assistant",content:[{type:"text",text:"API Error: 500 Internal server error. This is a server-side issue, usually temporary."}]}}'; }
 
 tfile() { mktemp "$TMP/t.XXXXXX"; }
 ev() { # ev <event> <transcript> <session-id> [extra-json]
@@ -144,6 +153,36 @@ set_state s-twenty '{"api_rewakes":24}'
 ck "20 24 retries already (six hours) -> skip api-cap"         api-cap "$(dec "$(ev StopFailure "$f" s-twenty "$SF")" .reason)"
 ck "20b a hook event that is not a stop -> skip"               not-a-stop-event "$(dec "$(ev SubagentStop "$f" s-twentyb)" .reason)"
 
+echo "auto-rewake.sh — decisions (one-shot /auto):"
+SE='{"error":"server_error","last_assistant_message":"API Error: 500 Internal server error"}'
+# 31. THE FLEET-SEQUENCE DEATH (2026-09-21): `claude --bg "/auto BF-2034"`, a targeted run with no /loop anywhere, killed by a
+#     500 mid-review. The delivery is the anchor; the task notification after it is not a human.
+f=$(tfile); { rec_auto $((B-7200)); rec_work $((B-3000)); rec_notif $((B-100)); rec_500 "$B"; } > "$f"
+ck "31 server_error in a targeted /auto run -> wait"           wait "$(dec "$(ev StopFailure "$f" s-thirtyone "$SE")" .action)"
+ck "31 ... as an api-kind wait of 900s"                        "api 900" "$(dec "$(ev StopFailure "$f" s-thirtyone "$SE")" '"\(.kind) \(.wait_s)"')"
+ck "31 ... on a one-shot session"                              one-shot "$(dec "$(ev StopFailure "$f" s-thirtyone "$SE")" .session)"
+# 32. A bare `/auto` typed once is one-shot too.
+f=$(tfile); { rec_auto $((B-300)) ""; rec_500 "$B"; } > "$f"
+ck "32 bare /auto -> wait"                                     wait "$(dec "$(ev StopFailure "$f" s-thirtytwo "$SE")" .action)"
+# 33. A human prompt after the delivery — the `continue` that recovered the real session — hands the run to the operator.
+f=$(tfile); { rec_auto $((B-7200)); rec_cont $((B-60)); rec_500 "$B"; } > "$f"
+ck "33 human prompt after the /auto delivery -> skip human-override" human-override "$(dec "$(ev StopFailure "$f" s-thirtythree "$SE")" .reason)"
+ck "33 ... in scope, so it is logged"                          true "$(dec "$(ev StopFailure "$f" s-thirtythree "$SE")" .in_scope)"
+# 34. A Stop on a one-shot run is the run finishing or resting, never a lost wakeup: out of scope, no log line.
+f=$(tfile); { rec_auto $((B-300)); rec_work $((B-10)); rec_text "$B"; } > "$f"
+ck "34 Stop on a targeted run -> skip one-shot-stop"           one-shot-stop "$(dec "$(ev Stop "$f" s-thirtyfour)" .reason)"
+ck "34 ... out of scope"                                       false "$(dec "$(ev Stop "$f" s-thirtyfour)" .in_scope)"
+# 35. The same error classes and the same cap as the loop path.
+f=$(tfile); { rec_auto $((B-300)); rec_500 "$B"; } > "$f"
+ck "35 authentication_failed on a targeted run -> skip not-transient" not-transient "$(dec "$(ev StopFailure "$f" s-thirtyfive '{"error":"authentication_failed"}')" .reason)"
+set_state s-thirtyfive '{"api_rewakes":24}'
+ck "35 ... and the cap holds"                                  api-cap "$(dec "$(ev StopFailure "$f" s-thirtyfive "$SE")" .reason)"
+# 36. A session that only READ a transcript with an /auto delivery in it holds the block in a tool_result, not a delivery.
+f=$(tfile); { rec_plain $((B-60)); rec_quote $((B-30)); rec_500 "$B"; } > "$f"
+ck "36 /auto quoted in a tool result is no delivery -> skip not-auto-loop" not-auto-loop "$(dec "$(ev StopFailure "$f" s-thirtysix "$SE")" .reason)"
+f=$(tfile); { rec_loop $((B-300)); rec_work $((B-10)); rec_apierr "$B"; } > "$f"
+ck "36b a loop session still takes the loop path"             loop "$(dec "$(ev StopFailure "$f" s-thirtysixb "$SF")" .session)"
+
 echo "auto-rewake.sh — end to end (second-scale waits):"
 run_hook() { # run_hook <event-json> <grace> <api-delay> → RC, stderr in $TMP/err
   printf '%s' "$1" | AUTO_REWAKE_GRACE="$2" AUTO_REWAKE_API_DELAY="$3" AUTO_REWAKE_SETTLE=1 AUTO_REWAKE_LOG_DIR="$LOGS" "$HOOK" > /dev/null 2> "$TMP/err"
@@ -178,6 +217,24 @@ run_hook "$(ev StopFailure "$f" s-e2e-api "$SF")" 300 1
 ck "22 API-error kill, silent after the delay -> exit 2"       2 "$RC"
 ck "22 ... stderr names the error and the retry"               1 "$(grep -c 'API error (rate_limit).*retry 1 of 24' "$TMP/err")"
 ck "22 ... the retry counter moved"                            1 "$(get_state s-e2e-api api_rewakes)"
+
+# 37. The 2026-09-21 shape end to end: a 500 kills a targeted run, nothing follows, and the model is told to finish the run
+#     and arm nothing.
+N=$(date +%s); f=$(tfile); { rec_auto $((N-3000)); rec_work $((N-5)); rec_500 "$N"; } > "$f"
+run_hook "$(ev StopFailure "$f" s-e2e-oneshot "$SE")" 300 1
+ck "37 targeted run killed by a 500, silent after the delay -> exit 2" 2 "$RC"
+ck "37 ... stderr names the run, the error and the retry"      1 "$(grep -c 'one-shot /auto run was killed by an API error (server_error).*retry 1 of 24' "$TMP/err")"
+ck "37 ... and tells the model to arm nothing"                 1 "$(grep -c 'arm no wakeup' "$TMP/err")"
+ck "37 ... and says it is not a human prompt"                  1 "$(grep -c 'This is not a human prompt' "$TMP/err")"
+ck "37 ... the retry counter moved"                            1 "$(get_state s-e2e-oneshot api_rewakes)"
+ck "37 ... the log records the rewake as one-shot"             1 "$(grep -c 's-e2e-on StopFailure rewake kind=api session=one-shot' "$LOGS/auto-rewake.log")"
+# 38. A Stop on that run spends the retry count; a targeted run that never rewoke leaves no state file and no log line.
+f=$(tfile); { rec_auto $((B-300)); rec_text "$B"; } > "$f"
+run_hook "$(ev Stop "$f" s-e2e-oneshot)" 1 1
+ck "38 a Stop on the one-shot run resets its API retry count"  0 "$(get_state s-e2e-oneshot api_rewakes)"
+run_hook "$(ev Stop "$f" s-e2e-quiet)" 1 1
+ck "38 ... an ordinary targeted run leaves no state file"      missing "$(get_state s-e2e-quiet api_rewakes)"
+ck "38 ... and no log line"                                    0 "$(grep -c 's-e2e-qu' "$LOGS/auto-rewake.log")"
 
 # 23. Counters: any completed turn proves the API answers; only a stop no hook caused proves the loop turns unaided.
 f=$(tfile); { rec_loop $((B-300)); rec_wake_stop "$B"; } > "$f"

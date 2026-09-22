@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Claude Stop + StopFailure hook, registered `asyncRewake: true`: wake a self-paced `/loop /auto` session that went silent.
+# Claude Stop + StopFailure hook, registered `asyncRewake: true`: wake a self-paced `/loop /auto` session that went silent,
+# and a one-shot `/auto` session — a targeted `/auto <ID>` (every /fleet-sequence child) or a bare `/auto` typed once — whose
+# turn an API error killed.
 #
 # WHY: two silent deaths end a fleet session with its ledger still `active`, and neither is visible to a synchronous hook.
 #   1. THE LOST WAKEUP (Stop). The turn ends compliantly — a ScheduleWakeup IS armed, so auto-heartbeat.sh passes it,
@@ -10,6 +12,11 @@
 #   2. THE API-ERROR KILL (StopFailure). A rate limit, overload or 5xx kills the turn mid-iteration. Stop does not fire
 #      at all — StopFailure fires INSTEAD — so nothing arms a wakeup and the session is dead until a human prompts it.
 #      Measured 2026-08-14 (4.85 session-hours) and 2026-08-17 (25.2 overnight).
+#      The same kill takes a ONE-SHOT /auto session, which has no loop to be recovered through and no wakeup contract of
+#      its own — its only recovery is this hook or a human. Measured 2026-09-21: an API 500 at 00:58Z killed the turn of
+#      /fleet-sequence child 5f071ea8 (`claude --bg "/auto BF-2034"`) mid-review, this hook stood down as not-auto-loop, the
+#      session sat idle 13 hours until a human typed `continue`, and the sequence runner timed out behind it with the next
+#      issue never dispatched; two hand-launched targeted sessions died the same way in the same outage window.
 #
 # THE MECHANISM: a command hook marked `asyncRewake: true` runs in the background, and when it exits 2 the harness
 # wakes the session with the hook's stderr as a system reminder. Measured 2026-09-19 on 2.1.278: a Stop hook woke a
@@ -31,9 +38,15 @@
 #                holds, the woken request fails the same way, StopFailure fires again, and the next instance waits
 #                again — a retry loop that costs nothing per attempt and keeps the session from idling into the reaper.
 #
+# SCOPE. A transcript with a `/loop` delivery is a loop session and takes both paths above through auto-heartbeat.sh's
+# decide(), sourced below: ONE definition of that session, never a second copy that can drift. A transcript with an
+# `/auto` delivery and no `/loop` is a one-shot session: only the StopFailure path applies (a Stop there is a finished or
+# resting one-shot run, never a lost wakeup — it just spends the API retry count), its anchor is the last `/auto`
+# delivery, and a human prompt after that anchor hands it to the operator exactly as decide()'s human-override does.
+# Its rewake tells the model to finish the one-shot run and arm nothing.
+#
 # DELIBERATELY NOT FIRING — each is a real exit, not an oversight:
-#   - Not a self-paced `/loop /auto` session, or a fixed-interval one. The discriminator is auto-heartbeat.sh's
-#     decide(), sourced below: ONE definition of that session, never a second copy that can drift.
+#   - Neither a self-paced `/loop /auto` session nor a one-shot `/auto` one — or a fixed-interval loop.
 #   - A turn that ended UN-armed or on a stale arm. That is auto-heartbeat.sh's fault to catch, synchronously.
 #     The turn is scoped HERE from its START, not with decide()'s `armed` verdict: that verdict windows on the last
 #     stop_hook_summary, which is right for a synchronous hook (it runs before the ending turn's summary is written)
@@ -161,14 +174,59 @@ log() { # log <words...> — one line per decision, in-scope sessions only
   printf '%s %s %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${SHORT:-unknown}" "${EVENT:-?}" "$*" >> "$LOG_DIR/auto-rewake.log" 2>/dev/null || true
 }
 
+# The one-shot session's own anchor and human-override, over the whole transcript: the LAST `/auto` delivery — a
+# `claude --bg "/auto BF-1"` prompt lands as a user record with origin.kind "human", the same as a typed one — and the
+# human records after it. Text blocks only, as decide()'s utext: a tool_result quoting the command block is not a delivery.
+oneshot_scope() { # → {anchor: bool, humans: n}
+  jq -nR -c '
+    [ inputs | fromjson? | select(type == "object") | select(.isSidechain != true) ] as $L
+    | ($L | to_entries) as $E
+    | def utext($c):
+        if ($c | type) == "string" then $c
+        elif ($c | type) == "array"
+          then ([$c[] | select((type == "object") and (.type == "text")) | (.text // "")] | join(" "))
+        else "" end;
+    ([ $E[]
+       | select(.value.type == "user")
+       | select((utext(.value.message.content // "")) | test("<command-name>/auto</command-name>"))
+       | .key ] | last) as $anchor
+    | if $anchor == null then {anchor: false, humans: 0}
+      else {anchor: true,
+            humans: ([ $E[] | select(.key > $anchor) | .value
+                       | select(.type == "user") | select(.origin.kind == "human") ] | length)} end' "$TRANSCRIPT_PATH" 2>/dev/null
+}
+
+api_failure_decision() { # <session: loop|one-shot> → the StopFailure verdict once the session is known to be ours and unheld
+  local session="$1" n
+  case "$API_ERROR" in
+    rate_limit|overloaded|server_error|unknown) ;;
+    *) jq -nc --arg e "$API_ERROR" --arg s "$session" '{action:"skip", reason:"not-transient", error:$e, in_scope:true, session:$s}'; return ;;
+  esac
+  n=$(counter api_rewakes)
+  [[ "$n" -ge "$API_MAX" ]] && { jq -nc --argjson n "$n" --arg s "$session" '{action:"skip", reason:"api-cap", n:$n, in_scope:true, session:$s}'; return; }
+  jq -nc --arg e "$API_ERROR" --argjson w "$API_DELAY" --argjson n "$n" --arg s "$session" \
+    '{action:"wait", kind:"api", wait_s:$w, error:$e, n:$n, in_scope:true, session:$s}'
+}
+
 # Prints {action: skip|wait, reason, in_scope, ...}. Pure: reads the transcript and the counters, changes nothing.
 decision() {
-  local D kind W stop delay at due wait n try
+  local D S kind W stop delay at due wait n try
   [[ "$EVENT" == "Stop" || "$EVENT" == "StopFailure" ]] || { echo '{"action":"skip","reason":"not-a-stop-event","in_scope":false}'; return; }
   [[ -n "$TRANSCRIPT_PATH" && -f "$TRANSCRIPT_PATH" ]] || { echo '{"action":"skip","reason":"no-transcript","in_scope":false}'; return; }
-  # The same cheap bail auto-heartbeat.sh makes: nearly every stop is an ordinary session with no /loop in it.
-  grep -q '<command-name>/loop</command-name>' "$TRANSCRIPT_PATH" 2>/dev/null \
-    || { echo '{"action":"skip","reason":"not-auto-loop","in_scope":false}'; return; }
+  # The same cheap bail auto-heartbeat.sh makes: nearly every stop is an ordinary session with neither command in it.
+  if ! grep -q '<command-name>/loop</command-name>' "$TRANSCRIPT_PATH" 2>/dev/null; then
+    grep -q '<command-name>/auto</command-name>' "$TRANSCRIPT_PATH" 2>/dev/null \
+      || { echo '{"action":"skip","reason":"not-auto-loop","in_scope":false}'; return; }
+    # One-shot: a Stop is the run finishing or resting, never a lost wakeup; it is reported out of scope so that an
+    # ordinary targeted run leaves no log line, and the main body still spends the API retry count on it.
+    [[ "$EVENT" == "StopFailure" ]] || { echo '{"action":"skip","reason":"one-shot-stop","in_scope":false,"session":"one-shot"}'; return; }
+    S=$(oneshot_scope) || S=''
+    [[ -n "$S" ]] || { echo '{"action":"skip","reason":"unreadable","in_scope":false,"session":"one-shot"}'; return; }
+    [[ "$(jq -r '.anchor' <<<"$S")" == "true" ]] || { echo '{"action":"skip","reason":"not-auto-loop","in_scope":false}'; return; }
+    [[ "$(jq -r '.humans' <<<"$S")" -eq 0 ]] || { echo '{"action":"skip","reason":"human-override","in_scope":true,"session":"one-shot"}'; return; }
+    api_failure_decision one-shot
+    return
+  fi
 
   D=$(decide) || D=''
   [[ -n "$D" ]] || D='{"reason_kind":"unreadable"}'
@@ -179,14 +237,7 @@ decision() {
   esac
 
   if [[ "$EVENT" == "StopFailure" ]]; then
-    case "$API_ERROR" in
-      rate_limit|overloaded|server_error|unknown) ;;
-      *) jq -nc --arg e "$API_ERROR" '{action:"skip", reason:"not-transient", error:$e, in_scope:true}'; return ;;
-    esac
-    n=$(counter api_rewakes)
-    [[ "$n" -ge "$API_MAX" ]] && { jq -nc --argjson n "$n" '{action:"skip", reason:"api-cap", n:$n, in_scope:true}'; return; }
-    jq -nc --arg e "$API_ERROR" --argjson w "$API_DELAY" --argjson n "$n" \
-      '{action:"wait", kind:"api", wait_s:$w, error:$e, n:$n, in_scope:true}'
+    api_failure_decision loop
     return
   fi
 
@@ -220,12 +271,18 @@ DEC=$(decision)
 
 ACTION=$(jq -r '.action' <<<"$DEC" 2>/dev/null || echo skip)
 IN_SCOPE=$(jq -r '.in_scope // false' <<<"$DEC" 2>/dev/null || echo false)
+SESSION_KIND=$(jq -r '.session // "loop"' <<<"$DEC" 2>/dev/null || echo loop)
 
 # A Stop means a turn completed and the API answered: the retry count is spent. A stop no hook caused means the loop
-# is turning over on its own again, so the consecutive-rewake count is spent too.
-if [[ "$IN_SCOPE" == "true" && "$EVENT" == "Stop" ]]; then
-  set_counter api_rewakes 0
-  [[ "$STOP_ACTIVE" == "true" ]] || set_counter stop_rewakes 0
+# is turning over on its own again, so the consecutive-rewake count is spent too. A one-shot session spends only the
+# API count, and only when it has one — most targeted runs never rewoke, and leave no state file behind.
+if [[ "$EVENT" == "Stop" ]]; then
+  if [[ "$IN_SCOPE" == "true" ]]; then
+    set_counter api_rewakes 0
+    [[ "$STOP_ACTIVE" == "true" ]] || set_counter stop_rewakes 0
+  elif [[ "$SESSION_KIND" == "one-shot" && -f "$(state_file)" ]]; then
+    set_counter api_rewakes 0
+  fi
 fi
 
 if [[ "$ACTION" != "wait" ]]; then
@@ -235,7 +292,7 @@ fi
 
 KIND=$(jq -r '.kind' <<<"$DEC"); WAIT=$(jq -r '.wait_s' <<<"$DEC")
 STARTED=$(date +%s)
-log "wait kind=$KIND wait_s=$WAIT"
+if [[ "$SESSION_KIND" == "one-shot" ]]; then log "wait kind=$KIND wait_s=$WAIT session=one-shot"; else log "wait kind=$KIND wait_s=$WAIT"; fi
 [[ "$WAIT" -gt 0 ]] && sleep "$WAIT"
 
 # A transcript this instance can no longer read is NOT an idle session. The harness re-keys a session's project directory
@@ -261,6 +318,13 @@ fi
 WAITED_MIN=$(( ( $(date +%s) - STARTED ) / 60 ))
 if [[ "$KIND" == "api" ]]; then
   set_counter api_rewakes $(( N + 1 ))
+  if [[ "$SESSION_KIND" == "one-shot" ]]; then
+    log "rewake kind=api session=one-shot error=$API_ERROR n=$(( N + 1 ))/$API_MAX waited_min=$WAITED_MIN"
+    cat >&2 <<EOF
+auto-rewake: the previous turn of this one-shot /auto run was killed by an API error ($API_ERROR) ${WAITED_MIN} min ago, and nothing has run since (retry $(( N + 1 )) of $API_MAX). That is transient infrastructure, never an issue failure — skills/auto/SKILL.md, "Transient API failures are never failures". Resume the iteration exactly where the transcript left off ("Stall recovery on re-entry": re-send or re-dispatch the work that was in flight, or go straight to Step 4 if /full's terminal tag was already emitted), then finish the run as a one-shot /auto does — record the outcome and end the turn; arm no wakeup, since nothing loops here. This is not a human prompt. If this request fails the same way, this hook retries on its own.
+EOF
+    exit 2
+  fi
   log "rewake kind=api error=$API_ERROR n=$(( N + 1 ))/$API_MAX waited_min=$WAITED_MIN"
   cat >&2 <<EOF
 auto-rewake: the previous turn of this /loop /auto run was killed by an API error ($API_ERROR) ${WAITED_MIN} min ago, and nothing has run since (retry $(( N + 1 )) of $API_MAX). That is transient infrastructure, never an issue failure — skills/auto/SKILL.md, "Transient API failures are never failures". Resume the /auto iteration exactly where the transcript left off ("Stall recovery on re-entry": make the missing dispatch, or go straight to Step 4 if /full's terminal tag was already emitted), then carry the loop on, ending the turn with ScheduleWakeup as every iteration does. This is not a human prompt. If this request fails the same way, this hook retries on its own.
