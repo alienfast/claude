@@ -215,8 +215,8 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/auto-rewake.sh",
-            "asyncRewake": true,
-            "timeout": 4200
+            "timeout": 4200,
+            "asyncRewake": true
           }
         ]
       }
@@ -228,8 +228,8 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/auto-rewake.sh",
-            "asyncRewake": true,
-            "timeout": 1500
+            "timeout": 1500,
+            "asyncRewake": true
           }
         ]
       }
