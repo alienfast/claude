@@ -8,6 +8,7 @@
 /debug
 .env.local
 .eslintcache
+/feedback
 /file-history
 /history.jsonl
 ide
@@ -30,6 +31,7 @@ projects
 /session-env
 /sessions
 shell-snapshots
+/state
 /stats-cache.json
 statsig
 /tasks
