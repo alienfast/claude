@@ -49,6 +49,31 @@ echo seed > "$main/seed.txt"; git -C "$main" add -A; git -C "$main" commit -qm s
 wt="$root/wt-bf-999"
 git -C "$main" worktree add -q -b test-bf-999 "$wt" >/dev/null 2>&1
 
+# The routing guard reads each filed issue's labels and priority through $QRV_LINEAR_CLI. This stub
+# answers `api query '<gql>' -o json` with the shapes the real CLI (0.3.27) returned on 2026-09-22 —
+# the pretty-printed data envelope on a hit, and on a miss nothing on stdout, the GraphQL error JSON
+# on stderr and exit 2 — and logs every query so a case can prove which ids were asked about. The
+# ids the earlier cases file (TT-40, TT-41, BF-701) resolve as routed, so those cases stay offline
+# and exit 0 exactly as before the guard existed.
+export QRV_STUB_LOG="$root/stub-queries.log"
+export QRV_LINEAR_CLI="$root/linear-cli-stub"
+cat > "$QRV_LINEAR_CLI" <<'STUB'
+#!/bin/bash
+printf '%s\n' "$3" >> "$QRV_STUB_LOG"
+routed() { printf '{\n  "data": {\n    "issue": {\n      "identifier": "%s",\n      "labels": {\n        "nodes": [\n          {\n            "name": "%s"\n          }\n        ]\n      },\n      "priority": %s\n    }\n  }\n}\n' "$1" "$2" "$3"; }
+case "$3" in
+  *'"TT-40"'*)  routed TT-40 specified 3 ;;
+  *'"TT-41"'*)  routed TT-41 "needs decision" 3 ;;
+  *'"BF-701"'*) routed BF-701 specified 2 ;;
+  *'"TT-64"'*)  routed TT-64 human 4 ;;
+  *'"TT-60"'*)  printf '%s\n' '{"data":{"issue":{"identifier":"TT-60","labels":{"nodes":[]},"priority":0}}}' ;;
+  *'"TT-61"'*)  printf '%s\n' '{"data":{"issue":{"identifier":"TT-61","labels":{"nodes":[{"name":"needs decision"}]},"priority":0}}}' ;;
+  *'"TT-62"'*)  printf '%s\n' '{"data":{"issue":{"identifier":"TT-62","labels":{"nodes":[{"name":"bug"},{"name":"simple"}]},"priority":3}}}' ;;
+  *) printf '%s\n' '{"code":2,"details":[{"extensions":{"code":"INPUT_ERROR","statusCode":400,"type":"invalid input","userError":true,"userPresentableMessage":"Could not find referenced Issue."},"locations":[{"column":9,"line":1}],"message":"Entity not found: Issue","path":["issue"]}],"error":true,"message":"GraphQL error","retry_after":null}' >&2; exit 2 ;;
+esac
+STUB
+chmod +x "$QRV_LINEAR_CLI"
+
 echo "== 1. stdin mode (-) publishes to BOTH locations from a worktree"
 body_ok '# Verdict — BF-999' | (cd "$wt" && "$SCRIPT" BF-999 -) >/dev/null 2>&1
 ck "  exit 0" 0 $?
@@ -249,6 +274,66 @@ ck "  'none owed' does not warn"         "no"  "$(warned "$err")"
 err=$(edges_body 'attempted `linear-cli relations add BF-701 BF-702 -r blocks`; could not wire — API returned 400 Argument Validation Error' \
   | (cd "$wt" && "$SCRIPT" BF-705 -) 2>&1 >/dev/null)
 ck "  evidenced failure still warns (by design)" "yes" "$(warned "$err")"
+
+echo "== 17. routing guard: a filed issue with no routing label or no priority exits 3, published"
+# BFP-251/BFP-252, 2026-09-22: two Nice-to-Have items filed from a lane that never files, with no
+# label and priority None, four hours after the never-unrouted rule landed. Nothing ranks such an
+# issue and nothing parks it for a human, so it is never picked. Publish-then-refuse like the schema
+# guard — the verdict file must still exist for /finish — and name the commands that route it.
+route_body() { # route_body <filed-line>
+  printf '# BF-800\n\nVerdict: passed-after-fixes\nCycles: 1 (initial)\nFindings resolved: 1 (MED/impl: x)\nDeferred fixed in-session: none\nDeferred filed as issues: %s\nCollision edges: none owed\nDeferred dropped: none\nOpen items: none\n' "$1"
+}
+: > "$QRV_STUB_LOG"
+err=$(route_body 'TT-60 (sub-issues of TT-9)' | (cd "$wt" && "$SCRIPT" BF-800 -) 2>&1 >/dev/null); rc=$?
+ck "  no label + no priority -> exit 3" 3 $rc
+ck "  still published to main"     "yes" "$([ -f "$main/tmp/quality-review-verdict-bf-800.md" ] && echo yes || echo no)"
+ck "  ERROR names the issue and both gaps" "yes" "$(printf '%s' "$err" | grep -q 'filed issue TT-60 is unrouted — no routing label (specified, needs decision or human), priority None' && echo yes || echo no)"
+ck "  ERROR names the label command"     "yes" "$(printf '%s' "$err" | grep -q "linear-add-label.sh TT-60 <specified|'needs decision'|human>" && echo yes || echo no)"
+ck "  ERROR names the priority command"  "yes" "$(printf '%s' "$err" | grep -q 'linear-cli issues update TT-60 -p <1-4>' && echo yes || echo no)"
+ck "  summary line carries the issue"    "yes" "$(printf '%s' "$err" | grep -q 'filed issue(s) are unrouted: TT-60: no routing label' && echo yes || echo no)"
+ck "  the parent in (sub-issues of …) is not read" "no" "$(grep -q '"TT-9"' "$QRV_STUB_LOG" && echo yes || echo no)"
+ck "  the filed id is read exactly once"          "1"  "$(grep -c '"TT-60"' "$QRV_STUB_LOG")"
+
+err=$(route_body 'TT-61 (sub-issues of TT-9)' | (cd "$wt" && "$SCRIPT" BF-801 -) 2>&1 >/dev/null); rc=$?
+ck "  needs decision but priority None -> exit 3" 3 $rc
+ck "  only the priority gap is named" "yes" "$(printf '%s' "$err" | grep -q 'TT-61 is unrouted — priority None:' && echo yes || echo no)"
+
+# `bug` and `simple` are class labels: they rank a pickable issue and route nothing on their own.
+err=$(route_body 'TT-62 (sub-issues of TT-9)' | (cd "$wt" && "$SCRIPT" BF-802 -) 2>&1 >/dev/null); rc=$?
+ck "  class labels only -> exit 3" 3 $rc
+ck "  only the label gap is named" "yes" "$(printf '%s' "$err" | grep -q 'TT-62 is unrouted — no routing label (specified, needs decision or human):' && echo yes || echo no)"
+
+# One unrouted id among routed siblings fails the batch; the annotation parenthetical the recipe
+# writes for an exit-2 create (the id repeated inside it) is stripped before ids are read.
+: > "$QRV_STUB_LOG"
+err=$(route_body 'TT-40, TT-60 (specified label not attached — add manually: ~/.claude/scripts/linear-add-label.sh TT-60 specified), TT-64 (sub-issues of TT-9)' | (cd "$wt" && "$SCRIPT" BF-803 -) 2>&1 >/dev/null); rc=$?
+ck "  one unrouted id among routed siblings -> exit 3" 3 $rc
+ck "  routed siblings raise nothing" "no" "$(printf '%s' "$err" | grep -Eq 'TT-40 is unrouted|TT-64 is unrouted' && echo yes || echo no)"
+ck "  each id read once despite the annotation" "3" "$(sort -u "$QRV_STUB_LOG" | wc -l | tr -d ' ')"
+
+# Routed filings — specified, needs decision, human — are quiet and exit 0, so the earlier cases'
+# TT-40/TT-41/BF-701 filings are unchanged by the guard.
+err=$(route_body 'TT-40, TT-41, TT-64 (sub-issues of TT-9)' | (cd "$wt" && "$SCRIPT" BF-804 -) 2>&1 >/dev/null); rc=$?
+ck "  routed filings -> exit 0" 0 $rc
+ck "  quiet" "no" "$(printf '%s' "$err" | grep -Eq 'unrouted|unverified' && echo yes || echo no)"
+
+# Linear cannot answer (an id the workspace does not know, or no network): WARN, exit unchanged — a
+# blocked ship over a transport error costs more than the filing it guards against.
+err=$(route_body 'TT-63 (sub-issues of TT-9)' | (cd "$wt" && "$SCRIPT" BF-805 -) 2>&1 >/dev/null); rc=$?
+ck "  unreadable id -> exit 0" 0 $rc
+ck "  WARN says routing is unverified" "yes" "$(printf '%s' "$err" | grep -q "could not read TT-63's labels and priority from Linear — its routing is unverified" && echo yes || echo no)"
+
+# `none` filed: no read at all.
+: > "$QRV_STUB_LOG"
+err=$(route_body 'none' | (cd "$wt" && "$SCRIPT" BF-806 -) 2>&1 >/dev/null); rc=$?
+ck "  nothing filed -> exit 0" 0 $rc
+ck "  nothing filed -> no Linear read" "0" "$(wc -l < "$QRV_STUB_LOG" | tr -d ' ')"
+
+# Off-schema AND unrouted: both ERRORs print, exit 3 once.
+err=$(printf '# BF-807\n\nVerdict: passed-after-fixes\nCycles: 1\nDeferred filed as issues: TT-60\nDeferred dropped: none\nOpen items: none\n' | (cd "$wt" && "$SCRIPT" BF-807 -) 2>&1 >/dev/null); rc=$?
+ck "  off-schema + unrouted -> exit 3" 3 $rc
+ck "  schema ERROR present"  "yes" "$(printf '%s' "$err" | grep -q 'off-schema: missing/unparseable lines' && echo yes || echo no)"
+ck "  routing ERROR present" "yes" "$(printf '%s' "$err" | grep -q 'TT-60 is unrouted' && echo yes || echo no)"
 
 echo
 echo "$pass passed / $fail failed"

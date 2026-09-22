@@ -31,10 +31,14 @@
 #   1 = not in a git repo
 #   2 = missing or unreadable inputs, or an empty body
 #   3 = published, but the body is off-schema — one or more of the Output block's seven
-#       field lines is missing or unparseable (stderr names which). The copies WERE
-#       written: /finish Step 1.5 needs the file to exist, and in auto mode an absent
-#       file aborts the ship, so refusing the write would turn a lost audit record into
-#       a blocked ship. Fix the block and re-run; the overwrite is idempotent.
+#       field lines is missing or unparseable (stderr names which) — or an issue the
+#       `Deferred filed as issues:` line names is UNROUTED in Linear: no `specified`,
+#       `needs decision` or `human` label, or priority None (stderr names the issue and
+#       the two commands that route it). The copies WERE written: /finish Step 1.5 needs
+#       the file to exist, and in auto mode an absent file aborts the ship, so refusing
+#       the write would turn a lost audit record into a blocked ship. Fix the block, or
+#       route the issue, and re-run; the overwrite is idempotent. QRV_LINEAR_CLI names
+#       the linear-cli binary the routing read uses (the suite stubs it).
 
 set -eo pipefail
 
@@ -193,6 +197,41 @@ if [ -n "$off_enum" ]; then
   echo "WARN: severity tag(s) carry an off-enum origin class: $(printf '%s' "$off_enum" | tr '\n' ' ')— legal classes are plan|impl|spec|test|latent; fleet-metrics.py drops these findings from the origin aggregate" >&2
 fi
 
+# Routing guard — every issue the verdict says it filed must carry a label some consumer reads
+# (`specified`, `needs decision`, `human`) and a priority, or nothing ever picks it
+# (standards/issue-spec.md § An agent filing never lands unrouted). Prose has lost this three times:
+# fourteen filings over five weeks carrying only a minted `suggested` label, BF-1189's three unlabeled
+# filings, and BFP-251/BFP-252 on 2026-09-22 — two Nice-to-Have items a lane that never files filed
+# with no label and priority None, four hours after the rule was written. This runs AFTER the recipe's
+# "Certify last" step, at the one moment the filing session still holds the context to route them,
+# and it exits 3 like the schema guard: published, fix and re-run. Linear is asked through
+# `$QRV_LINEAR_CLI` (default linear-cli; the suite stubs it), and a read that fails — network, an id
+# the workspace does not know — WARNs and lets the verdict through: a blocked ship over a transport
+# error would cost more than the unrouted filing it was guarding against.
+export PATH="$HOME/.cargo/bin:$PATH"
+linear="${QRV_LINEAR_CLI:-linear-cli}"
+routing_bad=""
+filed_ids=$(grep -E '^Deferred filed as issues:' "$body_file" | head -1 | sed -E 's/\([^)]*\)//g' \
+  | grep -Eo '\b[A-Z]+-[0-9]+\b' | sort -u || true)
+for fid in $filed_ids; do
+  resp=$("$linear" api query "query { issue(id: \"$fid\") { identifier priority labels { nodes { name } } } }" -o json 2>/dev/null) || resp=""
+  parsed=$(printf '%s' "$resp" | jq -r '.data.issue | select(. != null) | [(.priority // 0 | tostring), ([.labels.nodes[].name] | join("|"))] | join("\t")' 2>/dev/null || true)
+  if [ -z "$parsed" ]; then
+    echo "WARN: could not read $fid's labels and priority from Linear — its routing is unverified; confirm it carries specified, needs decision or human, and a priority" >&2
+    continue
+  fi
+  prio=${parsed%%$'\t'*}
+  labels=${parsed#*$'\t'}
+  gaps=""
+  printf '%s\n' "$labels" | tr '|' '\n' | grep -Eqx 'specified|needs decision|human' \
+    || gaps="no routing label (specified, needs decision or human)"
+  [ "$prio" != "0" ] || gaps="${gaps:+$gaps, }priority None"
+  if [ -n "$gaps" ]; then
+    routing_bad="${routing_bad:+$routing_bad; }$fid: $gaps"
+    echo "ERROR: filed issue $fid is unrouted — $gaps: nothing ranks it and nothing parks it for a human, so it is never picked and the next session re-files it. Route it (~/.claude/scripts/linear-add-label.sh $fid <specified|'needs decision'|human>; linear-cli issues update $fid -p <1-4>) and re-run this call." >&2
+  fi
+done
+
 has '^Verdict:[[:space:]]*(passed-clean|passed-after-fixes|terminated-with-open-items|escalated-to-architect)([[:space:]][^|]*)?$' || miss "Verdict"
 has '^Cycles:[[:space:]]*[0-9]+' || miss "Cycles"
 has '^Findings resolved:[[:space:]]*([0-9]+|none)' || miss "Findings resolved"
@@ -204,5 +243,10 @@ has '^Open items:' || miss "Open items"
 if [ -n "$schema_missing" ]; then
   echo "ERROR: verdict published but off-schema: missing/unparseable lines: $schema_missing" >&2
   echo "ERROR: the copies above were still written; re-run with the corrected block (see quality-review/SKILL.md Output)." >&2
+  exit 3
+fi
+if [ -n "$routing_bad" ]; then
+  echo "ERROR: verdict published but its filed issue(s) are unrouted: $routing_bad" >&2
+  echo "ERROR: the copies above were still written; route the issue(s) in Linear and re-run the same call (standards/issue-spec.md § An agent filing never lands unrouted)." >&2
   exit 3
 fi

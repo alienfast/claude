@@ -99,7 +99,7 @@ Every issue an agent files — a `/quality-review` deferred item, a `/finish` pr
 
 **A sibling filed the old way is not precedent.** An existing unlabeled issue of the same class shows that this rule was missed before, not that unlabeled is the class's convention; route the new filing, and route the sibling while you are there.
 
-**Every agent filing takes the one recipe**, whatever triggered it: `/quality-review` Step 6 sub-step 6 — search before filing, `linear-create-child.sh`, the originating issue as parent when there is one, class labels at create, collision edges, certify last ([linear-workflow.md](linear-workflow.md) § Every Agent Filing Takes the Filing Recipe).
+**Every agent filing takes the one recipe**, whatever triggered it: `/quality-review` Step 6 sub-step 6 — search before filing, `linear-create-child.sh`, the originating issue as parent when there is one, class labels at create, collision edges, certify last ([linear-workflow.md](linear-workflow.md) § Every Agent Filing Takes the Filing Recipe). `/quality-review`'s filings are additionally checked at publish: `quality-review-write-verdict.sh` reads every id on the verdict's `Deferred filed as issues:` line back from Linear and exits 3 on one carrying no routing label or priority None — the rule above lost three times as prose (the `suggested` batch, BF-1189, BFP-251/252), and publish time is the last moment the filing session still holds the context to route it.
 
 ## Canonical spec template
 

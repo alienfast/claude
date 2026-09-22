@@ -122,6 +122,17 @@ run keys>` and re-run, since a mis-scoped run also appends a junk row to `tmp/fl
 **Fewer than the fleet's** = a fleet session missing from discovery, which is a finding in itself — chase it;
 `--sessions` would only hide it.
 
+**Read the `Subagent usage rows` line under the token table before any output-token figure.** A subagent
+transcript streams one row per content block, all sharing the message id, and only the row stamped
+`stop_reason` carries the message's whole output count — the rest carry a placeholder of a few tokens. The
+script credits the largest value per id and reports how many subagent messages have a final row at all;
+below 100% every subagent figure, ktok/issue and burn rate is a floor and $/Mtok out a ceiling (the trend
+table's `sub-final%`). Until 2026-09-22 the script credited the FIRST row: the 2026-09-21 fleet's subagents
+read 714k output tokens against 6.68M on their final rows, every fleet's ktok/issue sat at a third of its
+real value, and the n=3 5h burst floor `/auto-prep` sized against read 1.9M where the corrected ledger says
+4.3–5.5M. Coverage itself varies by run with no cause established — 99% on most fleets, 25% on 2026-09-05
+and 15% on 2026-09-22, all on harness 2.1.278 — so a low share is a finding to carry, not to explain away.
+
 Four gauges ride the same run and the retro reads all four, not just the tables:
 
 - **Context distribution** — share of billable prompt volume by context size at call time. This is the
@@ -346,7 +357,12 @@ Filed issues are output too, and they fail in ways the metrics cannot see. Check
   #13), so read each filing with `issues get <ID> -o json | jq '[.labels.nodes[].name]'`. A severity-carrying
   `/quality-review` filing at priority None is the same fault on the other field. Measured 2026-09-22: fourteen
   filings over five weeks carried a minted `suggested` label — the skill's reply token, passed as a label — and
-  nothing else; none was ever picked, and a keeper audit found one real bug among the nine still open.
+  nothing else; none was ever picked, and a keeper audit found one real bug among the nine still open. Later the
+  same day a fleet filed BFP-251 and BFP-252 with no label and priority None, four hours after the rule landed, so
+  `quality-review-write-verdict.sh` now reads every filed id back from Linear and exits 3 on an unrouted one. A
+  filing that still lands unrouted on a run after that means one of three things — its verdict was never
+  published, the session ignored the exit 3, or Linear did not answer the read (a `routing is unverified` WARN in
+  the transcript) — so read that session's write-verdict call before filing a finding against the rule.
 - **Certification and placement.** `specified` present where the issue is meant to be auto-shippable;
   absent where it needs `/spec` first. Pipeline self-certification is sanctioned (keeper ruling
   2026-08-15): a filing whose body meets `standards/issue-spec.md`'s bar may carry `specified` from
