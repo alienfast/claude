@@ -235,6 +235,27 @@ close here.
    dedup). The 2026-08-14 run measured **1,394,893** and **1,213,190** — two independent ceilings for
    one `limit_kind`, ~13% apart.
 
+   **Unit trap since 2026-09-22:** `fleet-metrics.py` now credits each message its final usage row, but
+   `scripts/fleet-headroom.sh` still credits the FIRST row per `requestId` — on a streamed subagent
+   message a placeholder of a few tokens, since every row of one message shares its `requestId` (3,442
+   of 3,442 messages across one 2026-09-22 BFP session's 142 subagent transcripts, and the shape is as
+   old as the oldest transcript on disk, 2026-08-14 on 2.1.232), while a main-session message carries
+   its final count on every row. So the probe's trailing-5h meter, its 1,500,000 default, both
+   2026-08-17 observations in `~/.claude/telemetry/five-hour-ceiling.json`, and every figure in this
+   section are in the old unit; on a fleet-dominated window the script's unit runs roughly 3× higher
+   (its re-measured peaks moved 1.9M → 4.3–5.5M), less when interactive work fills the window. The
+   file's `ceiling_output_tokens` is 100,000,000 by keeper directive 2026-08-30 (multi-account: the
+   machine-wide meter maps to no one account's window), so the probe throttles on nothing today, and
+   the trap fires when that note's "restore a measured per-account ceiling" is followed: a new-unit
+   observation restored against the old-unit meter is a ceiling the probe can never approach, and the
+   fleet dies mid-issue with the gate silent. Do NOT write the script's cutoff-window figure into that
+   file — `skills/fleet-launch/SKILL.md`, `skills/auto/SKILL.md` and the probe's own header still say
+   to; record it in the retro report only, until the probe counts the largest row per `requestId`
+   (still a floor where a subagent's final row was never written — the `Subagent usage rows` share
+   above), its default is re-derived, and `scripts/fleet-forecast.py`'s throttle line — the same
+   ceiling read against a rate the re-measured history already states in the new unit — is converted
+   with it.
+
    **Cross-run token comparisons are valid only within one `limit_kind`.** The 2026-08-08 retro nearly
    shipped a confident, wrong conclusion here: trailing-5h total-billable at three cutoffs agreed to
    **0.08%** while output diverged **23%**, which reads unmistakably as having identified the meter —
