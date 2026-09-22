@@ -1,0 +1,25 @@
+You are running the deep pass of the /triage skill: a READ-ONLY revalidation of Linear issues against the code at HEAD. Working directory: the project checkout. Do NOT edit files and do NOT write to Linear (no `issues update`, no `issues comment`, no `relations add`, no labels). Search breadth: medium. Facts only; no fix proposals.
+
+Record `git rev-parse --short=10 HEAD` first; it goes into every record's `sha`.
+
+Issues in this group (stage/lane/labels, filed date and filer):
+{{ISSUES}}
+
+For each issue:
+- Read its Linear digest at `{{OUT}}/triage-digest-<ID>.md` (description, comments, parent chain, dependencies).
+- Read its script-pass row: `jq -c 'select(.id=="<ID>")' {{OUT}}/triage-cheap.ndjson` — fields: `subjects` (files the issue names, or that its named identifiers resolve to), `unresolved` (named identifiers git grep no longer finds — a rename signal as often as a removal), `changed` (commits touching the subjects since the baseline), `shipped_subject` (a commit whose SUBJECT LINE leads with the id), `body_mentions` (commits citing the id in the body, usually the one that filed it), `marker` (a previous run's verdict, if any).
+- Use `git log --oneline --since=<filed date> -- <paths>`, `git log -S<symbol> --oneline | head`, and `git log --oneline --all --grep=<ID>` to see what changed since filing and which issue id shipped it. The project spells some names differently than older issues do (for example a namespace renamed); a zero-hit grep is settled with `git log -S`, never assumed.
+
+Then answer, with file:symbol evidence (never a line number as the only locator):
+1. Re-locate every subject the issue names by SYMBOL. For each `unresolved` token decide rename vs removal and name the commit and its issue id.
+2. Verdict on the Problem or request as filed against HEAD: STALE (gone, or satisfied by other work: name the commit or issue), ACCURATE (still holds: quote the code fact), UNDERSTATED (holds and is larger than filed: say how), or NEEDS-FILER (business-language request the code cannot disambiguate).
+3. A `shipped_subject` hit: say what that commit actually changed and whether the issue's own comments record a deferral. A comment-only or doc-only commit is NOT shipped. An implementation that shipped under the issue's own id while the state never moved is disposition `ship-close`.
+4. Certified issue (label `specified`): read each Success Criterion and Must Have against HEAD — which still bind, which are already satisfied, which name a subject that no longer resolves. Every criterion binding and every subject resolving (renames allowed) → disposition `keep`. A criterion now satisfied, a census that moved, or a mechanism-exclusion the code falsified → `regroom` (say exactly what moved). Defect gone entirely → `cancel` or `ship-close`.
+5. Uncertified issue: say whether the filed text plus the code is enough to write a certifiable spec (problem, observable outcome, testable criteria, no open product decision) → `certify`; or list at most three questions the filer must answer → `ask-filer`; or name the one product decision an interview must settle → `hand-to-spec`. Business-language requests: enumerate candidate surfaces by MECHANISM (the mutation submitted, the record minted, the route rendered) and by label, read each candidate's contract, and say which one the request means, what it does today, and whether it is satisfied, partly satisfied, or untouched. Partly satisfied with a same-problem remainder → `narrow` (state what remains).
+6. `epic`-labelled issue: revalidate by its children — `linear-cli issues get <ID> -o json | jq .children` plus `linear-cli relations list <ID> -o json` reading BOTH `.relations[]` and `.inverseRelations[]` — list each child and its state, and say whether the description still describes the open ones. An epic with open children is `keep` even when its own brief shipped.
+7. Duplicates and collisions: one `linear-cli search issues "<token>" -o json` per distinctive single word from the title (never a phrase; matches are contiguous substrings), keep hits whose state NAME is not Done/Canceled/Duplicate/Ready for Release, and name any open issue that is the same defect (`duplicate_of`) or that edits the same file or mechanism (`collisions`).
+8. Curate `subjects`: the repo-relative files this issue is genuinely about (3 to 8 paths), which the next run's changed-since test will read. Not the generic spread the script pass derived.
+
+Set `escalate: true` when you could not settle the verdict with confidence (an unresolved rename you could not trace, a criterion you could not evaluate, conflicting evidence), so a stronger pass re-reads the issue.
+
+Return the structured records. `report` is the full per-issue write-up in markdown (Verdict line with evidence; Subjects resolved / renamed / removed with commits; Criteria still binding and already satisfied; Recommended disposition with reason; Duplicate and collision candidates; the questions or the open decision). `evidence` is the single line a human reads in a batch dialog.

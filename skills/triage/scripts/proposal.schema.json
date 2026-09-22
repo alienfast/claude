@@ -1,0 +1,30 @@
+{
+  "type": "object",
+  "properties": {
+    "sha": { "type": "string", "description": "git rev-parse --short=10 HEAD as measured by this agent" },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "verdict": { "type": "string", "enum": ["STALE", "ACCURATE", "UNDERSTATED", "NEEDS-FILER"] },
+          "disposition": { "type": "string", "enum": ["cancel", "ship-close", "duplicate", "narrow", "certify", "hand-to-spec", "ask-filer", "keep", "regroom"] },
+          "evidence": { "type": "string", "description": "one line: the commit, issue, or code fact that decides it" },
+          "subjects": { "type": "array", "items": { "type": "string" }, "description": "3-8 repo-relative paths this issue is genuinely about" },
+          "renames": { "type": "array", "items": { "type": "string" }, "description": "old -> new (commit, issue id)" },
+          "criteria_binding": { "type": "string" },
+          "criteria_satisfied": { "type": "string" },
+          "duplicate_of": { "type": "string" },
+          "collisions": { "type": "array", "items": { "type": "string" } },
+          "questions": { "type": "array", "items": { "type": "string" }, "description": "for ask-filer: at most three" },
+          "open_question": { "type": "string", "description": "for hand-to-spec: the one product decision" },
+          "escalate": { "type": "boolean" },
+          "report": { "type": "string", "description": "full per-issue markdown write-up" }
+        },
+        "required": ["id", "verdict", "disposition", "evidence", "subjects", "escalate", "report"]
+      }
+    }
+  },
+  "required": ["sha", "issues"]
+}
