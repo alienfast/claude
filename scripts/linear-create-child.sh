@@ -20,9 +20,11 @@
 #   <body-file>  Path to a file holding the markdown description.
 #   <label>      Optional issue label(s) to attach after create — a single name or a
 #                comma-separated list (e.g., "specified,bug"), or "-" / "" / omitted to
-#                skip. BEST EFFORT: the id still prints and the parent link is still
-#                attempted; a failed attach exits 2 (filed-but-unlabelled; 4 when the
-#                parent was also at the nesting cap), mirroring linear-file-improvement.sh.
+#                skip. Must already exist in the workspace: a near-miss heals to the
+#                canonical label, but a novel name is refused, never minted. BEST EFFORT:
+#                the id still prints and the parent link is still attempted; a failed
+#                attach exits 2 (filed-but-unlabelled; 4 when the parent was also at the
+#                nesting cap), mirroring linear-file-improvement.sh.
 #   <priority>   Optional Linear priority (0=none 1=urgent 2=high 3=normal 4=low), or
 #                "-" / "" / omitted to skip. Set at create time. A severity graded into
 #                an issue BODY is invisible to /next's priority_rank — this field is
@@ -164,7 +166,7 @@ fi
 
 # Attach the optional label BEFORE the parent link — labels do not depend on the parent,
 # and ordering them after it meant every parent failure filed an unlabeled issue, which
-# without `specified` is invisible to /auto and unranked by /next (BF-703). Probe/create
+# without `specified` is invisible to /auto and unranked by /next (BF-703). Probe
 # mechanics mirror linear-file-improvement.sh (the `-t issue` gotchas and the
 # canonical-casing capture are documented there); the direct `-l` replace semantics are
 # safe only because this issue was just created with an empty label set
@@ -202,10 +204,16 @@ if [ -n "$label" ] && [ "$label" != "-" ]; then
         continue
       fi
     fi
+    # Never mint: a filing session that passes a token that is not a label (quality-review's
+    # `suggested` reply, 2026-08-19) would otherwise create it here, and every later session
+    # then finds it in `labels list` and reuses it — fourteen filings carried it in place of
+    # `specified`. A genuinely new label is a /linear-setup decision, not a side effect.
     if [ -z "$have_label" ]; then
-      linear-cli labels create "$lb" -t issue >/dev/null 2>&1 || true
+      echo "WARN: requested label '$lb' does not exist — not minting it. Create it deliberately (/linear-setup, or linear-cli labels create '$lb' -t issue) and attach with ~/.claude/scripts/linear-add-label.sh $new_id '$lb'. Skipping this label." >&2
+      label_failed=1
+      continue
     fi
-    update_args+=(-l "${have_label:-$lb}")
+    update_args+=(-l "$have_label")
   done
   # One replace-semantics update carrying every -l — safe only because the label set is
   # empty on a just-created issue (existing issues must use linear-add-label.sh). Skipped

@@ -340,6 +340,13 @@ Filed issues are output too, and they fail in ways the metrics cannot see. Check
   gotcha #14). A phrase-shaped search returns empty with exit 0 and reads exactly like "no duplicate".
 - **Stranded states.** Anything in `Triage` is invisible to `/next` and `/auto` permanently. List it:
   `linear-cli api query` filtered on `state.name == "Triage"`.
+- **Routing.** Every filing carries `specified`, `needs decision`, or `human` — an issue with none of them is
+  unrouted: nothing ranks it, nothing parks it for a human, and the next session re-diagnoses and re-files it
+  (`standards/issue-spec.md` § An agent filing never lands unrouted). List rows omit labels (linear skill gotcha
+  #13), so read each filing with `issues get <ID> -o json | jq '[.labels.nodes[].name]'`. A severity-carrying
+  `/quality-review` filing at priority None is the same fault on the other field. Measured 2026-09-22: fourteen
+  filings over five weeks carried a minted `suggested` label — the skill's reply token, passed as a label — and
+  nothing else; none was ever picked, and a keeper audit found one real bug among the nine still open.
 - **Certification and placement.** `specified` present where the issue is meant to be auto-shippable;
   absent where it needs `/spec` first. Pipeline self-certification is sanctioned (keeper ruling
   2026-08-15): a filing whose body meets `standards/issue-spec.md`'s bar may carry `specified` from

@@ -5,8 +5,9 @@
 # missed the canonical label case-insensitively but space-sensitively, then MINTED the
 # corruption via `labels create`: BF-1109, BF-1243) — plus the normalized-identity healing
 # lifted from linear-add-label.sh: a near-miss heals to the canonical label with a NOTE, an
-# ambiguous near-miss is skipped with exit 2, and only a genuinely novel name reaches
-# `labels create`. linear-cli is a PATH shim that logs every invocation; HOME is an empty dir
+# ambiguous near-miss is skipped with exit 2, and a genuinely novel name is refused with exit 2
+# rather than minted (quality-review's `suggested` reply token, passed as a label, minted a
+# label on 2026-08-19 that fourteen filings then carried in place of `specified`). linear-cli is a PATH shim that logs every invocation; HOME is an empty dir
 # so the script's cargo-bin PATH prepend cannot resurrect the real CLI.
 set -uo pipefail
 
@@ -78,9 +79,11 @@ ck_has  "near-miss: NOTE names the healing"         "normalized match"  "$WORK/e
 ck_lacks "near-miss: nothing minted"                "labels|create"     "$WORK/calls.log"
 
 rc=$(run labels-plain.json "brand-new")
-ck "novel: exit"                 "0" "$rc"
-ck_has  "novel: label created"                      "labels|create|brand-new|-t|issue" "$WORK/calls.log"
-ck_has  "novel: attached as typed"                  "-l|brand-new"      "$WORK/calls.log"
+ck "novel: exit 2 (filed-but-unlabelled)" "2" "$rc"
+ck "novel: id still on stdout"            "TT-9" "$(cat "$WORK/out")"
+ck_has  "novel: WARN refuses to mint"               "does not exist — not minting" "$WORK/err"
+ck_lacks "novel: nothing minted"                    "labels|create"     "$WORK/calls.log"
+ck_lacks "novel: not attached"                      "-l|brand-new"      "$WORK/calls.log"
 
 rc=$(run labels-ambiguous.json "needsdecision")
 ck "ambiguous: exit 2 (filed-but-unlabelled)" "2" "$rc"

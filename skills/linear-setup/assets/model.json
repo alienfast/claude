@@ -229,14 +229,6 @@
       "required": true
     },
     {
-      "name": "suggested",
-      "color": "#bec2c8",
-      "description": null,
-      "isGroup": false,
-      "parent": null,
-      "required": false
-    },
-    {
       "name": "technical debt",
       "color": "#f2994a",
       "description": null,
