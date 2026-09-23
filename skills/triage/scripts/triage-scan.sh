@@ -23,8 +23,9 @@
 #   --force           re-scan issues that already have a proposal
 #   --summary         print the proposal counts and per-disposition lists, then exit
 #
-# Resumable: an issue with a proposal file is skipped (unless --force); `unchanged` and `claimed` rows are
-# never scanned. Re-run after a crash and it continues. Cost and duration per group go to DIR/triage-scan.log.
+# Resumable: an issue with a pending proposal is skipped (unless --force), and so is one with an applied proposal the
+# pool file predates; `unchanged` and `claimed` rows are never scanned. Re-run after a crash, or after an apply session,
+# and it continues. Cost and duration per group go to DIR/triage-scan.log.
 set -o pipefail
 export PATH="$HOME/.cargo/bin:$PATH"
 HERE=${0:A:h}
@@ -70,6 +71,12 @@ jq -c 'select(.claimed|not) | select(.class != "unchanged")' "$CHEAP" | while IF
   case "$STAGE" in all) ;; planned) [ "$st" = "Planned" ] || [ "$st" = "Todo" ] || continue ;; backlog) [ "$st" = "Backlog" ] || continue ;; triage) [ "$st" = "Triage" ] || continue ;; esac
   case "$LANE" in both) ;; certified|uncertified) [ "$ln" = "$LANE" ] || continue ;; esac
   [ "$FORCE" -eq 0 ] && [ -s "$PROP/$id.json" ] && continue
+  # applied/ is never cleared, so its mere presence cannot mean "done". A row whose marker_sha differs from the applied proposal's sha was read before
+  # that apply (skip); a match means the cheap pass saw that marker and still flagged the issue, so its subjects moved since (re-scan).
+  if [ "$FORCE" -eq 0 ] && [ -s "$PROP/applied/$id.json" ]; then
+    asha=$(jq -r '.sha // ""' "$PROP/applied/$id.json"); msha=$(printf '%s' "$row" | jq -r '.marker_sha // ""')
+    [ -n "$asha" ] && [ "$msha" != "$asha" ] && continue
+  fi
   area=$(printf '%s' "$row" | jq -r '(.subjects[0] // "") | split("/") | .[0:3] | join("/")'); [ -n "$area" ] || area=$(printf '%s' "$row" | jq -r '.parent // "misc"')
   lr=0; [ "$ln" = "uncertified" ] && lr=1
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(stage_rank "$st")" "$lr" "$area" "$(class_rank "$cl")" "$id" "$ln" "$st" >> "$sel"
