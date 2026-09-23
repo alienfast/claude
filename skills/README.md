@@ -75,6 +75,10 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 - Tasks that don't benefit from progressive disclosure
 - Operations that work well as slash commands
 
+### Claude-side tooling is a skill, not a package
+
+A tool whose only consumer is a Claude session belongs in `<project>/.claude/skills/<name>/` with its scripts under `scripts/`, in whatever language they were written (Python is the conventional choice, as in the bundled pdf/docx/xlsx skills). Keep it project-level and shared, never one person's; add an agent only where delegation adds material value; propose a `@repo/*` package, a CLI, or a product surface only when the user has named a product or deployment use. Ask about the use before proposing a structure — keeper ruling 2026-09-18, when a Python debt-service engine was about to become a TypeScript package with vitest tests because that is what the toolchain expects, and nobody had asked for anything deployable.
+
 ## Skills in This Directory
 
 ### dependency-updater

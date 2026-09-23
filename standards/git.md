@@ -198,6 +198,7 @@ git commit              # Commit staged changes
 git restore --staged    # Unstage (does not discard changes)
 git stash list          # View the stash stack (read-only)
 git reflog              # View reference log
+git merge-tree --write-tree <base> <branch>   # dry-run merge: answers "does this merge clean?" in a second, touching nothing
 ```
 
 **`git stash push`/`pop` are NOT on that list.** The stash stack lives in the **common** git dir (`<repo>/.git/refs/stash`), not per-worktree — every worktree of a repo pushes onto and pops off one shared stack, and `git stash list` from any worktree shows every other session's entries. `pop` takes `stash@{0}` and **drops** it, so a concurrent session pushing between your push and your pop makes your `pop` apply their diff into your tree *and* delete their entry. `git-permissions.sh` blocks every mutating form (bare `stash`, `push`, `pop`, `apply`, `drop`, `clear`), allowing only `stash list`/`stash show` — but the hook sees only top-level `git` commands (see above), so a stash run from inside a script executes unguarded. To undo a temporary edit, use the file-copy rule above.
@@ -366,6 +367,10 @@ worktree's contents unexamined, and run from inside the worktree it deletes this
 verify the source ref exists first (`git rev-parse --verify <ref>`) — a long-running branch often has no
 `origin/` twin — and remember the checkout's own branch cannot be checked out twice: fork a NEW branch
 (`git worktree add -b <work-branch> <path> <source-branch>`), then re-enter with `EnterWorktree({path})`.
+
+## Re-pointing a `/start wt` worktree at another merge target
+
+A worktree's merge target is the `start.source-branch` value in its per-worktree config: `git config --worktree start.source-branch <branch>` is what `finish-detect-mode.sh` reads, and the identity gate flags only a *wiped* value, never a changed one. But the stamp has three tiers, and the two identity sidecars — `.claude/worktree-identity/wt-identity-<id>.env` in the repo and `wt-identity-<id>.env` under `~/.claude/jobs/<session>/` — still carry the old branch, so every later probe loads the identity from a sidecar with a dissent WARN (measured 2026-09-23 on two worktrees re-pointed by config alone: corroboration 1/2, git-config dissenting). Change `WT_IDENTITY_SOURCE_BRANCH=` in both sidecars to match, or the re-point reads as tampering from then on. `wt_identity_stamp` is not the tool for this — the auto-mode classifier blocks it as a bypass — and neither is deleting and recreating a worktree that already carries work.
 
 ## A throwaway worktree tests HEAD, not your working tree
 

@@ -152,6 +152,10 @@ Ship honest best-effort now — attempt, log the outcome, and let the caller see
 
 Worked case: roughly four adversarial-review cycles went into retry, at-least-once and redelivery machinery for an alert transport that was still a logging no-op and could not fail. Each cycle rested on a different unverified premise about the eventual platform — including one, later disproven against the real scheduler, that a failed invocation would be redelivered — so review kept finding real defects in reasoning that could not be made sound. It resolved only by deleting the speculative layer, shipping best-effort, and filing the reliability work for when the transport existed.
 
+### A gate that one measurement has disproved is settled — act once
+
+A skill's recovery tree is written for the ambiguous case. When a gate fires and a single measurement proves it a false positive — an identity gate reporting a clobbered lineage where `git diff <dropped-sha> HEAD` is empty, say — re-walking the tree's branches is re-litigating a settled question. Send one message: the proof, the single remedy command, and either proceed or ask exactly once; never a second question on the same decision. An instruction already given ("merge") is the authorization, so reach the next hard blocker immediately — a permission denial is the user's real decision surface — rather than deliberating in front of it, and take the direct path rather than routing through another session whose liveness you do not control. Measured 2026-09-22: a `/finish merge` whose gate had been disproved in one command spent twenty more minutes and three multi-option questions on the recovery tree, and its two genuine blockers surfaced fifteen minutes later than a direct attempt would have found them. For "can this merge?", `git merge-tree --write-tree <base> <branch>` is the one-second, read-only fact that decides it — run it first.
+
 ### Complexity Response Pattern
 
 When two or more attempts have failed, stop and hand the decision over with everything needed to make
