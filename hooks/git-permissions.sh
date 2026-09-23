@@ -99,16 +99,23 @@ main_checkout_of() { # <dir> — the main checkout: the fleet markers live in IT
   local c; c=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
   dirname "$c"
 }
-# rc 0 and a reason when a fleet is running out of this checkout; rc 1 when none is. Only the explicit fleet-deadline
-# marker counts: an /auto ledger's mtime says nothing about liveness (the heartbeat never touches it, and a killed
-# loop leaves it "active"), and a lone loop — or a /fleet-sequence, whose runner steers each session with a per-issue
-# start.<id>.wt-source-branch key and never parks the checkout — keeps its work in worktrees and merges by ref, so a
-# main-checkout switch does not move its tree. The clean-tree condition is what protects a same-checkout session's edits.
+# rc 0 and a reason when a fleet whose picks fork from the checkout's own branch is running out of it; rc 1 otherwise.
+# Only the explicit fleet-deadline marker counts: an /auto ledger's mtime says nothing about liveness (the heartbeat
+# never touches it, and a killed loop leaves it "active"), and a lone loop — or a /fleet-sequence, whose runner steers
+# each session with a per-issue start.<id>.wt-source-branch key and never parks the checkout — keeps its work in
+# worktrees and merges by ref, so a main-checkout switch does not move its tree. An epic fleet (a marker recording an
+# integration `branch`) is steered the same way — each session's /auto sets the per-issue key from the marker
+# (auto-fork-key.sh) — so it gates nothing either, as long as that branch still exists (one deleted mid-fleet puts
+# the picks back on the checkout's branch, and the gate with them); a switch ONTO its branch merely puts merges on
+# the fast-forward path, which the clean-tree condition covers. The clean-tree condition is what protects a
+# same-checkout session's edits.
 automation_live() { # <dir>
-  local main m dl now
+  local main m dl now b
   main=$(main_checkout_of "$1") || { echo "the main checkout of $1 cannot be resolved"; return 0; }
   m="$main/tmp/fleet-deadline.json"
   if [ -s "$m" ] && [ "$(jq -r '.stopped // false' "$m" 2>/dev/null)" != "true" ]; then
+    b=$(jq -r '.branch // empty' "$m" 2>/dev/null)
+    [ -n "$b" ] && git -C "$main" rev-parse --verify --quiet "refs/heads/$b" >/dev/null 2>&1 && return 1
     dl=$(jq -r '.deadline_epoch // empty' "$m" 2>/dev/null); now=$(date +%s)
     if ! [[ "$dl" =~ ^[0-9]+$ ]] || [ "$dl" -gt "$now" ]; then
       echo "a fleet is running out of $main (tmp/fleet-deadline.json; /fleet-stop ends it)"; return 0

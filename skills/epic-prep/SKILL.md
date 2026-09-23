@@ -97,7 +97,7 @@ git rev-parse --verify --quiet "refs/heads/$branch" >/dev/null || git branch "$b
 git merge-base --is-ancestor "$base" "$branch" || echo "WARN: $branch is behind $base — merge $base into it before launch"
 ```
 
-No checkout happens here — `fleet-launch.sh` detaches the main checkout at the branch and sets `start.wt-source-branch` when it dispatches ([`/fleet-launch`](../fleet-launch/SKILL.md) § Epic-scoped launch), and restores nothing: after the fleet, the epic's PR is opened from `branch` onto `base` (`~/.claude/scripts/integration-pr.sh <branch> <base> <member IDs...>` pushes the branch and opens the PR with a roster body — the same script `/fleet-sequence` ends with; `/pr-update` from a checkout of the branch then writes the real description), then `git checkout <base>` and `git config --unset start.wt-source-branch`.
+No checkout happens here or at launch — `fleet-launch.sh` never moves the main checkout; each session's `/auto` steers its picks onto the branch with a per-issue `start.<id>.wt-source-branch` key set from the fleet marker ([`/fleet-launch`](../fleet-launch/SKILL.md) § Epic-scoped launch), so the human keeps the checkout on `base` or any other branch while the fleet runs. After the fleet, the epic's PR is opened from `branch` onto `base` (`~/.claude/scripts/integration-pr.sh <branch> <base> <member IDs...>` pushes the branch and opens the PR with a roster body — the same script `/fleet-sequence` ends with; `/pr-update` from a checkout of the branch then writes the real description).
 
 ### Step 7: Hard gate — every resolved member's code is on the branch
 
@@ -143,13 +143,13 @@ Written in the project's main checkout. A bare `/fleet-launch` now launches the 
 
 ## Report
 
-Lead with the Step 7 gate verdict — clean, or what was merged to make it clean. Then the roster: certified this run, declined (holding the gate), terminal, nested epics closed by the sweep. Then the boundary decisions, the promotion batch, and the audit's remaining `FOCUS` rows. Then the launch line: `/fleet-launch` (bare) with the recommended count and duration, which term bound it, the integration branch and its base, and the post-fleet steps (`~/.claude/scripts/integration-pr.sh <branch> <base> <member IDs...>` then `/pr-update` for the PR; `git checkout <base> && git config --unset start.wt-source-branch`). Every Linear write is reversible — say so once.
+Lead with the Step 7 gate verdict — clean, or what was merged to make it clean. Then the roster: certified this run, declined (holding the gate), terminal, nested epics closed by the sweep. Then the boundary decisions, the promotion batch, and the audit's remaining `FOCUS` rows. Then the launch line: `/fleet-launch` (bare) with the recommended count and duration, which term bound it, the integration branch and its base, and the post-fleet steps (`~/.claude/scripts/integration-pr.sh <branch> <base> <member IDs...>` then `/pr-update` for the PR). Every Linear write is reversible — say so once.
 
 ## What this skill must NOT do
 
 - Never launch — that is `/fleet-launch`, a separate human-triggered act.
 - Never certify without the interview — every certification goes through `/spec`.
-- Never switch the main checkout's branch — the branch is created by ref, merges land through a temporary worktree, and the launch does the detach.
+- Never switch the main checkout's branch — the branch is created by ref, merges land through a temporary worktree, and the launch does not move the checkout either (per-issue fork keys steer the fleet).
 - Never skip or waive the Step 7 gate.
 
 ## Error Handling

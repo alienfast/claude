@@ -201,7 +201,7 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 
 ### fleet-launch
 
-**Description**: Launch a fleet of parallel `/loop /auto` sessions as background agents in `claude agents`, staggered so each session's first pick sees the previous one's claim, with an optional time budget that winds the fleet down cleanly. The middle bookend: `/auto-prep` → `/fleet-launch` → `/fleet-retro`. An `epic:<ID>` token (or the scope `/epic-prep` persisted) scopes every session to one epic's graph and parks the checkout on its integration branch.
+**Description**: Launch a fleet of parallel `/loop /auto` sessions as background agents in `claude agents`, staggered so each session's first pick sees the previous one's claim, with an optional time budget that winds the fleet down cleanly. The middle bookend: `/auto-prep` → `/fleet-launch` → `/fleet-retro`. An `epic:<ID>` token (or the scope `/epic-prep` persisted) scopes every session to one epic's graph and steers every pick onto its integration branch through per-issue fork keys; the main checkout is never moved.
 
 **When Invoked**:
 

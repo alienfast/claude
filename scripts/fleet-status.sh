@@ -389,8 +389,14 @@ all_shipped=$(printf '%s' "$all_shipped" | tr ' ' '\n' | sed '/^$/d' | sort -u)
 if [ -z "$all_shipped" ]; then
   printf '_No session has recorded a ship here._\n\n'
 else
-  # The integration branch: the same key start-wt-setup falls back to, else the checkout's branch.
-  src_branch=$(git -C "$main_checkout" config --get start.wt-source-branch 2>/dev/null || true)
+  # The branch ships land on: the marker's integration branch on an epic fleet (its sessions steer onto it with
+  # per-issue fork keys), else the checkout-wide key a parked checkout falls back to, else the checkout's branch.
+  src_branch=$(jq -r '.branch // empty' "$marker" 2>/dev/null || true)
+  if [ -n "$src_branch" ] && ! git -C "$main_checkout" rev-parse --verify --quiet "refs/heads/$src_branch" >/dev/null 2>&1; then
+    printf '_The marker records integration branch `%s`, which no longer exists locally — ships are checked against the checkout instead._\n\n' "$src_branch"
+    src_branch=""
+  fi
+  [ -n "$src_branch" ] || src_branch=$(git -C "$main_checkout" config --get start.wt-source-branch 2>/dev/null || true)
   [ -n "$src_branch" ] || src_branch=$(git -C "$main_checkout" branch --show-current 2>/dev/null)
   [ -n "$src_branch" ] || src_branch=HEAD
   recent_subjects=$(git -C "$main_checkout" log -300 --format='%s' "$src_branch" 2>/dev/null || true)

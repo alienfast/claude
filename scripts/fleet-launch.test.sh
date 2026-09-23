@@ -207,7 +207,7 @@ ck_has "missing branch warned"        "no integration branch recorded for epic E
 ck "token leaves the checkout alone"  "nextjs-descope-user" "$(git -C "$REPO" branch --show-current)"
 
 # case 11: a bare launch after /epic-prep — the recommendation supplies count, scope, the membership
-# snapshot, and the branch; the checkout is detached at the branch tip with the config set.
+# snapshot, and the branch; the checkout is not moved and no checkout-wide config is written.
 git -C "$REPO" branch -q epic/ep-1 nextjs-descope-user
 jq -n --argjson e "$(date +%s)" '{sessions: 1, team: "EP", generated_epoch: $e, scope: "EP-1", members: ["EP-1","EP-3","EP-9"], branch: "epic/ep-1", base: "nextjs-descope-user"}' > "$REPO/tmp/fleet-recommendation.json"
 : > "$WORK/dispatches"
@@ -217,15 +217,31 @@ ck_has "prepared scope announced"     "Using /epic-prep's scope: epic EP-1" "$WO
 ck "members are the prep snapshot"    "EP-1 EP-3 EP-9" "$(jq -r '.members | join(" ")' "$REPO/tmp/fleet-deadline.json")"
 ck "branch recorded"                  "epic/ep-1" "$(jq -r '.branch' "$REPO/tmp/fleet-deadline.json")"
 ck "base recorded"                    "nextjs-descope-user" "$(jq -r '.base' "$REPO/tmp/fleet-deadline.json")"
-ck "source-branch config set"         "epic/ep-1" "$(git -C "$REPO" config --get start.wt-source-branch)"
-ck "main checkout detached"           "" "$(git -C "$REPO" branch --show-current)"
-ck "detached at the branch tip"       "$(git -C "$REPO" rev-parse epic/ep-1)" "$(git -C "$REPO" rev-parse HEAD)"
-ck_has "posture surfaced"             "Main checkout detached at epic/ep-1" "$WORK/out"
+ck "no checkout-wide config written"  "" "$(git -C "$REPO" config --get start.wt-source-branch || true)"
+ck "main checkout not moved"          "nextjs-descope-user" "$(git -C "$REPO" branch --show-current)"
+ck_has "steering surfaced"            "Sessions fork from and merge into epic/ep-1 by ref (per-issue fork keys; the main checkout stays on nextjs-descope-user)" "$WORK/out"
+ck_lacks "no detach"                  "detached" "$WORK/out"
+
+# case 11b: a checkout sitting ON the integration branch launches with a WARN — merges would touch its tree.
+git -C "$REPO" checkout -q epic/ep-1
+: > "$WORK/dispatches"
+ck "on-branch launch exits 0"         "0" "$(run)"
+ck_has "on-branch warned"             "WARN: the main checkout is ON the integration branch 'epic/ep-1'" "$WORK/out"
+ck "on-branch still dispatched"       "1" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
+ck "on-branch checkout not moved"     "epic/ep-1" "$(git -C "$REPO" branch --show-current)"
+git -C "$REPO" checkout -q nextjs-descope-user
+
+# case 11c: a leftover checkout-wide key naming the same branch (the retired posture) is noted, not refused.
+git -C "$REPO" config start.wt-source-branch epic/ep-1
+: > "$WORK/dispatches"
+ck "same-branch config exits 0"       "0" "$(run)"
+ck_has "same-branch config noted"     "NOTE: start.wt-source-branch=epic/ep-1 is set (the retired parked-checkout posture)" "$WORK/out"
+ck "same-branch config left alone"    "epic/ep-1" "$(git -C "$REPO" config --get start.wt-source-branch)"
+ck "same-branch checkout not moved"   "nextjs-descope-user" "$(git -C "$REPO" branch --show-current)"
+git -C "$REPO" config --unset start.wt-source-branch
 
 # case 12: an explicit token overrides the prepared scope — live membership, and no branch, since the
 # prep was for another epic.
-git -C "$REPO" config --unset start.wt-source-branch
-git -C "$REPO" checkout -q nextjs-descope-user
 : > "$WORK/dispatches"
 ck "override exits 0"                 "0" "$(run 1 epic:EP-3)"
 ck_has "override prompt"              "/loop /auto epic:EP-3" "$WORK/dispatches"

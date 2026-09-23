@@ -21,16 +21,19 @@
 #               integration branch the fleet merges into as it goes. /epic-prep creates that
 #               branch from the same source /start wt would resolve (start.wt-source-branch, else
 #               the checkout's branch) and records `branch` + `base` in the recommendation; when
-#               the recommendation's scope is the one launching, this script detaches the main
-#               checkout at the branch tip and sets start.wt-source-branch to it — the documented
-#               detached-HEAD posture (start-wt-setup.sh reads that key only under a detached HEAD,
-#               and start-wt-create.sh forks from the branch's ref, so the branch advancing under
-#               the parked HEAD is what later forks see) under which every /start wt forks from the
-#               branch and every /finish merge advances it ref-only. Both are recorded in the marker.
-#               (/fleet-sequence steers its sessions with per-issue start.<id>.wt-source-branch keys
-#               instead and never parks the checkout.) After the fleet: open the
-#               epic's PR from `branch` onto `base` (integration-pr.sh, then /pr-update from the
-#               branch), then `git checkout <base>` and `git config --unset start.wt-source-branch`.
+#               the recommendation's scope is the one launching, this script verifies the branch
+#               and records both in the marker. The main checkout is NEVER moved (keeper ruling
+#               2026-09-23): each session's /auto points the per-issue start.<id>.wt-source-branch
+#               key at the marker's branch just before dispatching an issue (auto-fork-key.sh — the
+#               same key /fleet-sequence's runner uses), start-wt-setup.sh resolves that key ahead
+#               of the checkout's own branch, and start-wt-create.sh forks from the branch's ref —
+#               so every fleet pick forks from and merges (ref-only) into the branch while the human
+#               keeps working on whatever branch the checkout is on, and their own /start wt for
+#               any issue still forks from that branch. Until 2026-09-23 this script instead
+#               detached the checkout at the branch and set the checkout-wide key: that posture
+#               took the checkout away from its human for the fleet's duration and steered their
+#               interactive /start wt onto the epic branch too. After the fleet: open the epic's
+#               PR from `branch` onto `base` (integration-pr.sh, then /pr-update from the branch).
 #               A token with no matching prepared
 #               branch launches on the checkout's own branch with a WARN — the human typed it.
 #   [duration]  Optional fleet time budget — "10h", "10 hours", "90m", "45 minutes".
@@ -75,8 +78,8 @@
 # FLEET_STAGGER_TIMEOUT seconds per wait.
 #
 # Read-write: rewrites tmp/fleet-deadline.json in the main checkout (`scope`, `members`,
-# `branch`, `base` added on a scoped launch); on a scoped launch with a prepared branch,
-# detaches the main checkout at that branch and sets start.wt-source-branch; clears DEAD
+# `branch`, `base` added on a scoped launch); never moves the main checkout's HEAD and never
+# writes start.wt-source-branch; clears DEAD
 # prior-run tmp/auto-state-*.json ledgers at launch — dead = absent from `claude agents --json`
 # or listed as done there; they deliberately persist from a fleet's end until the next launch
 # so /fleet-retro and the operator can examine them — retro before relaunching; dispatches
@@ -174,6 +177,7 @@ scope=""
 scope_members='[]'
 scope_branch=""
 scope_base=""
+checkout_branch=""
 rec_scope=""
 [ -f "$rec" ] && rec_scope=$(jq -r '.scope // empty' "$rec" 2>/dev/null || true)
 if [ -n "$scope_token" ]; then
@@ -205,10 +209,16 @@ if [ -n "$scope" ]; then
       || { echo "ERROR: the recommendation names integration branch '$scope_branch' but no such local branch exists — re-run /epic-prep $scope" >&2; exit 1; }
     cur_src=$(git -C "$main_checkout" config --get start.wt-source-branch 2>/dev/null || true)
     if [ -n "$cur_src" ] && [ "$cur_src" != "$scope_branch" ]; then
-      echo "ERROR: start.wt-source-branch is '$cur_src' but this launch's integration branch is '$scope_branch' — another fleet posture is in effect; unset it (git config --unset start.wt-source-branch) or finish that fleet first" >&2
+      echo "ERROR: start.wt-source-branch is '$cur_src' but this launch's integration branch is '$scope_branch' — a parked-checkout posture for another branch is in effect; unset it (git config --unset start.wt-source-branch) or finish that work first" >&2
       exit 1
+    elif [ -n "$cur_src" ]; then
+      echo "NOTE: start.wt-source-branch=$cur_src is set (the retired parked-checkout posture) — harmless, it is read only under a detached HEAD; unset it once the checkout is on a branch" >&2
     fi
-    echo "Integration branch: $scope_branch (forked from ${scope_base:-?}; the epic ships as one PR onto it)"
+    checkout_branch=$(git -C "$main_checkout" branch --show-current 2>/dev/null || true)
+    if [ "$checkout_branch" = "$scope_branch" ]; then
+      echo "WARN: the main checkout is ON the integration branch '$scope_branch' — every /finish merge will fast-forward its working tree instead of advancing the ref alone (and defer to the merge queue while it is dirty); check out ${scope_base:-another branch} to keep it out of the fleet's way" >&2
+    fi
+    echo "Integration branch: $scope_branch (forked from ${scope_base:-?}; the epic ships as one PR onto it — sessions steer onto it with per-issue fork keys; the main checkout is not moved)"
   else
     echo "WARN: no integration branch recorded for epic $scope — sessions fork from and merge into the checkout's own branch ($(git -C "$main_checkout" branch --show-current 2>/dev/null || echo detached)); run /epic-prep $scope to prepare one" >&2
   fi
@@ -305,14 +315,12 @@ if [ -n "$agents_json" ] && [ -s "$marker" ]; then
   done
 fi
 
-# Integration-branch posture — the first mutation, after every refusal above has had its chance: the
-# tree is clean (preflight), so the detach moves nothing but HEAD, and start-wt-setup.sh reads the
-# config only while HEAD is detached — that pairing is what makes the branch the fork AND merge point.
+# Integration-branch posture: nothing to mutate. The marker below carries `branch`, and each session's /auto
+# points the per-issue start.<id>.wt-source-branch key at it before every dispatch (auto-fork-key.sh), so the
+# main checkout stays where its human left it — a detach here (the posture until 2026-09-23) took the checkout
+# away for the fleet's duration and steered the human's own /start wt onto the epic branch as well.
 if [ -n "$scope_branch" ]; then
-  git -C "$main_checkout" checkout -q --detach "$scope_branch" \
-    || { echo "ERROR: could not detach the main checkout at '$scope_branch'" >&2; exit 1; }
-  git -C "$main_checkout" config start.wt-source-branch "$scope_branch"
-  echo "Main checkout detached at $scope_branch; start.wt-source-branch=$scope_branch (after the fleet: ~/.claude/scripts/integration-pr.sh $scope_branch ${scope_base:-<base>} <member IDs...>, then /pr-update from the branch, then git checkout ${scope_base:-<base>} && git config --unset start.wt-source-branch)"
+  echo "Sessions fork from and merge into $scope_branch by ref (per-issue fork keys; the main checkout stays on ${checkout_branch:-its current HEAD}). After the fleet: ~/.claude/scripts/integration-pr.sh $scope_branch ${scope_base:-<base>} <member IDs...>, then /pr-update from the branch."
 fi
 
 # The marker is rewritten on every launch: a stale deadline from a previous fleet would end every

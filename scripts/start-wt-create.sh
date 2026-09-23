@@ -83,7 +83,11 @@ fi
 #   reuse  — worktree dir and branch both exist; the session resumes in place.
 #   attach — the branch (and its history) survived but the worktree dir is gone; re-checked out here.
 #   fresh  — neither existed; branch created off the source branch's tip. The ONLY mode that establishes
-#            a new identity; the other two inherit the prior stamp below.
+#            a new identity; the other two inherit the prior stamp's baseline and rewrite anchors below.
+#            The SOURCE BRANCH is never inherited: every mode stamps the one start-wt-setup.sh resolved for
+#            this run, so a reuse without the per-issue start.<id>.wt-source-branch key a sequence or epic
+#            fleet had set re-points the merge target at the checkout's branch — which is why /auto leaves a
+#            failed member's key in place for its resume.
 # CREATED_WT is 1 for attach/fresh.
 mode=""
 CREATED_WT=0

@@ -12,8 +12,10 @@
 #           into the sequence's integration branch while the main checkout stays wherever it is, so a
 #           concurrent /start wt for any OTHER issue is untouched);
 #        b. else the checkout's current branch;
-#        c. else — HEAD detached — the checkout-wide `start.wt-source-branch` (the epic-fleet posture
-#           fleet-launch.sh sets; see the parallel-run advisory below).
+#        c. else — HEAD detached — the checkout-wide `start.wt-source-branch`, the manual escape hatch for
+#           a deliberately parked checkout (see the parallel-run advisory below). An epic fleet no longer
+#           sets it: /auto points the per-issue key (a) at the fleet's integration branch before each
+#           dispatch (auto-fork-key.sh), so the checkout stays on its human's branch.
 #      The worktree forks from that branch's REF (start-wt-create.sh), never from HEAD, so where the
 #      main checkout is parked does not decide the fork point.
 #   3. Enables extensions.worktreeConfig (idempotent).
@@ -119,7 +121,7 @@ current_branch=$(git branch --show-current)
 issue_fork_key="start.${issue_lower}.wt-source-branch"
 source_branch=$(git config --get "$issue_fork_key" 2>/dev/null || true)
 if [ -n "$source_branch" ]; then
-  echo "NOTE: source branch '$source_branch' comes from $issue_fork_key (set for this issue by a sequence runner)" >&2
+  echo "NOTE: source branch '$source_branch' comes from $issue_fork_key (set for this issue by a sequence runner or an epic fleet's /auto)" >&2
 else
   source_branch="$current_branch"
   if [ -z "$source_branch" ]; then
@@ -140,6 +142,30 @@ git rev-parse --verify --quiet "refs/heads/$source_branch" >/dev/null || {
   exit 1
 }
 
+# Safety net for an epic fleet's steering: the fleet marker records the integration branch its picks must fork
+# from, and a fleet session points the per-issue key at it before dispatching (auto-fork-key.sh). When this issue
+# is a recorded member about to fork from some other branch, either that step was skipped (a fleet session — the
+# fork and merge would land on the checkout's branch, splitting the epic's code across two branches) or this is a
+# human's interactive /start wt for a member (allowed: their work forks from their branch by design). Warn; never
+# redirect — the resolution order above is the contract, and which case this is only the caller knows.
+fleet_marker="$repo_root/tmp/fleet-deadline.json"
+if [ -s "$fleet_marker" ] && [ "$(jq -r '.stopped // false' "$fleet_marker" 2>/dev/null)" != "true" ]; then
+  fleet_branch=$(jq -r '.branch // empty' "$fleet_marker" 2>/dev/null || true)
+  fleet_deadline=$(jq -r '.deadline_epoch // empty' "$fleet_marker" 2>/dev/null || true)
+  if [[ "$fleet_deadline" =~ ^[0-9]+$ ]] && [ "$fleet_deadline" -le "$(date +%s)" ]; then fleet_branch=""; fi
+  if [ -n "$fleet_branch" ] && [ "$fleet_branch" != "$source_branch" ] \
+     && jq -e --arg id "$issue_id" '(.members // []) | index($id) != null' "$fleet_marker" >/dev/null 2>&1; then
+    fleet_scope=$(jq -r '.scope // "?"' "$fleet_marker" 2>/dev/null || echo "?")
+    echo "WARN: $issue_id is a member of the running epic fleet (scope $fleet_scope, integration branch '$fleet_branch') but is forking from '$source_branch'." >&2
+    if git rev-parse --verify --quiet "refs/heads/$fleet_branch" >/dev/null; then
+      echo "  A fleet session must run '~/.claude/scripts/auto-fork-key.sh set $issue_id $fleet_scope' before dispatching, so the issue forks from and merges into '$fleet_branch'." >&2
+      echo "  An interactive /start wt forks from the checkout's branch by design — fine, but this issue's code then lands on '$source_branch', not on the epic's PR." >&2
+    else
+      echo "  That branch no longer exists locally (dropped mid-fleet?) — the fleet is landing on the checkout's branch; strip branch/base from tmp/fleet-deadline.json if that is intended." >&2
+    fi
+  fi
+fi
+
 # Advisory (never blocks): if the main checkout is parked on the branch this
 # worktree will fork from / merge back into, AND other worktrees already exist
 # (i.e. parallel /full wt activity), every concurrent /finish merge will take
@@ -157,10 +183,10 @@ git rev-parse --verify --quiet "refs/heads/$source_branch" >/dev/null || {
 existing_wts=$(find .claude/worktrees -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ' || true)
 if [ -n "$current_branch" ] && [ "$current_branch" = "$source_branch" ] && [ "${existing_wts:-0}" -gt 0 ]; then
   echo "WARN: main checkout is on '$source_branch' (the shared source branch) while $existing_wts worktree(s) are active." >&2
-  echo "  For parallel /full wt runs, first set 'git config start.wt-source-branch $source_branch' so this and future" >&2
-  echo "  worktrees can still resolve the source branch once HEAD is detached, then park the main checkout off the" >&2
-  echo "  source branch (e.g. 'git checkout --detach') so every merge takes finish-merge.sh's ref-only fast path and" >&2
-  echo "  can't contend on the main working tree." >&2
+  echo "  Every concurrent /finish merge will fast-forward this working tree instead of advancing the ref alone. To keep" >&2
+  echo "  merges on finish-merge.sh's contention-free ref-only path, work from another branch here (a fleet steers its" >&2
+  echo "  own forks with per-issue start.<id>.wt-source-branch keys, so the checkout's branch is yours to choose), or" >&2
+  echo "  set 'git config start.wt-source-branch $source_branch' and park the checkout detached ('git checkout --detach')." >&2
 fi
 
 # Enable per-worktree config (idempotent).

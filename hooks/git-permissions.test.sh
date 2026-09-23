@@ -237,6 +237,14 @@ rm -f "$R/tmp/fleet-deadline.json"
 printf '{"status": "running", "queue": ["TT-1"]}\n' > "$R/tmp/fleet-sequence-tt-1.json"
 assert_allowed_in "$R" "git checkout feature" "a running /fleet-sequence never parks the checkout, so it gates nothing"
 rm -f "$R/tmp/fleet-sequence-tt-1.json"
+git -C "$R" branch -q epic/tt-1
+printf '{"deadline_epoch": %s, "scope": "TT-1", "branch": "epic/tt-1"}\n' "$((now + 3600))" > "$R/tmp/fleet-deadline.json"
+assert_allowed_in "$R" "git checkout feature" "an epic fleet steers its picks with per-issue fork keys and never parks the checkout"
+printf '{"fleet_sessions": ["ab000001"], "scope": "TT-1", "branch": "epic/tt-1"}\n' > "$R/tmp/fleet-deadline.json"
+assert_allowed_in "$R" "git checkout feature" "the same without a time budget"
+git -C "$R" branch -q -d epic/tt-1
+assert_blocked_in "$R" "git checkout feature" "a recorded branch that no longer exists puts the picks back on the checkout's branch"
+rm -f "$R/tmp/fleet-deadline.json"
 echo "== 12e. from a linked worktree, the markers are read from the MAIN checkout"
 WT="$WORK/r1-wt"; git -C "$R" worktree add -q "$WT" feature
 assert_allowed_in "$WT" "git checkout main" "hook allows; git itself refuses a branch checked out elsewhere"
