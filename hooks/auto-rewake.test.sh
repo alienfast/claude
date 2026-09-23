@@ -18,7 +18,8 @@
 #
 # The one-shot cases (#31-#38) are the 2026-09-21 fleet-sequence death: a targeted `/auto <ID>` session — no /loop anywhere,
 # its `claude --bg` delivery stamped origin.kind "human" like a typed one — killed by an API 500, with the hook standing down
-# as not-auto-loop while the sequence runner timed out behind it.
+# as not-auto-loop while the sequence runner timed out behind it. #39 is the 2026-09-23 sequel: the `continue` that recovered
+# such a death was read as manual control for the rest of the session, and the next 429 five hours later went unrecovered.
 #
 # GROW THIS SUITE, NEVER PRUNE IT. Every newly observed silent-death shape becomes a numbered case, added WITH its fix.
 
@@ -53,6 +54,8 @@ rec_plain()  { jq -nc --arg t "$(iso "$1")" '{type:"user",isSidechain:false,orig
 # A `claude --bg "/auto BF-2034"` delivery as fleet-sequence session 5f071ea8 recorded it (2026-09-21): origin.kind "human", as typed.
 rec_auto()   { jq -nc --arg t "$(iso "$1")" --arg a "${2-BF-2034}" '{type:"user",isSidechain:false,origin:{kind:"human"},timestamp:$t,message:{role:"user",content:("<command-message>auto</command-message>\n<command-name>/auto</command-name>\n<command-args>" + $a + "</command-args>")}}'; }
 rec_cont()   { jq -nc --arg t "$(iso "$1")" '{type:"user",isSidechain:false,origin:{kind:"human"},timestamp:$t,message:{role:"user",content:"continue"}}'; }
+# A subagent hand-back as session cdb8b6ad recorded it (2026-09-23): a user record, isMeta true, origin.kind "peer".
+rec_peer()   { jq -nc --arg t "$(iso "$1")" '{type:"user",isSidechain:false,isMeta:true,origin:{kind:"peer",from:"a40970bebbb855ae9",handback:true},timestamp:$t,message:{role:"user",content:"Another Claude session sent a message:\n<agent-message from=\"a40970bebbb855ae9\">\n[Subagent hand-back] The merge fix is done.\n</agent-message>"}}'; }
 rec_quote()  { jq -nc --arg t "$(iso "$1")" '{type:"user",isSidechain:false,timestamp:$t,message:{role:"user",content:[{type:"tool_result",tool_use_id:"toolu_b",content:"<command-name>/auto</command-name> quoted from a transcript this session read"}]}}'; }
 rec_500()    { jq -nc --arg t "$(iso "$1")" '{type:"assistant",isSidechain:false,timestamp:$t,isApiErrorMessage:true,error:"server_error",apiErrorStatus:500,apiErrorIsTransient:true,message:{role:"assistant",content:[{type:"text",text:"API Error: 500 Internal server error. This is a server-side issue, usually temporary."}]}}'; }
 
@@ -164,10 +167,22 @@ ck "31 ... on a one-shot session"                              one-shot "$(dec "
 # 32. A bare `/auto` typed once is one-shot too.
 f=$(tfile); { rec_auto $((B-300)) ""; rec_500 "$B"; } > "$f"
 ck "32 bare /auto -> wait"                                     wait "$(dec "$(ev StopFailure "$f" s-thirtytwo "$SE")" .action)"
-# 33. A human prompt after the delivery — the `continue` that recovered the real session — hands the run to the operator.
+# 33. A human prompt opened the turn that died — the `continue` that recovered the real session, killed again at once — so
+#     the operator holds the run.
 f=$(tfile); { rec_auto $((B-7200)); rec_cont $((B-60)); rec_500 "$B"; } > "$f"
-ck "33 human prompt after the /auto delivery -> skip human-override" human-override "$(dec "$(ev StopFailure "$f" s-thirtythree "$SE")" .reason)"
+ck "33 human prompt opened the dying turn -> skip human-override" human-override "$(dec "$(ev StopFailure "$f" s-thirtythree "$SE")" .reason)"
 ck "33 ... in scope, so it is logged"                          true "$(dec "$(ev StopFailure "$f" s-thirtythree "$SE")" .in_scope)"
+# 39. THE STICKY OVERRIDE (2026-09-23, fleet-sequence child cdb8b6ad): the `continue` of #33 recovered a 429 at 23:41Z, the run
+#     then carried on unattended for five hours on hand-backs and notifications, and a second 429 at 04:36Z found the hook
+#     still standing down on that one prompt. The hold is turn-scoped: once a non-human record opens a later turn, the run is
+#     unattended again — and a fresh human prompt opening the dying turn holds it again.
+f=$(tfile); { rec_auto $((B-30000)); rec_cont $((B-18000)); rec_work $((B-17990)); rec_text $((B-17980)); rec_stopsum $((B-17979)); rec_peer $((B-100)); rec_work $((B-50)); rec_500 "$B"; } > "$f"
+ck "39 human continue, then a hand-back opened the dying turn -> wait" wait "$(dec "$(ev StopFailure "$f" s-thirtynine "$SE")" .action)"
+ck "39 ... as a one-shot api-kind wait"                        "one-shot api" "$(dec "$(ev StopFailure "$f" s-thirtynine "$SE")" '"\(.session) \(.kind)"')"
+f=$(tfile); { rec_auto $((B-30000)); rec_cont $((B-18000)); rec_text $((B-17980)); rec_stopsum $((B-17979)); rec_notif $((B-100)); rec_500 "$B"; } > "$f"
+ck "39 ... a task notification as the opener, likewise"        wait "$(dec "$(ev StopFailure "$f" s-thirtynineb "$SE")" .action)"
+f=$(tfile); { rec_auto $((B-30000)); rec_cont $((B-18000)); rec_text $((B-17980)); rec_stopsum $((B-17979)); rec_notif $((B-200)); rec_text $((B-150)); rec_stopsum $((B-149)); rec_plain $((B-60)); rec_500 "$B"; } > "$f"
+ck "39 ... a fresh human prompt opening the dying turn holds again" human-override "$(dec "$(ev StopFailure "$f" s-thirtyninec "$SE")" .reason)"
 # 34. A Stop on a one-shot run is the run finishing or resting, never a lost wakeup: out of scope, no log line.
 f=$(tfile); { rec_auto $((B-300)); rec_work $((B-10)); rec_text "$B"; } > "$f"
 ck "34 Stop on a targeted run -> skip one-shot-stop"           one-shot-stop "$(dec "$(ev Stop "$f" s-thirtyfour)" .reason)"

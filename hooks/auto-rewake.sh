@@ -41,9 +41,16 @@
 # SCOPE. A transcript with a `/loop` delivery is a loop session and takes both paths above through auto-heartbeat.sh's
 # decide(), sourced below: ONE definition of that session, never a second copy that can drift. A transcript with an
 # `/auto` delivery and no `/loop` is a one-shot session: only the StopFailure path applies (a Stop there is a finished or
-# resting one-shot run, never a lost wakeup — it just spends the API retry count), its anchor is the last `/auto`
-# delivery, and a human prompt after that anchor hands it to the operator exactly as decide()'s human-override does.
-# Its rewake tells the model to finish the one-shot run and arm nothing.
+# resting one-shot run, never a lost wakeup — it just spends the API retry count), and its anchor is the last `/auto`
+# delivery. Its human-override is TURN-scoped, not decide()'s iteration scope: the operator holds the run only while
+# the record that opened the turn now ending is theirs (origin.kind "human"). A loop re-anchors on every wakeup fire,
+# so a human prompt there holds one iteration at most; a one-shot run never re-anchors, so counting every human prompt
+# after the delivery made the FIRST one permanent. Measured 2026-09-23 on fleet-sequence child cdb8b6ad (`/auto
+# BF-2057`): a 429 killed a turn at 23:41Z, the hook waited, a human typed `continue` at 23:45Z, and the run then
+# carried on unattended for five hours on subagent hand-backs and task notifications. A second 429 killed it at
+# 04:36Z; this hook logged `skip reason=human-override`, the daemon retired the idle session at 05:36Z, and it sat
+# dead until a human typed `continue` again at 14:16Z. Its rewake tells the model to finish the one-shot run and arm
+# nothing.
 #
 # DELIBERATELY NOT FIRING — each is a real exit, not an oversight:
 #   - Neither a self-paced `/loop /auto` session nor a one-shot `/auto` one — or a fixed-interval loop.
@@ -54,7 +61,8 @@
 #     open AFTER the arm and every compliant turn would read `stale-arm`. decide() is used only for what does not
 #     depend on that ordering: whether this is a self-paced /loop /auto session, and whether a human holds it.
 #   - ScheduleWakeup(stop: true): the loop ended on purpose, and silence is its contract.
-#   - A human prompt after the iteration anchor (decide()'s human-override): the run is under manual control.
+#   - A human prompt holds the run for the operator: after the iteration anchor in a loop session (decide()'s
+#     human-override), and as the opener of the turn now ending in a one-shot one (SCOPE, below).
 #   - A non-transient API error (authentication, billing, invalid request, ...): a retry cannot fix it; a human must.
 #   - A turn DID follow — the wakeup fired late, a task notification landed, an operator attached, or a synchronous
 #     Stop hook blocked this very stop. Anything newer than this hook's start means the session is not dead.
@@ -175,9 +183,11 @@ log() { # log <words...> — one line per decision, in-scope sessions only
 }
 
 # The one-shot session's own anchor and human-override, over the whole transcript: the LAST `/auto` delivery — a
-# `claude --bg "/auto BF-1"` prompt lands as a user record with origin.kind "human", the same as a typed one — and the
-# human records after it. Text blocks only, as decide()'s utext: a tool_result quoting the command block is not a delivery.
-oneshot_scope() { # → {anchor: bool, humans: n}
+# `claude --bg "/auto BF-1"` prompt lands as a user record with origin.kind "human", the same as a typed one — and
+# whether the operator opened the turn now ending: the last text-bearing user record after the anchor is theirs. A turn
+# opens on a user record carrying text (a prompt, a task notification, a peer hand-back, a Stop-hook nudge), as
+# turn_wakeup() reads it; a tool_result carries none, so one quoting the command block is not a delivery either.
+oneshot_scope() { # → {anchor: bool, held: bool}
   jq -nR -c '
     [ inputs | fromjson? | select(type == "object") | select(.isSidechain != true) ] as $L
     | ($L | to_entries) as $E
@@ -190,10 +200,11 @@ oneshot_scope() { # → {anchor: bool, humans: n}
        | select(.value.type == "user")
        | select((utext(.value.message.content // "")) | test("<command-name>/auto</command-name>"))
        | .key ] | last) as $anchor
-    | if $anchor == null then {anchor: false, humans: 0}
-      else {anchor: true,
-            humans: ([ $E[] | select(.key > $anchor) | .value
-                       | select(.type == "user") | select(.origin.kind == "human") ] | length)} end' "$TRANSCRIPT_PATH" 2>/dev/null
+    | if $anchor == null then {anchor: false, held: false}
+      else ([ $E[] | select(.key > $anchor) | .value
+              | select(.type == "user")
+              | select((utext(.message.content // "") | length) > 0) ] | last) as $opener
+           | {anchor: true, held: (($opener != null) and ($opener.origin.kind == "human"))} end' "$TRANSCRIPT_PATH" 2>/dev/null
 }
 
 api_failure_decision() { # <session: loop|one-shot> → the StopFailure verdict once the session is known to be ours and unheld
@@ -223,7 +234,7 @@ decision() {
     S=$(oneshot_scope) || S=''
     [[ -n "$S" ]] || { echo '{"action":"skip","reason":"unreadable","in_scope":false,"session":"one-shot"}'; return; }
     [[ "$(jq -r '.anchor' <<<"$S")" == "true" ]] || { echo '{"action":"skip","reason":"not-auto-loop","in_scope":false}'; return; }
-    [[ "$(jq -r '.humans' <<<"$S")" -eq 0 ]] || { echo '{"action":"skip","reason":"human-override","in_scope":true,"session":"one-shot"}'; return; }
+    [[ "$(jq -r '.held' <<<"$S")" != "true" ]] || { echo '{"action":"skip","reason":"human-override","in_scope":true,"session":"one-shot"}'; return; }
     api_failure_decision one-shot
     return
   fi
