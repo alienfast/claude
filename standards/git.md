@@ -156,7 +156,7 @@ Transient-block triggers reclassified to exit 3: main checkout on source + dirty
 
 #### Posture for high-concurrency runs (avoids the block entirely)
 
-Running many issues at once, **keep the main checkout parked on a quiet branch** (its own worktree for in-place work, or the default branch) rather than on the shared integration branch. When the main checkout is never on the source branch, every merge advances source by a clean ref-only `git update-ref` — it never blocks on a dirty tree, so the queue rarely engages. The queue is the safety net; this posture is the cheap fix that prevents most deferrals in the first place.
+Running many issues at once, **keep the main checkout parked on a quiet branch** (its own worktree for in-place work, or the default branch) rather than on the shared integration branch. When the main checkout is never on the source branch, every merge advances source by a clean ref-only `git update-ref` — it never blocks on a dirty tree, so the queue rarely engages. The queue is the safety net; this posture is the cheap fix that prevents most deferrals in the first place. When the checkout has to sit on the branch a fleet merges into (a day branch you are also working on), commit every edit you make there in the same turn — edit, lint, `git add <file> && git commit` — because an uncommitted change is exactly the dirty tree that defers every session's merge to the queue until it is clean (measured 2026-09-17 under a three-session fleet: one uncommitted CLAUDE.md edit held every merge). The default push rules stand; a commit is what clears the block, not a push.
 
 ### Proper File Staging
 
