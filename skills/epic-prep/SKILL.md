@@ -111,7 +111,7 @@ Subjects: every issue in `tmp/epic-graph.json`'s `terminal[]` whose state is com
    With no PR, search the whole commit message, not just the subject, and anchor the ID so `ABC-12` cannot match `ABC-123`: `git log -E --grep='<ID>([^0-9]|$)' --format='%h %s' "$branch"`.
 
    - A hit whose printed subject carries the ID counts as landed; `/finish` puts it there (`<ID>: …`, `Merge <ID>`).
-   - Work absorbed into a sibling's change is often named only in that commit's body. A body-only hit counts once you have read the commit and confirmed it carries this issue's change ("That is the change <ID> specifies") rather than merely citing it ("leaves X for <ID>"). The issue's own closing comment usually names the absorbing sibling, which corroborates the read.
+   - Work absorbed into a sibling's change is often named only in that commit's body. A body-only hit counts once you have read the commit and confirmed it carries this issue's change (`That is the change <ID> specifies`) rather than merely citing it (`leaves X for <ID>`). The issue's own closing comment usually names the absorbing sibling, which corroborates the read.
 
 3. Anything else — a PR open or merged elsewhere, or no trace — is a **FAIL** row naming the ID, the PR, and its head branch.
 
