@@ -41,16 +41,8 @@
 # SCOPE. A transcript with a `/loop` delivery is a loop session and takes both paths above through auto-heartbeat.sh's
 # decide(), sourced below: ONE definition of that session, never a second copy that can drift. A transcript with an
 # `/auto` delivery and no `/loop` is a one-shot session: only the StopFailure path applies (a Stop there is a finished or
-# resting one-shot run, never a lost wakeup — it just spends the API retry count), and its anchor is the last `/auto`
-# delivery. Its human-override is TURN-scoped, not decide()'s iteration scope: the operator holds the run only while
-# the record that opened the turn now ending is theirs (origin.kind "human"). A loop re-anchors on every wakeup fire,
-# so a human prompt there holds one iteration at most; a one-shot run never re-anchors, so counting every human prompt
-# after the delivery made the FIRST one permanent. Measured 2026-09-23 on fleet-sequence child cdb8b6ad (`/auto
-# BF-2057`): a 429 killed a turn at 23:41Z, the hook waited, a human typed `continue` at 23:45Z, and the run then
-# carried on unattended for five hours on subagent hand-backs and task notifications. A second 429 killed it at
-# 04:36Z; this hook logged `skip reason=human-override`, the daemon retired the idle session at 05:36Z, and it sat
-# dead until a human typed `continue` again at 14:16Z. Its rewake tells the model to finish the one-shot run and arm
-# nothing.
+# resting one-shot run, never a lost wakeup — it just spends the API retry count), its anchor is the last `/auto`
+# delivery, and no human prompt holds it (above). Its rewake tells the model to finish the one-shot run and arm nothing.
 #
 # DELIBERATELY NOT FIRING — each is a real exit, not an oversight:
 #   - Neither a self-paced `/loop /auto` session nor a one-shot `/auto` one — or a fixed-interval loop.
@@ -61,8 +53,16 @@
 #     open AFTER the arm and every compliant turn would read `stale-arm`. decide() is used only for what does not
 #     depend on that ordering: whether this is a self-paced /loop /auto session, and whether a human holds it.
 #   - ScheduleWakeup(stop: true): the loop ended on purpose, and silence is its contract.
-#   - A human prompt holds the run for the operator: after the iteration anchor in a loop session (decide()'s
-#     human-override), and as the opener of the turn now ending in a one-shot one (SCOPE, below).
+#   - A human prompt after the iteration anchor (decide()'s human-override) — on the STOP path only. A wakeup lost inside
+#     a turn the operator is steering is theirs to re-arm, as forcing one is auto-heartbeat.sh's conflict with them. It never
+#     holds the StopFailure path: an API error killed the request before the model acted on anything, so a retry contradicts
+#     no one — the woken model reads the transcript, the operator's words included — and an operator who retries by hand is
+#     covered already, since a turn following during the wait stands the hook down. Measured 2026-09-23 on fleet-sequence
+#     child cdb8b6ad (`/auto BF-2057`), while the one-shot path still copied the override: a 429 killed a turn at 23:41Z, a
+#     human typed `continue` at 23:45Z and the hook stood down on records_since=32 (the redundancy), and the run carried on
+#     unattended for five hours on subagent hand-backs and task notifications; a second 429 killed it at 04:36Z, the hook
+#     logged `skip reason=human-override` on that one prompt, the daemon retired the idle session at 05:36Z, and it sat dead
+#     until a human typed `continue` again at 14:16Z.
 #   - A non-transient API error (authentication, billing, invalid request, ...): a retry cannot fix it; a human must.
 #   - A turn DID follow — the wakeup fired late, a task notification landed, an operator attached, or a synchronous
 #     Stop hook blocked this very stop. Anything newer than this hook's start means the session is not dead.
@@ -182,29 +182,20 @@ log() { # log <words...> — one line per decision, in-scope sessions only
   printf '%s %s %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${SHORT:-unknown}" "${EVENT:-?}" "$*" >> "$LOG_DIR/auto-rewake.log" 2>/dev/null || true
 }
 
-# The one-shot session's own anchor and human-override, over the whole transcript: the LAST `/auto` delivery — a
-# `claude --bg "/auto BF-1"` prompt lands as a user record with origin.kind "human", the same as a typed one — and
-# whether the operator opened the turn now ending: the last text-bearing user record after the anchor is theirs. A turn
-# opens on a user record carrying text (a prompt, a task notification, a peer hand-back, a Stop-hook nudge), as
-# turn_wakeup() reads it; a tool_result carries none, so one quoting the command block is not a delivery either.
-oneshot_scope() { # → {anchor: bool, held: bool}
-  jq -nR -c '
+# Whether the transcript carries an `/auto` delivery — a `claude --bg "/auto BF-1"` prompt lands as a user record with
+# origin.kind "human", the same as a typed one. Text blocks only, as decide()'s utext: a tool_result quoting the command
+# block is not a delivery.
+oneshot_anchored() { # → true|false
+  jq -nR -r '
     [ inputs | fromjson? | select(type == "object") | select(.isSidechain != true) ] as $L
-    | ($L | to_entries) as $E
     | def utext($c):
         if ($c | type) == "string" then $c
         elif ($c | type) == "array"
           then ([$c[] | select((type == "object") and (.type == "text")) | (.text // "")] | join(" "))
         else "" end;
-    ([ $E[]
-       | select(.value.type == "user")
-       | select((utext(.value.message.content // "")) | test("<command-name>/auto</command-name>"))
-       | .key ] | last) as $anchor
-    | if $anchor == null then {anchor: false, held: false}
-      else ([ $E[] | select(.key > $anchor) | .value
-              | select(.type == "user")
-              | select((utext(.message.content // "") | length) > 0) ] | last) as $opener
-           | {anchor: true, held: (($opener != null) and ($opener.origin.kind == "human"))} end' "$TRANSCRIPT_PATH" 2>/dev/null
+    ([ $L[]
+       | select(.type == "user")
+       | select((utext(.message.content // "")) | test("<command-name>/auto</command-name>")) ] | length) > 0' "$TRANSCRIPT_PATH" 2>/dev/null
 }
 
 api_failure_decision() { # <session: loop|one-shot> → the StopFailure verdict once the session is known to be ours and unheld
@@ -221,7 +212,7 @@ api_failure_decision() { # <session: loop|one-shot> → the StopFailure verdict 
 
 # Prints {action: skip|wait, reason, in_scope, ...}. Pure: reads the transcript and the counters, changes nothing.
 decision() {
-  local D S kind W stop delay at due wait n try
+  local D A kind W stop delay at due wait n try
   [[ "$EVENT" == "Stop" || "$EVENT" == "StopFailure" ]] || { echo '{"action":"skip","reason":"not-a-stop-event","in_scope":false}'; return; }
   [[ -n "$TRANSCRIPT_PATH" && -f "$TRANSCRIPT_PATH" ]] || { echo '{"action":"skip","reason":"no-transcript","in_scope":false}'; return; }
   # The same cheap bail auto-heartbeat.sh makes: nearly every stop is an ordinary session with neither command in it.
@@ -231,10 +222,9 @@ decision() {
     # One-shot: a Stop is the run finishing or resting, never a lost wakeup; it is reported out of scope so that an
     # ordinary targeted run leaves no log line, and the main body still spends the API retry count on it.
     [[ "$EVENT" == "StopFailure" ]] || { echo '{"action":"skip","reason":"one-shot-stop","in_scope":false,"session":"one-shot"}'; return; }
-    S=$(oneshot_scope) || S=''
-    [[ -n "$S" ]] || { echo '{"action":"skip","reason":"unreadable","in_scope":false,"session":"one-shot"}'; return; }
-    [[ "$(jq -r '.anchor' <<<"$S")" == "true" ]] || { echo '{"action":"skip","reason":"not-auto-loop","in_scope":false}'; return; }
-    [[ "$(jq -r '.held' <<<"$S")" != "true" ]] || { echo '{"action":"skip","reason":"human-override","in_scope":true,"session":"one-shot"}'; return; }
+    A=$(oneshot_anchored) || A=''
+    [[ -n "$A" ]] || { echo '{"action":"skip","reason":"unreadable","in_scope":false,"session":"one-shot"}'; return; }
+    [[ "$A" == "true" ]] || { echo '{"action":"skip","reason":"not-auto-loop","in_scope":false}'; return; }
     api_failure_decision one-shot
     return
   fi
@@ -244,7 +234,6 @@ decision() {
   kind=$(jq -r '.reason_kind // "unreadable"' <<<"$D" 2>/dev/null || echo unreadable)
   case "$kind" in
     not-auto-loop|unreadable) echo "{\"action\":\"skip\",\"reason\":\"$kind\",\"in_scope\":false}"; return ;;
-    human-override)           echo '{"action":"skip","reason":"human-override","in_scope":true}'; return ;;
   esac
 
   if [[ "$EVENT" == "StopFailure" ]]; then
@@ -252,7 +241,9 @@ decision() {
     return
   fi
 
-  # Stop. Only a turn that ARMED is ours; an un-armed or stale-armed one is auto-heartbeat.sh to block.
+  # Stop. The operator's hold applies here alone (DELIBERATELY NOT FIRING, above). Only a turn that ARMED is ours; an
+  # un-armed or stale-armed one is auto-heartbeat.sh to block.
+  [[ "$kind" == "human-override" ]] && { echo '{"action":"skip","reason":"human-override","in_scope":true}'; return; }
   # FLUSH RACE (auto-heartbeat.sh documents it): the turn that just ended may not be durably written when a Stop hook
   # starts, so a single read can miss the arm. A miss here is a death left unrecovered, so re-read — in the background
   # it costs nothing — until the arm shows or the tries run out.

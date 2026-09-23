@@ -19,7 +19,8 @@
 # The one-shot cases (#31-#38) are the 2026-09-21 fleet-sequence death: a targeted `/auto <ID>` session — no /loop anywhere,
 # its `claude --bg` delivery stamped origin.kind "human" like a typed one — killed by an API 500, with the hook standing down
 # as not-auto-loop while the sequence runner timed out behind it. #39 is the 2026-09-23 sequel: the `continue` that recovered
-# such a death was read as manual control for the rest of the session, and the next 429 five hours later went unrecovered.
+# such a death was read as manual control for the rest of the session and the next 429 five hours later went unrecovered, so
+# no human prompt holds the StopFailure path any more (#19, #33, #39); the Stop path keeps the hold (#10).
 #
 # GROW THIS SUITE, NEVER PRUNE IT. Every newly observed silent-death shape becomes a numbered case, added WITH its fix.
 
@@ -151,7 +152,7 @@ done
 g=$(tfile); { rec_plain $((B-60)); rec_apierr "$B"; } > "$g"
 ck "18 API error in an ordinary session -> skip not-auto-loop" not-auto-loop "$(dec "$(ev StopFailure "$g" s-eighteen "$SF")" .reason)"
 g=$(tfile); { rec_loop $((B-300)); rec_human $((B-60)); rec_apierr "$B"; } > "$g"
-ck "19 API error while an operator holds the run -> skip"      human-override "$(dec "$(ev StopFailure "$g" s-nineteen "$SF")" .reason)"
+ck "19 API error after an operator prompt -> wait: a retry contradicts no one" wait "$(dec "$(ev StopFailure "$g" s-nineteen "$SF")" .action)"
 set_state s-twenty '{"api_rewakes":24}'
 ck "20 24 retries already (six hours) -> skip api-cap"         api-cap "$(dec "$(ev StopFailure "$f" s-twenty "$SF")" .reason)"
 ck "20b a hook event that is not a stop -> skip"               not-a-stop-event "$(dec "$(ev SubagentStop "$f" s-twentyb)" .reason)"
@@ -167,22 +168,21 @@ ck "31 ... on a one-shot session"                              one-shot "$(dec "
 # 32. A bare `/auto` typed once is one-shot too.
 f=$(tfile); { rec_auto $((B-300)) ""; rec_500 "$B"; } > "$f"
 ck "32 bare /auto -> wait"                                     wait "$(dec "$(ev StopFailure "$f" s-thirtytwo "$SE")" .action)"
-# 33. A human prompt opened the turn that died — the `continue` that recovered the real session, killed again at once — so
-#     the operator holds the run.
+# 33. A human prompt opened the turn that died — the `continue` that recovered the real session, killed again at once. The
+#     operator holds nothing on this path: the retry contradicts no one, and their own hand retry stands the hook down.
 f=$(tfile); { rec_auto $((B-7200)); rec_cont $((B-60)); rec_500 "$B"; } > "$f"
-ck "33 human prompt opened the dying turn -> skip human-override" human-override "$(dec "$(ev StopFailure "$f" s-thirtythree "$SE")" .reason)"
-ck "33 ... in scope, so it is logged"                          true "$(dec "$(ev StopFailure "$f" s-thirtythree "$SE")" .in_scope)"
+ck "33 human prompt opened the dying turn -> wait"             wait "$(dec "$(ev StopFailure "$f" s-thirtythree "$SE")" .action)"
+ck "33 ... on a one-shot session"                              one-shot "$(dec "$(ev StopFailure "$f" s-thirtythree "$SE")" .session)"
 # 39. THE STICKY OVERRIDE (2026-09-23, fleet-sequence child cdb8b6ad): the `continue` of #33 recovered a 429 at 23:41Z, the run
 #     then carried on unattended for five hours on hand-backs and notifications, and a second 429 at 04:36Z found the hook
-#     still standing down on that one prompt. The hold is turn-scoped: once a non-human record opens a later turn, the run is
-#     unattended again — and a fresh human prompt opening the dying turn holds it again.
+#     standing down on that one prompt. No human prompt holds the StopFailure path since, whichever record opened the turn.
 f=$(tfile); { rec_auto $((B-30000)); rec_cont $((B-18000)); rec_work $((B-17990)); rec_text $((B-17980)); rec_stopsum $((B-17979)); rec_peer $((B-100)); rec_work $((B-50)); rec_500 "$B"; } > "$f"
 ck "39 human continue, then a hand-back opened the dying turn -> wait" wait "$(dec "$(ev StopFailure "$f" s-thirtynine "$SE")" .action)"
 ck "39 ... as a one-shot api-kind wait"                        "one-shot api" "$(dec "$(ev StopFailure "$f" s-thirtynine "$SE")" '"\(.session) \(.kind)"')"
 f=$(tfile); { rec_auto $((B-30000)); rec_cont $((B-18000)); rec_text $((B-17980)); rec_stopsum $((B-17979)); rec_notif $((B-100)); rec_500 "$B"; } > "$f"
 ck "39 ... a task notification as the opener, likewise"        wait "$(dec "$(ev StopFailure "$f" s-thirtynineb "$SE")" .action)"
 f=$(tfile); { rec_auto $((B-30000)); rec_cont $((B-18000)); rec_text $((B-17980)); rec_stopsum $((B-17979)); rec_notif $((B-200)); rec_text $((B-150)); rec_stopsum $((B-149)); rec_plain $((B-60)); rec_500 "$B"; } > "$f"
-ck "39 ... a fresh human prompt opening the dying turn holds again" human-override "$(dec "$(ev StopFailure "$f" s-thirtyninec "$SE")" .reason)"
+ck "39 ... a fresh human prompt opening the dying turn, likewise" wait "$(dec "$(ev StopFailure "$f" s-thirtyninec "$SE")" .action)"
 # 34. A Stop on a one-shot run is the run finishing or resting, never a lost wakeup: out of scope, no log line.
 f=$(tfile); { rec_auto $((B-300)); rec_work $((B-10)); rec_text "$B"; } > "$f"
 ck "34 Stop on a targeted run -> skip one-shot-stop"           one-shot-stop "$(dec "$(ev Stop "$f" s-thirtyfour)" .reason)"
