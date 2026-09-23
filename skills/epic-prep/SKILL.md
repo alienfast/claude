@@ -1,6 +1,6 @@
 ---
 name: epic-prep
-description: Prepare one epic's graph for an epic-scoped fleet (`/fleet-launch epic:<ID>`) — the /auto-prep audit run with `--root`, plus what a team prep lacks: an inline /spec loop over uncertified members in dependency order, a boundary review of outside dependents and related partners, promotion of the whole graph to Planned, the epic integration branch, a hard gate that every resolved member's code is on that branch, and a scoped recommendation (scope, members, branch, base, 1–2 lanes). Interactive-only. Use when the user says 'epic prep', 'prep the epic', 'prep BF-1826 for a fleet', 'fleet this epic', or invokes /epic-prep.
+description: Prepare one epic's graph for an epic-scoped fleet (`/fleet-launch epic:<ID>`) — the /auto-prep audit run with `--root`, plus what a team prep lacks: an inline /spec loop over uncertified members in dependency order, a boundary review of outside dependents and related partners, promotion of the whole graph to Planned, the epic integration branch, a hard gate that every resolved member's code is on that branch, and a scoped recommendation (scope, members, branch, base, and a forecast-sized count with the critical path started first). Interactive-only. Use when the user says 'epic prep', 'prep the epic', 'prep BF-1826 for a fleet', 'fleet this epic', or invokes /epic-prep.
 argument-hint: "<EPIC-ID>"
 model: opus
 effort: xhigh
@@ -101,15 +101,28 @@ No checkout happens here or at launch — `fleet-launch.sh` never moves the main
 
 ### Step 7: Hard gate — every resolved member's code is on the branch
 
-The ranking reads a terminal member as resolved, so its siblings look unblocked — while its code may sit in an open PR against some other branch (BF-1826's three renames: Ready for Release, PRs 492/494/497 stacked on `hotfixes`, contained in neither `hotfixes` nor `main`). A fleet forked from a branch without that code builds on a base that lacks its prerequisites. **This gate stops the prep until every such member has landed on the integration branch.**
+The ranking reads a terminal member as resolved, so its siblings look unblocked — while its code may sit in an open PR against some other branch (BF-1826's three renames: Ready for Release, PRs 492/494/497 stacked on `hotfixes`, contained in neither `hotfixes` nor `main`). A fleet forked from a branch without that code builds on a base that lacks its prerequisites. **This gate stops the prep until every such member's code has landed on the integration branch.**
 
 Subjects: every issue in `tmp/epic-graph.json`'s `terminal[]` whose state is completed-type or Ready for Release (a Canceled or Duplicate member carries no code and is skipped), plus any member in `In Review` (resolved for blocker purposes, keeper ruling 2026-08-21). For each subject, in the project checkout:
 
-1. Find its PR: `gh pr list --state all --search "<ID>" --json number,state,headRefName,headRefOid,baseRefName,mergedAt --limit 5` (titles carry the ID by convention; keep the row whose title starts with it).
-2. **Landed** when the PR's head commit is contained: `git merge-base --is-ancestor <headRefOid> <branch>`. With no PR at all, a `/finish merge` ship leaves its commits on the source branch — `git log --oneline "$branch" | grep -q "<ID>"` counts as landed too.
-3. Anything else — PR open, merged elsewhere, or no trace — is a **FAIL** row naming the ID, the PR, and its head branch.
+1. Find its PR: `gh pr list --state all --search "<ID>" --json number,state,headRefName,headRefOid,baseRefName,mergedAt,title --limit 5`. Titles carry the ID by convention, so keep the row whose title starts with the ID followed by a non-digit; `ABC-12` must never take `ABC-123`'s PR.
+2. **Landed** when the PR's head commit is contained: `git merge-base --is-ancestor <headRefOid> <branch>`.
 
-Print the table (`ID · state · PR · head · verdict`). **Any FAIL stops the prep**: the remedy is to merge each failing head into the integration branch — for a stack, merging the tip carries the rest (BF-1839's branch carries BF-1832's and BF-1831's) — and the skill performs it only on explicit approval, through a temporary worktree so the main checkout is never switched:
+   With no PR, search the whole commit message, not just the subject, and anchor the ID so `ABC-12` cannot match `ABC-123`: `git log -E --grep='<ID>([^0-9]|$)' --format='%h %s' "$branch"`.
+
+   - A hit whose printed subject carries the ID counts as landed; `/finish` puts it there (`<ID>: …`, `Merge <ID>`).
+   - Work absorbed into a sibling's change is often named only in that commit's body. A body-only hit counts once you have read the commit and confirmed it carries this issue's change ("That is the change <ID> specifies") rather than merely citing it ("leaves X for <ID>"). The issue's own closing comment usually names the absorbing sibling, which corroborates the read.
+
+3. Anything else — a PR open or merged elsewhere, or no trace — is a **FAIL** row naming the ID, the PR, and its head branch.
+
+   The one exception is a **decision record**, which has no code to land: a Done member that `/spec`'s decision-grade path closed as the record of a decision. A decision with no code change rides no release, so it closes Done rather than Ready for Release. Confirm both halves:
+
+   - **Mechanically:** it has no PR of its own, and no commit anywhere carries its ID in the subject (`git log --all --format=%s | grep -E '<ID>([^0-9]|$)'` is empty). Bodies citing it are expected, because commits are where decisions get cited.
+   - **By reading:** its closing comment is the recorded decision and names the follow-ups that carry the code. Those follow-ups are gated on their own: a terminal one by this step, an open one by the fleet.
+
+   Mark the row `decision record`. It is a pass with nothing to land, not a waiver. A Done issue with no code and no such record stays a FAIL, since Linear's close-keyword automation can close an issue that way (`standards/git.md` § Linear auto-close keywords).
+
+Print the table (`ID · state · PR · head · verdict`; verdict is `landed`, `landed (body)`, `decision record`, or `FAIL`). **Any FAIL stops the prep**: the remedy is to merge each failing head into the integration branch — for a stack, merging the tip carries the rest (BF-1839's branch carries BF-1832's and BF-1831's) — and the skill performs it only on explicit approval, through a temporary worktree so the main checkout is never switched:
 
 ```bash
 git worktree add --detach tmp/epic-merge "$branch"
@@ -118,11 +131,38 @@ git update-ref "refs/heads/$branch" "$(git -C tmp/epic-merge rev-parse HEAD)"
 git worktree remove tmp/epic-merge
 ```
 
-Then re-run the gate; it must come back clean before Step 8. The superseded PRs are closed with a comment naming the branch they landed on (`gh pr close <n> --comment "landed on <branch> via /epic-prep <ID>"`) — never merged, since their bases were wrong. No waivers: a member whose code cannot be found is a member the fleet cannot safely build on, and the user's alternative is to take it out of the graph (re-parent it away or cancel it), not to launch around it. `gh` missing means the gate cannot run, which means the prep stops.
+Then re-run the gate; it must come back clean before Step 8. The superseded PRs are closed with a comment naming the branch they landed on (`gh pr close <n> --comment "landed on <branch> via /epic-prep <ID>"`) — never merged, since their bases were wrong. No waivers: a member whose code cannot be found is a member the fleet cannot safely build on (a decision record has no code to find — item 3), and the user's alternative is to take it out of the graph (re-parent it away or cancel it), not to launch around it. `gh` missing means the gate cannot run, which means the prep stops.
 
-### Step 8: Lanes, sizing, and the recommendation
+### Step 8: Critical path, sizing, and the recommendation
 
-Count lanes from the Step 3 scoped ranking exactly as [`/auto-prep` Step 5](../auto-prep/SKILL.md#step-5-fleet-size-and-launch-checklist) does — Planned-stage candidates minus decision-gated flags, chain heads counted once. **Expect 1–2**: members of one epic collide far more than a team pool (they share the feature's files and specs by construction), and the `related` de-rank plus the merge gate handle what the count leaves. Recommend `min(lanes, 2)` — the 5h cap of 3 still bounds it, and an explicit `/fleet-launch <count>` remains the user's override. State the binding term.
+**Start the critical path first, then size from the forecast, not the lane count.** An epic's constraint is usually its longest `blocks` chain. When that chain's head ranks behind the standalones it starts late, and each session added beside it only ships a standalone and then idles.
+
+Find the chain from the graph. Do not walk the edges by hand, and do not use the forecast's `(unblocked by …)` notes, which name the first shipped blocker rather than the binding one:
+
+```bash
+jq -r '[.members[].identifier] as $m
+  | [.edges[] | select(.type == "blocks" and (.from as $f | $m | index($f)) != null and (.to as $t | $m | index($t)) != null)] as $e
+  | def chain($x): [$x] + ([$e[] | select(.from == $x) | chain(.to)] | max_by(length) // []);
+  [$m[] | select(. as $x | all($e[]; .to != $x)) | chain(.)] | max_by(length) | "\(length): \(join(" → "))"' tmp/epic-graph.json
+```
+
+Read the head's rank in Step 3's `next-candidates.sh --root <ID> --label specified` listing, which is what decides picks at run time. If the head is not first, priority is the lever, and within the tier every epic member sits in, only Urgent works. The within-tier order is Urgent > label class (`security` > `bug` > none) > remaining priority (`skills/next/SKILL.md`), so a High head still ranks behind every Normal `security` or `bug` member.
+
+Self-assignment would also work, because fleet sessions share one Linear viewer and an issue assigned to you ranks in tier 1, above Urgent (`standards/linear-workflow.md` § Assignment Is a Claim). But it reads as your personal claim, and `fleet-forecast.py` does not model tiers, so the re-forecast below cannot confirm it.
+
+Propose Urgent on every chain member: the head and each successor, since each competes again when it unblocks. Get the user's yes first. Urgent is the board's "drop everything" signal, and it outranks label classes across the whole team, not only inside the epic. Set each member with `linear-cli issues update <ID> --priority 1`, read `.priority` back (linear skill gotcha #8), and record the change in one comment on the epic, as Step 4 does for the boundary.
+
+Then forecast the prepped graph at a few counts:
+
+```bash
+for n in 2 3 4 5; do ~/.claude/scripts/fleet-forecast.py --root <ID> --sessions $n --horizon-h 24 >| tmp/forecast-$n.txt; grep -E '^FORECAST|^UNREACHED' tmp/forecast-$n.txt; grep '^SHIP' tmp/forecast-$n.txt | tail -1; grep -E '^PICK .*: <HEAD> ' tmp/forecast-$n.txt; done
+```
+
+Confirm the head's `PICK` is at `t=0.0h`. Recommend the smallest count past which neither the ship count nor the last `SHIP` time improves, capped at 3 (the 5h-burst cap `/auto-prep` fixes; `/fleet-launch` takes any count, and above 3 the headroom gate parks sessions between picks). The simulation does not model file collisions, and one epic's members share files by construction. So when the last session added gains only by running `related` members side by side, take the count below it.
+
+Measured on a 22-member epic: a Normal chain head covering 6 of the 15 shippable members ranked 9th of 9, and 7th at High. With the chain at Urgent, 4 sessions finished all 15 in about 21h instead of 26h, 3 sessions reached all 15 instead of 14, and 5 or more added nothing. `min(lanes, 2)` would have shipped 11.
+
+State the binding term: the chain's serial floor (`floor`), which no count moves; lanes; or the cap. An explicit `/fleet-launch <count>` remains the user's override.
 
 Persist the recommendation with the scope fields `fleet-launch.sh` and `fleet-status.sh` read — `scope`, `members` (the prep-time membership: the burn-down baseline), `branch`, `base` — alongside the sizing block `/auto-prep` writes:
 
@@ -130,7 +170,7 @@ Persist the recommendation with the scope fields `fleet-launch.sh` and `fleet-st
 jq -n --argjson sessions <N> --arg team <KEY> --argjson e "$(date +%s)" \
       --arg scope <ID> --argjson members "$(jq -c '[.members[].identifier]' tmp/epic-graph.json)" \
       --arg branch "$branch" --arg base "$base" \
-      --arg bound_by '<lanes|cap>' --argjson duration_h <D> \
+      --arg bound_by '<floor|lanes|cap>' --argjson duration_h <D> \
       --argjson rate <TOK_PER_SESSION_HOUR> --argjson peak5h <PEAK_5H_OBSERVED> \
   '{sessions: $sessions, team: $team, generated_epoch: $e, generated: (now | todate),
     scope: $scope, members: $members, branch: $branch, base: $base,
@@ -143,7 +183,7 @@ Written in the project's main checkout. A bare `/fleet-launch` now launches the 
 
 ## Report
 
-Lead with the Step 7 gate verdict — clean, or what was merged to make it clean. Then the roster: certified this run, declined (holding the gate), terminal, nested epics closed by the sweep. Then the boundary decisions, the promotion batch, and the audit's remaining `FOCUS` rows. Then the launch line: `/fleet-launch` (bare) with the recommended count and duration, which term bound it, the integration branch and its base, and the post-fleet steps (`~/.claude/scripts/integration-pr.sh <branch> <base> <member IDs...>` then `/pr-update` for the PR). Every Linear write is reversible — say so once.
+Lead with the Step 7 gate verdict — clean, or what was merged to make it clean — naming each row that passed on a read body match or as a decision record, since both are judgment passes in a no-waiver gate. Then the roster: certified this run, declined (holding the gate), terminal, nested epics closed by the sweep. Then the boundary decisions, the promotion batch, the critical path and any priority changes made to start it first, and the audit's remaining `FOCUS` rows. Then the launch line: `/fleet-launch` (bare) with the recommended count and duration, which term bound it (the chain's serial floor, lanes, or the cap), the integration branch and its base, and the post-fleet steps (`~/.claude/scripts/integration-pr.sh <branch> <base> <member IDs...>` then `/pr-update` for the PR). Every Linear write is reversible — say so once.
 
 ## What this skill must NOT do
 

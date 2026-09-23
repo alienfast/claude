@@ -193,7 +193,7 @@ This approach keeps Claude's context efficient while providing deep expertise wh
 - Membership from `~/.claude/scripts/epic-graph.sh`: the epic, its transitive descendants, and the transitive blockers of any member — non-terminal, cross-team; dependents and `related` partners are the boundary (include by re-parenting, default leave out)
 - Certifies uncertified members through `/spec` in topological order (blockers first), then runs `/auto-prep` Steps 2–5 by link with `next-candidates.sh --root` and `fleet-blockers.sh --root`, including the CLOSE-SET sweep
 - Creates `epic/<id>` from the same source `/start wt` resolves; refuses to proceed until every Ready-for-Release / In Review member's code is contained in it (the BF-1826 rename stack is the live case), merging failing heads through a temporary worktree on approval
-- Persists `scope`, `members`, `branch`, `base` in `tmp/fleet-recommendation.json`; expects 1–2 lanes
+- Persists `scope`, `members`, `branch`, `base` in `tmp/fleet-recommendation.json`; starts the critical path first (Urgent on the chain, with approval) and sizes from `fleet-forecast.py`, capped at 3
 
 **Structure**:
 
