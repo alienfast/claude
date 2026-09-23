@@ -190,12 +190,14 @@ Auth: `linear-cli auth oauth` (browser) or `LINEAR_API_KEY`; check with `linear-
     response is to stop and hand the commands to the user — retry once as a plain command first. Issue Linear writes one per Bash call (loops are fine
     for reads) and confirm with a follow-up `relations list` / `issues get --no-cache`.
 
+25. **`issues list` returns 50 rows by default, silently — and `--count-only` counts that page, not the pool.** The default page size is 50 (hard-coded in `src/commands/issues.rs`; measured on 0.3.28): `issues list --team BF --state Backlog -o json | jq length` printed **50** against a 506-issue Backlog, the table footer read `50 issues`, and no output mode prints a more-results hint. `--count-only` — the natural flag for sizing a pool — inherits the cap and printed `50` for the same Backlog. The flags that fix it exist but `issues list --help` buries them among forty others (`linear-cli common` is where they are called out): **`--all`** fetches every page (1970 rows for the whole team, byte-equal to a paginated raw-hatch count), `--limit N` pages internally past the API's 250-per-page (`--limit 300` returns 300), and `--page-size`/`--after` are there for hand-paging. Pass `--all` on any pool-sized read — a whole Backlog, every issue carrying a label — and treat a result count landing exactly on 50 as truncation, never as the answer; the same tell applies to a one-shot raw query landing exactly on its `first:` cap (`/auto-prep`'s pool fetch documents that one and the `pageInfo` loop that fixes it — `next-candidates.sh` already runs it). Measured 2026-09-22: a report built from a bare `issues list` stated the uncertified Backlog at 50 when a paginated count put it in the hundreds.
+
 ## Command map
 
 ```bash
 # Issues (alias: i)
 linear-cli issues get <ID> [-o json]          # single issue (state is {name}; --comments adds STANDALONE comments only)
-linear-cli issues list --team <KEY> [--limit N] [--state X] [--assignee me] [-l <label>] [-o json]
+linear-cli issues list --team <KEY> [--all | --limit N] [--state X] [--assignee me] [-l <label>] [-o json]   # 50 rows by default (gotcha #25)
 linear-cli issues create "<title>" --team <KEY> [--state X] [-d -]   # description via stdin with -d -
 linear-cli issues update <ID> [--state X] [--assignee me|<user>] [--priority N] [-l <label>]... [--data -]   # -l SETS the whole label set — to add, use linear-add-label.sh (gotcha #7)
 linear-cli issues assign <ID> [<user>]        # omit <user> to UNASSIGN

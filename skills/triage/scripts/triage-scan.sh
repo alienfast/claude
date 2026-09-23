@@ -106,9 +106,9 @@ run_group() {   # $1 = group index, $2 = model, $3 = comma ids
   cost=$(jq -r '.total_cost_usd // 0' "$raw" 2>/dev/null); dur=$(( (t1-t0)*1000 ))
   local ok; ok=$(jq -r '.structured_output.issues | length' "$raw" 2>/dev/null)
   if [ "$(jq -r '.is_error // false' "$raw" 2>/dev/null)" = "true" ]; then
-    # A refused call (the account's session/usage limit, an auth failure) still bills the context it loaded
-    # (~$2 per group measured 2026-09-22), so stop the whole run at the first one instead of paying for every
-    # remaining group. The limit message names the reset time; re-run after it — proposals already written stand.
+    # A refused call (session/usage limit, auth) is is_error:true under subtype:success. A group launched after the
+    # limit costs $0 and 3-4 s; a group in flight when it lands is cut off with its partial work billed and no proposals.
+    # Stop the run at the first refusal — further launches are pointless — and re-run after the reset the message names.
     local msg; msg=$(jq -r '.result // ""' "$raw" | head -c 200)
     printf 'group\t%s\t%s\t%s\t%s\t%s\tFAILED refused: %s\n' "$gi" "$model" "$ids" "${cost:-0}" "$dur" "$msg" >> "$LOG"
     echo "  group $gi ($model) REFUSED: $msg"; touch "$PROP/.stop"; return 1
