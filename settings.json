@@ -174,7 +174,7 @@
       "/private/tmp"
     ]
   },
-  "model": "opus[1m]",
+  "model": "claude-fable-5",
   "hooks": {
     "PreToolUse": [
       {
@@ -258,6 +258,11 @@
   },
   "outputStyle": "concise",
   "effortLevel": "xhigh",
+  "modelSettings": {
+    "claude-opus-5-5": {
+      "effortLevel": "xhigh"
+    }
+  },
   "tui": "fullscreen",
   "theme": "dark",
   "agentPushNotifEnabled": true,
