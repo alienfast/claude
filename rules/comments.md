@@ -169,9 +169,10 @@ remedy is a comment edit.
   Backward-looking, adds nothing a reader needs, and
   rots as the code moves. It belongs in the PR description or commit body.
 - References to `tmp/` paths (investigations, screenshots, scratch notes) —
-  `tmp/` is transient and regularly cleaned, so the link will dangle. If the
-  WHY needs more than the comment can hold, capture it in a Linear issue or
-  commit message body — don't point readers at a path that may not exist.
+  the daily tmp reaper (`/reap-tmp`) ages scratch out after a week, so the
+  link will dangle. If the WHY needs more than the comment can hold, capture
+  it in a Linear issue or commit message body — don't point readers at a path
+  that may not exist.
 - Multi-paragraph docstrings on internal functions
 - Comments to flag removed code (`// removed XYZ`) — git is the history
 

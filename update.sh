@@ -461,12 +461,13 @@ install_launchd_agent() {
 
 echo ""
 echo "Installing launchd agents..."
-# All three are local launchd mechanisms; skip on non-macOS. The drainer lands deferred /finish merges;
-# the reaper reclaims completed/abandoned /start wt worktrees (the PR-merged-later and Canceled-in-Linear
-# cases finish-merge.sh's own cleanup can't reach); the stall watcher alerts on a /loop /auto session
-# frozen mid-iteration by an API quota cutoff, which no Stop hook can see (a turn killed by an API error
-# fires none) and no wakeup can recover (ScheduleWakeup is turn-ending, so an iteration in flight has
-# none pending).
+# All four are local launchd mechanisms; skip on non-macOS. The drainer lands deferred /finish merges;
+# the worktree reaper reclaims completed/abandoned /start wt worktrees (the PR-merged-later and
+# Canceled-in-Linear cases finish-merge.sh's own cleanup can't reach); the stall watcher alerts on a
+# /loop /auto session frozen mid-iteration by an API quota cutoff, which no Stop hook can see (a turn
+# killed by an API error fires none) and no wakeup can recover (ScheduleWakeup is turn-ending, so an
+# iteration in flight has none pending); the tmp reaper ages out the scratch every skill leaves under
+# <project>/tmp/ while keeping the named handoff files other skills still read.
 if [[ "$OSTYPE" == "darwin"* ]]; then
   echo "Installing merge-queue drainer (launchd)..."
   install_launchd_agent "com.alienfast.merge-queue-drain" "drains the merge queue every 15 min."
@@ -474,9 +475,18 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
   install_launchd_agent "com.alienfast.worktree-reap" "reaps completed/abandoned worktrees hourly."
   echo "Installing /auto stall watcher (launchd)..."
   install_launchd_agent "com.alienfast.auto-stall-watch" "checks for stalled /auto sessions every 10 min."
+  echo "Installing tmp reaper (launchd)..."
+  install_launchd_agent "com.alienfast.tmp-reap" "ages out tmp/ scratch daily."
 else
   echo "  skipped (macOS/launchd-only; this is $OSTYPE)."
 fi
+
+# One sweep now, on every platform: the launchd agent never fires on Windows or Linux, and even on macOS
+# its first daily tick is up to a day away. Still in the project directory here (the cd below comes
+# later), so the no-arg form covers the registered repos, ~/.claude, and the repo this run started in.
+echo ""
+echo "Reaping aged tmp/ scratch..."
+bash "$claude_repo/scripts/reap-tmp.sh" reap || echo "  WARNING: tmp reap failed (non-fatal); run ~/.claude/scripts/reap-tmp.sh list to inspect."
 
 # Reconcile ~/.claude's own devDependencies (markdownlint-cli2) against the committed lockfile before the lint step below
 # relies on them — a fresh clone has no node_modules, and a git pull can bump the lockfile out from under a stale install.

@@ -98,7 +98,7 @@ Each runs end to end independently, and the machinery keeps them from colliding:
 - **Isolation by worktree.** `/start wt` checks out the issue's branch in its own git worktree under `<repo>/.claude/worktrees/<issue>`, so every agent gets a private working tree and branch — edits, installs, and checkpoints never step on each other or on your main checkout.
 - **Serialized merge.** When each `/finish` lands, it advances the shared source branch under a per-repo lock ([scripts/with-repo-lock.py](scripts/with-repo-lock.py)): the worktree branch is first brought up to source's tip _inside its own worktree_ (any conflicts resolved there, never in the main checkout), then source moves by a clean `git merge --ff-only` or an atomic `git update-ref`. Concurrent finishes block briefly and merge in turn, so source is only ever advanced cleanly.
 - **Deferred, never forced.** A merge that can't advance right now — e.g. the main checkout is sitting on the shared branch with another session's WIP — is enqueued rather than failed: it leaves the worktree intact and a launchd drainer retries every ~15 min until it lands. Inspect with `/merge-queue`; conflicts are never resolved unattended.
-- **Self-cleanup.** Finished worktrees are reclaimed by the hourly reaper — check with `/reap-worktrees`.
+- **Self-cleanup.** Finished worktrees are reclaimed by the hourly reaper — check with `/reap-worktrees`. Aged `tmp/` scratch is reclaimed by a daily reaper that keeps the named handoff files other skills still read — check with `/reap-tmp`.
 - **Human alongside.** `/start interactive PL-4` claims an issue and sets up its worktree (opened in its own VS Code window), then hands off without planning or implementing — so you can work by hand in the same isolation while background agents keep shipping.
 
 For heavy fan-out, keep your main checkout parked on a quiet branch (not the shared integration branch) so every merge advances source by a ref-only update and the queue rarely engages. The full merge protocol lives in [standards/git.md](standards/git.md).
@@ -212,6 +212,7 @@ In workflow order — seed, certify, fleet, then the per-issue tiers and upkeep:
 | [finish](skills/finish/) | Finish an issue — read verdict, commit/push, mark Ready For Release |
 | [merge-queue](skills/merge-queue/) | Inspect and drain `/finish` merges that were deferred, then retried by the launchd drainer |
 | [reap-worktrees](skills/reap-worktrees/) | Inspect and reclaim leftover `/start wt` worktrees (PR/branch merged, or issue Done/Canceled) |
+| [reap-tmp](skills/reap-tmp/) | Inspect and reclaim aged `tmp/` scratch by name-based lane — never the handoff files other skills still read, never an unlisted directory |
 | [reflect](skills/reflect/) | Turn session friction into shared-config edits — auto-applies the safe ones, files the rest as Linear issues (scheduled surface is `/fleet-retro`'s batched `reflect fleet` step; `sweep` mode audits a project's config against its codebase) |
 | [keeper](skills/keeper/) | Interactive pickup for the config work autonomous runs cannot ship — uncommitted `~/.claude` edits, `keeper`-labeled issues, and contributor proposal PRs, adjudicated in one pass |
 
