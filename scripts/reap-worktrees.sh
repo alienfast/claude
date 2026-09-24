@@ -38,11 +38,18 @@
 #       untracked non-ignored files. We NEVER pass --force, so untracked work is never destroyed;
 #       gitignored scratch (tmp/, node_modules) does not block removal.
 #     • no in-flight deferred merge: no <repo>/.claude/merge-queue/<issue>.json marker.
-#     • NOT a live/in-progress worktree — BOTH liveness guards must pass (added after PL-459, where
+#     • NOT a live/in-progress worktree — EVERY liveness guard must pass (added after PL-459, where
 #       this reaper removed a freshly-created worktree mid-implementation: a zero-commit branch is
 #       trivially an ancestor of its source, so the "merged" evidence fired on a worktree whose owning
 #       session had just set it up; its edits then landed in the main checkout because the worktree's
 #       .git was gone):
+#         - NOT IN USE (guard C): no live Claude harness process has its cwd inside the worktree — the direct
+#           process signal (lsof + the harness comm allowlist), independent of the stamp and of git activity,
+#           and it outranks every evidence rule. A session that merges from inside the worktree and keeps
+#           working, or finishes one issue and plans the next in the same worktree, does no git ops for hours
+#           while "merged" or "issue terminal, zero commits" both read as done: three interactive sessions
+#           were reaped that way in one week (2026-09-23 BF-2074 twice, 2026-09-24 BF-2101), each then TERMed
+#           by the orphan sweep for sitting in the directory this script had just removed.
 #         - IDLE: no git activity in the worktree within WORKTREE_REAP_GRACE_MIN minutes (default 60) —
 #           the per-worktree index mtime is stale, indicating no live session is touching it. A live
 #           session's frequent git ops (checkpoints, add, status) keep the index fresh; it goes stale
@@ -60,11 +67,12 @@
 #   evidence test and are preserved automatically — no special-casing needed.
 #
 # KNOWN LIMITATIONS (accepted trade-offs; each leans toward keeping work safe):
-#   • Liveness is approximated by index mtime, not a true session signal. A worktree whose work is
-#     ALREADY merged/PR-merged/issue-terminal AND that then goes git-idle past the grace while its
-#     session is still alive could still be reaped. This is narrow — a normally-active in-progress
-#     session has not reached terminal evidence yet, so it is kept as "active" by the evidence test;
-#     and active git ops keep the index fresh. No heartbeat backs it up: the owning session's job-dir
+#   • Guard C sees a session only where its cwd is: a session that drives a worktree from OUTSIDE it (cwd in
+#     the main checkout, `git -C <wt> …`) is invisible to it and is covered by the index-mtime guard alone —
+#     which a worktree whose work is ALREADY merged/PR-merged/issue-terminal, then git-idle past the grace,
+#     still fails. That was every reap before guard C existed; it is now narrow, and `reap.keep` closes it for
+#     a worktree you mean to return to. Without lsof guard C stands down for the pass (WARNed once) and that
+#     pre-guard-C behavior is what runs. No heartbeat backs the index guard: the owning session's job-dir
 #     mtime was evaluated and rejected (it tracks dir creation, not activity). The stamped owner tuple
 #     (wt_owner_alive and the WTID_OWNER_* globals) IS a true session signal, but it only ever reports
 #     that a session is GONE — nothing refreshes it while one works — so it is consulted where absence
@@ -282,11 +290,60 @@ recent_activity() {
   [ "$(( now - mtime ))" -lt "$grace" ]
 }
 
+# Harness recognition for liveness guard C and the orphan sweep: the comm allowlist wt-identity.sh's
+# wtid_harness_pid uses (the native binary), plus an npm-installed CLI, which runs under `node` and is told
+# apart from a dev server only by its package path in argv. `ps -o comm=` rather than lsof's `c` field: lsof
+# reports the kernel's comm, the exec'd binary's own name, so a harness reached through a symlink or wrapper
+# — the suite's session fixture is one — would read as its target there.
+is_harness_pid() {
+  local pid="$1" comm base
+  comm=$(ps -o comm= -p "$pid" 2>/dev/null | tail -1)
+  base=$(basename "$comm" 2>/dev/null)
+  case "$base" in
+    claude|claude.exe|claude-code) return 0 ;;
+    node) case "$(ps -o args= -p "$pid" 2>/dev/null | tail -1)" in *anthropic-ai/claude-code*) return 0 ;; esac ;;
+  esac
+  return 1
+}
+
+# Liveness guard C — pids of live Claude harness processes whose cwd is inside <dir>, space-separated; empty
+# when there are none, or when lsof cannot answer, in which case the guard stands down for the pass (WARNed
+# once) and the index-mtime guard alone decides — the pre-guard-C behavior. lsof reports the resolved cwd, so
+# the worktree is compared in its physical form. No ancestry exclusion here, unlike the sweep: a harness among
+# this script's own ancestors that sits inside the worktree IS a live session in it (someone ran `list` from
+# there), and keeping is the right answer.
+CWD_SCAN_WARNED=""
+live_sessions_in() {
+  local dir="$1" phys out rc=0 pid="" line cwd pids=""
+  if ! have lsof; then
+    [ -n "$CWD_SCAN_WARNED" ] || { err "lsof not found — live-session guard disabled for this pass (index-mtime guard only)"; CWD_SCAN_WARNED=1; }
+    return 0
+  fi
+  phys=$( (cd "$dir" 2>/dev/null && pwd -P) || true )
+  [ -n "$phys" ] || return 0
+  out=$(lsof -b -a -d cwd -u "$(id -u)" -Fpn 2>/dev/null) || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    [ -n "$CWD_SCAN_WARNED" ] || { err "lsof exited $rc — live-session guard disabled for this pass (index-mtime guard only)"; CWD_SCAN_WARNED=1; }
+    return 0
+  fi
+  while IFS= read -r line; do
+    case "$line" in
+      p*) pid="${line#p}" ;;
+      n*) cwd="${line#n}"
+          [ -n "$pid" ] || continue
+          case "$cwd" in "$phys"|"$phys"/*) ;; *) continue ;; esac
+          is_harness_pid "$pid" || continue
+          pids="$pids $pid" ;;
+    esac
+  done <<< "$out"
+  printf '%s' "${pids# }"
+}
+
 # Evaluate one worktree dir. mode=list prints the verdict only; mode=reap also removes when eligible.
 # Assumes (reap mode) the per-repo lock is held by the caller.
 evaluate_worktree() {
   local repo="$1" dir="$2" mode="$3"
-  local slug issue branch source reason merged_ref ltype dirty baseline zero_commit
+  local slug issue branch source reason merged_ref ltype dirty baseline zero_commit live
 
   slug=$(basename "$dir")
   issue=$(printf '%s' "$slug" | tr '[:lower:]' '[:upper:]')
@@ -325,6 +382,18 @@ evaluate_worktree() {
   # Provenance — every gate below assumes the /start wt lifecycle (header, PROVENANCE).
   if ! is_managed "$dir" "$slug"; then
     printf '  %-12s %s\n' "$issue" "KEEP — unmanaged (no /start wt identity stamp); only /start wt worktrees are auto-reaped. Opt in: git -C '$dir' config --worktree reap.managed true"
+    return 0
+  fi
+
+  # Liveness guard C — a live session is INSIDE the worktree: a Claude harness process whose cwd is under this
+  # directory. It runs before every evidence rule because each of them can read "done" while a human keeps
+  # working here — /finish merge from inside the worktree and carry on (merged), finish one issue and plan the
+  # next in the same worktree (issue terminal, zero commits) — and neither touches the index for hours, so
+  # guard B does not see them either. Measured 2026-09-23/24: BF-2074 reaped twice and BF-2101 once under
+  # exactly those readings, each session then TERMed by the sweep for sitting in the directory just removed.
+  live=$(live_sessions_in "$dir")
+  if [ -n "$live" ]; then
+    printf '  %-12s %s\n' "$issue" "KEEP — in use: a live Claude session (pid ${live// /, }) has its cwd inside; never reaped while a session is inside."
     return 0
   fi
 
@@ -443,6 +512,9 @@ evaluate_worktree() {
 # because a deleted directory cannot be resolved. A live worktree, or a sibling of a dead one, therefore can
 # never be selected. NEVER match on argv/process name: puma and sidekiq rewrite their proctitle, so a
 # `pkill -f` pass misses real orphans and can hit unrelated processes; resolved cwd is the only reliable key.
+# The one name-keyed rule runs in the SAFE direction: a Claude harness process (is_harness_pid) is never a
+# victim. One parked in a removed worktree is a broken session, not a host process — reported as
+# LIVE-SESSION and left to the human, since killing it destroys whatever they still had in it.
 # lsof reports symlink-resolved paths (/private/var, not /var), so the repo root must be compared in its
 # PHYSICAL form — and an unresolvable root would leave a prefix that matches outside the repo entirely, so
 # that case sweeps nothing rather than guessing.
@@ -580,6 +652,10 @@ sweep_orphan_processes() {
         name="${rest%%/*}"
         [ -n "$name" ] || continue
         if [ -d "$prefix$name" ]; then continue; fi
+        if is_harness_pid "$pid"; then
+          printf '  LIVE-SESSION pid=%s cwd=%s (worktree removed; a session is never a sweep target — close or resume it by hand)\n' "$pid" "$cwd"
+          continue
+        fi
         victims+=("$pid $cwd") ;;
     esac
   done <<< "$lsof_out"

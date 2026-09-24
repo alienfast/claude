@@ -274,6 +274,72 @@ git -C "$r/.claude/worktrees/bf-933" config --worktree reap.keep true
 mkdir -p "$r/.claude/merge-queue" && : > "$r/.claude/merge-queue/bf-933.json"
 ck "pinned + merge queued → SKIP (the drainer owns it)" 'SKIP — merge queued' "$($SCRIPT list "$r" 2>&1)"
 
+# spawn_sleeper <cwd> [binary] → pid of a long-lived process parked in that directory, exec'd from <binary>
+# (default sleep; $CLAUDE_SLEEPER for one that clears is_harness_pid's comm allowlist — a session fixture).
+# Double-forked so the sleeper is ORPHANED rather than a child of this shell: a killed child lingers as a
+# zombie until it is waited on, and `kill -0` on a zombie still succeeds — a sweep that worked would read
+# alive. Stdout goes to /dev/null for the same reason build_case's sleepers do (callers run it under command
+# substitution, and a background child holding that pipe open blocks the substitution for its whole life).
+spawn_sleeper() {
+  local dir="$1" bin="${2:-sleep}" pf="$ROOT/sleeper-pid" p
+  mkdir -p "$dir"
+  ( ( cd "$dir" && exec "$bin" 600 >/dev/null 2>&1 ) & echo $! > "$pf" )
+  p=$(cat "$pf"); rm -f "$pf"
+  echo "$p" >> "$OWNER_PIDS"
+  await_comm "$p" "*$(basename "$bin")*" || { echo "FIXTURE: sleeper $p ($bin) never exec'd" >&2; exit 1; }
+  printf '%s' "$p"
+}
+
+proc_state() { kill -0 "$1" 2>/dev/null && echo ALIVE || echo DEAD; }
+
+# Bounded wait for the sweep's TERM (then KILL) to land and the pid to be reaped by init.
+await_dead() {
+  local i=0
+  while [ "$i" -lt 250 ]; do
+    kill -0 "$1" 2>/dev/null || { echo DEAD; return 0; }
+    i=$((i+1)); sleep 0.02
+  done
+  echo ALIVE
+}
+
+echo "== liveness guard C: a live Claude session inside the worktree outranks every evidence rule =="
+
+# The BF-2074 shape (2026-09-23, reaped twice in one day): stamped, committed, merged into its source from
+# inside the worktree, then the human kept working there — Storybook/Chromatic rounds, no git ops for over an
+# hour. Every evidence gate reads "done"; the session's cwd is the only signal left, and it must be enough.
+r=$(build_case inuse_merged BF-940 started 1 0 idle none stamped)
+merge_into_main "$r" bf-940
+sess_pid=$(spawn_sleeper "$r/.claude/worktrees/bf-940" "$CLAUDE_SLEEPER")
+ck "stamped + merged + idle + clean + live session inside → KEEP — in use" \
+   "KEEP — in use: a live Claude session (pid $sess_pid)" "$($SCRIPT list "$r" 2>&1)"
+out=$($SCRIPT reap "$r" 2>&1)
+ck "reap leaves an in-use worktree's directory in place" PRESENT \
+   "$([ -d "$r/.claude/worktrees/bf-940" ] && echo PRESENT || echo GONE)"
+ck "reap leaves an in-use worktree's branch in place" PRESENT \
+   "$(git -C "$r" rev-parse --verify --quiet user/bf-940 >/dev/null 2>&1 && echo PRESENT || echo NOBRANCH)"
+ck "reap never signals the session inside a kept worktree" ALIVE "$(proc_state "$sess_pid")"
+
+# The BF-2101 shape (2026-09-24): issue marked Done, zero commits, clean, idle — the human had moved on to the
+# next issue in the same worktree and was an hour into planning it. A terminal issue is the one evidence guard
+# A admits without commits; guard C must still outrank it.
+r=$(build_case inuse_done_zero BF-941 completed 0 0 idle none stamped)
+sess_pid=$(spawn_sleeper "$r/.claude/worktrees/bf-941" "$CLAUDE_SLEEPER")
+ck "zero-commit + issue completed + idle + clean + live session inside → KEEP — in use" \
+   'KEEP — in use' "$($SCRIPT list "$r" 2>&1)"
+
+# The session's cwd may sit anywhere UNDER the worktree (a package dir), and it is the harness comm that makes
+# a process a session: a leftover dev server inside must not hold the worktree, or every reaped worktree that
+# ever started one would be pinned forever and the sweep would never reach it.
+r=$(build_case inuse_subdir BF-942 started 1 0 idle none stamped)
+merge_into_main "$r" bf-942
+sess_pid=$(spawn_sleeper "$r/.claude/worktrees/bf-942/apps/api" "$CLAUDE_SLEEPER")
+ck "session cwd in a subdirectory of the worktree → KEEP — in use" 'KEEP — in use' "$($SCRIPT list "$r" 2>&1)"
+r=$(build_case notsession_merged BF-943 started 1 0 idle none stamped)
+merge_into_main "$r" bf-943
+srv_pid=$(spawn_sleeper "$r/.claude/worktrees/bf-943")
+ck "a non-harness process inside (a dev server) does not hold the worktree → eligible" \
+   'REAP-ELIGIBLE — branch merged into main' "$($SCRIPT list "$r" 2>&1)"
+
 echo "== reap mode removes what list called eligible =="
 
 r=$(build_case reap_zero BF-908 canceled 0 0 idle)
@@ -299,33 +365,6 @@ ck "ancestry set includes the sweep's own pid" " $probe_pid " "$probe_anc"
 ck "ancestry walk reaches pid 1" " 1 " "$probe_anc"
 
 echo "== orphan host processes: swept only when their worktree is gone from disk =="
-
-# spawn_sleeper <cwd> → pid of a long-lived process parked in that directory.
-# Double-forked so the sleeper is ORPHANED rather than a child of this shell: a killed child lingers as a
-# zombie until it is waited on, and `kill -0` on a zombie still succeeds — a sweep that worked would read
-# alive. Stdout goes to /dev/null for the same reason build_case's sleepers do (callers run it under command
-# substitution, and a background child holding that pipe open blocks the substitution for its whole life).
-spawn_sleeper() {
-  local dir="$1" pf="$ROOT/sleeper-pid" p
-  mkdir -p "$dir"
-  ( ( cd "$dir" && exec sleep 600 >/dev/null 2>&1 ) & echo $! > "$pf" )
-  p=$(cat "$pf"); rm -f "$pf"
-  echo "$p" >> "$OWNER_PIDS"
-  await_comm "$p" '*sleep*' || { echo "FIXTURE: sleeper $p never exec'd" >&2; exit 1; }
-  printf '%s' "$p"
-}
-
-proc_state() { kill -0 "$1" 2>/dev/null && echo ALIVE || echo DEAD; }
-
-# Bounded wait for the sweep's TERM (then KILL) to land and the pid to be reaped by init.
-await_dead() {
-  local i=0
-  while [ "$i" -lt 250 ]; do
-    kill -0 "$1" 2>/dev/null || { echo DEAD; return 0; }
-    i=$((i+1)); sleep 0.02
-  done
-  echo ALIVE
-}
 
 # The fixture repo path is mktemp-unique, so the prefix filter provably cannot select any process outside
 # it. It is also under /var/folders (a symlink to /private/var), which is exactly the path form lsof
@@ -357,6 +396,20 @@ rm -rf "$r/.claude/worktrees/wt-gone"
 out=$($SCRIPT list "$r" 2>&1)
 ck "list mode reports the orphan" "ORPHAN-PROC pid=$list_pid" "$out"
 ck "list mode kills nothing" ALIVE "$(proc_state "$list_pid")"
+
+# A harness session whose worktree is gone is a broken session, not a host process: reported, never signaled.
+# The dev server beside it is still an orphan and still goes.
+r=$(build_case sweep_session BF-924 started 1 0 fresh)
+sess_pid=$(spawn_sleeper "$r/.claude/worktrees/wt-gone" "$CLAUDE_SLEEPER")
+srv_pid=$(spawn_sleeper "$r/.claude/worktrees/wt-gone/apps/api")
+rm -rf "$r/.claude/worktrees/wt-gone"
+out=$($SCRIPT reap "$r" 2>&1)
+ck "sweep reports a session parked in a removed worktree" "LIVE-SESSION pid=$sess_pid" "$out"
+ck "sweep never signals a session" ALIVE "$(proc_state "$sess_pid")"
+ck "sweep still kills the dev server beside the session" "REAPED-PROC pid=$srv_pid" "$out"
+srv_state=$(await_dead "$srv_pid")
+ck "the dev server beside the session is dead" DEAD "$srv_state"
+[ "$srv_state" = DEAD ] && { grep -v -x -F -- "$srv_pid" "$OWNER_PIDS" > "$OWNER_PIDS.tmp" 2>/dev/null; mv -f "$OWNER_PIDS.tmp" "$OWNER_PIDS"; }
 
 # The state with the most orphans: the ENTIRE worktrees/ dir is gone, not just one slug under it. Both
 # cmd_reap_one and cmd_list used to early-exit before the sweep call in exactly this state, so an orphan

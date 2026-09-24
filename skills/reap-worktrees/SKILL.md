@@ -43,6 +43,14 @@ completion** — never on mere inactivity. A worktree is reaped iff **all** hold
   untracked work is never destroyed; gitignored scratch (`tmp/`, `node_modules`) doesn't block removal.
 - **No in-flight deferred merge**: no `<repo>/.claude/merge-queue/<issue>.json` marker (the drainer owns
   those).
+- **Not in use**: no live Claude session has its cwd inside the worktree (`lsof`, matched on the harness
+  comm — the same allowlist `wt-identity.sh` recognizes — so a leftover dev server never holds a worktree).
+  This outranks every evidence rule: a session that runs `/finish merge` from inside the worktree and keeps
+  working, or finishes one issue and plans the next in the same worktree, does no git ops for hours while
+  "merged" or "issue Done, zero commits" both read as done — three interactive sessions were reaped that
+  way in one week (BF-2074 twice on 2026-09-23, BF-2101 on 2026-09-24), each then TERMed by the sweep
+  below for sitting in the directory just removed. Without `lsof` the guard stands down for the pass (one
+  WARN in the log) and the index-mtime guard alone decides.
 - **Not live**: the worktree's index is stale (no git activity for `WORKTREE_REAP_GRACE_MIN` minutes,
   default 60), **and** the branch has commits beyond its recorded baseline — *or*, for a zero-commit
   branch, the completion evidence is something other than "merged". A zero-commit branch is trivially an
@@ -75,7 +83,9 @@ Every teardown path is git-only, so the dev servers, watchers, and job runners a
 running after it is removed — and its pidfiles went with the directory, leaving the resolved cwd as the only
 handle. So each reap pass also sweeps processes (yours only) whose cwd sits under
 `<repo>/.claude/worktrees/<name>` **where that `<name>` directory no longer exists on disk**. That gate is
-what makes the kill safe: a live worktree, or a sibling of a dead one, can never be selected. `list` prints
+what makes the kill safe: a live worktree, or a sibling of a dead one, can never be selected — and a Claude
+harness process never is: one parked in a removed worktree is a broken session, printed as `LIVE-SESSION
+pid=… cwd=…` and left for you to close or resume. `list` prints
 `ORPHAN-PROC pid=… cwd=…` and kills nothing; `reap` sends `TERM`, then `KILL` to survivors, logging
 `REAPED-PROC pid=… cwd=…`. Process names are deliberately **not** matched — puma and sidekiq rewrite their
 proctitle, so a `pkill -f` pass misses real orphans and can hit unrelated processes. Without `lsof` the sweep
@@ -90,7 +100,7 @@ notes itself and skips.
 ~/.claude/scripts/reap-worktrees.sh list <repo>     # one repo
 ```
 
-Each worktree prints one of: `REAP-ELIGIBLE`, `KEEP` (with the reason — pinned, unmanaged, active, unpushed, or dirty),
+Each worktree prints one of: `REAP-ELIGIBLE`, `KEEP` (with the reason — pinned, unmanaged, in use, active, unpushed, or dirty),
 `SKIP` (detached / merge-queued), or `STRAY`, followed by an `ORPHAN-PROC` line per leftover host process.
 
 **Reap (mutating — removes eligible worktrees, serialized per repo under the same common-git-dir lock

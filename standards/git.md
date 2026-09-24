@@ -388,8 +388,8 @@ Undo it before `git worktree remove`: removal refuses on **modified or untracked
 ## The hourly reaper reclaims `/start wt` worktrees it can prove finished — pin one you mean to keep
 
 `reap-worktrees.sh` runs hourly under launchd and removes a worktree — and deletes its branch — once the
-branch is merged into its source branch or the repo default, the tree is clean, and the index has sat idle
-past the grace (60 minutes). Those rules encode the `/start wt` lifecycle: one issue, one branch, merged once
+branch is merged into its source branch or the repo default, the tree is clean, the index has sat idle past
+the grace (60 minutes), and no live Claude session has its cwd inside it. Those rules encode the `/start wt` lifecycle: one issue, one branch, merged once
 and done. A worktree you made by hand under `.claude/worktrees/`, or one `EnterWorktree` made, has no such
 lifecycle: commit in it, merge it out, keep going, and "merged, clean, idle" is its resting state between
 rounds. Measured 2026-09-08: `api-memo` (hand-made, no Linear issue, no PR) had been merged into `hotfixes`
@@ -406,8 +406,11 @@ git -C <wt> config --worktree --unset reap.keep    # release the pin
 git -C <wt> config --worktree reap.managed true    # opt a hand-made worktree INTO the /start wt rules
 ```
 
-Pin a `/start interactive` worktree you intend to keep merging from — it is stamped, so once merged and idle
-it is otherwise eligible. A queued merge outranks the pin: the drainer removes that worktree when its merge
+A worktree with a live Claude session inside it — the harness process's cwd under it — is never reaped,
+whatever the evidence (added 2026-09-24 after three interactive sessions were reaped in one week: BF-2074
+twice, BF-2101 once; the pass that removed each worktree then TERMed the session for sitting in it). Pin a
+`/start interactive` worktree you will drive from outside it or return to after the session ends — it is
+stamped, so once merged and idle with no session inside it is otherwise eligible. A queued merge outranks the pin: the drainer removes that worktree when its merge
 lands. `--worktree` config needs `extensions.worktreeConfig`; `start-wt-setup.sh` enables it in every repo it
 has touched, and a repo without it refuses the write with a `fatal:` naming the extension.
 
