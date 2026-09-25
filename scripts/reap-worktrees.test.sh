@@ -446,6 +446,55 @@ ck "unresolvable repo root selects no process" NOPROC \
    "$(printf '%s' "$out" | grep -q -e ORPHAN-PROC -e REAPED-PROC && echo PROC || echo NOPROC)"
 ck "unresolvable repo root kills nothing" ALIVE "$(proc_state "$ghost_pid")"
 
+# ── stack sweep: which invocation the dead-owner gate selects ──────────────────────────────────────────
+# The gate is right for the TEARDOWN passes and wrong for the disk pass, so sweep_orphan_stacks branches on
+# it rather than returning early. Pinning the branch, not merely that something ran: the regression this
+# guards is silent in the worst way — every slot owner alive is the NORMAL state of a busy machine, and a
+# gate that skips the disk pass there simply never reclaims anything, while the VM fills to 100% and redis
+# stops accepting writes machine-wide (measured 2026-09-25: 121 rspec failures that read as a broken diff).
+stack_stub="$ROOT/stack-stub"; mkdir -p "$stack_stub"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$stack_stub/docker"; chmod +x "$stack_stub/docker"
+r=$(build_case sweep_stack BF-941 started 1 1 fresh)   # dirty + active issue => worktree kept, no reap noise
+mkdir -p "$r/tools"
+# The stub carries the real tool's parser arm, which is what the reaper probes for before it uses the flag.
+stack_slot_stub() {   # stack_slot_stub <with-disk-only|pre-disk-only>
+  { printf '#!/usr/bin/env bash\n'
+    [ "$1" = with-disk-only ] && printf 'case "${2:-}" in --disk-only) ;; esac\n'
+    printf 'echo "STACK-SLOT args=[$*]"\n'
+  } > "$r/tools/stack-slot"
+  chmod +x "$r/tools/stack-slot"
+}
+stack_slot_stub with-disk-only
+REG="$HOME/.basefund/stack-slots"; mkdir -p "$REG"
+
+printf 'owner=%s\nmode=test\n' "$r" > "$REG/2.slot"          # owner present => no teardown work to do
+out=$(PATH="$stack_stub:$PATH" $SCRIPT reap "$r" 2>&1)
+ck "stack sweep: all owners alive still runs the disk pass" 'STACK-SLOT args=\[reap --disk-only\]' "$out"
+
+# A tool from before the flag has no parser: `cmd_reap "$@"` drops the unknown arg and `reap --disk-only`
+# runs the FULL reap. With every owner alive the reaper must not call such a tool at all.
+stack_slot_stub pre-disk-only
+out=$(PATH="$stack_stub:$PATH" $SCRIPT reap "$r" 2>&1)
+ck "stack sweep: all owners alive + a tool without --disk-only calls nothing" NOCALL \
+   "$(printf '%s' "$out" | grep -q 'STACK-SLOT args=' && echo CALLED || echo NOCALL)"
+
+printf 'owner=%s\nmode=test\n' "$ROOT/checkout-that-is-gone" > "$REG/3.slot"
+out=$(PATH="$stack_stub:$PATH" $SCRIPT reap "$r" 2>&1)
+ck "stack sweep: a dead owner runs the full reap on a tool without --disk-only" 'STACK-SLOT args=\[reap\]' "$out"
+stack_slot_stub with-disk-only
+out=$(PATH="$stack_stub:$PATH" $SCRIPT reap "$r" 2>&1)
+ck "stack sweep: a dead owner runs the full reap, not the disk pass" 'STACK-SLOT args=\[reap\]' "$out"
+
+# An unreachable daemon must skip BOTH, the same way it always skipped the teardown: `reap` reads docker to
+# decide what is abandoned AND to read the VM's disk, so a daemon answering nothing makes every stack look
+# gone and every disk reading undeterminable.
+printf '#!/usr/bin/env bash\n[ "$1" = info ] && exit 1\nexit 0\n' > "$stack_stub/docker"
+out=$(PATH="$stack_stub:$PATH" $SCRIPT reap "$r" 2>&1)
+ck "stack sweep: an unreachable daemon skips the sweep entirely" 'daemon unavailable' "$out"
+ck "stack sweep: an unreachable daemon calls stack-slot not at all" NOCALL \
+   "$(printf '%s' "$out" | grep -q 'STACK-SLOT args=' && echo CALLED || echo NOCALL)"
+rm -f "$REG/2.slot" "$REG/3.slot"
+
 echo
 echo "reap-worktrees: $pass passed, $fail failed"
 [ "$fail" = 0 ]

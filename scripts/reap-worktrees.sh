@@ -596,19 +596,39 @@ _stack_slot_has_dead_owner() {
 # the trigger to a registry entry with a confirmed-dead owner keeps that invocation aimed at a genuine
 # orphan; it does not close the residual: an unregistered db-only stack in the same window is invisible to
 # both this check and to `reap`'s own registry scan.
+#
+# That dead-owner gate is right for the teardown passes and WRONG for the disk pass, which is why the two are
+# split below. Docker VM disk pressure is orthogonal to abandonment -- a machine full of perfectly healthy,
+# actively-owned stacks is exactly the state that fills it, since what accumulates is build cache and images
+# rather than anything a slot owns. Measured 2026-09-25: the VM hit 100%, redis could no longer BGSAVE, and
+# `stop-writes-on-bgsave-error yes` turned every redis write on the machine into MISCONF -- surfacing as 121
+# rspec failures that read as a broken diff. Every slot owner was alive, so a dead-owner-gated sweep would
+# have run zero times in the hours it took to build.
+#
+# The disk pass is used only where this checkout's tool parses the flag. A stack-slot from before it dispatches
+# `cmd_reap "$@"` into a function that reads no arguments, so `reap --disk-only` there does not fail -- it
+# silently runs the FULL reap, hourly, on every checkout whose project side has not landed, which is the pass-2
+# exposure the gate above exists to narrow. Probing the source for the parser arm keeps the old behavior on an
+# old tool, and the probe touches neither docker nor the registry lock.
 sweep_orphan_stacks() {
-  local repo="$1" mode="$2" slot_tool="$repo/tools/stack-slot"
+  local repo="$1" mode="$2" slot_tool="$repo/tools/stack-slot" args=()
   [ -x "$slot_tool" ] || return 0   # repo has no stack-slot registry -- nothing to sweep
   if [ "$mode" = list ]; then
     echo "  (stack sweep available: run '$slot_tool reap')"
     return 0
   fi
-  _stack_slot_has_dead_owner || return 0
+  if _stack_slot_has_dead_owner; then
+    args=(reap)
+  elif grep -q -- '--disk-only)' "$slot_tool" 2>/dev/null; then
+    args=(reap --disk-only)
+  else
+    return 0   # every owner alive and the tool predates the disk pass -- nothing it can do
+  fi
   have docker || { err "  (docker not found -- stack sweep skipped)"; return 0; }
   # An unreachable daemon must skip rather than run: `stack-slot reap` reads docker to decide what is
   # abandoned, and a daemon that answers nothing would make every stack look already-gone.
   docker info >/dev/null 2>&1 || { err "  (docker daemon unavailable -- stack sweep skipped)"; return 0; }
-  "$slot_tool" reap 2>&1 | sed 's/^/  /' || err "  (stack sweep failed -- skipped)"
+  "$slot_tool" "${args[@]}" 2>&1 | sed 's/^/  /' || err "  (stack sweep '${args[*]}' failed -- skipped)"
 }
 
 sweep_orphan_processes() {
