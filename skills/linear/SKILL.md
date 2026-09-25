@@ -52,7 +52,10 @@ Auth: `linear-cli auth oauth` (browser) or `LINEAR_API_KEY`; check with `linear-
 
     **For the assignee, use `issues assign <ID> me`.** `--help` calls it "a shortcut for update --assignee", and the difference it glosses over is the whole point: its
     mutation selects `assignee { name }` and it prints the server's resulting value — `+ Assigned <ID> to <name>`, or `+ Unassigned <ID>` when the response carries no
-    assignee — so a write that did not land appears in the output instead of reading as success. It cannot set state; pair it with a separate `-s` update. **Do not
+    assignee — so a write that did not land usually appears in the output instead of reading as success, though not always: the echo is evidence, not proof, on the
+    unassign direction. Measured 2026-09-25 (BF-2144), a bare `issues assign <ID>` printed `+ Unassigned <ID>` at exit 0 while two consecutive `issues get --no-cache`
+    reads still showed the assignee; the identical retry landed. A load-bearing assign or unassign therefore gets a `--no-cache` read-back regardless of what the echo
+    said. It cannot set state; pair it with a separate `-s` update. **Do not
     reach for `issues start`**: it selects both fields but renders them as the *intended* values when the response is null (the assignee defaulted to `"me"`, the state
     name computed locally), manufacturing a confirmation, and it picks whichever `started`-type state the API returns first — which on a team whose In Review is also
     type `started` (`standards/linear-workflow.md`) need not be In Progress.
