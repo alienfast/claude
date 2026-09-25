@@ -265,6 +265,5 @@
   "tui": "fullscreen",
   "theme": "dark",
   "agentPushNotifEnabled": true,
-  "skipAutoPermissionPrompt": true,
-  "model": "claude-opus-5"
+  "skipAutoPermissionPrompt": true
 }
