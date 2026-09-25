@@ -10,7 +10,10 @@ all quantities — blind-sleep hours, a run_in_background census, ScheduleWakeup
 517-vs-6 classifier split. Each was hand-rolled throwaway Python. Re-deriving them ad hoc every retro
 means each run measures something slightly different and the numbers are not comparable across
 fleets, which is where the real value is: drift. This emits a FIXED schema so two retros can be
-diffed. Add columns; do not quietly change what an existing one means.
+diffed. Add columns; do not quietly change what an existing one means. (`classifier_blocks` was
+narrowed once, 2026-09-25: it counts `is_error` denials only, and the check FAILING — `… cannot
+determine the safety of …` — is its own `classifier_unavailable`; before then every result quoting
+either phrase counted, denials, unavailability and prose alike, so older `cls` cells read high.)
 
 WHAT IT READS
   <checkout>/tmp/auto-state-<runKey>.json   run bookkeeping written by /auto Step 4
@@ -94,7 +97,14 @@ EARLY_EXIT = re.compile(
 SLEEP_RE = re.compile(r"(?:^|[^A-Za-z0-9_-])sleep\s+[0-9]")
 QUOTED = re.compile(r"\x27[^\x27]*\x27|\"[^\"]*\"")
 EXECUTOR = re.compile(r"\b(?:ba|z|k)?sh\s+-[A-Za-z]*c\b|\beval\b|\bxargs\b")
-CLASSIFIER = re.compile(r"auto mode classifier|Blocked by classifier")
+# Both harness messages ARE the tool result, so they open its body; a result that merely quotes one — a
+# Read of this file, or an errored Bash whose output cites a retro — does not (measured 2026-09-25: an
+# exit-1 Bash result carrying a Linear digest of the unavailability text, `is_error` set). The check
+# FAILING is not a denial: every "unavailable" wording (`… gave no verdict …`; `<model> is temporarily
+# unavailable (rate-limited|timed out)`) says "cannot determine the safety of" on its first line, and no
+# denial does. A wait of minutes behind one has so far always been the host asleep, not the service.
+CLASSIFIER = re.compile(r"\A(?:<tool_use_error>)?\s*(?:Permission for this action was denied by the Claude Code auto mode classifier|Blocked by classifier)")
+CLASSIFIER_UNAVAILABLE = re.compile(r"\A(?:<tool_use_error>)?[^\n]*?cannot determine the safety of")
 SHIPPED_TAG = re.compile(r"\b(SHIPPED-MERGE|SHIPPED-PR|RELEASED|DEFERRED-MERGE):\s*([A-Z]+-\d+)")
 # Canceled is its own ledger, never a shipped variant: recording cancellations in shipped[] is what
 # overstated the 2026-08-02 fleet's tally 29 vs 25 (skills/auto Step 4 now keeps a canceled[] list).
@@ -531,8 +541,13 @@ def scan_transcript(path, agg, agent_type="main", description=""):
                     else:
                         # The report came back inline: the dispatch genuinely blocked.
                         agg["dispatch"]["sync"] += 1
-                if CLASSIFIER.search(body):
-                    agg["classifier_blocks"].append(str(inp.get("command", ""))[:160])
+                if b.get("is_error") and (CLASSIFIER_UNAVAILABLE.search(body) or CLASSIFIER.search(body)):
+                    # Only Bash carries a command; the other tools are named by their own key so the flag reads.
+                    label = str(inp.get("command") or f"{name} {inp.get('file_path') or inp.get('description') or inp.get('subagent_type') or ''}".strip())[:160]
+                    if CLASSIFIER_UNAVAILABLE.search(body):
+                        agg["classifier_unavailable"].append((label, (t - t0).total_seconds() if t and t0 else None))
+                    else:
+                        agg["classifier_blocks"].append(label)
                 if t and t0:
                     secs = (t - t0).total_seconds()
                     if name == "Bash":
@@ -570,7 +585,7 @@ def new_agg():
     return {
         "first": None, "last": None, "tool_calls": 0, "wakeups": 0, "wakeup_stops": 0,
         "loop_firings": 0, "human_prompts": 0, "terminal_tags": 0, "dangling": 0,
-        "dispatch": Counter(), "classifier_blocks": [], "gaps": [], "activity_times": [],
+        "dispatch": Counter(), "classifier_blocks": [], "classifier_unavailable": [], "gaps": [], "activity_times": [],
         "sleep_blind_s": 0.0, "sleep_blind_n": 0, "sleep_marker_s": 0.0, "sleep_marker_n": 0,
         "ship_tags": set(), "cancel_tags": set(), "subagents": 0,
         # issue -> earliest SHIPPED-tag time, and every CANCELED-tag time: the transcript side of
@@ -1869,6 +1884,7 @@ def main():
                 "sleep_blind_h": round(s["agg"]["sleep_blind_s"] / 3600, 2),
                 "sleep_marker_h": round(s["agg"]["sleep_marker_s"] / 3600, 2),
                 "classifier_blocks": len(s["agg"]["classifier_blocks"]),
+                "classifier_unavailable": len(s["agg"]["classifier_unavailable"]),
                 "dangling_tool_calls": s["agg"]["dangling"],
                 "subagent_transcripts": s["agg"]["subagents"],
                 "named_dispatches": s["agg"]["named_dispatches"],
@@ -1992,7 +2008,7 @@ def main():
                           else f"started {e['started']}") + ")" for e in excluded_stale) + "\n")
 
     print("## Per session\n")
-    print("| run | span | ctx>=200k | shipped (rec/obs) | canceled (rec/obs) | wakeups | dispatch bg/sync/ign | blind sleep | marker | cls | dangling |")
+    print("| run | span | ctx>=200k | shipped (rec/obs) | canceled (rec/obs) | wakeups | dispatch bg/sync/ign | blind sleep | marker | cls denied/unavail | dangling |")
     print("|---|---|---|---|---|---|---|---|---|---|---|")
     tot = Counter()
     for s in sessions:
@@ -2010,11 +2026,12 @@ def main():
         print(f"| `{s['run_key']}`{flag} | {span:.1f}h | {ctx_cell} | {rec}/{obs} | {crec}/{cobs} | "
               f"{a['wakeups']} ({a['wakeup_stops']} stop) | "
               f"{a['dispatch']['background']}/{a['dispatch']['sync']}/{a['dispatch']['ignored']} | {blind_pct} | "
-              f"{a['sleep_marker_s'] / 3600:.1f}h | {len(a['classifier_blocks'])} | {a['dangling']} |")
+              f"{a['sleep_marker_s'] / 3600:.1f}h | {len(a['classifier_blocks'])}/{len(a['classifier_unavailable'])} | {a['dangling']} |")
         tot["span"] += span
         tot["blind"] += a["sleep_blind_s"]
         tot["marker"] += a["sleep_marker_s"]
         tot["cls"] += len(a["classifier_blocks"])
+        tot["cls_unavail"] += len(a["classifier_unavailable"])
         tot["bg"] += a["dispatch"]["background"]
         tot["sync"] += a["dispatch"]["sync"]
         tot["ign"] += a["dispatch"]["ignored"]
@@ -2024,7 +2041,7 @@ def main():
     print(f"\n**Totals** — {tot['span']:.1f} session-hours · blind sleep {tot['blind'] / 3600:.1f}h "
           f"{blind_share} · marker polls "
           f"{tot['marker'] / 3600:.1f}h · dispatch {tot['bg']} background / {tot['sync']} sync{ign_note} · "
-          f"{named} named dispatches · {tot['cls']} classifier blocks · "
+          f"{named} named dispatches · {tot['cls']} classifier denials / {tot['cls_unavail']} unavailable · "
           f"{sum(fleet_tokens.values()):,} output tokens\n")
     if rewake_tot is not None:
         print(f"rewakes {rewake_tot['stop']} stop ({rewake_tot['save']} save / "
@@ -2061,7 +2078,9 @@ def main():
               f"engage (check the dispatch flags). Size distribution alone cannot show compaction "
               f"THRASH — also check cadence: compact_boundary rows per session should be a handful "
               f"per issue, tens of minutes apart; spacing collapsing to minutes is the orbit "
-              f"signature (band ≈ live working set) and means the threshold is too low.\n")
+              f"signature (band ≈ live working set). It means the threshold is too low only when the "
+              f"orbiting compacts' postTokens are normal; a compact carrying 140k+ forward is re-injected "
+              f"path-scoped rules, fixed by trimming the rule, not by raising the cap.\n")
 
     print("## Review churn\n")
     if verdicts:
@@ -2431,6 +2450,14 @@ def main():
             print(f"- `{s['run_key']}` hit {len(a['classifier_blocks'])} classifier block(s):")
             for c in a["classifier_blocks"][:3]:
                 print(f"    - `{c}`")
+        if a["classifier_unavailable"]:
+            flagged = True
+            print(f"- `{s['run_key']}` got {len(a['classifier_unavailable'])} classifier-unavailable result(s) — "
+                  f"the check failed, not a denial, and the call is retried as-is; a wait over 2 min has so far "
+                  f"always been the host asleep (`pmset -g log`), never the service:")
+            for label, secs in a["classifier_unavailable"][:3]:
+                wait = "wait unknown" if secs is None else f"{secs:.0f}s" if secs < 120 else f"{secs / 60:.1f} min"
+                print(f"    - `{label}` after {wait}")
         rw = rewakes.get(s["run_key"])
         if rw and rw["spurious"]:
             flagged = True

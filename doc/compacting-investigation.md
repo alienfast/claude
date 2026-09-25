@@ -104,8 +104,9 @@ Instruments added to `scripts/fleet-metrics.py` the same day:
    is absent. **Check compaction cadence, not just the size distribution**: count
    `compact_boundary` rows per session and read their timestamp spacing — healthy is tens of
    minutes apart and a handful per issue; accelerating spacing that collapses to minutes is the
-   orbit signature (band ≈ working set) and means the threshold is too low for the phase the
-   session was in, whatever the averages say.
+   orbit signature (band ≈ working set). It means the threshold is too low for the phase the
+   session was in only when the orbiting compacts' `postTokens` are normal — a compact carrying
+   140k+ is re-injected path-scoped rules (see the 2026-09-24 verdict-log row), and no cap fixes it.
 3. **Sized too small?** The signature is rework, read off the trend row against the 2026-08-13
    baselines above:
    - ktok/issue **rising** while $/Mtok out falls — re-derivation tax, the sharpest single tell;

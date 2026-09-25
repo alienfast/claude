@@ -1543,6 +1543,47 @@ ck "streamed control: history row replaced, not appended"  "1"   "$(wc -l < "$CK
 ck_has   "streamed control: coverage line without the bound" "**Subagent usage rows** — 2 of 2 subagent messages (100%) carry a final usage row." "$MD19"
 ck_lacks "streamed control: no bound clause"                 "LOWER BOUND" "$MD19"
 
+# ---- 20. classifier: denials vs the check failing, and results that merely quote either ----
+# Measured 2026-09-24/25: one fleet session was reported as 4 classifier blocks with an empty command
+# for each. All four were "gave no verdict … cannot determine the safety of Agent/Write" results —
+# the check FAILING — after 14–18 min waits that each matched a Clamshell Sleep window in `pmset -g
+# log`; service-side unavailability returns in 7–15s. Bodies below are the real harness wordings.
+# Two controls must stay uncounted: a non-error Read whose text quotes both phrases, and an exit-1
+# Bash whose output carries a Linear digest citing the unavailability text (is_error set, so the
+# error gate alone would count it — the body-start anchor is what excludes it).
+CK20="$WORK/ck20"; mkdir -p "$CK20/tmp"
+git -C "$CK20" init -q 2>/dev/null
+git -C "$CK20" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "TT-20: classifier"
+M20="$(git -C "$CK20" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
+T20="$WORK/projects/$M20"; mkdir -p "$T20"
+echo '{"status":"drained","reason":"fleet deadline reached","mode":"loop","shipped":["TT-20"],"canceled":[],"skipped":[],"failed":[]}' > "$CK20/tmp/auto-state-c1a00001.json"
+cat > "$T20/c1a00001-0000.jsonl" <<'EOF'
+{"type":"user","timestamp":"2026-09-24T18:00:00.000Z","isSidechain":false,"message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"2026-09-24T18:00:10.000Z","isSidechain":false,"message":{"role":"assistant","id":"msg_c20a","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"tool_use","id":"toolu_c20_deny","name":"Bash","input":{"command":"git push origin monday"}}]}}
+{"type":"user","timestamp":"2026-09-24T18:00:15.000Z","isSidechain":false,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_c20_deny","is_error":true,"content":"Permission for this action was denied by the Claude Code auto mode classifier. Reason: Blocked by classifier. If you have other tasks that don't depend on this action, continue working on those."}]}}
+{"type":"assistant","timestamp":"2026-09-24T18:01:00.000Z","isSidechain":false,"message":{"role":"assistant","id":"msg_c20b","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"tool_use","id":"toolu_c20_agent","name":"Agent","input":{"subagent_type":"developer","description":"Fix batch TT-20","prompt":"x"}}]}}
+{"type":"user","timestamp":"2026-09-24T18:17:42.000Z","isSidechain":false,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_c20_agent","is_error":true,"content":"The server-side auto mode classifier gave no verdict (the response ended before its verdict arrived), so auto mode cannot determine the safety of Agent. This is a transient failure; retry the same action once."}]}}
+{"type":"assistant","timestamp":"2026-09-24T18:18:00.000Z","isSidechain":false,"message":{"role":"assistant","id":"msg_c20c","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"tool_use","id":"toolu_c20_rl","name":"Bash","input":{"command":"pnpm check"}}]}}
+{"type":"user","timestamp":"2026-09-24T18:18:08.000Z","isSidechain":false,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_c20_rl","is_error":true,"content":"claude-sonnet-5[1m] is temporarily unavailable (rate-limited), so auto mode cannot determine the safety of Bash right now. Wait a moment and then try this action again."}]}}
+{"type":"assistant","timestamp":"2026-09-24T18:19:00.000Z","isSidechain":false,"message":{"role":"assistant","id":"msg_c20d","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"tool_use","id":"toolu_c20_read","name":"Read","input":{"file_path":"notes/classifier-quotes.md"}},{"type":"tool_use","id":"toolu_c20_digest","name":"Bash","input":{"command":"linear-context.sh TT-99"}}]}}
+{"type":"user","timestamp":"2026-09-24T18:19:05.000Z","isSidechain":false,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_c20_read","content":"1\tPermission for this action was denied by the Claude Code auto mode classifier. Reason: Blocked by classifier.\n2\tso auto mode cannot determine the safety of Agent"},{"type":"tool_result","tool_use_id":"toolu_c20_digest","is_error":true,"content":"Exit code 1\n# TT-99 — the analyzer reports a sleeping Mac as classifier denials\n\nAll four were `… classifier gave no verdict …, so auto mode cannot determine the safety of Agent/Write` results."}]}}
+{"type":"assistant","timestamp":"2026-09-24T18:30:00.000Z","isSidechain":false,"message":{"role":"assistant","id":"msg_c20e","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-20 done"},{"type":"text","text":"AUTO-HALTED: fleet deadline"}]}}
+EOF
+J20="$WORK/out20.json"; MD20="$WORK/out20.md"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK20" --all --json > "$J20" 2>/dev/null
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK20" --all > "$MD20" 2>&1
+q20() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J20"; }
+ck "classifier: one denial"                       "1" "$(q20 "d['sessions'][0]['classifier_blocks']")"
+ck "classifier: two unavailable"                  "2" "$(q20 "d['sessions'][0]['classifier_unavailable']")"
+ck_has "classifier: table cell splits the two"    "| 1/2 |" "$MD20"
+ck_has "classifier: totals split the two"         "1 classifier denials / 2 unavailable" "$MD20"
+ck_has "classifier: denial keeps its command"     "    - \`git push origin monday\`" "$MD20"
+ck_has "classifier: unavailable flag line"        "got 2 classifier-unavailable result(s)" "$MD20"
+ck_has "classifier: Agent labelled, wait in min"  "    - \`Agent Fix batch TT-20\` after 16.7 min" "$MD20"
+ck_has "classifier: fast one in seconds"          "    - \`pnpm check\` after 8s" "$MD20"
+ck_lacks "classifier: quoting Read not counted"   "classifier-quotes.md" "$MD20"
+ck_lacks "classifier: errored digest not counted" "linear-context.sh TT-99" "$MD20"
+
 echo
 echo "$PASS passed / $FAIL failed / $SKIP skipped"
 [ "$FAIL" -eq 0 ]
