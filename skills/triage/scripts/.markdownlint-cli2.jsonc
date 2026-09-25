@@ -1,0 +1,8 @@
+{
+  // Merged over the root config for this directory only. scan-prompt.md is a prompt template: triage-scan.sh
+  // substitutes {{OUT}}/{{ISSUES}} into it verbatim, so a leading heading or an HTML disable comment would land in
+  // the prompt every headless scan agent reads.
+  "config": {
+    "MD041": false
+  }
+}
