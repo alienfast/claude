@@ -240,6 +240,16 @@ ck "same-branch config left alone"    "epic/ep-1" "$(git -C "$REPO" config --get
 ck "same-branch checkout not moved"   "nextjs-descope-user" "$(git -C "$REPO" branch --show-current)"
 git -C "$REPO" config --unset start.wt-source-branch
 
+# case 11d: a fractional generated_epoch (a python time.time() writer) still announces the count and the staleness WARN.
+cp "$REPO/tmp/fleet-recommendation.json" "$WORK/rec.keep"
+jq --argjson e "$(( $(date +%s) - 2*86400 ))" '.generated_epoch = $e + 0.412131' "$WORK/rec.keep" > "$REPO/tmp/fleet-recommendation.json"
+: > "$WORK/dispatches"
+ck "fractional epoch exits 0"         "0" "$(run)"
+ck_lacks "fractional epoch no bash error" "syntax error" "$WORK/out"
+ck_has "fractional epoch count announced" "Using /auto-prep's recommendation: 1 session(s)" "$WORK/out"
+ck_has "fractional epoch staleness warned" "WARN: that recommendation is 48h old" "$WORK/out"
+mv "$WORK/rec.keep" "$REPO/tmp/fleet-recommendation.json"
+
 # case 12: an explicit token overrides the prepared scope — live membership, and no branch, since the
 # prep was for another epic.
 : > "$WORK/dispatches"

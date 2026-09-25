@@ -577,12 +577,13 @@ Deferred filed as issues: TT-60 (sub-issues of TT-21)
 EOF
 # Compressed tags — `HIGH/test ×3`, `MED/impl: 2 —` — carry their multiplicity (the 2026-09-16 BFP
 # fleet wrote 131 tags for 183 findings), while a description that merely STARTS with a number
-# (`NICE-TO-HAVE/plan: 3 callers …`) stays one. TT-23 also re-cites TT-21's filing as the dedup
+# (`NICE-TO-HAVE/plan: 3 callers …`) stays one, as does a number glued to a hyphenated word
+# (`MED/test: 255-character …`, which once read as 255 findings). TT-23 also re-cites TT-21's filing as the dedup
 # recipe's `(existing — evidence appended)` record: one filing, counted once across both verdicts.
 cat > "$CK9/tmp/quality-review-verdict-tt-23.md" <<'EOF'
 Verdict: passed-after-fixes
 Cycles: 2 (initial + 1 re-review)
-Findings resolved: 6 (HIGH/test ×3: cursor decode, empty page, mark regression; MED/impl: 2 — clamp to now, envelope keys optional; NICE-TO-HAVE/plan: 3 callers renamed for the new seam)
+Findings resolved: 7 (HIGH/test ×3: cursor decode, empty page, mark regression; MED/impl: 2 — clamp to now, envelope keys optional; NICE-TO-HAVE/plan: 3 callers renamed for the new seam; MED/test: 255-character note cap untested)
 Deferred filed as issues: TT-60 (existing — evidence appended)
 Collision edges: none owed
 EOF
@@ -687,15 +688,15 @@ ck "named typeless dispatch is general-purpose" "40"    "$(q9 "d['output_tokens'
 ck "unmatched name stays the name"              "20"    "$(q9 "d['output_tokens']['orphan-name/claude-opus-5']")"
 ck "named dispatches counted"                   "3"     "$(q9 "d['sessions'][0]['named_dispatches']")"
 ck_has "named dispatches in totals"             "3 named dispatches" "$MD9"
-ck "tt23 severity expanded" "{'HIGH': 3, 'MED': 2}" "$(q9 "[v for v in d['review_churn'] if v['issue']=='TT-23'][0]['severity']")"
-ck "tt23 origins expanded"  "{'test': 3, 'impl': 2, 'plan': 1}" "$(q9 "[v for v in d['review_churn'] if v['issue']=='TT-23'][0]['origin']")"
+ck "tt23 severity expanded" "{'HIGH': 3, 'MED': 3}" "$(q9 "[v for v in d['review_churn'] if v['issue']=='TT-23'][0]['severity']")"
+ck "tt23 origins expanded"  "{'test': 4, 'impl': 2, 'plan': 1}" "$(q9 "[v for v in d['review_churn'] if v['issue']=='TT-23'][0]['origin']")"
 ck "filed dedupes re-citation" "0.33" "$(q9 "d['filed_per_shipped']")"
 ck "tier join opus"       "{'n': 1, 'mean': 2.0, 'median': 2, 'values': [2]}" "$(q9 "d['impl_origin_by_tier']['opus']")"
 ck "tier join main-loop"  "{'n': 1, 'mean': 1.0, 'median': 1, 'values': [1]}" "$(q9 "d['impl_origin_by_tier']['main-loop']")"
 ck_has "churn impl-by header" "| filed | impl by |" "$MD9"
 ck_has "tt20 row impl by"     "| TT-20 | \`gg999999\` | passed-after-fixes | 2 | 3 | 0/1/2 | impl:2 test:1 | 0 | opus |" "$MD9"
 ck_has "tt21 row main-loop"   "| TT-21 | \`gg999999\` | passed | 1 | 1 | 0/0/1 | impl:1 | 1 | main-loop |" "$MD9"
-ck_has "tt23 row expanded"    "| TT-23 | \`gg999999\` | passed-after-fixes | 2 | 6 | 0/3/2 | test:3 impl:2 plan:1 | 1 | sonnet |" "$MD9"
+ck_has "tt23 row expanded"    "| TT-23 | \`gg999999\` | passed-after-fixes | 2 | 7 | 0/3/3 | test:4 impl:2 plan:1 | 1 | sonnet |" "$MD9"
 ck_has "join line groups"     "opus n=1 · mean 2.0 · median 2.0" "$MD9"
 ck_has "lanes line split"     "implementation 210 (claude-sonnet-5 110, claude-opus-5 100) · post-review fix 200 (claude-sonnet-5 200) · unattributed 30" "$MD9"
 

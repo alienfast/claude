@@ -162,7 +162,8 @@ if [ -z "$count" ]; then
   fi
   count=$(jq -r '.sessions // empty' "$rec" 2>/dev/null)
   [[ "$count" =~ ^[0-9]+$ ]] || { echo "ERROR: $rec has no numeric .sessions field" >&2; exit 1; }
-  rec_epoch=$(jq -r '.generated_epoch // 0' "$rec" 2>/dev/null)
+  # floor: a writer using a fractional clock (python's time.time()) makes bash arithmetic abort the rest of this block.
+  rec_epoch=$(jq -r '.generated_epoch // 0 | floor' "$rec" 2>/dev/null)
   age=$(( $(date +%s) - ${rec_epoch:-0} ))
   echo "Using /auto-prep's recommendation: $count session(s) ($rec)"
   if [ "$age" -gt 86400 ]; then

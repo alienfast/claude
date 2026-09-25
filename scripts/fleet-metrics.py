@@ -196,9 +196,11 @@ SEV_SHORT = {"CRITICAL": "CRIT", "MEDIUM": "MED"}
 # headline `Findings resolved: N` counts every one, so a tag carries its multiplicity here too — read
 # as one each, every churn column in the trend ledger deflates whenever an author compresses
 # (2026-09-16 BFP fleet: 131 tags for 183 findings; HIGH 28 → 33, MED 98 → 119). The colon form
-# needs a separator or line end after the count so `MED/impl: 2 callers miss the guard` stays one.
+# needs a separator or line end after the count so `MED/impl: 2 callers miss the guard` stays one. An ASCII
+# hyphen separates only when whitespace precedes it: glued to the digits it is a compound word, so
+# `MEDIUM/test: 255-character cap untested` stays one finding rather than 255.
 V_ORIGIN_SUFFIX = re.compile(r"/(?:plan|impl|spec|test|latent)\b")
-V_MULTIPLICITY = re.compile(r"\s*(?:×\s*(\d+)\b|x(\d+)\b|:\s*(\d+)(?=\s*(?:[—–\-;,)]|$)))", re.M)
+V_MULTIPLICITY = re.compile(r"\s*(?:×\s*(\d+)\b|x(\d+)\b|:\s*(\d+)(?=\s*(?:[—–;,)]|$)|\s+-(?:\s|$)))", re.M)
 
 
 def tag_counts(pattern, blob, key):

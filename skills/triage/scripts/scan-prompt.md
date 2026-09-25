@@ -6,11 +6,13 @@ Issues in this group (stage/lane/labels, filed date and filer):
 {{ISSUES}}
 
 For each issue:
+
 - Read its Linear digest at `{{OUT}}/triage-digest-<ID>.md` (description, comments, parent chain, dependencies).
 - Read its script-pass row: `jq -c 'select(.id=="<ID>")' {{OUT}}/triage-cheap.ndjson` — fields: `subjects` (files the issue names, or that its named identifiers resolve to), `unresolved` (named identifiers git grep no longer finds — a rename signal as often as a removal), `changed` (commits touching the subjects since the baseline), `shipped_subject` (a commit whose SUBJECT LINE leads with the id), `body_mentions` (commits citing the id in the body, usually the one that filed it), `marker` (a previous run's verdict, if any).
 - Use `git log --oneline --since=<filed date> -- <paths>`, `git log -S<symbol> --oneline | head`, and `git log --oneline --all --grep=<ID>` to see what changed since filing and which issue id shipped it. The project spells some names differently than older issues do (for example a namespace renamed); a zero-hit grep is settled with `git log -S`, never assumed.
 
 Then answer, with file:symbol evidence (never a line number as the only locator):
+
 1. Re-locate every subject the issue names by SYMBOL. For each `unresolved` token decide rename vs removal and name the commit and its issue id.
 2. Verdict on the Problem or request as filed against HEAD: STALE (gone, or satisfied by other work: name the commit or issue), ACCURATE (still holds: quote the code fact), UNDERSTATED (holds and is larger than filed: say how), or NEEDS-FILER (business-language request the code cannot disambiguate).
 3. A `shipped_subject` hit: say what that commit actually changed and whether the issue's own comments record a deferral. A comment-only or doc-only commit is NOT shipped. An implementation that shipped under the issue's own id while the state never moved is disposition `ship-close`.
