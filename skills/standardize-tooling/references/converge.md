@@ -105,7 +105,8 @@ npm-published). `~/projects/gltfjsx` is the single-package + published + tsdown 
 
 ### Apply
 
-Add `npm-run-all` + `madge` and the script suite, adapting `check-circular`'s extensions and src dirs to the
+Add `npm-run-all2` (the maintained fork of `npm-run-all`, which the detector still accepts) + `madge` and the
+script suite, adapting `check-circular`'s extensions and src dirs to the
 target (`./src` single-package; `./apps/*/src ./packages/*/src …` monorepo):
 
 ```json
