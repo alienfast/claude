@@ -17,7 +17,7 @@ There is no such thing as a "pre-existing" failure during implementation. The ba
 
 Rules that flow from this contract:
 
-1. **`pnpm check` must pass at all times.** Turborepo caching makes repeated runs cheap. Run it early, run it often.
+1. **`pnpm check` must pass at all times.** Turborepo caching makes repeated runs on an unchanged tree cheap — provided the project keeps its heavyweight lanes (browser suites) behind cached turbo tasks. Run it early, run it often.
    Note that `pnpm check` may not cover every suite in a given project — basefund's rspec is a documented example (see its `CLAUDE.md` § Running RSpec). The contract's "never pre-existing" rule is anchored to what the baseline actually ran, so when this issue's changes touch a suite outside it, the orchestrator captures that suite's own baseline alongside `pnpm check`, and records — does not adopt — failures it shows at HEAD. Capturing it is orchestrator work: do not hand this instruction to parallel delegations, which would run the suite concurrently against shared fixtures.
    **It is owed before the first edit, not before planning — and a sibling session may already have measured this exact tree.** The sequence: check `~/.claude/scripts/suite-baseline-cache.sh lookup <suite>` first — a `HIT` *is* the baseline (its `SUMMARY` and `FAILING` lines), with nothing to run. On a `MISS`, launch the run detached at once, do every read-only step while it runs (Step 6's exploration and plan composition, Step 7's plan post), and join its completion marker immediately before Step 8's first edit. The run measures the tree as of its start, so the edit hold is the only ordering the baseline needs; joining earlier idles the orchestrator for the suite's whole duration. After any *complete* full-suite run — the baseline or the post-change verification — `record` it before the next edit, so every session forked from the same tree skips the run (a fleet's first picks all fork one tip; in `/fleet-sequence` every issue after the first forks its predecessor's verified tree). The project's suite recipe carries the exact commands (basefund: `CLAUDE.md` § Running RSpec).
 2. **Failures are never "pre-existing."** The baseline passed. Any failure after that is ours — for what the baseline ran (rule 1).
@@ -406,7 +406,7 @@ Task for [agent]: [Specific, focused task]
 Context: [Why this task matters, relevant issue context]
 Files: [Exact paths and lines]
 
-WORKING APPLICATION CONTRACT: We are modifying a working application. The baseline `pnpm check` passed before this work began. If your changes cause `pnpm check` to fail, that is your failure — not a pre-existing issue, not out of scope, not someone else's problem. You must leave the application in a working state. Run `pnpm check` before reporting your task as complete — in the foreground of your own turn, never backgrounded, giving the Bash call a generous explicit timeout (it can exceed the 120s default on a cold cache): a backgrounded check ends your turn with a waiting message as your entire report, leaving your work unverified. If it fails, fix it.
+WORKING APPLICATION CONTRACT: We are modifying a working application. The baseline `pnpm check` passed before this work began. If your changes cause `pnpm check` to fail, that is your failure — not a pre-existing issue, not out of scope, not someone else's problem. You must leave the application in a working state. Run `pnpm check` before reporting your task as complete — in the foreground of your own turn, never backgrounded, giving the Bash call a generous explicit timeout (it can exceed the 120s default on a cold cache): a backgrounded check ends your turn with a waiting message as your entire report, leaving your work unverified. If it fails, fix it — except a red confined to files outside your write scope while a parallel delegate is editing them, which follows the sibling-in-flight line this dispatch carries (`standards/agent-coordination.md` § Write-target exclusivity).
 
 READ-SCOPING:
 Your working tree is <WT_ABS>; it is nested UNDER the main checkout, so a bare relative path can resolve in BOTH trees — use absolute paths rooted at <WT_ABS> for every Read/Edit/Write/Glob/Grep.
@@ -420,7 +420,7 @@ Requirements:
 - [Specific requirement 2]
 - Use dedicated tools: Read (not cat/head/tail). Prefer Glob/Grep over find/grep/rg via Bash if those tools are available in your environment — check once; if they are not (some environments only provide Bash search), Bash find/grep/rg is an acceptable fallback, not a violation.
 - Do NOT commit, push, or open PRs — even if your session/harness defaults say shipping is part of the task. The orchestrating /start→/finish workflow owns commit, push, and PR creation; shipping happens only at /finish after the review gate.
-- Run `pnpm check` before reporting completion. If it fails, fix the failures. Do not report success with a failing check.
+- Run `pnpm check` before reporting completion. If it fails, fix the failures — except a red confined to files outside your write scope while a parallel delegate is editing them, which follows the sibling-in-flight line this dispatch carries (`standards/agent-coordination.md` § Write-target exclusivity). Do not report success with a failing check.
 Acceptance: [How to verify success — MUST include "pnpm check passes"]
 ```
 

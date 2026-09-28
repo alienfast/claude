@@ -35,6 +35,20 @@ line out, run the tests, restore by file copy) makes it a transient writer anywa
 tree need the mitigation from the observer's side: tell each that a red run or an unexpected diff may be a sibling's in-flight probe, to be re-checked before it is
 reported and never attributed to a named session (`skills/quality-review/SKILL.md` § Step 3 carries the dispatch sentence).
 
+**Write-capable delegates in one tree fail each other's exit gate.** The read-only paragraph above warns siblings about transient probes; parallel write
+delegates need the mirror warning about each other's *real* edits. Every `developer` runs the project check before it reports (`/start` Step 8's contract
+text; `agents/developer.md` RULE 0), and a whole-tree check — any type-check is one — reads a sibling's half-written files as errors, so the second
+delegate's gate reddens on files it never touched. Where the project also serializes the check per checkout (basefund's `check-locked.sh`) the runs
+queue and the wait lengthens, but the red does not depend on that. The contract's "if it fails, fix it" then aims the delegate at files outside its write
+scope — the lost-update hazard above, reached through the gate instead of the prompt. So every write-capable dispatch in a parallel batch carries: *"Other
+delegates are editing this same tree. A red confined to files outside your write scope is a sibling mid-edit: re-run the check once; if it stays red only
+there, report the files and the errors as a sibling-in-flight red and stop — never edit those files, and do not poll the tree to settle. Your own files
+must still check clean."* Report-and-stop rather than polling because the orchestrator owes the settled-tree check regardless (`/start` Step 8 "Verify
+results by running `pnpm check`"; § Long-running commands below already assigns verification there) and routes any red it finds to the delegate that owns
+the files (Step 8 item 4). Measured 2026-09-28: the second of two parallel `developer`s dispatched into one worktree failed its first `pnpm check` on four
+type errors, all in the other's `OrgDomainsCard*.stories.tsx`; pre-warned ad hoc by the orchestrator, it wrote a polling script and re-ran `check-types`
+until green. Nothing in the prescribed dispatch text carried that warning.
+
 **The orchestrator is a writer too.** The enumeration above pairs delegations against each other; the third pair is the orchestrator against its own
 in-flight agent. A dispatch launches asynchronously and the orchestrator keeps the turn, so an edit it makes lands in a tree the agent is reading live —
 while the prompt the agent was handed (an inline diff, a quoted file, a precomputed snapshot passed by path) still shows the old text. The agent then
