@@ -268,6 +268,39 @@ else
   echo "  FAIL   the hook changed the fixture: $(git -C "$R" branch --show-current) / $(git -C "$R" status --porcelain)"; fail=$((fail + 1))
 fi
 
+echo "== 12i. --ours/--theirs: allowed only on unmerged files of a merge in progress"
+M="$WORK/m1"; $G init -q "$M" && (cd "$M" && mkdir -p sub tmp && echo base > sub/c.txt && echo base > sub/d.txt && echo base > other.txt && $G add . && $G commit -q -m c1 \
+  && $G checkout -q -b feature && echo feat > sub/c.txt && echo feat > sub/d.txt && $G commit -qam f1 \
+  && $G checkout -q main && echo main > sub/c.txt && echo main > sub/d.txt && $G commit -qam m1)
+assert_blocked_in "$M" "git checkout --ours -- sub/c.txt" "no merge in progress"
+git -C "$M" merge -q --no-edit feature >/dev/null 2>&1
+echo dirty > "$M/other.txt"
+assert_allowed_in "$M" "git checkout --ours -- sub/c.txt" "an unmerged file"
+assert_allowed_in "$M" "git checkout --theirs sub/c.txt sub/d.txt" "both unmerged files, no --"
+assert_allowed_in "$M" "git restore --ours -- sub/c.txt" "restore takes the same rule"
+assert_allowed_in "$M/sub" "git checkout --ours -- c.txt" "a path relative to a subdirectory cwd"
+assert_allowed_in "$WORK" "git -C $M checkout --theirs -- sub/d.txt" "literal -C from elsewhere"
+assert_blocked_in "$M" "git checkout --ours -- other.txt" "a non-conflicted file: git would overwrite its uncommitted edit from the index"
+assert_blocked_in "$M" "git checkout --ours -- sub/c.txt other.txt" "one bad operand fails the lot"
+assert_blocked_in "$M" "git checkout --ours -- sub" "a directory pathspec"
+assert_blocked_in "$M" "git checkout --ours -- ." "the whole tree"
+assert_blocked_in "$M" "git checkout --ours" "no path"
+assert_blocked_in "$M" "git checkout -q --ours -- sub/c.txt" "a flag outside the side-take set"
+assert_blocked_in "$M" "git checkout --ours --theirs -- sub/c.txt" "both sides"
+assert_blocked_in "$M" "git checkout --ours -- 'sub/c.txt'" "a quoted path is the Q placeholder"
+assert_blocked_in "$M" 'git checkout --ours -- $F' "a \$VAR path"
+assert_blocked_in "$M" "cd $M && git checkout --ours -- sub/c.txt" "a cd in the command"
+assert_blocked "git checkout --ours -- sub/c.txt" "no cwd in the payload"
+assert_blocked_in "$WORK" "git checkout --ours -- sub/c.txt" "cwd is not a checkout"
+assert_blocked_in "$M" "git restore --ours -- other.txt" "restore on a non-conflicted file"
+if [ "$(cat "$M/other.txt")" = dirty ] && git -C "$M" diff --name-only --diff-filter=U | grep -q '^sub/c.txt$'; then
+  echo "  ok     m1 untouched: other.txt still dirty, sub/c.txt still unmerged"; pass=$((pass + 1))
+else
+  echo "  FAIL   the hook changed the m1 fixture"; fail=$((fail + 1))
+fi
+git -C "$M" merge --abort
+assert_blocked_in "$M" "git checkout --ours -- sub/c.txt" "after merge --abort nothing is unmerged"
+
 echo "== 13. stash on a single-checkout repo with no fleet is allowed; a linked worktree or a fleet blocks it"
 S="$WORK/s1"; mkrepo "$S"; echo x >> "$S/a"
 assert_allowed_in "$S" "git stash" "bare"

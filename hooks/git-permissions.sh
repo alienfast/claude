@@ -148,6 +148,52 @@ switch_verdict() { # <args after checkout/switch>
   why=$(automation_live "$dir") && { echo "$why"; return 1; }
   return 0
 }
+# Taking a side in a conflicted merge is the one path-operand checkout that destroys nothing authored: an unmerged
+# path's working file is git's own conflict output, and a re-merge regenerates it. Off an unmerged path the same flag is
+# an ordinary overwrite — measured: `git checkout --ours -- <non-conflicted file with uncommitted edits>` restores the
+# index copy and exits 0, `git restore --ours` likewise — so every operand must be a single file git lists as unmerged;
+# directories and unverifiable paths fail closed. Without this the hook's only advice was a `git show <ref>:<path> >|`
+# overwrite, which is exactly the shape the auto-mode classifier denies unattended (2026-09-29: BF-2201, reviewed and
+# green, was stalled on four such files).
+side_take_verdict() { # <args after checkout/restore> — a --ours/--theirs take on unmerged files of a merge in progress
+  local w side="" dir out p
+  local -a paths
+  paths=()
+  for w in $1; do
+    case "$w" in
+      --ours|--theirs) if [ -n "$side" ] && [ "$side" != "$w" ]; then echo "both --ours and --theirs"; return 1; fi; side=$w ;;
+      --) ;;
+      -*) echo "flag '$w' is outside the side-take set (--ours, --theirs)"; return 1 ;;
+      *)  paths+=("$w") ;;
+    esac
+  done
+  [ ${#paths[@]} -gt 0 ] || { echo "no path operand"; return 1; }
+  dir=$(repo_dir) || { echo "the directory git would run in cannot be determined (a quoted or \$VAR -C path, a cd in the command, or no cwd in the payload)"; return 1; }
+  git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "$dir is not inside a git checkout"; return 1; }
+  git -C "$dir" rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 || { echo "no merge is in progress in $dir"; return 1; }
+  for p in "${paths[@]}"; do
+    if [ "$p" = Q ] || [[ "$p" == *'$'* ]]; then echo "a quoted or \$VAR path cannot be checked against the unmerged list"; return 1; fi
+    out=$(git -C "$dir" diff --name-only --relative --diff-filter=U -- "$p" 2>/dev/null) || { echo "'$p' could not be checked against the unmerged list"; return 1; }
+    [ "$out" = "${p#./}" ] || { echo "'$p' is not a single unmerged file"; return 1; }
+  done
+  return 0
+}
+deny_side_take() { # <segment> <why>
+  deny "🛑 BLOCKED: --ours/--theirs is allowed only on unmerged files of a merge in progress
+
+Command: $1
+Why:     $2
+
+Off an unmerged path git falls back to the index copy, so the flag overwrites
+uncommitted edits exactly as 'git checkout <file>' does.
+
+Allowed when a merge is in progress in a resolvable directory (no quoted or
+\$VAR -C path, no cd in the command) and every operand is one file git lists
+as unmerged — no directories, no quoted or \$VAR paths. Anything else is
+resolved by editing the file (the Edit tool).
+
+To proceed: Explicitly tell Claude \"yes, run this command\""
+}
 # A stash mutation is a hazard only with a second party on the shared stack: a linked worktree, or a running fleet.
 stash_verdict() {
   local dir why n
@@ -305,8 +351,13 @@ To proceed: Explicitly tell Claude \"yes, run this git reset command\"
   fi
 
   # BLOCK: git restore <files> (destroys working tree changes for specific files)
-  # Allow ONLY: git restore --staged
+  # Allow ONLY: git restore --staged, and a --ours/--theirs take on unmerged files mid-merge (side_take_verdict)
   if [[ "$segment" =~ ^git[[:space:]]+restore[[:space:]] ]] && [[ ! "$segment" =~ --staged ]]; then
+    rargs="${segment#*restore}"
+    if [[ "$rargs" =~ (^|[[:space:]])--(ours|theirs)([[:space:]]|$) ]]; then
+      why=$(side_take_verdict "$rargs") && continue
+      deny_side_take "$segment" "$why"
+    fi
     deny "🛑 BLOCKED: Destructive git command requires explicit user approval
 
 Command: $segment
@@ -326,6 +377,7 @@ To proceed: Explicitly tell Claude \"yes, run this git restore command\"
   # existing branch, a clean tracked tree, a resolvable directory, no fleet running out of it (switch_verdict). Blocking
   # every branch operand outright left a one-person machine with no in-session way to `git checkout main` at all.
   # -b creates and stays allowed; --detach is flag-only and stays allowed (/full, /auto-prep and /start recommend it).
+  # A --ours/--theirs take on unmerged files of a merge in progress is allowed too (side_take_verdict).
   # -B is denied outright: it resets an EXISTING branch to the start point and moves the tree onto it — `branch -f` plus
   # a switch in one word — and it was the one branch-moving form the old flag-only allowance let through.
   if [[ "$segment" =~ ^git[[:space:]]+checkout([[:space:]]|$) ]]; then
@@ -344,6 +396,10 @@ To proceed: Explicitly tell Claude \"yes, run this git checkout -B command\""
     if [[ "$args" =~ (^|[[:space:]])-b([[:space:]]|$) ]] && [[ ! "$args" =~ [[:space:]]--([[:space:]]|$) ]]; then
       continue
     fi
+    if [[ "$args" =~ (^|[[:space:]])--(ours|theirs)([[:space:]]|$) ]]; then
+      why=$(side_take_verdict "$args") && continue
+      deny_side_take "$segment" "$why"
+    fi
     # A lone `-` is the previous-branch shorthand — an operand that moves the tree, not a flag, though it reads as one.
     if [[ "$args" =~ (^|[[:space:]])[^-[:space:]] ]] || [[ "$args" =~ [[:space:]]--?([[:space:]]|$) ]]; then
       why=$(switch_verdict "$args") && continue
@@ -359,7 +415,8 @@ session's WIP onto the target branch.
 A plain switch IS allowed when the operand is an existing branch (local or
 origin/), the tracked tree is clean, the directory is resolvable (no quoted or
 \$VAR -C path, no cd in the command), and no fleet is running out of it.
-To restore a file, copy it aside and back, or 'git show HEAD:<path> >| <path>'.
+Mid-merge, 'git checkout --ours|--theirs -- <unmerged file>' IS allowed. Any
+other repair is an edit (the Edit tool), never a shell overwrite from a ref.
 Flag-only forms (--detach, -b) stay allowed.
 
 To proceed: Explicitly tell Claude \"yes, run this git checkout command\""
