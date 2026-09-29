@@ -179,7 +179,7 @@ jq -n --argjson sessions <N> --arg team <KEY> --argjson e "$(date +%s)" \
   > tmp/fleet-recommendation.json
 ```
 
-Written in the project's main checkout. A bare `/fleet-launch` now launches the scoped fleet on the integration branch; `/fleet-status` reports the member burn-down against `members`.
+Written in the project's main checkout. A bare `/fleet-launch` stops on the recorded scope (`SCOPE-CONFIRM`, exit 3) and asks whether to launch it or go team-wide; `/fleet-launch epic:<ID>` launches the scoped fleet on the integration branch directly, and `/fleet-status` reports the member burn-down against `members`.
 
 ## Report
 

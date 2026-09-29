@@ -190,7 +190,7 @@ A tool whose only consumer is a Claude session belongs in `<project>/.claude/ski
 **When Invoked**:
 
 - User says "epic prep", "prep the epic", "prep BF-1826 for a fleet", or "fleet this epic"
-- Before `/fleet-launch epic:<ID>` — a bare `/fleet-launch` afterwards launches the scoped fleet from the persisted recommendation
+- Before `/fleet-launch epic:<ID>` — a bare `/fleet-launch` afterwards stops on the persisted scope and asks whether to launch it or go team-wide
 
 **Key Features**:
 
@@ -205,7 +205,7 @@ A tool whose only consumer is a Claude session belongs in `<project>/.claude/ski
 
 ### fleet-launch
 
-**Description**: Launch a fleet of parallel `/loop /auto` sessions as background agents in `claude agents`, staggered so each session's first pick sees the previous one's claim, with an optional time budget that winds the fleet down cleanly. The middle bookend: `/auto-prep` → `/fleet-launch` → `/fleet-retro`. An `epic:<ID>` token (or the scope `/epic-prep` persisted) scopes every session to one epic's graph and steers every pick onto its integration branch through per-issue fork keys; the main checkout is never moved.
+**Description**: Launch a fleet of parallel `/loop /auto` sessions as background agents in `claude agents`, staggered so each session's first pick sees the previous one's claim, with an optional time budget that winds the fleet down cleanly. The middle bookend: `/auto-prep` → `/fleet-launch` → `/fleet-retro`. An `epic:<ID>` token scopes every session to one epic's graph (a scope `/epic-prep` persisted is confirmed with the user, never assumed; `team` launches team-wide over it) and steers every pick onto its integration branch through per-issue fork keys; the main checkout is never moved.
 
 **When Invoked**:
 

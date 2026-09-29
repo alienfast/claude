@@ -2,7 +2,7 @@
 # fleet-launch.sh — dispatch N background `/loop /auto` sessions into `claude agents`,
 # staggered so each session's first pick sees the previous session's claim.
 #
-# Usage: fleet-launch.sh [count] [duration] [epic:<ID>] [-- <claude flags...>]
+# Usage: fleet-launch.sh [count] [duration] [epic:<ID> | team] [-- <claude flags...>]
 #        fleet-launch.sh stop
 #
 #   [count]     Number of /loop /auto sessions to launch (1-12). Omitted → read the
@@ -11,11 +11,18 @@
 #               count is the quota throttle: auto-prep recommends from lane math alone.
 #   [epic:<ID>] Scope the fleet to one epic's graph: every session runs `/loop /auto epic:<ID>`
 #               (next-candidates.sh --root — the epic, its descendants, and their blockers, and
-#               nothing else). Omitted → the `scope` /epic-prep persisted to the recommendation,
-#               when there is one; an explicit token overrides the file. Validated fail-closed
-#               through epic-graph.sh before anything is dispatched or written: a missing issue
-#               or one without the `epic` label refuses the launch — a fleet scoped to a bad epic
-#               would latch drained against an empty pool.
+#               nothing else). A recommendation carrying a `scope` (an /epic-prep) is used only
+#               when this token names it — the token IS the confirmation. Omitted while the file
+#               carries one → SCOPE-CONFIRM, exit 3, nothing dispatched or written: re-run with
+#               `epic:<ID>` or `team`. Until 2026-09-29 the file's scope launched silently, and a
+#               bare launch four days after an /epic-prep inherited BF-1826 unnoticed: the fleet
+#               drained the epic's two workable members and ended while the team pool had work.
+#               Validated fail-closed through epic-graph.sh before anything is dispatched or
+#               written: a missing issue or one without the `epic` label refuses the launch — a
+#               fleet scoped to a bad epic would latch drained against an empty pool.
+#   [team]      Launch team-wide, ignoring the recommendation's `scope`. The count still defaults
+#               from the file, with a WARN that /epic-prep sized it for the epic — pass a count or
+#               re-run /auto-prep. Mutually exclusive with epic:<ID>.
 #
 #               Release shape (keeper decision 2026-09-11): an epic ships as ONE PR from an
 #               integration branch the fleet merges into as it goes. /epic-prep creates that
@@ -73,8 +80,9 @@
 #
 # Run it from the project the fleet should work on; sessions inherit the cwd.
 # Env: FLEET_PROMPT overrides the dispatched prompt (default "/loop /auto", or
-# "/loop /auto epic:<ID>" when scoped — e.g. "/loop /auto BF" to team-scope the run; an
-# override that drops a launch's scope is warned about, never corrected);
+# "/loop /auto epic:<ID>" when scoped — e.g. "/loop /auto BF" to team-scope the run, though a
+# team-wide launch over an epic recommendation is the `team` token; an override that drops a
+# launch's scope is warned about, never corrected);
 # FLEET_STAGGER_TIMEOUT seconds per wait.
 #
 # Read-write: rewrites tmp/fleet-deadline.json in the main checkout (`scope`, `members`,
@@ -84,15 +92,16 @@
 # or listed as done there; they deliberately persist from a fleet's end until the next launch
 # so /fleet-retro and the operator can examine them — retro before relaunching; dispatches
 # background claude sessions. Exit 1 on
-# argument/environment errors (never mid-fleet: a dispatch failure stops further
-# launches but leaves prior sessions running).
+# argument/environment errors and exit 3 on SCOPE-CONFIRM (an inherited epic scope awaiting a
+# decision) — both before any dispatch or write; never mid-fleet: a dispatch failure stops
+# further launches but leaves prior sessions running.
 
 set -eo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
-  echo "usage: fleet-launch.sh [count] [duration e.g. '10h' or '10 hours'] [epic:<ID>] [-- <claude flags...>] | fleet-launch.sh stop" >&2
+  echo "usage: fleet-launch.sh [count] [duration e.g. '10h' or '10 hours'] [epic:<ID> | team] [-- <claude flags...>] | fleet-launch.sh stop" >&2
   exit 1
 }
 
@@ -141,21 +150,29 @@ fi
 
 dur_tokens=()
 scope_token=""
+team_token=0
 while [ $# -gt 0 ] && [ "$1" != "--" ]; do
   case "$1" in
     [Ee][Pp][Ii][Cc]:*)
       [ -z "$scope_token" ] || { echo "ERROR: at most one epic:<ID> token (got '$scope_token' and '$1')" >&2; exit 1; }
       scope_token=$(printf '%s' "${1#*:}" | tr '[:lower:]' '[:upper:]')
       [[ "$scope_token" =~ ^[A-Z0-9]+-[0-9]+$ ]] || { echo "ERROR: epic token '$1' does not name an issue (epic:BF-123)" >&2; exit 1; } ;;
+    [Tt][Ee][Aa][Mm]) team_token=1 ;;
     *) dur_tokens+=("$1") ;;
   esac
   shift
 done
 [ "${1:-}" = "--" ] && shift
 claude_args=("$@")
+if [ -n "$scope_token" ] && [ "$team_token" = 1 ]; then
+  echo "ERROR: 'team' and 'epic:$scope_token' are mutually exclusive" >&2
+  exit 1
+fi
 
 rec="$main_checkout/tmp/fleet-recommendation.json"
+count_from_rec=0
 if [ -z "$count" ]; then
+  count_from_rec=1
   if [ ! -f "$rec" ]; then
     echo "ERROR: no count given and no $rec — run /auto-prep first, or pass a count" >&2
     exit 1
@@ -183,9 +200,17 @@ rec_scope=""
 [ -f "$rec" ] && rec_scope=$(jq -r '.scope // empty' "$rec" 2>/dev/null || true)
 if [ -n "$scope_token" ]; then
   scope="$scope_token"
+  [ "$rec_scope" = "$scope" ] && echo "Using /epic-prep's recommendation for epic $scope ($rec)"
+elif [ "$team_token" = 1 ]; then
+  if [ -n "$rec_scope" ]; then
+    echo "Team-wide launch: ignoring the epic $rec_scope scope in $rec"
+    [ "$count_from_rec" = 1 ] && echo "WARN: the recommendation's count ($count) was sized for epic $rec_scope by /epic-prep — pass a count, or re-run /auto-prep for a team-wide sizing" >&2
+  fi
 elif [ -n "$rec_scope" ]; then
-  scope="$rec_scope"
-  echo "Using /epic-prep's scope: epic $scope ($rec)"
+  rec_epoch=$(jq -r '.generated_epoch // 0 | floor' "$rec" 2>/dev/null)
+  echo "SCOPE-CONFIRM: $rec carries epic scope $rec_scope (written by /epic-prep $(( ($(date +%s) - ${rec_epoch:-0}) / 3600 ))h ago). Nothing was dispatched or written." >&2
+  echo "Re-run with 'epic:$rec_scope' to launch the epic fleet, or 'team' to launch team-wide." >&2
+  exit 3
 fi
 if [ -n "$scope" ]; then
   graph=$("$script_dir/epic-graph.sh" "$scope" 2>"$main_checkout/tmp/fleet-launch-scope.err") || {

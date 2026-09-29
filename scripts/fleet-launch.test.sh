@@ -206,14 +206,26 @@ ck_has "scope surfaced"               "Scope: epic EP-1 — 2 non-terminal membe
 ck_has "missing branch warned"        "no integration branch recorded for epic EP-1" "$WORK/out"
 ck "token leaves the checkout alone"  "nextjs-descope-user" "$(git -C "$REPO" branch --show-current)"
 
-# case 11: a bare launch after /epic-prep — the recommendation supplies count, scope, the membership
-# snapshot, and the branch; the checkout is not moved and no checkout-wide config is written.
+# case 11: a bare launch after /epic-prep STOPS — an inherited scope is asked about, never assumed
+# (2026-09-29: a bare launch four days after prep inherited BF-1826 unnoticed and drained it). Nothing
+# is dispatched, and the marker case 10 wrote is untouched.
 git -C "$REPO" branch -q epic/ep-1 nextjs-descope-user
 jq -n --argjson e "$(date +%s)" '{sessions: 1, team: "EP", generated_epoch: $e, scope: "EP-1", members: ["EP-1","EP-3","EP-9"], branch: "epic/ep-1", base: "nextjs-descope-user"}' > "$REPO/tmp/fleet-recommendation.json"
 : > "$WORK/dispatches"
-ck "prepared launch exits 0"          "0" "$(run)"
+ck "bare launch over a scoped recommendation exits 3" "3" "$(run)"
+ck_has "scope confirm named"          "SCOPE-CONFIRM: " "$WORK/out"
+ck_has "scope confirm names the epic" "carries epic scope EP-1 (written by /epic-prep 0h ago). Nothing was dispatched or written." "$WORK/out"
+ck_has "scope confirm remedies"       "Re-run with 'epic:EP-1' to launch the epic fleet, or 'team' to launch team-wide." "$WORK/out"
+ck "scope confirm dispatched nothing" "0" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
+ck "scope confirm left the marker"    "EP-1 EP-3" "$(jq -r '.members | join(" ")' "$REPO/tmp/fleet-deadline.json")"
+ck "a count without a token asks too" "3" "$(run 1)"
+
+# case 11a: the typed token is the confirmation — the recommendation supplies count, the membership
+# snapshot, and the branch; the checkout is not moved and no checkout-wide config is written.
+: > "$WORK/dispatches"
+ck "prepared launch exits 0"          "0" "$(run epic:ep-1)"
 ck_has "prepared prompt scoped"       "/loop /auto epic:EP-1" "$WORK/dispatches"
-ck_has "prepared scope announced"     "Using /epic-prep's scope: epic EP-1" "$WORK/out"
+ck_has "prepared scope announced"     "Using /epic-prep's recommendation for epic EP-1" "$WORK/out"
 ck "members are the prep snapshot"    "EP-1 EP-3 EP-9" "$(jq -r '.members | join(" ")' "$REPO/tmp/fleet-deadline.json")"
 ck "branch recorded"                  "epic/ep-1" "$(jq -r '.branch' "$REPO/tmp/fleet-deadline.json")"
 ck "base recorded"                    "nextjs-descope-user" "$(jq -r '.base' "$REPO/tmp/fleet-deadline.json")"
@@ -225,7 +237,7 @@ ck_lacks "no detach"                  "detached" "$WORK/out"
 # case 11b: a checkout sitting ON the integration branch launches with a WARN — merges would touch its tree.
 git -C "$REPO" checkout -q epic/ep-1
 : > "$WORK/dispatches"
-ck "on-branch launch exits 0"         "0" "$(run)"
+ck "on-branch launch exits 0"         "0" "$(run epic:ep-1)"
 ck_has "on-branch warned"             "WARN: the main checkout is ON the integration branch 'epic/ep-1'" "$WORK/out"
 ck "on-branch still dispatched"       "1" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
 ck "on-branch checkout not moved"     "epic/ep-1" "$(git -C "$REPO" branch --show-current)"
@@ -234,7 +246,7 @@ git -C "$REPO" checkout -q nextjs-descope-user
 # case 11c: a leftover checkout-wide key naming the same branch (the retired posture) is noted, not refused.
 git -C "$REPO" config start.wt-source-branch epic/ep-1
 : > "$WORK/dispatches"
-ck "same-branch config exits 0"       "0" "$(run)"
+ck "same-branch config exits 0"       "0" "$(run epic:ep-1)"
 ck_has "same-branch config noted"     "NOTE: start.wt-source-branch=epic/ep-1 is set (the retired parked-checkout posture)" "$WORK/out"
 ck "same-branch config left alone"    "epic/ep-1" "$(git -C "$REPO" config --get start.wt-source-branch)"
 ck "same-branch checkout not moved"   "nextjs-descope-user" "$(git -C "$REPO" branch --show-current)"
@@ -244,11 +256,27 @@ git -C "$REPO" config --unset start.wt-source-branch
 cp "$REPO/tmp/fleet-recommendation.json" "$WORK/rec.keep"
 jq --argjson e "$(( $(date +%s) - 2*86400 ))" '.generated_epoch = $e + 0.412131' "$WORK/rec.keep" > "$REPO/tmp/fleet-recommendation.json"
 : > "$WORK/dispatches"
-ck "fractional epoch exits 0"         "0" "$(run)"
+ck "fractional epoch exits 0"         "0" "$(run epic:ep-1)"
 ck_lacks "fractional epoch no bash error" "syntax error" "$WORK/out"
 ck_has "fractional epoch count announced" "Using /auto-prep's recommendation: 1 session(s)" "$WORK/out"
 ck_has "fractional epoch staleness warned" "WARN: that recommendation is 48h old" "$WORK/out"
 mv "$WORK/rec.keep" "$REPO/tmp/fleet-recommendation.json"
+
+# case 11e: `team` launches team-wide over the same recommendation — unscoped prompt, no scope in the
+# marker, and a WARN that the inherited count was sized for the epic; an explicit count is not warned.
+: > "$WORK/dispatches"
+ck "team launch exits 0"              "0" "$(run team)"
+ck_has "team prompt unscoped"         "/loop /auto" "$WORK/dispatches"
+ck_lacks "team prompt carries no epic" "epic:" "$WORK/dispatches"
+ck "team marker has no scope"         "" "$(jq -r '.scope // empty' "$REPO/tmp/fleet-deadline.json")"
+ck_has "team announced"               "Team-wide launch: ignoring the epic EP-1 scope" "$WORK/out"
+ck_has "team count sizing warned"     "WARN: the recommendation's count (1) was sized for epic EP-1 by /epic-prep" "$WORK/out"
+: > "$WORK/dispatches"
+ck "team with a count exits 0"        "0" "$(run 1 team)"
+ck_lacks "explicit count not warned"  "was sized for epic" "$WORK/out"
+ck "team and epic refuse"             "1" "$(run team epic:ep-1)"
+ck_has "team and epic named"          "ERROR: 'team' and 'epic:EP-1' are mutually exclusive" "$WORK/out"
+ck "team and epic dispatched nothing" "1" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
 
 # case 12: an explicit token overrides the prepared scope — live membership, and no branch, since the
 # prep was for another epic.
@@ -273,11 +301,11 @@ ck "two tokens exit 1"                "1" "$(run 1 epic:EP-1 epic:EP-3)"
 # case 14: a prepared branch that no longer exists, or a foreign source-branch config, refuses.
 jq '.branch = "epic/gone"' "$REPO/tmp/fleet-recommendation.json" > "$WORK/rec.tmp" && mv "$WORK/rec.tmp" "$REPO/tmp/fleet-recommendation.json"
 : > "$WORK/dispatches"
-ck "missing branch exits 1"           "1" "$(run)"
+ck "missing branch exits 1"           "1" "$(run epic:ep-1)"
 ck_has "missing branch named"         "integration branch 'epic/gone' but no such local branch" "$WORK/out"
 jq '.branch = "epic/ep-1"' "$REPO/tmp/fleet-recommendation.json" > "$WORK/rec.tmp" && mv "$WORK/rec.tmp" "$REPO/tmp/fleet-recommendation.json"
 git -C "$REPO" config start.wt-source-branch nextjs-descope-user
-ck "foreign source-branch config exits 1" "1" "$(run)"
+ck "foreign source-branch config exits 1" "1" "$(run epic:ep-1)"
 ck_has "foreign config named"         "start.wt-source-branch is 'nextjs-descope-user'" "$WORK/out"
 ck "nothing dispatched across the refusals" "0" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
 ck "checkout untouched by the refusals" "nextjs-descope-user" "$(git -C "$REPO" branch --show-current)"
