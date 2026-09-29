@@ -333,7 +333,7 @@ A tool whose only consumer is a Claude session belongs in `<project>/.claude/ski
 - Three modes: **session** (reflect on this session in context), **sweep** (audit a project's `CLAUDE.md`/rules against the actual codebase + cross-file dedup; manual or scheduled), and **fleet** (batched reflection over a finished fleet run's evidence; invoked by `/fleet-retro`)
 - Targets **shared, team-visible config** (`CLAUDE.md` / `rules/` / `standards/` / skills); memory is last resort
 - Adversarial verify gate drops anything not generalizable, already-covered, or that wouldn't have helped — "zero improvements" is a success
-- Auto-applies only additive/clarifying edits to the working tree; **commits only one scoped case** — project-scoped edits inside a `/start wt` worktree, check-gated and staged by name, so they ride the issue merge. User-level `~/.claude` edits are never committed; the explicit-commit step stays the review gate
+- Auto-applies only additive/clarifying edits to the working tree; **commits only one scoped case** — project-scoped edits, check-gated and staged by name: inside a `/start wt` worktree so they ride the issue merge, or on the main checkout's source branch once that worktree is gone. User-level `~/.claude` edits are never committed; the explicit-commit step stays the review gate. Proposals auto-file as a Linear issue only unattended; interactively the user picks apply / file / drop per batch
 
 **Structure**:
 
