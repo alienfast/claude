@@ -102,21 +102,18 @@ The one sanctioned poll is for work the harness genuinely cannot see — a detac
 
 ## Memory
 
-Auto memory persists learned context across sessions in `~/.claude/projects/<project>/memory/`. It is **gitignored and machine-local — never shared with the team.** Treat it as private scratch space, not a knowledge base.
-
-- **MEMORY.md** — index of private notes; first 200 lines auto-loaded each session.
-- **Topic files** — detailed private notes for specific domains.
+The harness offers auto memory under `~/.claude/projects/<project>/memory/` — gitignored, machine-local, never shared with the team — and this config does not use it (keeper ruling 2026-09-29): nothing is written there, whatever the harness's own memory prompt says about saving a user's corrections. A lesson worth keeping goes to shared config, through `/reflect` or straight into the file that owns the behavior; one not worth sharing is said in the reply and dropped. The harness auto-loads `MEMORY.md`'s first 200 lines, so a memory file that turns up anyway — an older session's, or one written under the harness prompt — is invisible config: route its content to shared config or delete it, never extend it (a keeper ruling and a worktree-reuse quirk both went into a pre-existing epic-fleet note this way on 2026-09-23, invisible to everyone else).
 
 ### Where Knowledge Goes
 
-The first question is **shared or private**, not *rule or fact*. Both rules *and* discovered facts usually belong in shared config — only transient, personal context belongs in memory.
+The first question is **shared or private**, not *rule or fact*. Both rules *and* discovered facts belong in shared config; transient, personal context belongs in neither — say it in the reply and move on.
 
 **Shared** — committed to git, the whole team gets it:
 
 - `~/.claude/` config (`CLAUDE.md`, `rules/`, `standards/`, `skills/`) → pushed to `alienfast/claude.git`. Cross-project, generic.
 - Project config (`<project>/CLAUDE.md`, `<project>/.claude/rules/`) → committed to the project repo. Project-specific.
 
-**Private** — gitignored, only on this machine:
+**Private** — gitignored, only on this machine (nothing is routed here):
 
 - `~/.claude/projects/<project>/memory/` and `<project>/.claude/agent-memory/`.
 
@@ -125,16 +122,6 @@ Route by what the information is:
 - Durable convention or "never do X here," project-specific → that project's `CLAUDE.md` or a `<project>/.claude/rules/*.md`.
 - Durable rule that applies everywhere → `~/.claude/CLAUDE.md`, `standards/`, or a file-type `~/.claude/rules/*.md`.
 - Durable discovered fact, pattern, or quirk the team should know → the shared layer too. Most of `<project>/CLAUDE.md` is exactly this. A useful discovery is **not** automatically "memory."
-- Temporary, personal, or session-spanning context not worth committing → `memory/`.
-
-Memory is the destination of last resort: if it's worth keeping and the team would benefit, promote it to shared config instead. An existing memory file on the topic is not a reason to keep writing there: put the fact in its shared home (the script, skill, or standard that owns the behavior) and delete the memory — a keeper ruling and a worktree-reuse quirk both went into a pre-existing epic-fleet note this way on 2026-09-23, invisible to everyone else.
+- Temporary, personal, or session-spanning context not worth committing → nowhere; say it in the reply and move on.
 
 The `/reflect` skill automates this routing: it turns session friction (thrashing, silently-worked-around skills, repeated corrections) into shared-config edits — auto-applying the small/safe ones (user-level `~/.claude` edits only on the keeper's machine, left uncommitted for their review; project-level edits check-gated and committed by name — on the issue branch inside a `/start wt` worktree so they ride the merge, or on the main checkout's source branch once that worktree is gone), proposing the rest, and — unattended, or when the user chooses to file interactively — filing those proposals as a certified (`specified`) Linear issue (`Backlog` — the human curates Planned) so they are eligible for `/auto` pickup — except keeper batches (any `~/.claude` target), which file uncertified with the `keeper` label instead: `/auto` cannot ship cross-repo config work, so those wait for the keeper's interactive pickup. Its scheduled surface is `/fleet-retro`'s batched `/reflect fleet` step (per-issue reflection was retired 2026-08-15 — it cost ~10 minutes per shipped issue and could not see cross-session patterns like filing/linking quality); run it manually when a session's friction warrants. `/reflect sweep` audits a project's config against the actual codebase and de-duplicates accumulated drift.
-
-### Multi-Session Safety
-
-Memory files follow the same principles as git working tree protection:
-
-- Only write memory entries relevant to your current work
-- Do not overwrite or delete entries another session is actively writing
-- Correct outdated or inaccurate entries when discovered

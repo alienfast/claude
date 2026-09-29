@@ -32,7 +32,7 @@ A reflection step that drips low-value "lessons" into `CLAUDE.md`/rules **active
 
 ## Routing — where a lesson goes
 
-Per the "Where Knowledge Goes" doctrine in `~/.claude/CLAUDE.md`. Target **shared config** by default; memory is the last resort, reserved for the rare truly-personal/transient note (a generalizable lesson is team-worthy, so it belongs in committed config where the team benefits).
+Per the "Where Knowledge Goes" doctrine in `~/.claude/CLAUDE.md`. Target **shared config**; memory is not a destination (keeper ruling 2026-09-29) — a generalizable lesson is team-worthy, so it belongs in committed config, and a non-generalizable note is `drop`.
 
 | Lesson shape | Destination |
 | --- | --- |
@@ -40,7 +40,7 @@ Per the "Where Knowledge Goes" doctrine in `~/.claude/CLAUDE.md`. Target **share
 | Universal cross-project rule or doctrine | `~/.claude/CLAUDE.md` or a `~/.claude/standards/<topic>.md` |
 | Project-specific convention / stale project fact | `<project>/CLAUDE.md` or `<project>/.claude/rules/<topic>.md` |
 | Broken skill behavior | fix the skill's `SKILL.md` directly; if it needs code/script changes → `propose` (its diff is captured in the continuous-improvement issue Step 6 files — see Step 6) |
-| Truly personal / transient (rare) | `~/.claude/projects/<project>/memory/` |
+| Truly personal / transient | `drop` — memory is not used; say it in the reply if it matters now |
 
 When unsure between two destinations, prefer the **most specific** scope that still reaches everyone who needs it (project rule over global rule over CLAUDE.md prose), and route to `propose` so the user picks placement.
 
