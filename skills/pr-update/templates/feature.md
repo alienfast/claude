@@ -9,11 +9,12 @@ Use this template when adding new features or capabilities.
 business do now, and why it matters. No file paths, no code, minimal jargon. Lead
 with the outcome.]
 
-[Multi-issue PR (hotfix or release bundle): the sentences carry the headline problem, then a
-roster — one bullet per shipped customer-visible issue, `BF-1763: one plain sentence`,
-complete over the census; shipped internal-only issues on one trailing `Also in this release,
-with no customer-visible change:` line as bare IDs. Concision cuts within a bullet, never a
-bullet.]
+[Multi-issue PR (hotfix or release bundle): the sentences above become a one-paragraph headline,
+followed by 3–6 `###` themes in the business's words — each one sentence of problem, then
+outcome bullets, no issue IDs — and, last, `### Issues in this release`: one `BF-1763: short
+label` line per shipped customer-visible issue, sorted by ID, then shipped internal-only issues
+on one trailing `Also in this release, with no customer-visible change:` line as bare IDs.
+Concision cuts within a bullet, never a theme or a reference line.]
 
 [Optional one-liners — include only those that apply, omit the rest:]
 - **For users:** [what they can now do]

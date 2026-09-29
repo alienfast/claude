@@ -364,8 +364,9 @@ Before finalizing the description, verify:
 - [ ] Testing sections describe actual tests that currently pass
 - [ ] Code snippets are from actual files in HEAD, not from memory
 - [ ] No issue ID other than this PR's own is preceded by a Linear close keyword ([standards/git.md](../../standards/git.md) § Linear auto-close keywords)
-- [ ] Every shipped Linear ID from the census appears in the Executive Summary exactly once — a roster bullet or the internal line — and no referenced-only ID appears at all
-- [ ] Every Executive Summary roster item goes live on merge — nothing under a mirror of an externally managed system (Descope snapshots, vendor-console exports) is claimed as in this release
+- [ ] Every shipped Linear ID from the census appears in the Executive Summary exactly once — a line under `### Issues in this release` or the internal line — and no referenced-only ID appears at all
+- [ ] Every Executive Summary theme bullet and issue line goes live on merge — nothing under a mirror of an externally managed system (Descope snapshots, vendor-console exports) is claimed as in this release
+- [ ] On a multi-issue PR the Executive Summary opens with a headline and themed `###` sections, carries no issue IDs in the themes, and puts `### Issues in this release` last before the PR link — never a roster as the Solution
 
 ## PR Title Formats
 
@@ -395,11 +396,13 @@ plain-language block the user can copy out whole and share with the business tea
 It precedes the technical `## Summary` (the two serve different audiences: Executive
 Summary = business outcome; Summary = technical TL;DR for reviewers).
 
-Rules for the Executive Summary — voice and concision follow the
-[exec-summary skill](../exec-summary/SKILL.md) (problem first, then the fix; concise per item,
-complete per shipped issue; backticks for user-visible strings; no deferments or process
-detail). This block is that skill's PR-description variant: it keeps the `## Executive Summary` heading and
-the trailing PR link in place of the Slack-style underlined title. Plus:
+Rules for the Executive Summary — voice, shape and concision follow the
+[exec-summary skill](../exec-summary/SKILL.md) (single-issue: problem first, then the fix;
+multi-issue: a headline, a roll-up by theme, then the per-issue list last as a reference;
+concise per item, complete per shipped issue; backticks for user-visible strings; no
+deferments or process detail). This block is that skill's PR-description variant: it keeps the
+`## Executive Summary` heading, uses `###` for the theme and reference headings, and ends with
+the PR link in place of the Slack-style underlined title. Plus:
 
 - **Business language only.** Translate the change into its outcome. No file paths, no
   code, no line-count tables, minimal jargon. Issue IDs are the one identifier that stays —
@@ -415,15 +418,29 @@ the trailing PR link in place of the Slack-style underlined title. Plus:
   snapshot, a vendor-console export — ships nothing on merge: a production mirror changed by
   export was live before the PR, a dev/staging-only change ships on a later promote; neither
   is release content, so leave it out or state it as already live). An ID Linear marks
-  `Duplicate` or `Canceled` is referenced-only; credit its work to the absorbing issue. On a
-  hotfix or release bundle the **Solution** is a roster — one bullet per shipped
-  customer-visible issue, `BF-1763: one plain sentence` — complete over the census, with
-  shipped internal-only issues on one trailing `Also in this release, with no customer-visible
-  change:` line as bare IDs, and referenced-only IDs nowhere. Every shipped ID appears exactly
-  once. Concision cuts within a bullet, never a bullet. Measured before this rule: three
+  `Duplicate` or `Canceled` is referenced-only; credit its work to the absorbing issue. Every
+  shipped ID appears exactly once — customer-visible ones as a line under `### Issues in this
+  release`, internal-only ones on the trailing `Also in this release, with no customer-visible
+  change:` line as bare IDs — and referenced-only IDs nowhere. Measured before this rule: three
   bundled hotfix PRs shipping 2, 5, and 6 issues, and the Executive Summary named zero;
   measured after its first draft: a hotfix bundle whose roster listed three Descope console
   changes already live in production, each commit body saying so.
+- **On a multi-issue PR the themes are the summary and the issue list is the reference.**
+  A bundle has many problems, so it gets no single **Problem:** block. Open with a headline
+  paragraph (1–3 sentences: what this release is about, in the business's words), then 3–6
+  `###` theme headings named for what the reader does or gets ("Managing an organization",
+  "Support and admin tools" — never a component, subsystem or route), each opening with one
+  sentence of the problem that theme solves and followed by 2–6 outcome bullets. No issue IDs
+  in the themes: the reader is following the story, and the ID is noise there. Then
+  `### Issues in this release` — one line per shipped customer-visible ID, `BF-1763: short
+  label`, sorted by ID and last in the block: a lookup for "did our customer's issue ship?",
+  not a second narrative, so each label only has to make the issue recognizable. A rode-along
+  change with no ID lives in a theme bullet and nowhere else. Concision cuts within a bullet,
+  never a theme's problem sentence or a reference line. Measured 2026-09-28 on PR #533 (54
+  issues): one Problem paragraph followed by a 43-bullet ID-first roster, and the keeper's
+  verdict was that no business user would read it — the Problem read as one problem when many
+  were solved, nothing rolled the list up, and the list belonged last, like a bibliography. A
+  single-issue PR keeps **Problem:** / **Solution:**.
 - **ID first, colon after, never a close verb before it.** The PR body is a surface Linear
   scans — `Fixed BF-1763` in a roster line moves that issue on merge
   ([standards/git.md](../../standards/git.md) § Linear auto-close keywords; the checklist
@@ -432,13 +449,14 @@ the trailing PR link in place of the Slack-style underlined title. Plus:
 - The **For users / Business impact / Security & quality** lines are *suggestions, not
   required sections*. Include only those that genuinely apply; keep each to one line;
   omit the rest. A simple change may be 2–3 sentences with no bullets at all. On a
-  multi-issue PR the roster already says what changed for users — drop **For users**
-  rather than restate it.
+  multi-issue PR they sit after the last theme and before the issue list, and the themes
+  already say what changed for users — drop **For users** rather than restate it.
 - **Accuracy is paramount here.** This is the most-shared, highest-visibility text, so
   over-claiming is the worst case — every impact / "fixes" statement must pass the same
   baseline check from §4 before it's written.
 - **End with the PR link** so the shared block is self-contained (see "After Generating
-  Description" for how the URL is resolved).
+  Description" for how the URL is resolved) — on a multi-issue PR it follows the issue list,
+  which is the block's last section.
 - **Don't pad.** On a small PR where the technical `## Summary` would merely restate the
   Executive Summary, drop the `## Summary` and go straight to the detailed sections —
   two near-identical openers read as bloat. Keep both only when the technical Summary
@@ -449,22 +467,42 @@ Use this general template structure:
 ```markdown
 ## Executive Summary
 
+[Single-issue PR:]
+
 **Problem:** [1–2 plain sentences: what users or the business hit, and why it matters
 now. Concrete numbers where real. No file paths, no code, minimal jargon.]
 
-**Solution:** [Single-issue PR: 1–2 plain sentences, what changed in outcome terms,
-verbatim user-visible strings in backticks where the change IS the copy. Multi-issue PR:
-the roster below instead — one bullet per shipped customer-visible issue, complete over
-the census; a rode-along change with no issue still gets its bullet.]
-- BF-1763: [one plain sentence — what the customer or support can now see]
-- BF-1716: [one plain sentence — the verbatim new string in backticks where the change is the copy]
+**Solution:** [1–2 plain sentences, what changed in outcome terms, verbatim user-visible
+strings in backticks where the change IS the copy.]
 
-Also in this release, with no customer-visible change: BF-1703, BF-1698.
+[Multi-issue PR (hotfix or release bundle) — in place of Problem/Solution:]
+
+[Headline: 1–3 plain sentences — what this release is about, in the business's words.]
+
+### [Theme — what the reader does or gets, e.g. Managing an organization]
+
+[One sentence: the problem this theme solves.]
+
+- [Outcome — what is better now; verbatim user-visible strings in backticks. No issue IDs.]
+- [Outcome — a rode-along change with no issue goes here too]
+
+### [Next theme]
+
+[One sentence: its problem.]
+
+- [Outcome]
 
 [Optional one-liners — include only those that genuinely apply, omit the rest:]
-- **For users:** [what changes in their experience]
+- **For users:** [what changes in their experience — single-issue PRs; the themes cover it on a bundle]
 - **Business impact:** [revenue, risk, cost, compliance, or operational effect]
 - **Security & quality:** [notable hardening, test coverage, or reliability gains]
+
+### Issues in this release
+
+- BF-1716: [short label — enough to recognize the issue, not to explain it]
+- BF-1763: [short label]
+
+Also in this release, with no customer-visible change: BF-1698, BF-1703.
 
 🔗 **Pull request:** [#<number> — <title>](<pr-url>)
 
