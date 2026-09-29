@@ -4,16 +4,21 @@
 # neither. Linear is an integration-platform Sentry app, so the link is the same `external-issue-actions` POST the
 # UI's form submits: resolve the org's `linear` installation, ask the app's search hook for the Linear issue's uuid
 # (exact identifier match on the returned label), POST the link, and confirm it on the issue's `external-issues`
-# listing. A repeat returns the existing record (measured 2026-09-16), so re-running a sweep cannot stack links.
+# listing. Sentry keeps one record per (issue, app) — `update_or_create` on unique (group, service_type) — so linking a
+# DIFFERENT Linear issue re-points that record in place, writes no Activity, and leaves the first owner's Linear
+# attachment behind (measured 2026-09-29): refused below, before the POST. `sentry api` caches GETs for 60s, so every
+# read here bypasses that cache — a cached pre-POST read would otherwise answer the post-POST read-back.
 #
 # Performance issues (`performance_*` issue types) are refused up front: the action endpoint answers
 # `Could not find the corresponding issue for the given groupId` and their `external-issues` listing 403s
 # (measured 2026-09-16), so their back-link lives in the Linear issue's description alone.
 #
 # Exit: 0 linked (or already linked); 2 usage/prereq; 3 performance issue; 4 no Linear app installed for the org;
-# 5 Linear issue not found by the app's search; 6 the link POST returned no record; 7 read-back did not show it.
+# 5 Linear issue not found by the app's search; 6 the link POST returned no record; 7 read-back did not show it;
+# 8 the Sentry issue already links a different Linear issue.
 
 set -uo pipefail
+export SENTRY_NO_CACHE=1
 
 usage() { echo "usage: link-linear.sh <org/project> <SENTRY-SHORT-ID> <LINEAR-ID>   e.g. link-linear.sh alienfast/basefund BASEFUND-1F0 BF-1939" >&2; exit 2; }
 [ $# -eq 3 ] || usage
@@ -31,6 +36,11 @@ case "$itype" in
   performance_*) echo "link-linear: $sid is a $itype issue — Sentry refuses external links on performance issues; record the mapping in the Linear description instead" >&2; exit 3 ;;
 esac
 
+expected="${lid%%-*}#${lid#*-}"
+existing="$(sentry api "issues/$gid/external-issues/" 2>/dev/null | jq -r '[.[]? | objects | select(.serviceType == "linear")] | .[0].displayName // empty')"
+[ "$existing" = "$expected" ] && { echo "already linked: $sid ↔ $lid"; exit 0; }
+[ -z "$existing" ] || { echo "link-linear: $sid already links $existing — a second link would re-point it in place; record $lid's mapping in its Linear description" >&2; exit 8; }
+
 pid="$(sentry api "projects/$org/$project/" 2>/dev/null | jq -r '.id // empty')"
 [ -n "$pid" ] || { echo "link-linear: cannot resolve project id for $target" >&2; exit 2; }
 
@@ -47,6 +57,6 @@ eid="$(printf '%s' "$resp" | jq -r '.id // empty' 2>/dev/null)"
 [ -n "$eid" ] || { echo "link-linear: link POST returned no record for $sid ↔ $lid: $resp" >&2; exit 6; }
 
 listed="$(sentry api "issues/$gid/external-issues/" 2>/dev/null | jq -r --arg eid "$eid" '[.[]? | select(.id == $eid)] | .[0].displayName // empty')"
-[ -n "$listed" ] || { echo "link-linear: POST answered record $eid but the external-issues listing for $sid does not show it" >&2; exit 7; }
+[ "$listed" = "$expected" ] || { echo "link-linear: record $eid for $sid lists as '${listed:-nothing}', not $expected" >&2; exit 7; }
 
 echo "linked: $sid ↔ $lid (external issue $eid, shown as $listed)"
