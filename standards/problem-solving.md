@@ -166,3 +166,45 @@ reason otherwise. Then ask.
 
 The failure mode this replaces is proposing the workaround alone ("let's downgrade to v1.2 to avoid
 this"), which asks the user to approve a decision they cannot see the alternatives to.
+
+### Ask as a story
+
+Wherever a question's answer turns on what someone experiences — a label a user reads, what an admin
+can or cannot do, how an edge case lands on a customer, which of two policies to adopt — write the
+question as a story, not as a menu of mechanisms. The decider answers from the scenario; the code
+facts that make the scenario true are evidence beside it, never the question. In this shape:
+
+1. **Position.** "Decision 2 of 3" — the reader knows how much is coming and that each stands alone.
+2. **The story.** Named people and organizations doing concrete things: who did what, what they see
+   on screen, what goes wrong or what becomes reachable. The names are invented; identifiers stay
+   out. The fact that makes the story true — a migration id, a column, a unique index — sits in
+   parentheses or below the story as evidence, so the reader can check it without needing it to
+   decide. When the harm has several parts, list them.
+3. **The stake**, in a sentence: what is now false, harmful, or exposed that was not before.
+4. **Lettered options, named by outcome.** Each says what the reader would see or be able to do
+   under it and what it costs — more work, or a part of the problem left open. The recommended one
+   comes first with its reason in the reader's vocabulary, never the code's (recommend, don't menu).
+   When the user pinned the current behavior, keeping it is an option, labeled as theirs. A
+   parameter an option needs — a cap, a rate, an add-on sentence — is named so the answer can carry
+   it.
+5. **The closing question**, listing the letters: "Which do you want: A, B, C, or D?"
+
+**After the answer**, restate what is settled as its consequence ("A, so bridge rows show 'Team
+admin'") and name what stays unchanged, then re-derive the next question from that answer rather
+than asking the one already queued — an answer routinely collapses or reshapes what follows.
+
+**When the reader questions a premise** ("why would it disappear from the other org?"), check the
+mechanism before replying, say in plain terms why the current behavior is what it is and whether it
+was intended, state their model back to them, lay out what adopting it changes, and ask the new
+fork it opens. Defending the original framing is the failure: the premise challenge is usually where
+the real decision is.
+
+Measured 2026-09-30, BF-2219, three decisions posed this way after the implementation was built:
+each was answered with a single letter, and the one premise challenge ("I would think only verified
+disappears from another") exposed that a global uniqueness on the domain table made every
+undecided proposal exclusive — a data-model change larger than the issue, found because the story
+made the squatting concrete enough to object to.
+
+A question with no experiential consequence — which of two equivalent files, whether to run in a
+worktree — takes the recommend-don't-menu rule and the Complexity Response Pattern without the
+story. `/spec`'s decision interview is this pattern's product-owner form, staged over batches.
