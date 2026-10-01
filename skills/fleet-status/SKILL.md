@@ -25,7 +25,7 @@ Run from the project the fleet works on (a worktree cwd is fine):
 - **In flight** — live worktrees joined with Linear state and the owning session. A worktree whose issue reads terminal (Done/Canceled) is leftover, awaiting `/reap-worktrees`.
 - **Shipped, cross-checked** — the union of the fleet's session ledgers, each entry verified against commits on the integration branch, falling back to the merge queue. The three verdicts: merged ✓, deferred (queued — a transient block, the drainer retries), or ⚠️ recorded-but-unfound (investigate: a session may have died between recording and merging).
 - **Failed/canceled, cross-checked** — each recorded failure/cancel joined with the issue's *current* Linear state. A ledger entry is a claim about that run only: a later session or an interactive pickup can resolve the issue without writing any ledger, so a completed-type state renders as "since shipped" history rather than a live failure. Only ⚠️ rows (a failure still unshipped, or a cancel Linear disagrees with) need action.
-- **Runway** — unblocked certified candidates remaining, with the hidden-count notes (`needs decision` / `solo` / `human`) passed through verbatim.
+- **Runway** — unblocked certified candidates remaining, with the hidden-count notes (`needs decision` / `solo` / `human`) passed through verbatim. Under a `backlog` launch (the marker's `backlog: true`) the count includes Backlog once nothing Planned/Todo is pickable — the same flag every session's pick passes — and the heading says `(backlog fallback on)`.
 
 Surface the script's markdown to the user as-is, then add narration only where the output flags something (⚠️ rows, deferred merges, dead-active sessions) — say what it means and what resolves it, don't repeat the tables in prose.
 

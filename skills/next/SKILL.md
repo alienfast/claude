@@ -1,7 +1,7 @@
 ---
 name: next
 description: Suggest the best next issue to work on. Considers workflow stage (Planned before Backlog), dependency graph, triage status, and what's unblocked. Optionally filters to a label — `/next specified` restricts to certified specs (what /auto runs). Use when the user says 'what's next', 'next issue', or invokes /next.
-argument-hint: "[label] [team:KEYS] [epic:ID]"
+argument-hint: "[label] [team:KEYS] [epic:ID] [backlog]"
 ---
 
 # Next Issue
@@ -18,14 +18,15 @@ Suggests the most logical next issue to work on by combining workflow stage, dep
 ## Arguments
 
 ```text
-/next [label] [team:KEY[,KEY...]] [epic:ID]
+/next [label] [team:KEY[,KEY...]] [epic:ID] [backlog]
 ```
 
-Three optional tokens, order-insensitive:
+Four optional tokens, order-insensitive:
 
 - A Linear issue-label name (e.g. `specified`): every candidate must carry that label (ASCII-case-insensitive name match); pass it to the script as `--label <label>`. Bare `/next` is unfiltered — humans may deliberately pick uncertified issues; only `/auto` is gated to `specified`.
 - `team:KEY[,KEY...]` (e.g. `team:BF`, `team:PL,BF`): an explicit team scope; pass through as `--team`. This outranks `$LINEAR_TEAM` in Step 2's resolution — it is a direct instruction.
 - `epic:ID` (e.g. `epic:BF-1826`): scope the whole ranking to that epic's graph — the epic, its transitive descendants, and the transitive blockers of any member, non-terminal only, cross-team included (`scripts/epic-graph.sh`); pass through as `--root <ID>`. The graph's teams join the fetch on their own, so `team:` is not needed alongside it and merely widens the fetch. Validated **fail-closed by the script**: an ID that does not exist or does not carry the `epic` label exits 1 with the reason — surface it and stop; never fall back to the unscoped pool.
+- `backlog`: the Planned gate's human opt-in (keeper ruling 2026-10-01) — pass through as `--backlog-fallback`. Planned/Todo stays strictly first; Backlog is offered only when nothing Planned/Todo is pickable at that instant, under a `_BACKLOG-FALLBACK: …_` note naming what still holds the column. `/auto backlog` forwards it, which is what `/fleet-launch backlog` dispatches on a day with spare usage.
 
 Error on any other token.
 
@@ -65,11 +66,14 @@ A `<COMPLETED-ID>` or branch prefix feeds `--completed` only — it does **not**
 
 # Epic-scoped (/next epic:BF-1826, and what /auto epic:BF-1826 runs): members only
 ~/.claude/scripts/next-candidates.sh --root BF-1826 --label specified
+
+# Backlog fallback (/next specified backlog, and what /auto backlog runs)
+~/.claude/scripts/next-candidates.sh --label specified --backlog-fallback
 ```
 
 `--label` composes with `--completed` — the unblock analysis is label-agnostic; the filter applies only to the final candidate set. `--root` composes with both: the fetched list is cut to the epic's members right after the fetch, before the Planned gate and every hold/hidden note, so the order, the holds, the counts, and the drained headline all describe the epic alone (a `_Scope: epic <ID> — N non-terminal member(s) …_` line under the heading says so, and the headlines read `in epic <ID> (team <KEY>)`).
 
-The script emits a markdown-formatted ranked list with tier, parent chain, and reasoning per candidate. It exits 0 even when no workable candidates exist — printing `_No workable issues in team <KEY>._` (single team) or `_No workable issues in teams <KEY, KEY>._` (multi), with the label named when a filter was active. Under the Planned gate (below) the empty case reads differently on purpose — `_Nothing pickable right now … the Planned/Todo column is not drained, so Backlog is withheld (PLANNED-HOLD below) …_` — and that difference is what `/auto` keys on to wait rather than end its run.
+The script emits a markdown-formatted ranked list with tier, parent chain, and reasoning per candidate. It exits 0 even when no workable candidates exist — printing `_No workable issues in team <KEY>._` (single team) or `_No workable issues in teams <KEY, KEY>._` (multi), with the label named when a filter was active. Under the Planned gate (below) the empty case reads differently on purpose — `_Nothing pickable right now … the Planned/Todo column is not drained, so Backlog is withheld (PLANNED-HOLD below) …_` — and that difference is what `/auto` keys on to wait rather than end its run. Under `--backlog-fallback` the gate closes only while a Planned/Todo candidate is pickable or Backlog has nothing to offer, so the same wait headline still appears when neither column is pickable — a held column never reads as drained, fallback or not.
 
 The same wait-not-drained distinction holds when the gate is open but every remaining candidate sits behind an unresolved blocker: if at least one of them will release on its own (its chain runs through in-flight or fleet-eligible work), the empty case prints `_Nothing pickable right now … every remaining candidate waits behind an unresolved blocker, and N will release on their own (BLOCKED-HOLD below)._` with a `_BLOCKED-HOLD: …_` note naming what each hidden issue waits on — the pool is chained, not drained, and `/auto` parks on it. Blocked issues are otherwise counted on every path in a plain `_N issue(s) hidden behind unresolved blockers — …_` note, like every other exclusion; a pool blocked only behind keeper-owned work keeps the drained headline, since nothing in it releases without a human.
 
@@ -82,6 +86,7 @@ Read the script's stdout and narrate it naturally — and **definitively**:
 - If there's a runner-up that's qualitatively different from the top pick (different tier, different parent epic, different team), mention it as "also consider."
 - Surface a `_PLANNED-HOLD: …_` note **verbatim** — it is the answer to "why is nothing from Backlog here" and, for the keeper, the list of what to decide, certify, or close so the column drains. When the script reported *nothing pickable* under a hold, say that the fleet is waiting on the Planned/Todo column (name the releasing and keeper-owned entries) — never suggest Backlog work or `/spec`-for-Backlog around it.
 - Surface a `_BLOCKED-HOLD: …_` note **verbatim** the same way — it names the in-flight issue each hidden candidate waits on, so the narration is "waiting on a sibling to ship `<ID>`", never a `/spec` or Backlog suggestion.
+- Surface a `_BACKLOG-FALLBACK: …_` note **verbatim** — it says the pick is Backlog work taken under the `backlog` opt-in while the column still holds work, and names what holds it; never call the column drained around it.
 - If the script reported no workable issues (the column drained and nothing remains), say so plainly — do not invent a suggestion. When the filter was `--label specified`, suggest running `/spec` to certify backlog issues (or `/prd` to seed new certified ones).
 
 The script's tier reasons (e.g. "newly unblocked", "sibling under completed parent") already explain the *why* — surface them rather than rephrasing.
@@ -100,6 +105,8 @@ Only **Backlog / Planned / Todo** issues are workable candidates. Issues in **Tr
 Workable is not the same as equal: **Backlog sorts behind Planned/Todo** in every tier. Stage is the one planning signal in the pool a human sets by hand, so bouncing an area of work to Backlog has to actually defer it — see the within-tier order below.
 
 **The Planned gate — Backlog is withheld, not merely out-ranked, until the Planned/Todo column drains** (keeper ruling 2026-08-28: every Planned/Todo issue is worked before any Backlog issue, and no usage is spent on Backlog while that column is not drained). Ordering alone only holds while a Planned issue is pickable this instant; the moment the rest of the column is blocked behind in-flight work or parked, ordering falls through to Backlog — the usage the ruling forbids. So while the column holds anything not claimed by another person, every Backlog candidate (tiers 0 and 1 included — a reflection filing or an issue assigned to you in Backlog waits too; promote it to Planned to run it first) is withheld and a `PLANNED-HOLD` note classifies each held issue: *pickable now*, *will release on its own* (every unresolved blocker in its chain is in flight or fleet-eligible), or *needs the keeper* (parked, uncertified under the filter, an epic to close, or blocked behind such an issue). Inherited-stage Backlog issues — blockers of Planned work — are Planned scope and stay pickable, so the gate cannot deadlock on them. A claim by another person is the one carve-out: that work is neither the fleet's nor the keeper's to drain. With nothing pickable, the caller **waits** — `/auto` ticks cheaply until a chain releases or the keeper acts — and never treats the hold as a drained backlog. Discovery listings (`--include-blocked`, `--include-triage`, `--label solo|'needs decision'|human`) are exempt, and `--no-stage-gate` lifts it to inspect what waits behind it.
+
+**The `backlog` opt-in (keeper ruling 2026-10-01) relaxes the gate without reordering anything.** `--backlog-fallback` still withholds Backlog while a Planned/Todo candidate is pickable now (inherited-stage ones included), so Planned stays strictly first across tiers — which `--no-stage-gate` does not promise: with the gate simply lifted, a tier-0 reflection filing or a tier-1 assigned issue in Backlog outranks every Planned issue. Once nothing Planned is pickable, the Backlog candidates are offered under a `BACKLOG-FALLBACK` note instead of withheld; a releasing Planned issue does not make the caller wait, because the ordering takes it at the next pick. With nothing pickable in either column the hold is exactly the gate's (`PLANNED-HOLD`, wait). It is a literal token on the invocation — `/fleet-launch backlog`, `/loop /auto backlog`, `/next specified backlog` — never inferred from a usage reading; the default stays the gate (`standards/linear-workflow.md` § Stage Priorities).
 
 A label filter (`--label`) applies after the workable/blocker filtering and before tiering — it never changes the ranking math, only the candidate pool. The script also has `--exclude-label`, `--include-triage`, and `--include-blocked`: those are `/spec`'s grooming-discovery knobs (find uncertified issues, including the Triage inbox and issues with unresolved blockers) and are never used by `/next` itself. The `specified` label contract lives in [standards/issue-spec.md](../../standards/issue-spec.md).
 

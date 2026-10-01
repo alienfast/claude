@@ -8,8 +8,10 @@
 # horizon cuts (past-deadline in-flight finishes, capacity vs unlocks-past-deadline UNREACHED),
 # claimed/epic exclusion from the pool, POOL-DRAINED as out-of-pickable-work, the STAGE
 # Planned→Backlog crossover line, hours-per-issue calibration from fleet-metrics history, estimate
-# weighting, and sessions/horizon defaults from fleet-recommendation.json. The FORECAST line makes
-# an empty result distinguishable from a broken run.
+# weighting, sessions/horizon defaults from fleet-recommendation.json, and --backlog (2026-10-01: a
+# session with nothing Planned/Todo pickable takes Backlog instead of idling, Planned/Todo still first
+# at every pick, nothing WITHHELD). The FORECAST line makes an empty result distinguishable from a
+# broken run.
 set -uo pipefail
 
 SCRIPT="$(cd "$(dirname "$0")" && pwd)/fleet-forecast.py"
@@ -204,6 +206,16 @@ ck_has "M backlog after"   "PICK t=4.0h: TT-113 → s1" "$WORK/m.out"
 ck_has "M stage"           "STAGE: Planned/Todo (1 issues) drains ≈t=4.0h; first Backlog pick ≈t=4.0h" "$WORK/m.out"
 ck_lacks "M nothing withheld" "WITHHELD" "$WORK/m.out"
 
+# ---- --backlog on M: the session takes the Backlog issue at t=0 instead of idling, then the Planned
+# ---- issue the moment it releases — Planned/Todo still first at every pick ----
+rc=$(run "$WORK/m.json" "$WORK/mb.out" --sessions 1 --horizon-h 12 --hours-per-issue 2 --flat --backlog)
+ck "MB exit" 0 "$rc"
+ck_has "MB fallback line"  "BACKLOG-FALLBACK: on — Backlog is picked once nothing Planned/Todo is pickable; Planned/Todo stays first at every pick" "$WORK/mb.out"
+ck_has "MB backlog first"  "PICK t=0.0h: TT-113 → s1" "$WORK/mb.out"
+ck_lacks "MB no hold"      "HOLD t=" "$WORK/mb.out"
+ck_has "MB planned when released" "PICK t=2.0h: TT-111 → s1 (~2.0h) (unblocked by TT-112)" "$WORK/mb.out"
+ck_has "MB stage"          "STAGE: Planned/Todo (1 issues) drains ≈t=4.0h; first Backlog pick ≈t=0.0h" "$WORK/mb.out"
+
 # ---- Fixture N: only a keeper-owned Planned issue remains — the fleet idles at t=0 and the Backlog
 # ---- candidate is WITHHELD for the run, named with what holds it ----
 cat > "$WORK/n.json" <<'EOF'
@@ -218,6 +230,15 @@ ck_has "N forecast"        "est. 0 ship · 0 unreached · 0 stranded · 1 withhe
 ck_has "N planned-hold"    "PLANNED-HOLD: 1 unblocked Backlog candidate(s) withheld through the run — Planned/Todo never drained: TT-121 [needs decision]" "$WORK/n.out"
 ck_has "N withheld"        "WITHHELD: TT-122 — Backlog withheld (Planned/Todo not drained)" "$WORK/n.out"
 ck_has "N drained"         "POOL-DRAINED: t=0.0h" "$WORK/n.out"
+
+# ---- --backlog on N: the keeper-held column no longer withholds — the Backlog candidate ships and
+# ---- nothing is WITHHELD or PLANNED-HOLD ----
+rc=$(run "$WORK/n.json" "$WORK/nb.out" --sessions 1 --horizon-h 12 --hours-per-issue 2 --flat --backlog)
+ck "NB exit" 0 "$rc"
+ck_has "NB forecast"       "est. 1 ship · 0 unreached · 0 stranded — pool 1 shippable of 2 certified" "$WORK/nb.out"
+ck_has "NB backlog shipped" "PICK t=0.0h: TT-122 → s1" "$WORK/nb.out"
+ck_lacks "NB nothing withheld" "WITHHELD" "$WORK/nb.out"
+ck_lacks "NB no planned-hold" "PLANNED-HOLD" "$WORK/nb.out"
 
 # ---- Fixture O: a Backlog child of a Planned epic inherits the stage — pickable under the gate ----
 cat > "$WORK/o.json" <<'EOF'

@@ -20,7 +20,7 @@ fleet-blockers.test.sh alongside this suite when the classification rules move.
 Usage:
   fleet-forecast.py --team KEY | --root EPIC-ID [--team KEY] [--sessions N] [--horizon-h H]
                     [--hours-per-issue X] [--flat] [--recommendation PATH] [--history PATH]
-                    [--me EMAIL] [--fixture PATH]
+                    [--me EMAIL] [--fixture PATH] [--backlog]
 
   --root EPIC-ID simulates an epic-scoped fleet (what /fleet-launch epic:<ID> runs): the pool is cut
   to the epic's graph members right after the fetch (epic-graph.sh — the epic, its descendants,
@@ -43,6 +43,11 @@ simulated as next-candidates.sh applies it: while any Planned/Todo issue not cla
 person is unshipped and unpicked, a session with no pickable Planned issue IDLES (HOLD) rather
 than taking Backlog; blockers and children of Planned work inherit the Planned stage and stay
 pickable. A Backlog candidate the gate holds for the whole run is WITHHELD, not UNREACHED.
+
+--backlog simulates /fleet-launch backlog (keeper ruling 2026-10-01): a session with nothing
+Planned/Todo pickable takes Backlog instead of idling, Planned/Todo still first at every pick. A
+BACKLOG-FALLBACK line says so, HOLD never fires, and nothing is WITHHELD — an unpicked Backlog
+candidate was out-ranked or out of horizon, which UNREACHED already reports.
 """
 
 import argparse
@@ -217,7 +222,7 @@ def duration_fn(pool, base, flat):
     return hours
 
 
-def simulate(issues, n_sessions, horizon, hours):
+def simulate(issues, n_sessions, horizon, hours, backlog_fallback=False):
     """Greedy list-scheduling: each free session picks the top-ranked available candidate; a pick
     happens whenever t < horizon and the issue finishes past it if it must — /auto checks the fleet
     deadline before each pick, never mid-issue, so in-flight work finishing late is faithful."""
@@ -247,7 +252,9 @@ def simulate(issues, n_sessions, horizon, hours):
         return all(b in shipped or b not in issues for b in p.blockers)
 
     def available():
-        gate = bool(held())
+        # Under the fallback the gate is ordering alone: the stage-first rank still puts every
+        # pickable Planned/Todo issue ahead, so Backlog is taken only when none is pickable.
+        gate = bool(held()) and not backlog_fallback
         return sorted((p for p in pool.values() if p.id not in picked and unblocked(p)
                        and not (gate and p.stype == "backlog" and not p.gates_unstarted)),
                       key=Issue.rank)
@@ -358,6 +365,8 @@ def main():
     ap.add_argument("--history", default="tmp/fleet-metrics-history.jsonl")
     ap.add_argument("--me")
     ap.add_argument("--fixture")
+    ap.add_argument("--backlog", action="store_true",
+                    help="simulate /fleet-launch backlog — Backlog is picked once nothing Planned/Todo is pickable")
     args = ap.parse_args()
 
     rec = {}
@@ -446,14 +455,15 @@ def main():
     certified = [i for i in issues.values()
                  if i.stype in ("unstarted", "backlog") and "specified" in i.labels and "epic" not in i.labels]
     hours = duration_fn([i for i in issues.values() if i.shippable], base, args.flat)
-    pool, picked, shipped, ship_time, events, lanes, drained_at, held_end = simulate(issues, n_sessions, horizon, hours)
+    pool, picked, shipped, ship_time, events, lanes, drained_at, held_end = simulate(issues, n_sessions, horizon, hours, args.backlog)
 
     shipped_pool = [iid for iid in pool if iid in shipped]
     late = [iid for iid in shipped_pool if ship_time[iid] > horizon]
     leftovers = [pool[iid] for iid in sorted(pool) if iid not in shipped]
     # The held set only shrinks, so a non-empty end state means the gate never opened: every unblocked,
-    # unpicked Backlog candidate was withheld by it, not out-ranked or out-of-time.
-    withheld = [iid for iid in sorted(pool) if iid not in shipped and held_end
+    # unpicked Backlog candidate was withheld by it, not out-ranked or out-of-time. Under the fallback
+    # the gate never withholds, so such a candidate is UNREACHED like any other.
+    withheld = [] if args.backlog else [iid for iid in sorted(pool) if iid not in shipped and held_end
                 and pool[iid].stype == "backlog" and not pool[iid].gates_unstarted
                 and all(b in shipped or b not in issues for b in pool[iid].blockers)]
     verdicts = {iid: unreached_reason(pool[iid], issues, pool, shipped, ship_time, horizon)
@@ -467,6 +477,8 @@ def main():
           f"{f' · {len(withheld)} withheld' if withheld else ''}"
           f" — pool {len(pool)} shippable of {len(certified)} certified")
     print(f"HOURS-PER-ISSUE: {base} ({source}{'' if args.flat else '; estimate-weighted'})")
+    if args.backlog:
+        print("BACKLOG-FALLBACK: on — Backlog is picked once nothing Planned/Todo is pickable; Planned/Todo stays first at every pick")
     unstarted_ids = [iid for iid in pool if pool[iid].stype == "unstarted"]
     backlog_ids = [iid for iid in pool if pool[iid].stype == "backlog"]
     # An inherited-stage blocker is a Planned-stage pick by construction — it is not the crossover

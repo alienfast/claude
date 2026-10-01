@@ -5,7 +5,7 @@
 #   next-candidates.sh [--team KEY[,KEY...]] [--completed PL-XX] [--limit N]
 #                      [--no-parent-walk] [--label NAME] [--exclude-label NAME]
 #                      [--include-triage] [--include-blocked] [--include-claimed]
-#                      [--no-stage-gate] [--root EPIC-ID]
+#                      [--no-stage-gate] [--backlog-fallback] [--root EPIC-ID]
 #
 # --root EPIC-ID scopes the whole ranking to one epic's graph (epic-graph.sh: the epic, its
 # transitive descendants, and the transitive blockers of any member — non-terminal only,
@@ -73,6 +73,18 @@
 # no-pick tick, never as drained. Discovery listings (--include-blocked, --include-triage, and
 # the solo / needs decision / human label views) are exempt; --no-stage-gate lifts it to inspect
 # what waits behind it.
+#
+# --backlog-fallback (keeper ruling 2026-10-01) is the human's opt-in for a day with spare usage —
+# /next's `backlog` token, which /auto passes through from /fleet-launch backlog, and the runway
+# /fleet-status counts under a `backlog` marker. The gate still withholds Backlog while a
+# Planned/Todo candidate is pickable NOW (inherited-stage ones included), so Planned stays strictly
+# first across tiers — which --no-stage-gate does not promise: with the gate simply lifted, a tier-0
+# reflection filing or a tier-1 assigned issue in Backlog outranks every Planned issue. Once nothing
+# Planned is pickable, the Backlog candidates are offered under a BACKLOG-FALLBACK note naming what
+# still holds the column. A releasing Planned issue does not make the caller wait: it picks Backlog
+# now and the ordering takes the Planned issue at the next pick. With nothing pickable in either
+# column the hold is exactly the gate's (PLANNED-HOLD: wait), so the fallback never turns a held
+# column into drained.
 #
 # Emits a ranked markdown list to stdout. The --limit cut never hides unstarted-stage
 # work: every Planned/Todo candidate below the cut is appended in a trailing
@@ -153,6 +165,7 @@ include_triage=0
 include_blocked=0
 include_claimed=0
 stage_gate=1
+backlog_fallback=0
 root=""
 
 # Value-taking flags must fail loudly, not silently: a missing value makes the `shift 2`
@@ -178,6 +191,7 @@ while [ $# -gt 0 ]; do
     --include-blocked) include_blocked=1; shift ;;
     --include-claimed) include_claimed=1; shift ;;
     --no-stage-gate) stage_gate=0; shift ;;
+    --backlog-fallback) backlog_fallback=1; shift ;;
     --root) require_value --root "$#" "${2:-}"; root="$2"; shift 2 ;;
     -h|--help)
       sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//'
@@ -772,6 +786,8 @@ fi
 gate_closed=0
 withheld=0
 hold_line=""
+fallback_open=0
+fallback_line=""
 # Eligible-issue map (id → unresolved blocker count): the Planned gate and the blocked note below both
 # classify a hidden issue by walking its blocker chain through it.
 eligible_map_file="$tmpdir/eligible_map.json"
@@ -832,21 +848,40 @@ if [ "$gate_on" -eq 1 ]; then
            end) ]
   ' "$list_file")
   if [ "$(printf '%s' "$held_json" | jq 'length')" -gt 0 ]; then
-    gate_closed=1
+    planned_pickable=$(printf '%s' "$candidates_json" | jq '[.[] | select(.state_rank == 0)] | length')
     withheld=$(printf '%s' "$candidates_json" | jq '[.[] | select(.state_rank == 1)] | length')
-    candidates_json=$(printf '%s' "$candidates_json" | jq 'map(select(.state_rank != 1))')
-    hold_line=$(printf '%s' "$held_json" | jq -r --argjson w "$withheld" '
-      ([.[] | select(.kind == "pickable")] | length) as $p
-      | [.[] | select(.kind == "releasing") | .id] as $r
-      | [.[] | select(.kind == "keeper") | "\(.id) [\(.reason)]"] as $k
-      | "_PLANNED-HOLD: Backlog withheld — the Planned/Todo column is not drained (\(length) issue(s) hold the gate: \($p) pickable now"
-        + (if ($r | length) > 0 then "; \($r | length) will release on their own — \($r | join(", "))" else "" end)
-        + (if ($k | length) > 0 then "; \($k | length) need the keeper — \($k | join(", "))" else "" end)
-        + "). \($w) Backlog candidate(s) wait behind the gate; it opens when the column drains — pass --no-stage-gate to list them._"')
+    if [ "$backlog_fallback" -eq 1 ] && [ "$planned_pickable" -eq 0 ] && [ "$withheld" -gt 0 ]; then
+      # The fallback opens only where it changes the pick: nothing Planned pickable and Backlog not
+      # empty. With Backlog empty too the gate closes as usual, so the caller waits on the column
+      # instead of reading it as drained.
+      fallback_open=1
+      fallback_line=$(printf '%s' "$held_json" | jq -r --argjson w "$withheld" '
+        [.[] | select(.kind == "releasing") | .id] as $r
+        | [.[] | select(.kind == "keeper") | "\(.id) [\(.reason)]"] as $k
+        | "_BACKLOG-FALLBACK: picking from Backlog — the Planned/Todo column is not drained (\(length) issue(s) hold it"
+          + (if ($r | length) > 0 then "; \($r | length) will release on their own — \($r | join(", "))" else "" end)
+          + (if ($k | length) > 0 then "; \($k | length) need the keeper — \($k | join(", "))" else "" end)
+          + ") but nothing in it is pickable now, so \($w) Backlog candidate(s) are offered; Planned/Todo resumes first at the next pick._"')
+    else
+      gate_closed=1
+      candidates_json=$(printf '%s' "$candidates_json" | jq 'map(select(.state_rank != 1))')
+      hold_line=$(printf '%s' "$held_json" | jq -r --argjson w "$withheld" --arg fb "$backlog_fallback" '
+        ([.[] | select(.kind == "pickable")] | length) as $p
+        | [.[] | select(.kind == "releasing") | .id] as $r
+        | [.[] | select(.kind == "keeper") | "\(.id) [\(.reason)]"] as $k
+        | "_PLANNED-HOLD: Backlog withheld — the Planned/Todo column is not drained (\(length) issue(s) hold the gate: \($p) pickable now"
+          + (if ($r | length) > 0 then "; \($r | length) will release on their own — \($r | join(", "))" else "" end)
+          + (if ($k | length) > 0 then "; \($k | length) need the keeper — \($k | join(", "))" else "" end)
+          + "). \($w) Backlog candidate(s) wait behind the gate; "
+          + (if $fb != "1" then "it opens when the column drains — pass --no-stage-gate to list them._"
+             elif $w > 0 then "backlog fallback is on — they open as soon as nothing Planned/Todo is pickable._"
+             else "backlog fallback is on but Backlog has nothing pickable either — wait._" end)')
+    fi
   fi
 fi
 hold_note() {
   [ "$gate_closed" -eq 1 ] && printf '\n%s\n' "$hold_line"
+  [ "$fallback_open" -eq 1 ] && printf '\n%s\n' "$fallback_line"
   return 0
 }
 

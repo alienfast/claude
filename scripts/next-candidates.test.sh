@@ -10,6 +10,9 @@
 # another person, every Backlog candidate is withheld behind a PLANNED-HOLD note that classifies
 # the held issues (pickable / releasing on their own / need the keeper); discovery listings are
 # exempt; --no-stage-gate lifts it; with nothing pickable the headline says wait, not drained.
+# --backlog-fallback (2026-10-01): Planned stays strictly first across tiers (a Planned candidate
+# pickable now closes the gate exactly as before), Backlog is offered under a BACKLOG-FALLBACK note
+# only once nothing Planned is pickable, and an empty Backlog still waits on the column, never drained.
 # BLOCKED-HOLD (2026-09-05): with the Planned column drained, a pick list emptied only by blocked
 # issues that will release on their own says wait too, never drained; blocked issues are counted in a
 # note on every path (releasing vs keeper), and a pool blocked only behind keeper-owned work stays drained.
@@ -299,6 +302,15 @@ run "$OUT7" --limit 20 --no-stage-gate || { echo "FAIL: no-stage-gate run exited
 ck "gate lifted order" "TT-17 TT-3 TT-2 TT-4 TT-5 TT-28 TT-7 TT-18 TT-20 TT-23 TT-26 TT-40 TT-1 TT-6 TT-22 TT-42 TT-44" "$(order_of "$OUT7")"
 ck_lacks "no note when lifted" "PLANNED-HOLD" "$OUT7"
 
+# ---- --backlog-fallback with a Planned candidate pickable: the gate closes exactly as before — TT-17
+# ---- (tier 1, Backlog) stays withheld, which --no-stage-gate above does not promise — and only the
+# ---- note's tail changes ----
+OUT7b="$WORK/out7b.md"
+run "$OUT7b" --limit 20 --backlog-fallback || { echo "FAIL: fallback-closed run exited $?"; cat "$OUT7b.err"; exit 1; }
+ck "fallback with planned pickable keeps the gate" "TT-3 TT-2 TT-4 TT-5 TT-28 TT-7 TT-18 TT-20 TT-23 TT-26 TT-40" "$(order_of "$OUT7b")"
+ck_has  "fallback hold tail" "6 Backlog candidate(s) wait behind the gate; backlog fallback is on — they open as soon as nothing Planned/Todo is pickable._" "$OUT7b"
+ck_lacks "fallback closed has no fallback note" "BACKLOG-FALLBACK" "$OUT7b"
+
 # ---- gate OPEN: the Planned column holds only a claimed issue, so Backlog is offered normally ----
 cat > "$FIX/issues-open.json" <<'EOF'
 {"data":{"issues":{"nodes":[
@@ -339,6 +351,24 @@ ck "hold lists nothing" "" "$(order_of "$OUT9")"
 ck_has  "hold headline"  "_Nothing pickable right now in team TT — the Planned/Todo column is not drained, so Backlog is withheld (PLANNED-HOLD below). Wait for a release or act on the held issues; do not pick Backlog._" "$OUT9"
 ck_lacks "hold is not drained" "No workable issues" "$OUT9"
 ck_has  "hold note splits releasing from keeper" "(2 issue(s) hold the gate: 0 pickable now; 1 will release on their own — TT-9; 1 need the keeper — TT-11 [needs decision]). 1 Backlog candidate(s) wait behind the gate" "$OUT9"
+
+# Under --backlog-fallback the same column yields TT-1 under a BACKLOG-FALLBACK note instead of the wait
+# headline: a releasing Planned issue (TT-9) does not make the caller wait.
+OUT9b="$WORK/out9b.md"
+run "$OUT9b" --limit 20 --backlog-fallback || { echo "FAIL: fallback-open run exited $?"; cat "$OUT9b.err"; exit 1; }
+ck "fallback opens to backlog" "TT-1" "$(order_of "$OUT9b")"
+ck_has  "fallback note" "_BACKLOG-FALLBACK: picking from Backlog — the Planned/Todo column is not drained (2 issue(s) hold it; 1 will release on their own — TT-9; 1 need the keeper — TT-11 [needs decision]) but nothing in it is pickable now, so 1 Backlog candidate(s) are offered; Planned/Todo resumes first at the next pick._" "$OUT9b"
+ck_lacks "fallback open has no planned-hold" "PLANNED-HOLD" "$OUT9b"
+ck_lacks "fallback open is not the wait headline" "Nothing pickable right now" "$OUT9b"
+# With Backlog empty too the fallback has nothing to offer: the gate closes and the headline still says
+# wait — a held column never reads as drained, fallback or not.
+jq '.data.issues.nodes |= map(select(.identifier != "TT-1"))' "$FIX/issues-hold.json" > "$FIX/issues-page.json"
+OUT9c="$WORK/out9c.md"
+run "$OUT9c" --limit 20 --backlog-fallback || { echo "FAIL: fallback-empty run exited $?"; cat "$OUT9c.err"; exit 1; }
+ck "fallback with empty backlog lists nothing" "" "$(order_of "$OUT9c")"
+ck_has  "fallback with empty backlog still waits" "_Nothing pickable right now in team TT — the Planned/Todo column is not drained, so Backlog is withheld (PLANNED-HOLD below)." "$OUT9c"
+ck_lacks "fallback with empty backlog is not drained" "No workable issues" "$OUT9c"
+ck_has  "fallback with empty backlog says so" "0 Backlog candidate(s) wait behind the gate; backlog fallback is on but Backlog has nothing pickable either — wait._" "$OUT9c"
 cp "$FIX/issues-main.json" "$FIX/issues-page.json"; cp "$FIX/deps-main.json" "$FIX/deps-page.json"
 
 # ---- BLOCKED-HOLD: the Planned column is drained and every certified Backlog issue is chained behind a

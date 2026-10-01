@@ -2,7 +2,7 @@
 # fleet-launch.sh — dispatch N background `/loop /auto` sessions into `claude agents`,
 # staggered so each session's first pick sees the previous session's claim.
 #
-# Usage: fleet-launch.sh [count] [duration] [epic:<ID> | team] [-- <claude flags...>]
+# Usage: fleet-launch.sh [count] [duration] [epic:<ID> | team] [backlog] [-- <claude flags...>]
 #        fleet-launch.sh stop
 #
 #   [count]     Number of /loop /auto sessions to launch (1-12). Omitted → read the
@@ -43,6 +43,15 @@
 #               PR from `branch` onto `base` (integration-pr.sh, then /pr-update from the branch).
 #               A token with no matching prepared
 #               branch launches on the checkout's own branch with a WARN — the human typed it.
+#   [backlog]   Let every session fall through to Backlog once nothing Planned/Todo is pickable
+#               (keeper ruling 2026-10-01): the dispatched prompt gains ` backlog`, so each pick runs
+#               next-candidates.sh --backlog-fallback instead of idling on PLANNED-HOLD. Planned/Todo
+#               stays strictly first at every pick. The opt-in for a day with spare usage — the
+#               default stays the gate (standards/linear-workflow.md § Stage Priorities), and /auto's
+#               headroom gate still parks near the 5h ceiling, so this changes the spending policy
+#               only. Recorded as `backlog: true` in the marker for /fleet-status and /fleet-retro.
+#               A session's mode is fixed at launch; a top-up launch with the token adds fallback
+#               sessions beside holding ones. Composes with epic:<ID> and team.
 #   [duration]  Optional fleet time budget — "10h", "10 hours", "90m", "45 minutes".
 #               Adds deadline_epoch to tmp/fleet-deadline.json; each session's /auto
 #               checks it before PICKING new work (never mid-issue), so at the deadline
@@ -79,15 +88,15 @@
 # A top-up launch carries forward the members the session registry still lists, then appends.
 #
 # Run it from the project the fleet should work on; sessions inherit the cwd.
-# Env: FLEET_PROMPT overrides the dispatched prompt (default "/loop /auto", or
-# "/loop /auto epic:<ID>" when scoped — e.g. "/loop /auto BF" to team-scope the run, though a
+# Env: FLEET_PROMPT overrides the dispatched prompt (default "/loop /auto", plus " epic:<ID>"
+# when scoped and " backlog" under the token — e.g. "/loop /auto BF" to team-scope the run, though a
 # team-wide launch over an epic recommendation is the `team` token; an override that drops a
 # launch's scope is warned about, never corrected);
 # FLEET_STAGGER_TIMEOUT seconds per wait.
 #
 # Read-write: rewrites tmp/fleet-deadline.json in the main checkout (`scope`, `members`,
-# `branch`, `base` added on a scoped launch); never moves the main checkout's HEAD and never
-# writes start.wt-source-branch; clears DEAD
+# `branch`, `base` added on a scoped launch; `backlog: true` under the token); never moves the
+# main checkout's HEAD and never writes start.wt-source-branch; clears DEAD
 # prior-run tmp/auto-state-*.json ledgers at launch — dead = absent from `claude agents --json`
 # or listed as done there; they deliberately persist from a fleet's end until the next launch
 # so /fleet-retro and the operator can examine them — retro before relaunching; dispatches
@@ -101,7 +110,7 @@ set -eo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
-  echo "usage: fleet-launch.sh [count] [duration e.g. '10h' or '10 hours'] [epic:<ID> | team] [-- <claude flags...>] | fleet-launch.sh stop" >&2
+  echo "usage: fleet-launch.sh [count] [duration e.g. '10h' or '10 hours'] [epic:<ID> | team] [backlog] [-- <claude flags...>] | fleet-launch.sh stop" >&2
   exit 1
 }
 
@@ -151,6 +160,7 @@ fi
 dur_tokens=()
 scope_token=""
 team_token=0
+backlog_token=0
 while [ $# -gt 0 ] && [ "$1" != "--" ]; do
   case "$1" in
     [Ee][Pp][Ii][Cc]:*)
@@ -158,6 +168,7 @@ while [ $# -gt 0 ] && [ "$1" != "--" ]; do
       scope_token=$(printf '%s' "${1#*:}" | tr '[:lower:]' '[:upper:]')
       [[ "$scope_token" =~ ^[A-Z0-9]+-[0-9]+$ ]] || { echo "ERROR: epic token '$1' does not name an issue (epic:BF-123)" >&2; exit 1; } ;;
     [Tt][Ee][Aa][Mm]) team_token=1 ;;
+    [Bb][Aa][Cc][Kk][Ll][Oo][Gg]) backlog_token=1 ;;
     *) dur_tokens+=("$1") ;;
   esac
   shift
@@ -361,6 +372,11 @@ if [ -n "$scope" ]; then
     '. + {scope: $s, members: $m} + (if $b != "" then {branch: $b, base: $base} else {} end)' "$marker")
   printf '%s\n' "$tmpm" > "$marker"
 fi
+if [ "$backlog_token" = 1 ]; then
+  tmpm=$(jq '. + {backlog: true}' "$marker")
+  printf '%s\n' "$tmpm" > "$marker"
+  echo "Backlog fallback: on — a session picks Backlog only once nothing Planned/Todo is pickable (Planned/Todo first at every pick; the headroom gate still parks near the 5h ceiling)"
+fi
 if [ -n "$deadline_epoch" ]; then
   tmpm=$(jq --argjson epoch "$deadline_epoch" --arg human "$deadline_human" '. + {deadline_epoch: $epoch, deadline: $human}' "$marker")
   printf '%s\n' "$tmpm" > "$marker"
@@ -398,10 +414,14 @@ if ! have_flag --permission-mode "${claude_args[@]}" && ! have_flag --dangerousl
 fi
 
 default_prompt="/loop /auto"
-[ -n "$scope" ] && default_prompt="/loop /auto epic:$scope"
+[ -n "$scope" ] && default_prompt="$default_prompt epic:$scope"
+[ "$backlog_token" = 1 ] && default_prompt="$default_prompt backlog"
 prompt="${FLEET_PROMPT:-$default_prompt}"
 if [ -n "$scope" ] && [ "$prompt" != "$default_prompt" ] && ! printf '%s' "$prompt" | grep -qi "epic:$scope"; then
   echo "WARN: FLEET_PROMPT='$prompt' does not carry epic:$scope — the sessions will NOT be scoped to the epic the marker records" >&2
+fi
+if [ "$backlog_token" = 1 ] && [ "$prompt" != "$default_prompt" ] && ! printf '%s' "$prompt" | grep -qiw "backlog"; then
+  echo "WARN: FLEET_PROMPT='$prompt' does not carry backlog — the sessions will hold on the Planned gate although the marker records the fallback" >&2
 fi
 timeout="${FLEET_STAGGER_TIMEOUT:-180}"
 wt_dir="$main_checkout/.claude/worktrees"

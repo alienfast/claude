@@ -30,6 +30,7 @@ the output anywhere `/auto` or a fleet session might read it as instructions.
 ```bash
 ~/.claude/scripts/fleet-forecast.py --team <KEY> [--sessions N] [--horizon-h H]
 ~/.claude/scripts/fleet-forecast.py --root <EPIC-ID> [--sessions N] [--horizon-h H]   # an epic-scoped fleet
+~/.claude/scripts/fleet-forecast.py --team <KEY> --backlog [--sessions N] [--horizon-h H]  # what /fleet-launch backlog would run
 ```
 
 `--root` forecasts what `/fleet-launch epic:<ID>` would run: the pool is cut to the epic's graph members
@@ -43,6 +44,11 @@ count from either source is a hard error — point at `/auto-prep` or ask for on
 12 h/issue is ignored with a `NOTE:` on stderr, because a non-fleet session set recorded as a fleet reads as a
 70-hour issue, not a slow fleet; surface the note, it means the history needs cleaning),
 `--flat` (disable estimate-point weighting of per-issue duration). `-h` documents the rest.
+
+`--backlog` simulates `/fleet-launch backlog` (keeper ruling 2026-10-01): a session with nothing Planned/Todo
+pickable takes Backlog instead of idling, Planned/Todo still first at every pick — a `BACKLOG-FALLBACK` line
+says so, `HOLD` never fires, and nothing is `WITHHELD` (an unpicked Backlog candidate is `UNREACHED` like any
+other). Run it when the question is what a spare-usage day would eat.
 
 The script fetches once (states, labels, estimates, relations), classifies fleet-eligibility with the
 same gate rules as `fleet-blockers.sh` (certified + workable state, unclaimed, non-epic, no

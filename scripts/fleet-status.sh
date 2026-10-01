@@ -12,7 +12,8 @@
 #   tmp/fleet-deadline.json            fleet_sessions (the session set) + launch_epoch + count, plus
 #                                      the deadline when the launch carried one, plus scope + the
 #                                      prep-time members snapshot (+ branch/base) when it was
-#                                      epic-scoped (fleet-launch.sh)
+#                                      epic-scoped, plus backlog: true under a `backlog` launch —
+#                                      the runway then counts with --backlog-fallback (fleet-launch.sh)
 #   epic-graph.sh (scoped fleets)      the live membership, for the shipped/remaining/added burn-down
 #   tmp/auto-state-*.json              per-session ledgers: shipped/canceled/failed, mode
 #   .claude/worktrees/ + worktree-identity/ sidecars   in-flight issues, session ownership
@@ -484,14 +485,21 @@ fi
 # ---------- runway ----------
 
 if [ "$no_runway" -eq 0 ] && [ "$have_linear" -eq 1 ] && [ -n "$team" ]; then
+  # A `backlog` launch (marker `backlog: true`) counts Backlog once nothing Planned/Todo is pickable —
+  # the same flag every session's pick passes, so the runway is what the fleet will actually take.
+  fb_flag=""
+  if [ -s "$marker" ] && [ "$(jq -r '.backlog // false' "$marker" 2>/dev/null)" = "true" ]; then
+    fb_flag="--backlog-fallback"
+  fi
   # A scoped fleet's runway is the epic's: the same --root ranking every session picks from.
   if [ -n "$scope" ]; then
-    ranking=$("$SCRIPT_DIR/next-candidates.sh" --root "$scope" --label specified --limit 100 2>/dev/null || true)
+    ranking=$("$SCRIPT_DIR/next-candidates.sh" --root "$scope" --label specified --limit 100 $fb_flag 2>/dev/null || true)
     where="epic $scope"
   else
-    ranking=$("$SCRIPT_DIR/next-candidates.sh" --team "$team" --label specified --limit 100 2>/dev/null || true)
+    ranking=$("$SCRIPT_DIR/next-candidates.sh" --team "$team" --label specified --limit 100 $fb_flag 2>/dev/null || true)
     where="$team"
   fi
+  [ -n "$fb_flag" ] && where="$where (backlog fallback on)"
   n=$(printf '%s\n' "$ranking" | grep -c '^[0-9]*\. \*\*' || true)
   printf '### Runway\n\n**%s** unblocked certified candidate(s) remain in %s.\n' "$n" "$where"
   printf '%s\n' "$ranking" | grep '^_' | sed 's/^/  /' || true

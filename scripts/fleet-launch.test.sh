@@ -341,6 +341,27 @@ ck_lacks "crashed sequence not noted"    "running alongside" "$WORK/out"
 ck "crashed sequence protects no ledger" "no" "$([ -f "$REPO/tmp/auto-state-cafe0002.json" ] && echo yes || echo no)"
 rm -f "$REPO/tmp/fleet-sequence-sq-1.json" "$REPO/tmp/fleet-sequence-sq-7.json" "$REPO"/tmp/auto-state-*.json
 
+# case 17: the `backlog` token (keeper ruling 2026-10-01) rides the prompt — composing with an epic scope —
+# and the marker records it for the observers; a launch without it records nothing, and a FLEET_PROMPT
+# override that drops it is warned about like a dropped scope. No recommendation on disk, so a bare
+# count launches team-wide without the SCOPE-CONFIRM stop.
+rm -f "$REPO/tmp/fleet-recommendation.json"
+: > "$WORK/dispatches"
+ck "backlog launch exits 0"               "0" "$(run 1 backlog)"
+ck_has "backlog prompt"                   "/loop /auto backlog" "$WORK/dispatches"
+ck "backlog marker"                       "true" "$(jq -r '.backlog' "$REPO/tmp/fleet-deadline.json")"
+ck_has "backlog announced"                "Backlog fallback: on" "$WORK/out"
+: > "$WORK/dispatches"
+ck "backlog with epic exits 0"            "0" "$(run 1 epic:EP-3 BACKLOG)"
+ck_has "backlog composes with epic"       "/loop /auto epic:EP-3 backlog" "$WORK/dispatches"
+ck "backlog with epic marker"             "EP-3 true" "$(jq -r '"\(.scope) \(.backlog)"' "$REPO/tmp/fleet-deadline.json")"
+: > "$WORK/dispatches"
+ck "plain launch exits 0"                 "0" "$(run 1)"
+ck "plain launch records no backlog"      "" "$(jq -r '.backlog // empty' "$REPO/tmp/fleet-deadline.json")"
+ck_lacks "plain prompt carries no backlog" "backlog" "$WORK/dispatches"
+ck "override without backlog exits 0"     "0" "$(FLEET_PROMPT='/loop /auto EP' run 1 backlog)"
+ck_has "override without backlog warned"  "does not carry backlog" "$WORK/out"
+
 echo
 echo "$PASS passed / $FAIL failed"
 [ "$FAIL" -eq 0 ]
