@@ -427,18 +427,39 @@ if [ -n "$fc_entries" ]; then
       | awk '{k=$1" "$2; s[k]=s[k] ? s[k] "," $3 : $3} END {for (e in s) print e, s[e]}' | sort)
     while read -r id kind keys; do
       [ -n "$id" ] || continue
-      st=$(linear-cli api query "query { issue(id: \"$id\") { state { name type } } }" 2>/dev/null \
-        | jq -r '.data.issue.state | [.type, .name] | @tsv' 2>/dev/null || true)
+      st=$(linear-cli api query "query { issue(id: \"$id\") { state { name type } labels { nodes { name } } } }" 2>/dev/null \
+        | jq -r '.data.issue | [.state.type, .state.name, ([.labels.nodes[]?.name] | join(","))] | @tsv' 2>/dev/null || true)
       s_type=$(printf '%s' "$st" | cut -f1)
       s_name=$(printf '%s' "$st" | cut -f2)
+      s_labels=$(printf '%s' "$st" | cut -f3)
       if [ -z "$s_type" ] || [ "$s_type" = "null" ]; then
         printf -- '- %s — recorded %s (session %s); Linear state unavailable\n' "$id" "$kind" "$keys"
       elif [ "$kind" = "failed" ]; then
         case "$s_type" in
           completed) printf -- '- %s — failed (session %s), **since shipped**: now [%s] — resolved by a later session or an interactive pickup ✓\n' "$id" "$keys" "$s_name" ;;
           canceled)  printf -- '- %s — failed (session %s), since canceled: [%s]\n' "$id" "$keys" "$s_name" ;;
-          started)   printf -- '- %s — failed (session %s), now [%s] — a retry may be in flight\n' "$id" "$keys" "$s_name" ;;
-          *)         printf -- '- %s — ⚠️ failed (session %s), still [%s] — unresolved; look for a `stalled` label and a preserved worktree\n' "$id" "$keys" "$s_name" ;;
+          *)
+            # A `failed` ledger row's outward marking depends on how the session stopped — a stall carries `stalled` (In Progress), a human-gated
+            # park carries `human` / `needs decision` (Planned, unassigned) — so the row reads the labels instead of telling the operator to look
+            # for one. The worktree check is the recovery signal: a parked or stalled issue with a preserved worktree holds finished or partial work
+            # nothing else surfaces (BF-2329 sat parked `human` with four reviewed files staged while this row said "look for a `stalled` label").
+            wt_dir="$main_checkout/.claude/worktrees/$(printf '%s' "$id" | tr '[:upper:]' '[:lower:]')"
+            if [ -d "$wt_dir" ]; then
+              wt_note="**worktree preserved at \`$wt_dir\` — finished or partial work to recover**"
+            else
+              wt_note="no preserved worktree"
+            fi
+            case ",$s_labels," in
+              *,stalled,*)          mark='`stalled`, abandoned mid-flight — resume or release' ;;
+              *",needs decision,"*) mark='parked `needs decision`' ;;
+              *,human,*)            mark='parked `human`' ;;
+              *)                    mark="" ;;
+            esac
+            if [ -z "$mark" ] && [ "$s_type" = "started" ]; then
+              printf -- '- %s — failed (session %s), now [%s] — a retry may be in flight\n' "$id" "$keys" "$s_name"
+            else
+              printf -- '- %s — ⚠️ failed (session %s), still [%s] — %s; %s\n' "$id" "$keys" "$s_name" "${mark:-unresolved, no routing label}" "$wt_note"
+            fi ;;
         esac
       else
         case "$s_type" in

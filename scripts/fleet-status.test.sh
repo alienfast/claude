@@ -337,6 +337,38 @@ run_fs --no-runway
 ck "clean exit without linear-cli" "0" "$RC"
 ck_has "  burn-down skipped without linear-cli" "_Member burn-down skipped — linear-cli unavailable._" "$OUT"
 
+echo "== 18. failed rows read the issue's routing label and surface a preserved worktree"
+# Three `failed` ledger entries, three outward markings: a human-gated park (Planned, `human`) whose worktree still holds
+# the work, a genuine stall (In Progress, `stalled`) with no worktree, and an In Progress issue carrying neither label.
+write_marker $((NOW - 500)) $((NOW + 7230))
+jq '.fleet_sessions = ["sess-p"]' "$REPO/tmp/fleet-deadline.json" > "$ROOT/m.tmp" && mv "$ROOT/m.tmp" "$REPO/tmp/fleet-deadline.json"
+jq -n '{pid: 999999999, pidStart: "never", status: "active", shipped: [], canceled: [], failed: ["XX-4","XX-6","XX-7"], reviewBlocks: 3}' \
+  > "$REPO/tmp/auto-state-sess-p.json"
+mkdir -p "$REPO/.claude/worktrees/xx-4"
+cat > "$STUB/linear-cli" <<'EOF'
+#!/bin/bash
+case "${1:-} ${2:-}" in
+  "api query")
+    case "${3:-}" in
+      *XX-4*) echo '{"data":{"issue":{"state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"},{"name":"human"}]}}}}' ;;
+      *XX-6*) echo '{"data":{"issue":{"state":{"name":"In Progress","type":"started"},"labels":{"nodes":[{"name":"specified"},{"name":"stalled"}]}}}}' ;;
+      *XX-7*) echo '{"data":{"issue":{"state":{"name":"In Progress","type":"started"},"labels":{"nodes":[{"name":"specified"}]}}}}' ;;
+      *) exit 1 ;;
+    esac ;;
+  "issues list") echo '[]' ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x "$STUB/linear-cli"
+run_fs --no-runway
+ck "clean exit" "0" "$RC"
+ck_has "  park row names its label, not a stalled hint" '- XX-4 — ⚠️ failed (session sess-p), still [Planned] — parked `human`;' "$OUT"
+ck_has "  park row surfaces the preserved worktree as a recovery" 'worktree preserved at' "$OUT"
+ck_has "  recovery wording present" 'finished or partial work to recover' "$OUT"
+ck_has "  stalled row reads the label" '- XX-6 — ⚠️ failed (session sess-p), still [In Progress] — `stalled`, abandoned mid-flight — resume or release; no preserved worktree' "$OUT"
+ck_has "  unlabeled in-progress row stays a possible retry" '- XX-7 — failed (session sess-p), now [In Progress] — a retry may be in flight' "$OUT"
+ck_lacks "  generic look-for-stalled hint gone" 'look for a `stalled` label' "$OUT"
+
 echo ""
 echo "$PASS passed / $FAIL failed"
 [ "$FAIL" -eq 0 ]
