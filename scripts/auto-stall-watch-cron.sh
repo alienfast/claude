@@ -37,9 +37,10 @@ if [ -n "$missing" ]; then
   exit 1
 fi
 
-result=$("$HOME/.claude/scripts/auto-stall-watch.sh" --json 2>&1)
+result=$("$HOME/.claude/scripts/auto-stall-watch.sh" --json --retire 2>&1)
 count=$(printf '%s' "$result" | jq -r '.stalled | length' 2>/dev/null)
 in_scope=$(printf '%s' "$result" | jq -r '.in_scope // 0' 2>/dev/null)
+retired=$(printf '%s' "$result" | jq -r '[.retired[]? | .id] | join(" ")' 2>/dev/null)
 
 # A detector whose output does not parse has NOT reported zero stalls — logging "0 flagged" on a parse
 # failure is exactly how the 2026-08-17 schema-drift blindness stayed invisible (BF-1226).
@@ -55,8 +56,8 @@ if ! [[ "$count" =~ ^[0-9]+$ ]]; then
 fi
 
 {
-  echo "=== stall-watch $(date -u +%Y-%m-%dT%H:%M:%SZ) — $count flagged, $in_scope in scope ==="
-  [ "$count" != "0" ] && printf '%s\n' "$result"
+  echo "=== stall-watch $(date -u +%Y-%m-%dT%H:%M:%SZ) — $count flagged, $in_scope in scope${retired:+, retired: $retired} ==="
+  if [ "$count" != "0" ] || [ -n "$retired" ]; then printf '%s\n' "$result"; fi
   echo
 } >> "$LOG" 2>&1
 

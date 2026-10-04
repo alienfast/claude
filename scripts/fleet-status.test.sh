@@ -161,6 +161,8 @@ ck_lacks "  no stalled sweep without linear-cli" "Needs attention" "$OUT"
 # `claude agents --json` stub. Shape re-snapshotted from the live feed 2026-08-25: `id` is the
 # 8-char short id that matches the ledger filename key, `pid` is present on only some rows, and
 # `state` can be null — the fixture keeps all three properties because the join depends on them.
+# Re-measured 2026-10-04: every LIVE row carries `status` (idle|busy); the row `claude stop` leaves
+# behind has neither `status` nor `pid` (case 15 pins both).
 write_agents() { # write_agents <json-array>
   printf '%s' "$1" > "$ROOT/agents.json"
   printf '#!/bin/bash\n[ "${1:-}" = "agents" ] || exit 1\ncat %s\n' "$ROOT/agents.json" > "$STUB/claude"
@@ -170,7 +172,7 @@ write_agents() { # write_agents <json-array>
 echo "== 9. registry present — a bogus recorded pid does NOT mean dead"
 write_marker $((NOW - 500)) $((NOW + 3600))
 write_agents '[{"id":"sess-a","cwd":"/x","kind":"background","sessionId":"sess-a-full","name":"n","state":"working","pid":111,"status":"busy"},
-               {"id":"sess-b","cwd":"/x","kind":"background","sessionId":"sess-b-full","name":"n","state":null}]'
+               {"id":"sess-b","cwd":"/x","kind":"background","sessionId":"sess-b-full","name":"n","state":null,"status":"idle"}]'
 run_fs --no-runway
 ck "clean exit" "0" "$RC"
 # sess-b's ledger pid is 999999999 and has never existed. Pre-fix this row read `dead` and raised
@@ -288,6 +290,21 @@ run_fs --no-runway
 ck "clean exit" "0" "$RC"
 ck_has "  done row reads dead"                "| sess-b | dead (ended) | active" "$OUT"
 ck_has "  and the stranded-claim flag fires"  'Session sess-b reads `active` but its process is gone' "$OUT"
+# The row `claude stop` leaves behind (measured 2026-10-04): state unchanged, `status` and `pid` both gone, while the
+# live rows beside it carry `status`. The same shape in a registry where NO row carries `status` is an older schema,
+# not a death — it must read live.
+jq -n '{pid: 1, pidStart: "x", status: "drained", shipped: ["XX-9"], canceled: [], failed: [], reviewBlocks: 0}' \
+  > "$REPO/tmp/auto-state-sess-c.json"
+write_agents '[{"id":"sess-a","cwd":"/x","kind":"background","sessionId":"sess-a-full","name":"n","state":"working","status":"idle","pid":5},
+               {"id":"sess-c","cwd":"/x","kind":"background","sessionId":"sess-c-full","name":"n","state":"working"}]'
+run_fs --no-runway
+ck_has "  stopped row (no status/pid beside live rows) reads dead" "| sess-c | dead (ended) | drained" "$OUT"
+ck_has "  the live row beside it is ALIVE"                         "| sess-a | ALIVE (working) |" "$OUT"
+write_agents '[{"id":"sess-a","cwd":"/x","kind":"background","sessionId":"sess-a-full","name":"n","state":"working"},
+               {"id":"sess-c","cwd":"/x","kind":"background","sessionId":"sess-c-full","name":"n","state":"working"}]'
+run_fs --no-runway
+ck_has "  status-less row in a status-less schema reads live"      "| sess-c | ALIVE (working) | drained" "$OUT"
+rm -f "$REPO/tmp/auto-state-sess-c.json"
 
 echo "== 16. an epic-scoped marker — scope line, and the member burn-down against the prep snapshot"
 # fleet-launch.sh epic:<ID> records scope, the prep-time members snapshot, and the integration branch.

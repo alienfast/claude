@@ -52,6 +52,12 @@ mk_agents_legacy() { # <file> <id> <sessionId> — pre-2026-08-17 schema: id pre
 EOF
 }
 
+mk_agents_bg() { # <file> <id> <sessionId> [status] [state] — a live `claude --bg` row as listed 2026-10-04
+  cat > "$1" <<EOF
+[{"pid":1,"id":"$2","cwd":"$TMP/repo","kind":"background","startedAt":1,"sessionId":"$3","name":"loop auto backlog","status":"${4:-idle}","state":"${5:-working}"}]
+EOF
+}
+
 mk_state() { printf '{"status":"%s","reason":"","shipped":[]}\n' "$2" > "$TMP/repo/tmp/auto-state-$1.json"; }
 
 # Every tail builder takes the age (seconds before NOW) of its LAST timestamped record.
@@ -237,6 +243,32 @@ mk_agents_legacy "$TMP/agents.json" "dddddddd" "dddddddd-0000-0000-0000-00000000
 got=$("$SCRIPT" --agents-json "$TMP/agents.json" --now "$NOW" --json 2>/dev/null | jq -r 'if (.stalled | length) == 0 then "none" else .stalled[0].verdict end')
 if [ "$got" = "stalled-quota" ]; then echo "  PASS  legacy-schema row still flagged (id fallback)"; PASS=$((PASS+1));
 else echo "  FAIL  legacy-schema row still flagged — expected stalled-quota, got '$got'"; FAIL=$((FAIL+1)); fi
+
+# ---- the retire backstop (--retire): a drained run the registry still lists live and idle is stopped and removed ----
+SB="$TMP/bin"; mkdir -p "$SB"
+printf '#!/usr/bin/env bash\necho "$*" >> "%s/claude-calls"\nexit 0\n' "$TMP" > "$SB/claude"; chmod +x "$SB/claude"
+retire_case() { # <name> <ledger-status> <row-status> <silence-seconds> <extra-args...> <want: "retired"|"none">
+  local name="$1" ledger="$2" rstatus="$3" age="$4"; shift 4
+  local want="${*: -1}"; set -- "${@:1:$#-1}"
+  local id="aaaaaaaa" sid="aaaaaaaa-0000-0000-0000-000000000000" got
+  rm -f "$PROJ"/*.jsonl "$TMP/repo/tmp"/auto-state-*.json; : > "$TMP/claude-calls"
+  tail_quota "$age" > "$PROJ/$sid.jsonl"; touch_ago "$age" "$PROJ/$sid.jsonl"
+  mk_state "$id" "$ledger"
+  mk_agents_bg "$TMP/agents.json" "$id" "$sid" "$rstatus"
+  got=$(PATH="$SB:$PATH" "$SCRIPT" --agents-json "$TMP/agents.json" --now "$NOW" --json "$@" 2>/dev/null \
+        | jq -r 'if ((.retired // []) | length) == 0 then "none" else "retired" end')
+  [ "$got" = "retired" ] && [ "$(grep -c "^stop $id$" "$TMP/claude-calls")$(grep -c "^rm $id$" "$TMP/claude-calls")" != "11" ] && got="retired-without-calls"
+  [ "$got" = "none" ] && [ -s "$TMP/claude-calls" ] && got="none-but-called"
+  if [ "$got" = "$want" ]; then echo "  PASS  $name"; PASS=$((PASS+1));
+  else echo "  FAIL  $name — expected '$want', got '$got'"; FAIL=$((FAIL+1)); fi
+}
+retire_case "drained, idle, 20m silent, --retire     -> retired (stop + rm)"  drained idle 1200 --retire retired
+retire_case "halted, idle, 20m silent, --retire      -> retired"              halted  idle 1200 --retire retired
+retire_case "drained, idle, 3m silent, --retire      -> left alone (floor)"   drained idle  180 --retire none
+retire_case "drained, BUSY row, 20m, --retire        -> left alone"           drained busy 1200 --retire none
+retire_case "drained, idle, 20m, no --retire         -> left alone"           drained idle 1200 none
+retire_case "active ledger, idle, 20m, --retire      -> left alone (stall)"   active  idle 1200 --retire none
+retire_case "drained, idle, 6m, --retire-min 5       -> retired (floor moved)" drained idle  360 --retire --retire-min 5 retired
 
 echo ""
 echo "  $PASS passed, $FAIL failed"

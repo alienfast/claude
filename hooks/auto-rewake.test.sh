@@ -94,9 +94,23 @@ ck " 1 ... carrying the armed delay"                           1800 "$(dec "$E" 
 f=$(tfile); { rec_loop $((B-30000)); rec_fire $((B-22)); rec_loop $((B-22)); rec_wake "$B" 1800; rec_result $((B+1)); rec_text $((B+3)); } > "$f"
 ck " 2 lost-wakeup shape, summary not yet written -> wait"     wait "$(dec "$(ev Stop "$f" s-two)" .action $((B+5)))"
 
-# 3. The loop ended on purpose: silence is its contract.
+# 3. The loop ended on purpose: silence is its contract — and with a terminal ledger the session is retired (header, THE
+# THIRD JOB). The ledger is read from the event's cwd (`/work` in ev(), which does not exist, so the plain case has none).
 f=$(tfile); { rec_loop $((B-300)); rec_work $((B-10)); rec_wake_stop "$B"; rec_text $((B+2)); } > "$f"
-ck " 3 ScheduleWakeup(stop:true) -> skip loop-ended"           loop-ended "$(dec "$(ev Stop "$f" s-three)" .reason)"
+ck " 3 ScheduleWakeup(stop:true), no ledger -> skip loop-ended" loop-ended "$(dec "$(ev Stop "$f" s-three)" .reason)"
+R="$TMP/repo"; mkdir -p "$R/tmp"
+led() { printf '{"status":"%s","shipped":[]}' "$2" > "$R/tmp/auto-state-$1.json"; }
+led s-three drained
+ck " 3a ... drained ledger -> retire"                           retire "$(dec "$(ev Stop "$f" s-three "{\"cwd\":\"$R\"}")" .action)"
+ck " 3a ... naming the ledger status"                           drained "$(dec "$(ev Stop "$f" s-three "{\"cwd\":\"$R\"}")" .ledger)"
+led s-three halted
+ck " 3b ... halted ledger -> retire"                            retire "$(dec "$(ev Stop "$f" s-three "{\"cwd\":\"$R\"}")" .action)"
+led s-three active
+ck " 3c ... active ledger (stopped without finalizing) -> skip" loop-ended "$(dec "$(ev Stop "$f" s-three "{\"cwd\":\"$R\"}")" .reason)"
+led s-three drained
+f=$(tfile); { rec_loop $((B-300)); rec_human $((B-20)); rec_work $((B-10)); rec_wake_stop "$B"; rec_text $((B+2)); } > "$f"
+ck " 3d ... operator prompt in the turn -> skip human-override" human-override "$(dec "$(ev Stop "$f" s-three "{\"cwd\":\"$R\"}")" .reason)"
+rm -f "$R/tmp/auto-state-s-three.json"
 
 # 4-5. Not a self-paced /loop /auto session.
 f=$(tfile); { rec_plain $((B-60)); rec_work $((B-10)); rec_text "$B"; } > "$f"
@@ -315,6 +329,29 @@ ck "30 ... nothing is said to the model"                       0 "$(wc -c < "$TM
 ck "30 ... it waited out the grace, not zero"                  1 "$(grep -c 's-e2e-ze Stop wait kind=stop wait_s=7$' "$LOGS/auto-rewake.log")"
 ck "30 ... the log says it stood down"                         1 "$(grep -c 's-e2e-ze Stop stood-down kind=stop records_since=' "$LOGS/auto-rewake.log")"
 ck "30 ... no rewake was counted"                              0 "$(get_state s-e2e-zero stop_rewakes)"
+
+# 40-41. Retiring a finished loop for real: a stub `claude` records the stop and rm the hook issues.
+SB="$TMP/bin"; mkdir -p "$SB"
+printf '#!/usr/bin/env bash\necho "$*" >> "%s/claude-calls"\nexit 0\n' "$TMP" > "$SB/claude"; chmod +x "$SB/claude"
+led s-e2e-re drained
+f=$(tfile); { rec_loop $((B-300)); rec_wake_stop "$B"; rec_text $((B+2)); rec_stopsum $((B+3)); } > "$f"
+: > "$TMP/claude-calls"
+PATH="$SB:$PATH" AUTO_REWAKE_RETIRE_DELAY=1 run_hook "$(ev Stop "$f" s-e2e-retire "{\"cwd\":\"$R\"}")" 1 900
+ck "40 drained loop end -> exit 0"                             0 "$RC"
+ck "40 ... nothing is said to the model"                       0 "$(wc -c < "$TMP/err" | tr -d ' ')"
+ck "40 ... the session is stopped"                             1 "$(grep -c '^stop s-e2e-re$' "$TMP/claude-calls")"
+ck "40 ... and removed from the registry"                      1 "$(grep -c '^rm s-e2e-re$' "$TMP/claude-calls")"
+ck "40 ... the log records the retire"                         1 "$(grep -c 's-e2e-re Stop retired ledger=drained stop_rc=0 rm_rc=0' "$LOGS/auto-rewake.log")"
+# A turn that follows during the delay — an operator attached, a notification landed — stands the retire down.
+f=$(tfile); { rec_loop $((B-300)); rec_wake_stop "$B"; rec_text $((B+2)); rec_stopsum $((B+3)); } > "$f"
+: > "$TMP/claude-calls"
+( sleep 4; rec_cont "$(date +%s)" >> "$f" ) &
+PATH="$SB:$PATH" AUTO_REWAKE_RETIRE_DELAY=7 run_hook "$(ev Stop "$f" s-e2e-retire "{\"cwd\":\"$R\"}")" 1 900
+wait
+ck "41 a turn during the delay -> exit 0, nothing stopped"     0 "$RC"
+ck "41 ... no claude call was made"                            0 "$(wc -c < "$TMP/claude-calls" | tr -d ' ')"
+ck "41 ... the log says it stood down"                         1 "$(grep -c 's-e2e-re Stop stood-down kind=retire records_since=' "$LOGS/auto-rewake.log")"
+rm -f "$R/tmp/auto-state-s-e2e-re.json"
 
 echo "auto-rewake.sh — registration (../settings.json):"
 # Both fields are load-bearing and both fail silently. Measured 2026-09-19: without asyncRewake the exit code wakes

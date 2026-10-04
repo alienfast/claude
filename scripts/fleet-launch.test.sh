@@ -164,6 +164,30 @@ ck "loop ledger kept"                    "yes" "$([ -f "$REPO/tmp/auto-state-ab0
 ck "unlisted ledger cleared"             "no" "$([ -f "$REPO/tmp/auto-state-dead0001.json" ] && echo yes || echo no)"
 ck_has "clearing reported"               "Cleared prior-run ledger(s): dead0001" "$WORK/out"
 
+# ---- case 8b: the row `claude stop` leaves behind is an ended session; a status-less row in a status-less schema is not ----
+# Measured 2026-10-04: a stopped session stays listed with its state unchanged and the `status`/`pid` keys gone, while
+# every live row carries `status`. The second launch has no `status` anywhere — the pre-2026-10 shape — so the same
+# key-less row must read alive and its ledger must be kept.
+jq -n '{fleet_sessions: ["ab000001", "ab000003"], count: 2, launch_epoch: 1}' > "$REPO/tmp/fleet-deadline.json"
+echo '{"status":"active","shipped":["XX-1"]}' > "$REPO/tmp/auto-state-ab000001.json"
+echo '{"status":"drained","shipped":["XX-4"]}' > "$REPO/tmp/auto-state-ab000003.json"
+cat > "$WORK/agents.json" <<'EOF'
+[{"id":"ab000001","kind":"background","sessionId":"ab000001-0000-4000-8000-000000000000","state":"working","status":"idle","pid":11},
+ {"id":"ab000003","kind":"background","sessionId":"ab000003-0000-4000-8000-000000000000","state":"working"}]
+EOF
+: > "$WORK/dispatches"
+ck "stopped-row launch exits 0"          "0" "$(run 1)"
+ck "stopped-row ledger cleared"          "no" "$([ -f "$REPO/tmp/auto-state-ab000003.json" ] && echo yes || echo no)"
+ck "live-row ledger kept"                "yes" "$([ -f "$REPO/tmp/auto-state-ab000001.json" ] && echo yes || echo no)"
+echo '{"status":"drained","shipped":["XX-5"]}' > "$REPO/tmp/auto-state-ab000005.json"
+cat > "$WORK/agents.json" <<'EOF'
+[{"id":"ab000001","kind":"background","sessionId":"ab000001-0000-4000-8000-000000000000","state":"working"},
+ {"id":"ab000005","kind":"background","sessionId":"ab000005-0000-4000-8000-000000000000","state":"working"}]
+EOF
+: > "$WORK/dispatches"
+ck "status-less schema launch exits 0"   "0" "$(run 1)"
+ck "status-less row's ledger kept"       "yes" "$([ -f "$REPO/tmp/auto-state-ab000005.json" ] && echo yes || echo no)"
+
 # ---- case 9: an unreadable --bg output warns and launches anyway ----
 cat > "$BIN/claude" <<EOF
 #!/usr/bin/env bash

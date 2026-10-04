@@ -432,6 +432,14 @@ reset
 echo listed-blocked > "$WORK/outcome-BF-1"
 ck "blocked exits 1"                 "1" "$(run BF-1 BF-2)"
 ck_has "blocked timeout names the state" "BF-1: session ab000001 still blocked after 1s — waiting on a decision only a human can give" "$WORK/out"
+# The row `claude stop` leaves behind (measured 2026-10-04): state unchanged, `status` and `pid` gone, beside a live row
+# that carries `status`. The stub's dispatch row never carries `status`, so the pre-seeded live row is what makes the
+# shape read as stopped; without it the same row is the older status-less schema and reads as working.
+reset
+printf '[{"id":"zzzzzzzz","kind":"background","sessionId":"zzzzzzzz-0000-4000-8000-000000000000","state":"working","status":"idle","pid":1}]\n' > "$WORK/agents.json"
+echo listed-working > "$WORK/outcome-BF-1"
+ck "stopped-shape exits 1"           "1" "$(run BF-1 BF-2)"
+ck_has "stopped-shape ends the wait as stopped" "BF-1 ended without a ledger — the registry lists session ab000001 as stopped" "$WORK/out"
 export FLEET_SEQUENCE_ISSUE_TIMEOUT=5
 
 # ---- the detached runner leads a session of its own, outside the launching shell's process group ----

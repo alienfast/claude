@@ -123,15 +123,20 @@ done
 # `claude agents` every session embeds the fleet-root pid, and in a daemon-backed fleet that is the
 # daemon itself (pid 55032 on 2026-08-29, alive across every fleet since 2026-08-28) — the pid test
 # read all 14 prior-run ledgers as alive, cleared none, and pulled launch_epoch back 5h19m to a
-# targeted run's ledger. The registry also lists ENDED background sessions (state "done"), so listed
-# is not alive. Empty when `claude agents` is unavailable, and then nothing is cleared.
+# targeted run's ledger. The registry also lists ENDED background sessions, so listed is not alive:
+# a done/failed/stopped state, or the row `claude stop` leaves behind — state unchanged, `status` and
+# `pid` both gone (fleet-status.sh registry_row has the measurements; the test is the same here).
+# Empty when `claude agents` is unavailable, and then nothing is cleared.
 agents_json=$(claude agents --json 2>/dev/null || true)
 printf '%s' "$agents_json" | jq -e 'type == "array"' >/dev/null 2>&1 || agents_json=""
-registry_alive() { # <run key> — true when the registry lists it (by id, or the sessionId prefix) and not as done
+registry_alive() { # <run key> — true when the registry lists it (by id, or the sessionId prefix) and not as ended
   [ -n "$agents_json" ] || return 1
-  printf '%s' "$agents_json" | jq -e --arg k "$1" \
-    'map(select(((.id // (.sessionId // "" | split("-")[0])) == $k) and ((.state // "running") != "done"))) | length > 0' \
-    >/dev/null 2>&1
+  printf '%s' "$agents_json" | jq -e --arg k "$1" '
+    any(.[]; has("status")) as $carries_status
+    | map(select((.id // (.sessionId // "" | split("-")[0])) == $k))
+    | map(select((((.state // "running") | IN("done","failed","stopped")) | not)
+                 and (($carries_status and (has("status") | not) and (has("pid") | not)) | not)))
+    | length > 0' >/dev/null 2>&1
 }
 
 main_checkout=$(git worktree list --porcelain 2>/dev/null | awk '/^worktree /{print substr($0,10); exit}')

@@ -25,6 +25,18 @@
 # detection: turning a silent multi-hour loss into an alert the operator can act on with one `claude attach`.
 # If a scriptable send ever lands, resume belongs here behind an explicit opt-in flag, never as a default.
 #
+# THE ONE ACTION IT TAKES — RETIRING A FINISHED RUN (--retire, passed by the cron wrapper). A loop that ends on purpose
+# (ledger `drained`/`halted`, ScheduleWakeup stop:true) never leaves the registry by itself: the harness settles a `--bg`
+# session only when its launch prompt's turn ends, so a loop's row keeps its last agent-view state, and the daemon's
+# 60-minute idle retirement is the only other exit. Measured 2026-10-04: three drained fleet sessions sat listed as
+# `working`/`blocked` for hours, that retirement never fired, and a merge gate that reads the registry waited on them all
+# morning. hooks/auto-rewake.sh now retires the session at its loop end; this is the backstop for a hook that missed
+# (not registered, killed, or a loop that ended before the hook learned to). The verdict must come from the LEDGER, the
+# row must still be live and idle in the registry, and the session must have been silent RETIRE_MIN (10m) — an operator
+# attached and typing leaves timestamped records, so one is never cut off. Retiring is `claude stop <id>` then
+# `claude rm <id>`: measured that day, `stop` leaves the row listed with `status`/`pid` gone and `rm` removes it while
+# the transcript stays on disk for /fleet-retro.
+#
 # SCOPING: an agent is in scope iff its cwd carries a matching /auto run-state file — NEVER by the agent
 # list's `kind` field, and never by an `id` field. Measured 2026-08-17: the live `claude agents --json`
 # rows carry NO `id` at all and report `kind:"interactive"` for every session, fleet agents included. The
@@ -50,6 +62,8 @@ set -uo pipefail
 THRESHOLD_MIN=25
 NOTIFY=0
 AS_JSON=0
+RETIRE=0         # --retire: end a session whose ledger says its run is over and which the registry still lists live
+RETIRE_MIN=10
 AGENTS_JSON=""   # test seam: read the agent list from a file instead of shelling out to `claude`
 NOW=""           # test seam: fixed clock
 
@@ -58,6 +72,8 @@ while [ $# -gt 0 ]; do
     --threshold-min) THRESHOLD_MIN="$2"; shift 2 ;;
     --notify)        NOTIFY=1; shift ;;
     --json)          AS_JSON=1; shift ;;
+    --retire)        RETIRE=1; shift ;;
+    --retire-min)    RETIRE_MIN="$2"; shift 2 ;;
     --agents-json)   AGENTS_JSON="$2"; shift 2 ;;
     --now)           NOW="$2"; shift 2 ;;
     -h|--help)
@@ -227,9 +243,15 @@ else
   agents=$(claude agents --json 2>/dev/null)
 fi
 
+CLAUDE_BIN=""
+if [ "$RETIRE" = "1" ]; then
+  CLAUDE_BIN=$(command -v claude 2>/dev/null) || { echo "ERROR: --retire needs claude on PATH (PATH=$PATH)" >&2; exit 1; }
+fi
+
 rows=""
+retired=""
 INSCOPE=0
-while IFS=$'\t' read -r id sid cwd name; do
+while IFS=$'\t' read -r id sid cwd name live; do
   [ -n "$sid" ] || continue
   [ -n "$id" ] || id="${sid%%-*}"
   transcript=$(find_transcript "$sid")
@@ -251,21 +273,44 @@ while IFS=$'\t' read -r id sid cwd name; do
   case "$verdict" in
     stalled|stalled-quota)
       rows="${rows}${id}"$'\t'"${verdict}"$'\t'"$(( silence / 60 ))"$'\t'"${detail}"$'\t'"${cwd}"$'\t'"${name}"$'\n' ;;
+    terminal)
+      # RETIRE BACKSTOP (header). Only a LEDGER-terminal run (`state=<status>`, never the tag alone), only a row the
+      # registry still lists live and idle, and only after RETIRE_MIN of silence — an operator typing at a drained
+      # session leaves timestamped records, so this never cuts one off.
+      if [ "$RETIRE" = "1" ] && [ "$live" = "idle" ] && [ "$silence" -ge $(( RETIRE_MIN * 60 )) ]; then
+        case "$detail" in
+          state=*)
+            "$CLAUDE_BIN" stop "$id" >/dev/null 2>&1; rc_stop=$?
+            "$CLAUDE_BIN" rm "$id" >/dev/null 2>&1; rc_rm=$?
+            retired="${retired}${id}"$'\t'"${detail#state=}"$'\t'"$(( silence / 60 ))"$'\t'"${rc_stop}/${rc_rm}"$'\n' ;;
+        esac
+      fi ;;
   esac
 # The id fallback happens in jq, not the shell: tab is IFS whitespace, so an EMPTY leading @tsv column
 # collapses and shifts every later field one left in `read` (id would silently become the sessionId).
-done < <(printf '%s' "$agents" | jq -r '.[] | select(.sessionId) | [(.id // (.sessionId | split("-")[0])), .sessionId, .cwd, (.name // "-")] | @tsv' 2>/dev/null)
+# `live` is the registry's own word on the row: `idle` only for a listed session with a live worker (`status`
+# present) sitting at its prompt and not in a terminal state — the one shape the retire backstop may act on.
+done < <(printf '%s' "$agents" | jq -r '.[] | select(.sessionId)
+  | [(.id // (.sessionId | split("-")[0])), .sessionId, .cwd, (.name // "-"),
+     (if (.status == "idle") and (((.state // "") | IN("done","failed","stopped")) | not) then "idle" else "-" end)] | @tsv' 2>/dev/null)
 
 # The JSON shape is an OBJECT, not a bare array: `in_scope` is the blindness canary's input — it
 # distinguishes "no /auto session is stalled" from "the watcher matched NOTHING", which print
 # identically otherwise and did so through the 2026-08-17 schema-drift blindness (BF-1226). Consumers
 # read `.stalled`; the cron wrapper reads both fields and its jq failure is an ERROR, never "0 flagged".
 if [ "$AS_JSON" = "1" ]; then
-  printf '%s' "$rows" | jq -Rs --argjson inscope "$INSCOPE" '{in_scope: $inscope,
-    stalled: (split("\n") | map(select(length > 0) | split("\t"))
-    | map({id: .[0], verdict: .[1], silent_min: (.[2] | tonumber), detail: .[3], cwd: .[4], name: .[5]}))}'
+  jq -n --argjson inscope "$INSCOPE" --arg rows "$rows" --arg retired "$retired" '{in_scope: $inscope,
+    stalled: ($rows | split("\n") | map(select(length > 0) | split("\t"))
+      | map({id: .[0], verdict: .[1], silent_min: (.[2] | tonumber), detail: .[3], cwd: .[4], name: .[5]})),
+    retired: ($retired | split("\n") | map(select(length > 0) | split("\t"))
+      | map({id: .[0], ledger: .[1], idle_min: (.[2] | tonumber), rc: .[3]}))}'
   exit 0
 fi
+
+printf '%s' "$retired" | while IFS=$'\t' read -r id ledger mins rc; do
+  [ -n "$id" ] || continue
+  echo "RETIRED  $id  ledger $ledger, ${mins}m idle — stopped and removed from claude agents (stop/rm exit $rc)"
+done
 
 if [ -z "$rows" ]; then
   echo "no stalled /auto sessions (a pending wakeup ${WAKE_GRACE_S}s overdue, else ${THRESHOLD_MIN}m silent; ${INSCOPE} in scope)"

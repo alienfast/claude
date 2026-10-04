@@ -162,16 +162,24 @@ registry_json() {
   printf '%s' "$j" | jq -e 'type == "array"' >/dev/null 2>&1 || return 1
   printf '%s' "$j"
 }
+# The row `claude stop` leaves behind keeps its state and loses its `status` and `pid` keys (fleet-status.sh
+# registry_row has the measurements); it prints as `stopped` here so every caller's terminal test sees it.
 registry_state() { # <short id> → prints "" (absent), "done", or the listed state; returns 2 when no registry
   local j
   j=$(registry_json) || return 2
-  printf '%s' "$j" | jq -r --arg k "$1" \
-    'map(select((.id // (.sessionId // "" | split("-")[0])) == $k)) | if length == 0 then "" else (.[0].state // "running") end'
+  printf '%s' "$j" | jq -r --arg k "$1" '
+    any(.[]; has("status")) as $carries_status
+    | map(select((.id // (.sessionId // "" | split("-")[0])) == $k))
+    | if length == 0 then ""
+      elif ((.[0].state // "running") | IN("done","failed","stopped")) then (.[0].state)
+      elif $carries_status and ((.[0] | has("status")) | not) and ((.[0] | has("pid")) | not) then "stopped"
+      else (.[0].state // "running") end'
 }
-registry_alive() { # <short id> — listed and not done
+registry_alive() { # <short id> — listed and not ended
   local st
   st=$(registry_state "$1") || return 1
-  [ -n "$st" ] && [ "$st" != "done" ]
+  case "$st" in ""|done|failed|stopped) return 1 ;; esac
+  return 0
 }
 
 # ---- ledger ----

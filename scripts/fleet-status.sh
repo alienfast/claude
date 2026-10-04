@@ -170,14 +170,24 @@ fi
 # row in the 2026-08-17 snapshot auto-stall-watch.sh was rebuilt against. Without the fallback a
 # targeted `/auto <ID>` run in a terminal — a ledger, no `id` — reads `dead` with the registry
 # present and raises the stranded-claim flag this join exists to prevent. `.pid` is deliberately
-# not read (absent on 16 of 23 rows in one live sample) and a null `.state` means
-# present-but-unlabelled, so it renders as running rather than being mistaken for absence. A `done`
-# state is an ENDED background session the registry still lists (measured 2026-08-29); callers
-# treat it as gone.
+# not read as liveness (absent on 16 of 23 rows in one live sample) and a null `.state` means
+# present-but-unlabelled, so it renders as running rather than being mistaken for absence. Two
+# listed shapes are ENDED sessions and print `ended`: a `done`/`failed`/`stopped` state (a `done`
+# row measured 2026-08-29 — the harness settles a `--bg` session when its launch prompt's turn ends,
+# or the daemon retires it), and the row `claude stop` leaves behind — its state unchanged, with
+# the `status` and `pid` keys both GONE (measured 2026-10-04 on a `working` row and a `done` one;
+# every live row that day carried both). The second test is taken only when some row in the same
+# registry carries `status`, so a schema that drops the key entirely reads as live, never as dead.
 registry_row() {
   [ "$have_registry" -eq 1 ] || return 0
   printf '%s' "$agents_json" \
-    | jq -r --arg k "$1" 'map(select((.id // (.sessionId // "" | split("-")[0])) == $k)) | if length == 0 then "" else (.[0].state // "running") end' 2>/dev/null \
+    | jq -r --arg k "$1" '
+        any(.[]; has("status")) as $carries_status
+        | map(select((.id // (.sessionId // "" | split("-")[0])) == $k))
+        | if length == 0 then ""
+          elif ((.[0].state // "running") | IN("done","failed","stopped")) then "ended"
+          elif $carries_status and ((.[0] | has("status")) | not) and ((.[0] | has("pid")) | not) then "ended"
+          else (.[0].state // "running") end' 2>/dev/null \
     || true
 }
 
@@ -332,9 +342,9 @@ else
     if [ "$have_registry" -eq 1 ]; then
       rstate=$(registry_row "$key")
       case "$rstate" in
-        "")   live="dead"; [ "$status" = "active" ] && died_active="$died_active $key" ;;
-        done) live="dead (ended)"; [ "$status" = "active" ] && died_active="$died_active $key" ;;
-        *)    live="ALIVE ($rstate)" ;;
+        "")    live="dead"; [ "$status" = "active" ] && died_active="$died_active $key" ;;
+        ended) live="dead (ended)"; [ "$status" = "active" ] && died_active="$died_active $key" ;;
+        *)     live="ALIVE ($rstate)" ;;
       esac
     elif session_alive "$pid" "$pid_start"; then
       live="unknown (no registry; pid live)"
@@ -347,7 +357,7 @@ else
     live="unknown"
     if [ "$have_registry" -eq 1 ]; then
       rstate=$(registry_row "$k")
-      case "$rstate" in "") live="dead" ;; done) live="dead (ended)" ;; *) live="ALIVE ($rstate)" ;; esac
+      case "$rstate" in "") live="dead" ;; ended) live="dead (ended)" ;; *) live="ALIVE ($rstate)" ;; esac
     fi
     printf '| %s | %s | %s | %s | %s | %s | %s |\n' "$k" "$live" "**no ledger**" "?" "?" "?" "?"
   done

@@ -52,7 +52,7 @@
 #     and wrong for this one — running in the background, it reads after that summary lands, so the window would
 #     open AFTER the arm and every compliant turn would read `stale-arm`. decide() is used only for what does not
 #     depend on that ordering: whether this is a self-paced /loop /auto session, and whether a human holds it.
-#   - ScheduleWakeup(stop: true): the loop ended on purpose, and silence is its contract.
+#   - ScheduleWakeup(stop: true): the loop ended on purpose, and silence is its contract. It is RETIRED instead (below).
 #   - A human prompt after the iteration anchor (decide()'s human-override) — on the STOP path only. A wakeup lost inside
 #     a turn the operator is steering is theirs to re-arm, as forcing one is auto-heartbeat.sh's conflict with them. It never
 #     holds the StopFailure path: an API error killed the request before the model acted on anything, so a retry contradicts
@@ -70,6 +70,21 @@
 #     is not evidence of silence, and waking a healthy session is the costlier mistake: it is told to run an iteration.
 #   - The per-session caps (AUTO_REWAKE_STOP_MAX 12 consecutive rewakes, AUTO_REWAKE_API_MAX 24 = six hours of retries),
 #     so a session whose scheduler is simply broken, or a multi-day quota block, cannot be revived forever.
+#
+# THE THIRD JOB — RETIRING A FINISHED LOOP. A `/loop /auto` session that ends its loop (ScheduleWakeup stop:true after
+# writing a `drained`/`halted` ledger) never leaves the session registry on its own: the harness settles a `--bg` session
+# to state `done` only when its LAUNCH PROMPT's turn ends (measured 2026-10-04: a throwaway `claude --bg "reply ok"` read
+# `done` within 10s), and a loop's final turn is a wakeup's, so the row keeps whatever state the agent view last gave it.
+# Measured the same day on a three-session fleet: all three drained at the deadline and sat listed as `working` (two) and
+# `blocked`/"Needs input" (one) for hours; the daemon's 60-minute idle retirement — the only other thing that ends such a
+# row — did not fire at all that day (its log went silent at 09:28 CDT), and basefund's /pr-merge-deferred, which gates on
+# the registry, waited on them all morning. So on a Stop whose turn ended the loop AND whose session's ledger is terminal,
+# this hook waits RETIRE_DELAY (30s — long enough for a following turn's records to land, which turns_since then sees),
+# stands down if anything followed, and otherwise runs `claude stop <id>` then `claude rm <id>`. Measured 2026-10-04: `stop`
+# kills the worker but leaves the row listed with its state unchanged and the `status`/`pid` keys gone (the daemon logs
+# `bg settled <id> (killed)`); `rm` removes the row and KEEPS the transcript on disk, so /fleet-retro still reads it.
+# An operator's hold (human-override) and a loop that stopped without a terminal ledger are both left alone — the second
+# is the `wound down but never finalized its ledger` shape /fleet-status and /fleet-retro report.
 #
 # REGISTRATION (settings.json) — both fields are load-bearing, and both were measured:
 #   "asyncRewake": true   without it the hook's exit code wakes nothing.
@@ -93,6 +108,7 @@ source "$HOOK_DIR/auto-heartbeat.sh"   # decide() only — that file guards its 
 
 GRACE="${AUTO_REWAKE_GRACE:-300}"
 API_DELAY="${AUTO_REWAKE_API_DELAY:-900}"
+RETIRE_DELAY="${AUTO_REWAKE_RETIRE_DELAY:-30}"
 STOP_MAX="${AUTO_REWAKE_STOP_MAX:-12}"
 API_MAX="${AUTO_REWAKE_API_MAX:-24}"
 SETTLE_TRIES="${AUTO_REWAKE_SETTLE:-10}"
@@ -161,6 +177,22 @@ turns_since() {
       | select((. != null) and (. > $since)) ] | length' 2>/dev/null) || return 1
   [[ "$n" =~ ^[0-9]+$ ]] || return 1
   printf '%s\n' "$n"
+}
+
+# The ledger of the session whose loop just ended, when it recorded a terminal outcome: skills/auto/SKILL.md Step 4
+# writes `drained`/`halted` as the run's last act, under the MAIN checkout whichever worktree the session last sat in,
+# so the event's cwd is resolved through `git worktree list` (its first entry is the main checkout).
+terminal_ledger() { # → prints the terminal status; fails when no ledger says the run is over
+  local cwd main f st
+  cwd=$(jq -r '.cwd // empty' <<<"$INPUT" 2>/dev/null || true)
+  [[ -n "$cwd" && -d "$cwd" ]] || return 1
+  main=$(git -C "$cwd" worktree list --porcelain 2>/dev/null | awk 'NR==1 && sub(/^worktree /,"") {print; exit}')
+  [[ -n "$main" ]] || main="$cwd"
+  f="$main/tmp/auto-state-$SHORT.json"
+  [[ -f "$f" ]] || return 1
+  st=$(jq -r '.status // empty' "$f" 2>/dev/null || true)
+  case "$st" in drained|halted) printf '%s\n' "$st"; return 0 ;; esac
+  return 1
 }
 
 state_file() { printf '%s/auto-rewake/%s.json' "$LOG_DIR" "$SESSION"; }
@@ -255,7 +287,11 @@ decision() {
   done
   [[ -n "$W" ]] || { echo '{"action":"skip","reason":"unarmed","in_scope":true}'; return; }
   stop=$(jq -r '.stop' <<<"$W"); delay=$(jq -r '.delay // empty' <<<"$W"); at=$(jq -r '.at // empty' <<<"$W")
-  [[ "$stop" == "true" ]] && { echo '{"action":"skip","reason":"loop-ended","in_scope":true}'; return; }
+  if [[ "$stop" == "true" ]]; then
+    L=$(terminal_ledger) || { echo '{"action":"skip","reason":"loop-ended","in_scope":true}'; return; }
+    jq -nc --arg l "$L" '{action:"retire", reason:"loop-ended", ledger:$l, in_scope:true}'
+    return
+  fi
   [[ -n "$delay" && -n "$at" ]] || { echo '{"action":"skip","reason":"no-delay","in_scope":true}'; return; }
   n=$(counter stop_rewakes)
   [[ "$n" -ge "$STOP_MAX" ]] && { jq -nc --argjson n "$n" '{action:"skip", reason:"stop-cap", n:$n, in_scope:true}'; return; }
@@ -285,6 +321,23 @@ if [[ "$EVENT" == "Stop" ]]; then
   elif [[ "$SESSION_KIND" == "one-shot" && -f "$(state_file)" ]]; then
     set_counter api_rewakes 0
   fi
+fi
+
+if [[ "$ACTION" == "retire" ]]; then
+  LEDGER=$(jq -r '.ledger' <<<"$DEC")
+  STARTED=$(date +%s)
+  log "retire wait_s=$RETIRE_DELAY ledger=$LEDGER"
+  sleep "$RETIRE_DELAY"
+  # The same stand-downs as a rewake: a turn that followed (an operator attached, a notification landed) means the
+  # session is in use, and an unreadable transcript is not evidence of anything.
+  FOLLOWED=$(turns_since $(( STARTED + 2 ))) || { log "stood-down kind=retire reason=transcript-unreadable"; exit 0; }
+  [[ "$FOLLOWED" -gt 0 ]] && { log "stood-down kind=retire records_since=$FOLLOWED"; exit 0; }
+  CLAUDE_BIN=$(command -v claude 2>/dev/null || true); [[ -n "$CLAUDE_BIN" ]] || CLAUDE_BIN="$HOME/.local/bin/claude"
+  log "retire ledger=$LEDGER stop"
+  "$CLAUDE_BIN" stop "$SHORT" >/dev/null 2>&1; RC_STOP=$?
+  "$CLAUDE_BIN" rm "$SHORT" >/dev/null 2>&1; RC_RM=$?
+  log "retired ledger=$LEDGER stop_rc=$RC_STOP rm_rc=$RC_RM"
+  exit 0
 fi
 
 if [[ "$ACTION" != "wait" ]]; then
