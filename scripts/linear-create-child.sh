@@ -2,7 +2,7 @@
 # linear-create-child.sh — create a Linear issue (optionally linked to a parent),
 # with its description read from a file, and verify the parent link took.
 #
-# Usage: linear-create-child.sh [--allow-planned] <parent|-> <team> <state|-> <title> <body-file> [label|-] [priority|-]
+# Usage: linear-create-child.sh [--allow-planned] [--allow-unrouted] <parent|-> <team> <state|-> <title> <body-file> [label|-] [priority|-]
 #
 #   --allow-planned  Required (leading) to pass `Planned` as the state. Unattended filings land in
 #                Backlog — the human curates Planned (keeper ruling 2026-08-15) — and a caller-passed
@@ -12,6 +12,13 @@
 #                it as the human-in-the-loop placement. Only the CALLER-passed state is gated — the
 #                internal fallback below stays exempt, since it can resolve `planned` only when the
 #                team has no Backlog/Todo state and refusing there would strand the filing in Triage.
+#   --allow-unrouted  Required (leading, in either order with --allow-planned) to file with no routing
+#                label in the slot: none of specified / needs decision / human / keeper, nor sentry /
+#                dependencies, the two producer labels standards/issue-spec.md treats as routing.
+#                Without it the call is refused before anything is created. The flag is the audit
+#                record that the caller attaches the routing label in a later step of the same run —
+#                quality-review's recipe certifies last, and /prd and /spec batches certify after
+#                their collision pass.
 #   <parent>     Parent issue identifier (e.g., PL-396) to link under, or "-" / ""
 #                for a top-level issue.
 #   <team>       Team key or name (e.g., PL).
@@ -20,7 +27,8 @@
 #   <body-file>  Path to a file holding the markdown description.
 #   <label>      Optional issue label(s) to attach after create — a single name or a
 #                comma-separated list (e.g., "specified,bug"), or "-" / "" / omitted to
-#                skip. Must already exist in the workspace: a near-miss heals to the
+#                skip (which, like a slot of class labels only, needs --allow-unrouted).
+#                Must already exist in the workspace: a near-miss heals to the
 #                canonical label, but a novel name is refused, never minted. BEST EFFORT:
 #                the id still prints and the parent link is still attempted; a failed
 #                attach exits 2 (filed-but-unlabelled; 4 when the parent was also at the
@@ -60,10 +68,11 @@
 #       EXISTS and is fully usable — do NOT treat the item as unfiled; annotate it as
 #       related-not-sub-issue.
 #   4 = both 2 and 3: parent at cap (`related` edge wired) AND the label attach failed
-#   1 = usage / caller-passed Planned without --allow-planned (refused pre-create — nothing
-#       exists) / missing body file / create failed / no identifier returned — or created
-#       but the state or the parent linkage could not be established at all (stderr says
-#       which; id already on stdout whenever the issue exists)
+#   1 = usage / caller-passed Planned without --allow-planned, or an unrouted label slot without
+#       --allow-unrouted (both refused pre-create — nothing exists) / missing body file / create
+#       failed / no identifier returned — or created but the state or the parent linkage could
+#       not be established at all (stderr says which; id already on stdout whenever the issue
+#       exists)
 
 set -eo pipefail
 
@@ -71,13 +80,17 @@ set -eo pipefail
 export PATH="$HOME/.cargo/bin:$PATH"
 
 allow_planned=0
-if [ "${1:-}" = "--allow-planned" ]; then
-  allow_planned=1
-  shift
-fi
+allow_unrouted=0
+while :; do
+  case "${1:-}" in
+    --allow-planned)  allow_planned=1;  shift ;;
+    --allow-unrouted) allow_unrouted=1; shift ;;
+    *) break ;;
+  esac
+done
 
 if [ $# -lt 5 ] || [ $# -gt 7 ]; then
-  echo "usage: linear-create-child.sh [--allow-planned] <parent|-> <team> <state|-> <title> <body-file> [label|-] [priority|-]" >&2
+  echo "usage: linear-create-child.sh [--allow-planned] [--allow-unrouted] <parent|-> <team> <state|-> <title> <body-file> [label|-] [priority|-]" >&2
   exit 1
 fi
 
@@ -93,6 +106,26 @@ priority="${7:-}"
 # before any create, so a refusal leaves nothing behind.
 if [ "$allow_planned" -eq 0 ] && [ -n "$state" ] && [ "$state" != "-" ] && printf '%s' "$state" | grep -qxi 'planned'; then
   echo "ERROR: refusing caller-passed state 'Planned' without --allow-planned (leading flag) — unattended filings land in Backlog, the human curates Planned (keeper ruling 2026-08-15). Pass --allow-planned only when the placement is deliberate: Critical/High or security-labeled per quality-review's recipe, or a human-in-the-loop interactive filing" >&2
+  exit 1
+fi
+
+# Routing gate — standards/issue-spec.md § An agent filing never lands unrouted. Pre-create, like the
+# Planned gate: a refusal leaves nothing behind. The set is the standard's own — its four routing labels
+# plus the two producer labels it treats as self-routing. The verdict writer's read-back sees only ids a
+# verdict lists, so a follow-up filed outside one was never checked — measured 2026-10-04: one filed
+# mid-implementation with `bug` alone sat unrouted 17.5 hours, until the next retro's filing audit.
+norm() { tr '[:upper:]' '[:lower:]' | tr -d ' _-'; }
+routed=0
+if [ -n "$label" ] && [ "$label" != "-" ]; then
+  IFS=',' read -ra _probe <<< "$label"
+  for lb in "${_probe[@]}"; do
+    case "$(printf '%s' "$lb" | norm)" in
+      specified|needsdecision|human|keeper|sentry|dependencies) routed=1 ;;
+    esac
+  done
+fi
+if [ "$routed" -eq 0 ] && [ "$allow_unrouted" -eq 0 ]; then
+  echo "ERROR: refusing to file UNROUTED — the label slot ('${label:-<empty>}') carries none of specified / needs decision / human / keeper (nor sentry / dependencies, the two producer labels standards/issue-spec.md treats as routing), and nothing ranks or parks an unrouted issue. Nothing was created: this is a refused invocation, not a failed create — correct it and re-run. Put a routing label in the slot (e.g. 'bug,specified', or 'needs decision'), or — only when a later step of THIS run attaches one, as /quality-review's filing recipe does at 'Certify last' — pass the leading flag --allow-unrouted" >&2
   exit 1
 fi
 
@@ -178,8 +211,7 @@ if [ -n "$label" ] && [ "$label" != "-" ]; then
   # Normalized identity, mirroring linear-add-label.sh's healing: a multi-word label must keep its
   # internal spacing (the old `tr -d '[:space:]'` turned `needs decision` into `needsdecision`,
   # missed the canonical label, and MINTED the corruption — twice: BF-1109, BF-1243 — which then
-  # leaked issues past next-candidates.sh's exact-string park gate).
-  norm() { tr '[:upper:]' '[:lower:]' | tr -d ' _-'; }
+  # leaked issues past next-candidates.sh's exact-string park gate). `norm` is defined at the routing gate.
   update_args=(issues update "$new_id")
   IFS=',' read -ra _labels <<< "$label"
   for lb in "${_labels[@]}"; do

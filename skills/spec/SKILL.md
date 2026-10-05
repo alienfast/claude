@@ -123,7 +123,7 @@ Cheapest way to stay on the first branch: when drafting surfaces something new, 
 2. **Sub-issues** (only if the quality bar's sizing check failed — epic-sized work): offer a breakdown; for each child Write a spec-shaped body to `tmp/`, then:
 
    ```bash
-   ~/.claude/scripts/linear-create-child.sh --allow-planned <ID> <TEAM> Planned "<title>" <body-file>   # the flag marks the Planned placement deliberate (interactive, human-in-the-loop)
+   ~/.claude/scripts/linear-create-child.sh --allow-planned --allow-unrouted <ID> <TEAM> Planned "<title>" <body-file>   # --allow-planned: the Planned placement is deliberate (interactive, human-in-the-loop); --allow-unrouted: item 5 certifies each child afterwards
    linear-cli relations add <BLOCKER> <BLOCKED> -r blocks     # blocker FIRST (blocked-by 400s in every published version through 0.3.27)
    ~/.claude/scripts/linear-add-label.sh <ID> epic            # the groomed issue is now a delegated epic — its children carry the work
    ```

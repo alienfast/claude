@@ -28,7 +28,7 @@ Use this skill when:
 
    Create it through `~/.claude/scripts/linear-create-child.sh` with `-` for the parent (top-level), **never a bare `linear-cli issues create`**. A bare create passes no workflow state, and on a triage-enabled team the team default is Triage — where `next-candidates.sh`'s `WORKABLE_STATES` (Backlog/Planned/Todo) cannot see it, so a certified epic is invisible to `/next` and `/auto` with nothing reporting the omission. The helper resolves a workable state and verifies it landed.
 
-   On a run that will create sub-issues, pass the workspace `epic` label in the helper's label slot — the parent is a delegated epic whose work its children carry, and certification (Step 5) leaves that slot free on batch runs. A single-issue run is not an epic: no `epic` label, and its slot carries `specified` per Step 5.
+   On a run that will create sub-issues, pass the workspace `epic` label in the helper's label slot — the parent is a delegated epic whose work its children carry, and certification (Step 5) leaves that slot free on batch runs. Neither the epic nor its sub-issues carries a routing label at create on such a run, so each create passes the leading `--allow-unrouted`: the helper refuses a label slot with no routing label otherwise, and the flag records that Step 5 certifies. A single-issue run is not an epic: no `epic` label, its slot carries `specified` per Step 5, and it needs no flag.
 
 3. **Break Down into Sub-Issues**
    Each sub-issue body is itself a spec (same template) and should:
@@ -74,15 +74,16 @@ Specs are problem + outcomes + success criteria only — **no implementation pla
 # in Triage and fall out of /next's WORKABLE_STATES unnoticed. `epic` in the label slot:
 # this run creates a batch, so the parent is a delegated epic and certification waits for
 # step 5, after the collision edges are wired. A single-issue run passes `specified` in
-# that position instead (a standalone issue is not an epic).
+# that position instead (a standalone issue is not an epic) and drops --allow-unrouted,
+# which a batch create needs because its routing label arrives at step 5.
 #   ...write the description to tmp/prd-description.md via the Write tool...
-~/.claude/scripts/linear-create-child.sh --allow-planned - ENG Planned "User Authentication System" tmp/prd-description.md epic 2
+~/.claude/scripts/linear-create-child.sh --allow-planned --allow-unrouted - ENG Planned "User Authentication System" tmp/prd-description.md epic 2
 
 # Create a sub-issue linked to a parent. `linear-cli issues create` has no --parent
 # flag (set the parent's UUID via `--data` parentId instead), but prefer the helper — it
 # links via `relations parent` and verifies the link, failing on an orphan. Write the body to a file first.
 #   ...write the description to tmp/sub-issue-description.md via the Write tool...
-~/.claude/scripts/linear-create-child.sh --allow-planned ENG-100 ENG Planned "Add JWT refresh tokens" tmp/sub-issue-description.md
+~/.claude/scripts/linear-create-child.sh --allow-planned --allow-unrouted ENG-100 ENG Planned "Add JWT refresh tokens" tmp/sub-issue-description.md
 
 # Set a blocking dependency: ENG-101 blocks ENG-102 (i.e. ENG-102 is blocked by ENG-101).
 # Use `-r blocks` with the blocker FIRST — the `blocked-by` enum value is broken in every
