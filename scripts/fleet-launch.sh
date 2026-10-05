@@ -388,6 +388,17 @@ if [ -n "$deadline_epoch" ]; then
   echo "Fleet deadline: $deadline_human ($marker)"
 fi
 
+# Every pick parks against this ceiling, so name the one the fleet will run on. A `(default)` source means
+# the calibration file is missing and the probe throttles at 1.5M: the 2026-10-04/05 fleet parked 6
+# session-hours that way with 146 issues pickable, and no launch or retro output said so.
+ceiling_line=$("$script_dir/fleet-headroom.sh" --ceiling-only 2>/dev/null || true)
+if [ -n "$ceiling_line" ]; then
+  echo "Headroom ceiling: $ceiling_line"
+  case "$ceiling_line" in
+    *'(default)'*) echo "WARN: the headroom probe is on its built-in default ceiling — the calibration file named above is missing. Restore it before an overnight run, or every session parks against 1.5M (fleet-headroom.sh header)." >&2 ;;
+  esac
+fi
+
 have_flag() {
   local f="$1"; shift
   local a

@@ -133,7 +133,7 @@ real value, and the n=3 5h burst floor `/auto-prep` sized against read 1.9M wher
 4.3–5.5M. Coverage itself varies by run with no cause established — 99% on most fleets, 25% on 2026-09-05
 and 15% on 2026-09-22, all on harness 2.1.278 — so a low share is a finding to carry, not to explain away.
 
-Four gauges ride the same run and the retro reads all four, not just the tables:
+Five gauges ride the same run and the retro reads all five, not just the tables:
 
 - **Context distribution** — share of billable prompt volume by context size at call time. This is the
   autocompact gauge: fleet-launch pins `--autocompact 500000` (150000 shipped 2026-08-14 and
@@ -181,6 +181,23 @@ Four gauges ride the same run and the retro reads all four, not just the tables:
   and on its `ended without recording an outcome` flag) and never do. A dead session's evidence says
   nothing about the pool after its last turn, so forfeited hours are a session fault, not a prep finding.
   Measured 2026-09-19: 5.3 held (32%) and 19.4 forfeited, on a run where the gauge had printed nothing.
+- **Headroom throttle** — session-hours parked by `/auto`'s fleet headroom gate between picks: the
+  `throttled` column per session (`parked hours (THROTTLE probes/probes)`), a clause on the **Totals** line
+  naming the ceiling source every probe reported, `thr%` in the trend, and `throttle` in the JSON. A
+  THROTTLE parks the session until its next probe, so the hours are those intervals summed; where a park
+  ran past the last ship it also sits inside idle%, and the Pool exhausted line prints the overlap rather
+  than subtracting it. Against a calibrated ceiling this is the gate working — read it with the
+  rate-limit windows below. Against the probe's DEFAULT (`ceiling=1500000(default)`) it is a config
+  fault with its own flag: the calibration file at `~/.claude/local/five-hour-ceiling.json` was not read,
+  and under the keeper's 100M ceiling the gate should throttle on nothing. Measured 2026-10-04/05: 12 of
+  39 probes said THROTTLE against the default, 6.2 session-hours (16%) parked with 146 issues pickable,
+  the file having vanished from its old home under the harness-owned `~/.claude/telemetry/` six days
+  earlier — and the only trace was 2.5h riding idle% as an empty pool.
+
+The per-session `obs` count reads two witnesses since 2026-10-05: the bare `SHIPPED-*: <ID>` line and the
+`mark-ready-for-release.sh <ID>` call the merge path makes (`observed_by` in the JSON splits them). The call
+is the reliable one — on that run the tag caught 8 of 27 ships and the call all 27 — so a session whose
+`obs` lags its ledger on an older report is a tag-drift artifact, not an unrecorded ship.
 
 The review-churn table reads `tmp/quality-review-verdict-*.md`: cycles, findings by severity, the
 SEVERITY/origin split (`plan`/`impl`/`spec`/`test`/`latent` — verdicts written before 2026-08-04
@@ -252,7 +269,7 @@ close here.
    of 3,442 messages across one 2026-09-22 BFP session's 142 subagent transcripts, and the shape is as
    old as the oldest transcript on disk, 2026-08-14 on 2.1.232), while a main-session message carries
    its final count on every row. So the probe's trailing-5h meter, its 1,500,000 default, both
-   2026-08-17 observations in `~/.claude/telemetry/five-hour-ceiling.json`, and every figure in this
+   2026-08-17 observations in `~/.claude/local/five-hour-ceiling.json`, and every figure in this
    section are in the old unit; on a fleet-dominated window the script's unit runs roughly 3× higher
    (its re-measured peaks moved 1.9M → 4.3–5.5M), less when interactive work fills the window. The
    file's `ceiling_output_tokens` is 100,000,000 by keeper directive 2026-08-30 (multi-account: the
@@ -260,8 +277,8 @@ close here.
    the trap fires when that note's "restore a measured per-account ceiling" is followed: a new-unit
    observation restored against the old-unit meter is a ceiling the probe can never approach, and the
    fleet dies mid-issue with the gate silent. Do NOT write the script's cutoff-window figure into that
-   file — `skills/fleet-launch/SKILL.md`, `skills/auto/SKILL.md` and the probe's own header still say
-   to; record it in the retro report only, until the probe counts the largest row per `requestId`
+   file — `skills/fleet-launch/SKILL.md` and `skills/auto/SKILL.md` still say to; record it in the
+   retro report only, until the probe counts the largest row per `requestId`
    (still a floor where a subagent's final row was never written — the `Subagent usage rows` share
    above), its default is re-derived, and `scripts/fleet-forecast.py`'s throttle line — the same
    ceiling read against a rate the re-measured history already states in the new unit — is converted
@@ -318,12 +335,13 @@ The script finds *shapes*; it does not explain them. Each flag is a lead:
 | shipped with no persisted verdict | `/quality-review` never persisted its Output block, or the issue shipped outside the review pipeline | that issue's `/full` run in the session transcript |
 | plan-heavy origin mix | the posted plans leak requirements/scope — planning is the stage to tune (model, effort, or a dedicated plan/plan-review step) | the tagged findings' issues; diff each posted plan against what the review had to fix |
 | impl-heavy origin mix | plans were right, code diverged — developer model/effort or delegation prompts are the lever, not more planning. **Precondition: read the script's implementing-tier join before routing at model/effort.** /quality-review pins fix batches to sonnet-tier developers, so the by-agent token table always reads "developer is mostly sonnet" no matter what tier implemented — on the 2026-08-09 basefund fleet that table drove a move-to-opus proposal while 86% of the developer/sonnet row was fix batches, 14 of 23 issues had already been implemented at the opus agent default, and the 8 discretionary sonnet downgrades carried no more impl findings per issue than the opus group. Model is the lever only when the join puts the impl-origin findings on issues implemented at the *lower* tier; when they sit on the top tier already, look at the delegation prompts or the downgrade discretion instead | the **Implementing-tier join** and **Developer lanes** lines in the script's churn and token sections; then the fix-dispatch prompts and the findings they addressed |
-| test-heavy origin mix | plan and code were sound — review is repairing coverage the implementation never wrote (`test` = behavior correct but unpinned), so the lever is the test bar in `/start` Step 8's `developer` implementation dispatch, which today asks for no coverage on the change beyond a green `pnpm check`; not planning, and not developer model/effort. Some share of this bucket is the *intended yield* of `quality-reviewer`'s test-review modality rather than churn to design away | the tagged findings' issues; for each, check whether the fix touched spec files or app files — an app-file fix means the finding was mis-tagged `test` and belongs to `impl` |
+| test-heavy origin mix | plan and code were sound — review is repairing coverage the implementation never wrote (`test` = behavior correct but unpinned). The lever is **not** "make the author prove its arms", nor the planning or developer model/effort: `agents/developer.md` § Testing Standards already requires a mutation-proved arm for every assertion that the code chose A over B, and on the 2026-10-04/05 fleet (57 of 140 findings tagged `test`, the largest bucket) 29 of the 32 implementation-lane `developer` dispatches (review-driven fix batches and spec refactors excluded) also spelled out a mutate-and-see-red step in the prompt — the findings arrived anyway, at the same rate behind a sonnet implementer as an opus one (2.1 and 2.0 per issue). Read by wording, most were a property or call site no arm covered, or a fixture that could not separate the chosen implementation from a *different* wrong one than the author's own mutation; few were an arm still green under removal of the thing it names. What remains open, and unproven as an author-side step, is what `agents/quality-reviewer.md` asks of the reviewer and nothing asks of the author: name the plausible wrong implementations and the properties the result must not depend on, then give the fixture a row separating each. Where that list would live — the plan's arm list, the dispatch, or the author's own pass — is unmeasured too. Some share of this bucket is the *intended yield* of `quality-reviewer`'s test-review modality rather than churn to design away | the tagged findings' issues; for each, check whether the fix touched spec files or app files — an app-file fix means the finding was mis-tagged `test` and belongs to `impl`. Classify the rest by those classes before proposing an author-side rule: restating a proof the dispatches already demand changes nothing. To count the dispatches that demand one, read the prompts — in a GraphQL codebase a `mutat` grep also matches every `mutations/` path, and misses a prompt that says "prove the arm load-bearing" |
 | spec-heavy origin mix | the certified spec itself is what review keeps correcting — the lever is `/spec` rigor at certification time, not planning or implementation effort | the tagged findings' issues; diff each issue's Problem/Success Criteria against what the review had to restate |
 | latent-heavy origin mix | pre-existing defects the change merely surfaced — NOT a signal about this fleet's plan, code or specs, and not a lever at all. Expect it to decay across runs as the pool drains; a share that stays flat or rises means the reviewer is finding genuinely new latent surface, which is worth its own investigation | Step 3's Linear census: are these being filed, and is the filed-per-shipped rate falling run over run? |
 | high filed-per-shipped rate | each shipped issue spawns near or above one new issue — at that rate the backlog cannot drain | Step 3's Linear census: severity + certification mix of what was filed |
 | drained early, siblings kept picking | the ranking reported an empty pool for a transient reason — every remaining candidate chained behind a sibling's in-flight issue (now `BLOCKED-HOLD` in `next-candidates.sh`, which /auto must honor as a wait, not a drain), an empty fetch the double-run also hit, a label flap, or work certified after the drain — and the session latched sticky `drained`. If it recurs after the BLOCKED-HOLD fix, that prose gate lost, exactly as the deadline gate did before `auto-deadline-gate.sh` | that session's last `/next` output in its transcript; `linear-cli relations list` on the issues its siblings shipped next; the flag's K and H give the cost |
 | rewakes classified spurious | `hooks/auto-rewake.sh` woke a session that was alive and told it to run an iteration — invisible in every other column, because the injected turn looks like ordinary loop activity and arrives as `task-notification`, not `human`. Two shapes are known and both were fixed 2026-09-20, so on a log newer than that a flag is a regression or a third shape. The transcript MOVED while the hook slept: a worktree enter or exit re-keys the session's project directory, and the instance read the emptied path as silence (73 of that run's 74; now logged `stood-down … reason=transcript-unreadable`). The ZERO WAIT: an arm already past due + grace when its turn ended was checked before the overdue wakeup's record could exist (1 of 74; the wait is now never shorter than the grace) | the flagged line in `~/.claude/logs/auto-rewake.log`, then the transcript between its `armed_at` and its timestamp: which opener landed there. A turn that ran while the hook slept means its stand-down read failed — check whether the session's cwd changed in the window. A `scheduled_task_fire` inside the line's own second, under a `wait kind=stop wait_s=0` line, is the zero-wait race |
+| Throttled against the probe's DEFAULT ceiling | `fleet-headroom.sh` answered `ceiling=1500000(default)` on a THROTTLE, so `~/.claude/local/five-hour-ceiling.json` was missing or unreadable at pick time and sessions parked on 1.5M instead of the keeper's 100M (which throttles on nothing). Every parked hour is capacity lost to config, not to the pool or the session. Measured 2026-10-04/05: the file had vanished from `~/.claude/telemetry/` on 2026-09-29 (a 2.1.284→2.1.285 harness self-upgrade landed in the same hour; the harness owns that directory), and every fleet after it ran throttled with nothing saying so | `~/.claude/scripts/fleet-headroom.sh --ceiling-only` now, and the `Headroom ceiling:` line `/fleet-launch` prints at dispatch; restore the file (the probe's header records the directive and the unit), then confirm the probe answers `(calibration)` before the next launch |
 
 **Correlate across sessions before concluding.** The 2026-08-01 run's biggest finding existed only in the
 comparison: blind-sleep burn tracked dispatch mode exactly (0% at 0 background dispatches; 55% at 32). No
@@ -338,7 +356,8 @@ a permission prompt.
 
 Independent of the transcripts, establish what the run really produced:
 
-- **Shipped** — every issue in `shipped[]` plus every `SHIPPED-*` tag observed. Confirm each is in a
+- **Shipped** — every issue in `shipped[]` plus every ship the transcript witnesses (a `SHIPPED-*` tag or a
+  `mark-ready-for-release.sh <ID>` call — the call is the reliable witness, Step 1). Confirm each is in a
   release-ready state and has a commit. The script's merge reconciliation flags the gaps.
 - **Filed** — issues *created* during the window. This is the half a retro forgets.
 
@@ -451,7 +470,11 @@ Lead with where the capacity went, in hours. Then, ranked by cost:
    When the **Pool exhausted** line printed (Step 1's gauge), it is the first entry: capacity the fleet
    could not have used, charged to prep — the pool — rather than to any session. Its **forfeited** hours
    are the opposite charge and are reported separately: sessions that died before the deadline, a
-   session fault with its own finding, however gated the pool was when they died.
+   session fault with its own finding, however gated the pool was when they died. **Headroom-parked**
+   hours (the Totals clause, `thr%` in the trend) are a third charge: against a calibrated ceiling they are
+   the gate working and cost what the limit would have; against the DEFAULT ceiling (its flag) they are a
+   config fault — charge them to config, not to the pool or the session, and restore the file before the
+   next launch.
 3. **Findings** — one per fault: evidence (numbers + `file:line` or transcript timestamps), root cause,
    and the specific fix. Distinguish a **compliance failure** (the rule exists and was ignored — prose
    will not fix it again) from a **gap** (no rule covers it).

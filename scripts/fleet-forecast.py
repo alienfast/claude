@@ -342,7 +342,7 @@ def unreached_reason(issue, issues, pool, shipped, ship_time, horizon, seen=None
 def throttle_line(rec, n_sessions):
     try:
         rate = (rec.get("sizing") or {}).get("rate_tok_per_session_hour")
-        cal = json.loads((Path.home() / ".claude/telemetry/five-hour-ceiling.json").read_text(encoding="utf-8"))
+        cal = json.loads((Path.home() / ".claude/local/five-hour-ceiling.json").read_text(encoding="utf-8"))
         ceiling = cal.get("ceiling_output_tokens")
         if rate and ceiling and n_sessions * rate * 5 > 0.9 * ceiling:
             return (f"THROTTLE-RISK: {n_sessions} sessions × {rate / 1000:.0f}k tok/session-hour ≈ "

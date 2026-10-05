@@ -62,6 +62,12 @@ t "calibration file read"                     2 'ceiling=170000(calibration)' --
 # Missing calibration file → conservative default, named as such.
 t "default ceiling when uncalibrated"         0 'ceiling=1500000(default)' --calibration "$TMP/nope.json"
 
+# --ceiling-only answers the launch-time question (which ceiling will this fleet park against?) without a
+# transcript scan, and names the calibration path so a default-sourced answer says what to restore.
+t "ceiling-only: calibrated"                  0 'ceiling=170000(calibration) calibration=.*cal.json$' --ceiling-only --calibration "$TMP/cal.json"
+t "ceiling-only: default names the missing file" 0 'ceiling=1500000(default) calibration=.*nope.json (missing)' --ceiling-only --calibration "$TMP/nope.json"
+t "ceiling-only: --json shape"                0 '"ceiling_source": "default"' --ceiling-only --json --calibration "$TMP/nope.json"
+
 # A malformed line must not abort the sum (fromjson? tolerance).
 printf 'NOT JSON AT ALL\n' >> "$PROJ/s1.jsonl"
 touch "$PROJ/s1.jsonl"

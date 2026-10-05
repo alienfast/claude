@@ -131,6 +131,10 @@ ck "session set recorded"         "ab000003 ab000004" "$(jq -r '.fleet_sessions 
 ck "count recorded"               "2" "$(jq -r '.count' "$REPO/tmp/fleet-deadline.json")"
 ck_has "each id surfaced"         "session ab000003 recorded" "$WORK/out"
 ck_has "set surfaced at the end"  "Fleet session set: ab000003 ab000004" "$WORK/out"
+# The ceiling every pick will park against is named at launch; HOME is empty here, so the probe answers
+# with its default and the launch warns that the calibration file is missing.
+ck_has "ceiling in effect printed"   "Headroom ceiling: ceiling=" "$WORK/out"
+ck_has "default ceiling warned"       "WARN: the headroom probe is on its built-in default ceiling" "$WORK/out"
 
 # ---- case 7: a dated launch carries the deadline AND the set; a dead prior set is not inherited ----
 : > "$WORK/dispatches"

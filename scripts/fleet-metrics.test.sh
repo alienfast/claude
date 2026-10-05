@@ -1584,6 +1584,67 @@ ck_has "classifier: fast one in seconds"          "    - \`pnpm check\` after 8s
 ck_lacks "classifier: quoting Read not counted"   "classifier-quotes.md" "$MD20"
 ck_lacks "classifier: errored digest not counted" "linear-context.sh TT-99" "$MD20"
 
+# ---- 21. the second ship witness, and the headroom-throttle gauge ----
+# Measured 2026-10-04/05 (3 sessions, 27 ships): only 8 ships ended on the bare `SHIPPED-MERGE: <ID>` line
+# /finish prescribes — two sessions' obs columns read 0 and 2 against ledgers of 9 and 8 — while the
+# `mark-ready-for-release.sh <ID>` call the merge path makes matched all 27 and every ledger exactly. The
+# same run parked 6.2 session-hours (16%) on fleet-headroom.sh THROTTLE answers against the 1,500,000
+# DEFAULT ceiling (the calibration file had vanished a week earlier) with 146 issues pickable, and no
+# table or flag said so; the 2.5h of it after the last ships rode the idle-tail gauge as an empty pool.
+# Rows carry the live shapes: the call as a Bash tool_use ending `; echo "EXIT=$?"` whose result is just
+# `EXIT=0`, and the probe's two-line stdout. Two controls: a grep QUOTING a call (TT-299) and a Read whose
+# text quotes a THROTTLE line — neither is a ship or a probe.
+CK21="$WORK/ck21"; mkdir -p "$CK21/tmp"
+git -C "$CK21" init -q 2>/dev/null
+git -C "$CK21" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "init"
+M21="$(git -C "$CK21" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
+T21="$WORK/projects/$M21"; mkdir -p "$T21"
+NOW21=$(python3 -c "import time; print(int(time.time()))")
+DL21=$((NOW21 - 3600))
+echo "{\"deadline_epoch\": $DL21, \"deadline\": \"test\", \"count\": 1, \"launch_epoch\": $((DL21 - 43200))}" > "$CK21/tmp/fleet-deadline.json"
+echo '{"status":"drained","reason":"fleet deadline reached (test)","mode":"loop","shipped":["TT-200"],"canceled":[],"skipped":[],"failed":[]}' > "$CK21/tmp/auto-state-thr00001.json"
+probe21() { # probe21 <epoch> <n> <THROTTLE|PICK-OK> <ceiling> <source> — the probe's tool_use and its result
+  local tail="headroom=1161762  reserve=250000" rc=0
+  if [ "$3" = THROTTLE ]; then tail="headroom=180470 < reserve=250000 — park with a wakeup instead of picking"; rc=2; fi
+  printf '{"type":"assistant","timestamp":"%s","isSidechain":false,"message":{"role":"assistant","id":"msg_p%s","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":50},"content":[{"type":"tool_use","id":"toolu_p%s","name":"Bash","input":{"command":"~/.claude/scripts/fleet-headroom.sh; echo \\"EXIT=$?\\"","description":"Probe fleet usage headroom before picking"}}]}}\n' "$(at_epoch "$1")" "$2" "$2"
+  printf '{"type":"user","timestamp":"%s","isSidechain":false,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_p%s","is_error":false,"content":"%s  trailing-5h=1319530  ceiling=%s(%s)  %s\\nEXIT=%s"}]}}\n' "$(at_epoch $(($1 + 4)))" "$2" "$3" "$4" "$5" "$tail" "$rc"
+}
+{
+  printf '{"type":"user","timestamp":"%s","isSidechain":false,"message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto backlog</command-args>"}}\n' "$(at_epoch $((DL21 - 36000)))"
+  probe21 $((DL21 - 20000)) 1 PICK-OK 100000000 calibration
+  printf '{"type":"assistant","timestamp":"%s","isSidechain":false,"message":{"role":"assistant","id":"msg_rfr","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":50},"content":[{"type":"tool_use","id":"toolu_rfr","name":"Bash","input":{"command":"~/.claude/scripts/mark-ready-for-release.sh TT-200; echo \\"EXIT=$?\\"","description":"Move TT-200 to Ready For Release"}}]}}\n' "$(at_epoch $((DL21 - 18000)))"
+  printf '{"type":"user","timestamp":"%s","isSidechain":false,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_rfr","is_error":false,"content":"EXIT=0"}]}}\n' "$(at_epoch $((DL21 - 17997)))"
+  printf '{"type":"assistant","timestamp":"%s","isSidechain":false,"message":{"role":"assistant","id":"msg_grep","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":50},"content":[{"type":"tool_use","id":"toolu_grep","name":"Bash","input":{"command":"grep -n '"'"'mark-ready-for-release.sh TT-299'"'"' tmp/x.jsonl | head -3"}},{"type":"tool_use","id":"toolu_read","name":"Read","input":{"file_path":"notes/throttle-quotes.md"}}]}}\n' "$(at_epoch $((DL21 - 17000)))"
+  printf '{"type":"user","timestamp":"%s","isSidechain":false,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_grep","is_error":false,"content":""},{"type":"tool_result","tool_use_id":"toolu_read","is_error":false,"content":"1\tTHROTTLE  trailing-5h=1  ceiling=1500000(default)  headroom=0 < reserve=250000"}]}}\n' "$(at_epoch $((DL21 - 16990)))"
+  probe21 $((DL21 - 14400)) 2 THROTTLE 1500000 default
+  probe21 $((DL21 - 12600)) 3 THROTTLE 1500000 default
+  probe21 $((DL21 - 10800)) 4 PICK-OK 1500000 default
+  probe21 $((DL21 - 3600))  5 THROTTLE 1500000 default
+  printf '{"type":"assistant","timestamp":"%s","isSidechain":false,"message":{"role":"assistant","id":"msg_end","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":50},"content":[{"type":"text","text":"NO-CANDIDATES: fleet deadline reached"}]}}\n' "$(at_epoch "$DL21")"
+} > "$T21/thr00001-0000.jsonl"
+GIT_COMMITTER_DATE="$(at_epoch $((DL21 - 18000)))" git -C "$CK21" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "Merge TT-200"
+J21="$WORK/out21.json"; MD21="$WORK/out21.md"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK21" --hours 24 --json > "$J21" 2>/dev/null
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK21" --hours 24 > "$MD21" 2>&1
+q21() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J21"; }
+ck "ship call: observed without a tag"      "['TT-200']" "$(q21 "d['sessions'][0]['observed_shipped']")"
+ck "ship call: witness split"               "{'tags': [], 'calls': ['TT-200']}" "$(q21 "d['sessions'][0]['observed_by']")"
+ck "ship call: quoted mention is not a ship" "False" "$(q21 "'TT-299' in d['sessions'][0]['observed_shipped']")"
+ck_has "ship call: obs agrees with the ledger" "| 1/1 |" "$MD21"
+ck_lacks "ship call: no unrecorded-ship flag" "shipped without recording it" "$MD21"
+ck "throttle: per-session gauge"            "{'probes': 5, 'throttled': 3, 'parked_h': 2.0, 'parked_in_idle_tail_h': 2.0, 'ceiling_sources': {'100000000(calibration)': 1, '1500000(default)': 4}}" "$(q21 "d['sessions'][0]['throttle']")"
+ck "throttle: fleet total and share"        "2.0 0.2" "$(q21 "str(d['throttle']['parked_session_hours']) + ' ' + str(d['throttle']['share'])")"
+ck "throttle: overlap with the idle tail"   "2.0" "$(q21 "d['pool_exhausted']['throttled_within_tail_session_hours']")"
+ck "throttle: idle tail itself unchanged"   "5.0" "$(q21 "d['pool_exhausted']['idle_tail_session_hours']")"
+ck "throttle: history row carries it"       "2.0 0.2" "$(q21 "str(d['history'][-1]['throttle_session_hours']) + ' ' + str(d['history'][-1]['throttle_share'])")"
+ck_has "throttle: table column"             "| throttled |" "$MD21"
+ck_has "throttle: table cell"               "| 2.0h (3/5) |" "$MD21"
+ck_has "throttle: totals clause"            "headroom-parked 2.0h (20% of fleet; 3/5 probes THROTTLE; ceiling 1500000(default) x4, 100000000(calibration) x1)" "$MD21"
+ck_has "throttle: pool line names the overlap" "\`thr00001\` 5.0h), of which 2.0 session-hours were headroom-parked — a throttle, not an empty pool" "$MD21"
+ck_has "throttle: trend column"             "| thr% |" "$MD21"
+ck_has "throttle: trend cell beside idle%"  "| 50% | 20% |" "$MD21"
+ck_has "throttle: default-ceiling flag"     "**Throttled against the probe's DEFAULT ceiling** — \`thr00001\` 3x (2.0h parked)" "$MD21"
+
 echo
 echo "$PASS passed / $FAIL failed / $SKIP skipped"
 [ "$FAIL" -eq 0 ]

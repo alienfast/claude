@@ -12,11 +12,15 @@
 # this machine (verified 2026-08-16/17: non-fleet burn in the cutoff windows was zero), so a trailing-5h
 # sum over ~/.claude/projects, deduped by requestId, is the account meter to within the subagent slack.
 #
-# CEILING: not queryable from any API — it is CALIBRATED from observed cutoffs. fleet-retro records each
-# cutoff's trailing-5h output into ~/.claude/telemetry/five-hour-ceiling.json; this probe reads
-# `ceiling_output_tokens` from there (default 1500000 — conservatively under the 1.57M/1.74M measured
-# 2026-08-17). Ceilings are account-specific: after an account switch, expect the first overnight run to
-# recalibrate (one cutoff observation), then update the file.
+# CEILING: not queryable from any API. It is read from ~/.claude/local/five-hour-ceiling.json
+# (`ceiling_output_tokens`), falling back to 1500000 (conservatively under the 1.57M/1.74M cutoffs measured
+# 2026-08-17). The keeper set it to 100,000,000 on 2026-08-30 (multi-account: the machine-wide meter maps to
+# no one account's window, so the probe should throttle on nothing). The file lives under local/, a directory
+# only this config writes to, because the harness owns telemetry/ — its previous home — and the copy there
+# vanished 2026-09-29 (a harness self-upgrade landed in the same hour); the 2026-10-04/05 fleet then parked 6
+# session-hours against the default with 146 issues pickable and nothing said so. `--ceiling-only` prints the
+# ceiling in effect without scanning transcripts: /fleet-launch prints it before a fleet runs on it, and
+# fleet-metrics.py flags a run that was throttled against the default.
 #
 # Exit: 0 = pick OK (headroom >= reserve, or the probe errored — FAIL OPEN: a broken probe must not
 # halt a healthy fleet; the stall watcher remains the backstop). 2 = THROTTLE (headroom < reserve).
@@ -29,7 +33,8 @@ RESERVE=250000
 WINDOW_MIN=300
 AS_JSON=0
 PROJECTS_DIR="$HOME/.claude/projects"
-CALIBRATION="$HOME/.claude/telemetry/five-hour-ceiling.json"
+CALIBRATION="$HOME/.claude/local/five-hour-ceiling.json"
+CEILING_ONLY=0
 NOW=""   # test seam: fixed epoch clock
 
 while [ $# -gt 0 ]; do
@@ -38,10 +43,11 @@ while [ $# -gt 0 ]; do
     --reserve)      RESERVE="$2"; shift 2 ;;
     --window-min)   WINDOW_MIN="$2"; shift 2 ;;
     --json)         AS_JSON=1; shift ;;
+    --ceiling-only) CEILING_ONLY=1; shift ;;
     --projects-dir) PROJECTS_DIR="$2"; shift 2 ;;
     --calibration)  CALIBRATION="$2"; shift 2 ;;
     --now)          NOW="$2"; shift 2 ;;
-    -h|--help)      sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)      sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 0 ;;   # fail open, never fail closed on usage
   esac
 done
@@ -59,6 +65,17 @@ fi
 if ! [[ "${CEILING:-}" =~ ^[0-9]+$ ]]; then
   CEILING=1500000
   ceiling_source="default"
+fi
+
+if [ "$CEILING_ONLY" = "1" ]; then
+  if [ "$AS_JSON" = "1" ]; then
+    jq -n --argjson c "$CEILING" --arg src "$ceiling_source" --arg path "$CALIBRATION" \
+          '{ceiling: $c, ceiling_source: $src, calibration: $path}'
+  else
+    missing=""; [ -f "$CALIBRATION" ] || missing=" (missing)"
+    echo "ceiling=$CEILING($ceiling_source) calibration=$CALIBRATION$missing"
+  fi
+  exit 0
 fi
 
 cutoff_epoch=$(( NOW - WINDOW_MIN * 60 ))

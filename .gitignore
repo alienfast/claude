@@ -49,3 +49,4 @@ daemon-auth-*
 /scripts/__pycache__
 /skills/synced
 /skills/.trash
+/local

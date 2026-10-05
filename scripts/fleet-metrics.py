@@ -13,7 +13,12 @@ fleets, which is where the real value is: drift. This emits a FIXED schema so tw
 diffed. Add columns; do not quietly change what an existing one means. (`classifier_blocks` was
 narrowed once, 2026-09-25: it counts `is_error` denials only, and the check FAILING — `… cannot
 determine the safety of …` — is its own `classifier_unavailable`; before then every result quoting
-either phrase counted, denials, unavailability and prose alike, so older `cls` cells read high.)
+either phrase counted, denials, unavailability and prose alike, so older `cls` cells read high.
+`observed_shipped` gained a second witness 2026-10-05 — the `mark-ready-for-release.sh <ID>` call
+the merge path makes, beside the `SHIPPED-*: <ID>` tag — so older rows' obs counts read low: on the
+2026-10-04/05 fleet the tag caught 8 of 27 ships and the call all 27. The `throttle` gauge — session-
+hours parked by fleet-headroom.sh's THROTTLE between picks, with the ceiling source each probe named —
+was added the same day; rows before it carry no `throttle_*` fields.)
 
 WHAT IT READS
   <checkout>/tmp/auto-state-<runKey>.json   run bookkeeping written by /auto Step 4
@@ -105,6 +110,13 @@ EXECUTOR = re.compile(r"\b(?:ba|z|k)?sh\s+-[A-Za-z]*c\b|\beval\b|\bxargs\b")
 # denial does. A wait of minutes behind one has so far always been the host asleep, not the service.
 CLASSIFIER = re.compile(r"\A(?:<tool_use_error>)?\s*(?:Permission for this action was denied by the Claude Code auto mode classifier|Blocked by classifier)")
 CLASSIFIER_UNAVAILABLE = re.compile(r"\A(?:<tool_use_error>)?[^\n]*?cannot determine the safety of")
+# The merge path's Ready-For-Release call, at a command position (start, or after ; & | ( ) — a quoted mention
+# inside a grep or a comment body does not count. The path prefix is optional and whatever the session typed.
+SHIP_CALL = re.compile(r"(?:^|[;&|(])\s*(?:[\w~./-]*/)?mark-ready-for-release\.sh\s+([A-Z]+-\d+)", re.M)
+# fleet-headroom.sh's text and --json answers; the ceiling source (calibration|default|flag) rides along.
+HEADROOM_PROBE = re.compile(r"^(THROTTLE|PICK-OK)\s+trailing-5h=(\d+)\s+ceiling=(\d+)\((\w+)\)", re.M)
+HEADROOM_PROBE_JSON = re.compile(r"\"trailing_5h_output\":\s*(\d+).*?\"ceiling\":\s*(\d+).*?\"pick_ok\":\s*(true|false)"
+                                 r".*?\"ceiling_source\":\s*\"(\w+)\"", re.S)
 SHIPPED_TAG = re.compile(r"\b(SHIPPED-MERGE|SHIPPED-PR|RELEASED|DEFERRED-MERGE):\s*([A-Z]+-\d+)")
 # Canceled is its own ledger, never a shipped variant: recording cancellations in shipped[] is what
 # overstated the 2026-08-02 fleet's tally 29 vs 25 (skills/auto Step 4 now keeps a canceled[] list).
@@ -495,6 +507,12 @@ def scan_transcript(path, agg, agent_type="main", description=""):
                     agg["visible_chars"][agent_type] += len(json.dumps(inp))
                 pending[b.get("id")] = (t, name, inp)
                 agg["tool_calls"] += 1
+                # The second ship witness (see observed_ships). Main loop only: /finish runs inline there.
+                if name == "Bash" and agent_type == "main" and not r.get("isSidechain"):
+                    for issue in SHIP_CALL.findall(str(inp.get("command", ""))):
+                        agg["ship_calls"].add(issue)
+                        if t and (issue not in agg["ship_times"] or t < agg["ship_times"][issue]):
+                            agg["ship_times"][issue] = t
                 # A named dispatch is the slip /start Step 8 forbids ("never pass `name`"), and
                 # folding names back into types (subagent_meta) erases its only trace from the token
                 # table — so count it here, where the input is in hand. The name→type map is what
@@ -548,6 +566,13 @@ def scan_transcript(path, agg, agent_type="main", description=""):
                         agg["classifier_unavailable"].append((label, (t - t0).total_seconds() if t and t0 else None))
                     else:
                         agg["classifier_blocks"].append(label)
+                if name == "Bash" and t and agent_type == "main" and not r.get("isSidechain") \
+                        and "fleet-headroom" in str(inp.get("command", "")):
+                    for kind, trailing, ceiling, src in HEADROOM_PROBE.findall(body):
+                        agg["headroom_probes"].append((t, kind, int(trailing), int(ceiling), src))
+                    for trailing, ceiling, ok, src in HEADROOM_PROBE_JSON.findall(body):
+                        agg["headroom_probes"].append((t, "PICK-OK" if ok == "true" else "THROTTLE",
+                                                       int(trailing), int(ceiling), src))
                 if t and t0:
                     secs = (t - t0).total_seconds()
                     if name == "Bash":
@@ -581,6 +606,15 @@ def scan_transcript(path, agg, agent_type="main", description=""):
         })
 
 
+def observed_ships(agg):
+    """Ships the transcript testifies to, by either witness: the bare `SHIPPED-*: <ID>` line /finish Step 9
+    prescribes, or the `mark-ready-for-release.sh <ID>` call its merge path makes. The tag is prose and drifts
+    (2026-10-04/05: 8 of 27 ships ended on it; the call matched all 27 and every ledger exactly), so the call
+    is the primary witness and the tag the fallback — a standard-flow release (state set inline, no script call)
+    and a queued merge (the drainer makes the call, not the session) still tag."""
+    return agg["ship_tags"] | agg["ship_calls"]
+
+
 def new_agg():
     return {
         "first": None, "last": None, "tool_calls": 0, "wakeups": 0, "wakeup_stops": 0,
@@ -588,6 +622,9 @@ def new_agg():
         "dispatch": Counter(), "classifier_blocks": [], "classifier_unavailable": [], "gaps": [], "activity_times": [],
         "sleep_blind_s": 0.0, "sleep_blind_n": 0, "sleep_marker_s": 0.0, "sleep_marker_n": 0,
         "ship_tags": set(), "cancel_tags": set(), "subagents": 0,
+        # Issues named by a main-loop `mark-ready-for-release.sh <ID>` call, and every fleet-headroom.sh
+        # answer as (time, THROTTLE|PICK-OK, trailing, ceiling, source) — main loop only for both.
+        "ship_calls": set(), "headroom_probes": [],
         # issue -> earliest SHIPPED-tag time, and every CANCELED-tag time: the transcript side of
         # "when was this session last productive" (git's committer dates are the primary, see
         # git_merged). SKIPPED/FAILED carry no timestamped tag, so a post-ship skip reads as idle.
@@ -1512,7 +1549,7 @@ def main():
     all_shipped = set()
     issue_run = {}
     for s in sessions:
-        shipped = set(s["state"].get("shipped") or []) | s["agg"]["ship_tags"]
+        shipped = set(s["state"].get("shipped") or []) | observed_ships(s["agg"])
         all_shipped |= shipped
         for issue in shipped:
             issue_run.setdefault(issue, s["run_key"])
@@ -1536,7 +1573,7 @@ def main():
     landings = {}
     for s in sessions:
         times = {}
-        for issue in set(s["state"].get("shipped") or []) | s["agg"]["ship_tags"]:
+        for issue in set(s["state"].get("shipped") or []) | observed_ships(s["agg"]):
             when = merged.get(issue, {}).get("landed_at") or s["agg"]["ship_times"].get(issue)
             if when:
                 times[issue] = when
@@ -1617,6 +1654,45 @@ def main():
     idle_tail_session_hours = round(sum(h for h, _ in idle_tails.values())
                                     + sum(h for h, _ in held_tails.values()), 1) if to_deadline else None
     forfeited_session_hours = round(sum(forfeited.values()), 1) if forfeited else None
+
+    # Headroom throttle: session-hours parked by /auto's fleet headroom gate (fleet-headroom.sh). A THROTTLE
+    # answer parks the session until its next probe — or its last turn, when none follows — so parked time
+    # is the sum of those intervals, per session and fleet-wide, with the ceiling source each probe named.
+    # The gauge the 2026-10-04/05 run lacked: 12 of 39 probes said THROTTLE against the 1,500,000 default
+    # (the calibration file had vanished a week earlier), 6.2 session-hours sat parked with 146 issues
+    # pickable, and the 2.5h of it after the last ships rode the idle-tail gauge (idle%) as an empty pool.
+    # Reported BESIDE that gauge, never folded into it: idle% keeps its meaning and the overlap is printed.
+    throttle = {}
+    for s in sessions:
+        probes = sorted(s["agg"]["headroom_probes"], key=lambda pr: pr[0])
+        intervals = []
+        for i, (pt, kind, _trailing, _ceiling, _src) in enumerate(probes):
+            if kind != "THROTTLE":
+                continue
+            end = probes[i + 1][0] if i + 1 < len(probes) else s["agg"]["last"]
+            if end and end > pt:
+                intervals.append((pt, end))
+        in_tail = 0.0
+        if fleet_deadline_dt is not None and (s["run_key"] in idle_tails or s["run_key"] in held_tails):
+            tail_lo, _ = last_productive_of(s)
+            for lo, hi in intervals:
+                a_, b_ = max(lo, tail_lo), min(hi, fleet_deadline_dt)
+                if b_ > a_:
+                    in_tail += (b_ - a_).total_seconds() / 3600
+        throttle[s["run_key"]] = {
+            "probes": len(probes),
+            "throttled": sum(1 for pr in probes if pr[1] == "THROTTLE"),
+            "parked_h": round(sum((hi - lo).total_seconds() for lo, hi in intervals) / 3600, 2),
+            "parked_in_idle_tail_h": round(in_tail, 2),
+            "ceiling_sources": dict(Counter(f"{c}({src})" for _, _, _, c, src in probes)),
+        }
+    throttle_parked_h = round(sum(v["parked_h"] for v in throttle.values()), 1)
+    throttle_in_tail_h = round(sum(v["parked_in_idle_tail_h"] for v in throttle.values()), 1)
+    throttle_probes = sum(v["probes"] for v in throttle.values())
+    throttle_throttled = sum(v["throttled"] for v in throttle.values())
+    throttle_sources = Counter()
+    for v in throttle.values():
+        throttle_sources.update(v["ceiling_sources"])
 
     # Early drain: ONE session drained while its siblings kept picking — the pool was gated, not
     # empty (a `blocks` chain behind in-flight work, an empty fetch, a label flap, work certified
@@ -1771,6 +1847,8 @@ def main():
         "idle_tail_session_hours": idle_tail_session_hours,
         "forfeited_session_hours": forfeited_session_hours,
         "idle_tail_share": None,  # filled below once session_hours exists
+        "throttle_session_hours": throttle_parked_h,
+        "throttle_share": None,  # filled below once session_hours exists
     }
 
     # Burn against the moving windows the account actually meters. /auto-prep sizes a fleet from
@@ -1783,6 +1861,7 @@ def main():
     headline["session_hours"] = round(session_hours, 1)
     headline["idle_tail_share"] = round(idle_tail_session_hours / session_hours, 3) \
         if idle_tail_session_hours is not None and session_hours else None
+    headline["throttle_share"] = round(throttle_parked_h / session_hours, 3) if session_hours else None
     # --sessions carries NO time bound, so every ledger-less /auto session the project has ever
     # held counts as "excluded" — 18 of them on the 2026-08-25 checkout, all from earlier fleets and
     # every one a correct exclusion. Only an exclusion OVERLAPPING the measured fleet's own span can
@@ -1868,7 +1947,8 @@ def main():
             "sessions": [{
                 "run_key": s["run_key"],
                 "recorded_shipped": s["state"].get("shipped") or [],
-                "observed_shipped": sorted(s["agg"]["ship_tags"]),
+                "observed_shipped": sorted(observed_ships(s["agg"])),
+                "observed_by": {"tags": sorted(s["agg"]["ship_tags"]), "calls": sorted(s["agg"]["ship_calls"])},
                 "recorded_canceled": s["state"].get("canceled") or [],
                 "observed_canceled": sorted(s["agg"]["cancel_tags"]),
                 "status": s["state"].get("status"), "reason": s["state"].get("reason"),
@@ -1893,6 +1973,7 @@ def main():
                 "idle_tail_h": round(idle_tails[s["run_key"]][0], 1) if s["run_key"] in idle_tails
                 else round(held_tails[s["run_key"]][0], 1) if s["run_key"] in held_tails else None,
                 "forfeited_h": round(forfeited[s["run_key"]], 1) if s["run_key"] in forfeited else None,
+                "throttle": throttle.get(s["run_key"]),
                 "rewakes": {k: v for k, v in rewakes[s["run_key"]].items()
                             if k != "spurious_lines"} if s["run_key"] in rewakes else None,
                 "output_tokens": {f"{t}/{m}": n for (t, m), n in s["agg"]["tokens"].most_common()},
@@ -1953,6 +2034,14 @@ def main():
                 "held_sessions": {k: {"held_h": round(h, 1), "forfeited_h": round(forfeited[k], 1)}
                                   for k, (h, _) in held_tails.items()},
                 "forfeited_session_hours": forfeited_session_hours,
+                # Hours of the idle tails above that a THROTTLE had parked: a throttle, not an empty pool.
+                "throttled_within_tail_session_hours": throttle_in_tail_h,
+            },
+            "throttle": {
+                "parked_session_hours": throttle_parked_h,
+                "share": headline["throttle_share"],
+                "probes": throttle_probes, "throttled_probes": throttle_throttled,
+                "ceiling_sources": dict(throttle_sources),
             },
             "windows": {
                 "peak_5h_output_tokens": peak_5h,
@@ -2008,25 +2097,26 @@ def main():
                           else f"started {e['started']}") + ")" for e in excluded_stale) + "\n")
 
     print("## Per session\n")
-    print("| run | span | ctx>=200k | shipped (rec/obs) | canceled (rec/obs) | wakeups | dispatch bg/sync/ign | blind sleep | marker | cls denied/unavail | dangling |")
-    print("|---|---|---|---|---|---|---|---|---|---|---|")
+    print("| run | span | ctx>=200k | shipped (rec/obs) | canceled (rec/obs) | wakeups | dispatch bg/sync/ign | blind sleep | marker | cls denied/unavail | dangling | throttled |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|")
     tot = Counter()
     for s in sessions:
         a = s["agg"]
         span = ((a["last"] - a["first"]).total_seconds() / 3600) if a["first"] and a["last"] else 0.0
-        rec, obs = len(s["state"].get("shipped") or []), len(a["ship_tags"])
+        rec, obs = len(s["state"].get("shipped") or []), len(observed_ships(a))
         crec, cobs = len(s["state"].get("canceled") or []), len(a["cancel_tags"])
         if s["ledger_missing"]:
             rec, crec = "-", "-"   # no ledger to record against; obs is the only truth for this row
         blind_pct = f"{a['sleep_blind_s'] / 3600:.1f}h ({100 * a['sleep_blind_s'] / (span * 3600):.0f}%)" if span else "-"
-        unrecorded = a["ship_tags"] - set(s["state"].get("shipped") or [])
+        unrecorded = observed_ships(a) - set(s["state"].get("shipped") or [])
         flag = "  ⚠" if (a["wakeups"] == 0 and a["loop_firings"]) or unrecorded or s["ledger_missing"] else ""
         _, s_ge200, s_ctx_total = ctx_shares(a["ctx_volume"])
         ctx_cell = f"{100 * s_ge200:.0f}%" if s_ctx_total else "-"
         print(f"| `{s['run_key']}`{flag} | {span:.1f}h | {ctx_cell} | {rec}/{obs} | {crec}/{cobs} | "
               f"{a['wakeups']} ({a['wakeup_stops']} stop) | "
               f"{a['dispatch']['background']}/{a['dispatch']['sync']}/{a['dispatch']['ignored']} | {blind_pct} | "
-              f"{a['sleep_marker_s'] / 3600:.1f}h | {len(a['classifier_blocks'])}/{len(a['classifier_unavailable'])} | {a['dangling']} |")
+              f"{a['sleep_marker_s'] / 3600:.1f}h | {len(a['classifier_blocks'])}/{len(a['classifier_unavailable'])} | {a['dangling']} | "
+              f"{throttle[s['run_key']]['parked_h']:.1f}h ({throttle[s['run_key']]['throttled']}/{throttle[s['run_key']]['probes']}) |")
         tot["span"] += span
         tot["blind"] += a["sleep_blind_s"]
         tot["marker"] += a["sleep_marker_s"]
@@ -2042,7 +2132,10 @@ def main():
           f"{blind_share} · marker polls "
           f"{tot['marker'] / 3600:.1f}h · dispatch {tot['bg']} background / {tot['sync']} sync{ign_note} · "
           f"{named} named dispatches · {tot['cls']} classifier denials / {tot['cls_unavail']} unavailable · "
-          f"{sum(fleet_tokens.values()):,} output tokens\n")
+          f"{sum(fleet_tokens.values()):,} output tokens · headroom-parked {throttle_parked_h:.1f}h"
+          + (f" ({100 * headline['throttle_share']:.0f}% of fleet; {throttle_throttled}/{throttle_probes} probes THROTTLE; "
+             f"ceiling {', '.join(f'{k} x{n}' for k, n in throttle_sources.most_common())})"
+             if throttle_probes else " (no headroom probes seen)") + "\n")
     if rewake_tot is not None:
         print(f"rewakes {rewake_tot['stop']} stop ({rewake_tot['save']} save / "
               f"{rewake_tot['spurious']} spurious) + {rewake_tot['api']} api · "
@@ -2063,7 +2156,10 @@ def main():
         print(f"**Pool exhausted** — last ship {pool_exhausted_h:.1f}h before the deadline; "
               f"{idle_tail_session_hours:.1f} session-hours ({share} of the fleet) idle on an empty or "
               f"gated pool ({len(idle_tails)} of {len(sessions)} sessions deadline-drained{held_clause}: "
-              f"{tails}). An empty or gated pool is a prep finding, not a session fault — read it "
+              f"{tails})"
+              + (f", of which {throttle_in_tail_h:.1f} session-hours were headroom-parked — a throttle, not an empty "
+                 f"pool (Totals)" if throttle_in_tail_h else "")
+              + f". An empty or gated pool is a prep finding, not a session fault — read it "
               f"beside the Remaining pool census (fleet-retro Step 3). Skips and failures after the "
               f"last ship carry no timestamp and are counted as idle.{held_note}\n")
     if ctx_total_vol:
@@ -2324,8 +2420,8 @@ def main():
         def pct(v):
             return f"{round(100 * v)}%" if v is not None else "-"
         print("| fleet start | n | hours | shipped | $/issue | ktok/issue | $/Mtok out | sub-final% | "
-              "cycles | find/rev | C+H/rev | plan% | ctx>=200k% | filed/ship | fresh% | idle% |")
-        print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+              "cycles | find/rev | C+H/rev | plan% | ctx>=200k% | filed/ship | fresh% | idle% | thr% |")
+        print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
         for r in history[-6:]:
             mark = " ←" if r.get("session_set") == headline["session_set"] and not args.all else ""
             fs = (r.get("fleet_start") or "?")[:16].replace("T", " ")
@@ -2337,7 +2433,8 @@ def main():
                   f"{cell(r.get('avg_cycles'))} | {cell(r.get('findings_per_review'))} | "
                   f"{cell(r.get('crit_high_per_review'))} | {pct(r.get('plan_origin_share'))} | "
                   f"{pct(r.get('ctx_share_ge200k'))} | {cell(r.get('filed_per_shipped'))} | "
-                  f"{pct(r.get('fresh_shipped_share'))} | {pct(r.get('idle_tail_share'))} |")
+                  f"{pct(r.get('fresh_shipped_share'))} | {pct(r.get('idle_tail_share'))} | "
+                  f"{pct(r.get('throttle_share'))} |")
         if len(history) > 6:
             print(f"\n({len(history) - 6} earlier row(s) in the ledger, not shown)")
         print("\nRead $/issue as its two factors: ktok/issue is work per shipped issue (churn or harder "
@@ -2349,7 +2446,10 @@ def main():
               "gauge: the share of shipped issues created during or within 7 days before the run. "
               "idle% is the pool-exhausted gauge: session-hours sessions sat on an empty or gated pool "
               "after their last ship — a deadline-drained session to the deadline, one that died "
-              "holding only to its last turn — as a share of the fleet's summed transcript span.\n")
+              "holding only to its last turn — as a share of the fleet's summed transcript span. thr% is the "
+              "headroom-throttle gauge: session-hours parked by fleet-headroom.sh's THROTTLE between picks, as a "
+              "share of the same span; it overlaps idle% wherever a park ran past the last ship, and the Pool "
+              "exhausted line says by how much.\n")
     elif not args.all:
         print("- first recorded fleet — the trend accrues one row per windowed run in "
               "`tmp/fleet-metrics-history.jsonl`\n")
@@ -2358,7 +2458,7 @@ def main():
     flagged = False
     for s in sessions:
         a, st = s["agg"], s["state"]
-        rec, obs = set(st.get("shipped") or []), a["ship_tags"]
+        rec, obs = set(st.get("shipped") or []), observed_ships(a)
         if s["ledger_missing"]:
             flagged = True
             span = ((a["last"] - a["first"]).total_seconds() / 3600) if a["first"] and a["last"] else 0.0
@@ -2470,6 +2570,20 @@ def main():
                   f"`task-notification` and are main-loop output in every other table.")
             for c in rw["spurious_lines"][:3]:
                 print(f"    - `{c}`")
+    # Parked against the probe's built-in default: the calibration file was not read. The keeper's ceiling
+    # (100,000,000 since 2026-08-30) means the gate should throttle on nothing, so every default-sourced
+    # THROTTLE is capacity parked for no reason — 6.2 session-hours on 2026-10-04/05, silent in every table.
+    default_throttled = {k: v for k, v in throttle.items()
+                         if v["throttled"] and any(src.endswith("(default)") for src in v["ceiling_sources"])}
+    if default_throttled:
+        flagged = True
+        who = ", ".join(f"`{k}` {v['throttled']}x ({v['parked_h']:.1f}h parked)"
+                        for k, v in sorted(default_throttled.items()))
+        print(f"- **Throttled against the probe's DEFAULT ceiling** — {who}: fleet-headroom.sh answered "
+              f"`ceiling=…(default)`, so `~/.claude/local/five-hour-ceiling.json` was missing or unreadable at pick "
+              f"time and the gate parked on 1,500,000 instead of the keeper's 100,000,000 (2026-08-30, multi-account: "
+              f"it should throttle on nothing). {throttle_parked_h:.1f} session-hours parked this run. Restore the "
+              f"file; /fleet-launch prints the ceiling in effect, so check that line before the next run.")
     missing = [i for i, m in merged.items() if not m["commit"]]
     if missing:
         flagged = True
