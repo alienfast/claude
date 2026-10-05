@@ -1,6 +1,6 @@
 # PR Title and Description Generator
 
-Version: 1.3.0
+Version: 1.4.0
 
 Generate or update GitHub Pull Request titles and descriptions based on actual code changes in the final state.
 
@@ -151,6 +151,7 @@ To update this skill:
 
 ## Version History
 
+- **1.4.0** (2026-10-02): Targeting a PR by number or URL — the PR, not the checkout, is the subject: no checkout, switch, or push, Case B only, and the analysis runs against `<headRefOid>` and `origin/<base>`, or `<mergeCommit>^1` once merged (`origin/<base>` then already carries the PR — its baseline read is wrong, and after a merge-commit merge the diff against it is empty)
 - **1.3.0** (2026-09-28): Themed Executive Summary for multi-issue PRs — a headline, then `###` themes in the business's words (one problem sentence, outcome bullets, no IDs), then `### Issues in this release` last as a sorted reference list; a single-issue PR keeps Problem/Solution
 - **1.2.0** (2026-09-08): Census-then-roster for multi-issue PRs — the Executive Summary enumerates every shipped Linear ID and lists each customer-visible one on its own line (concision cuts within a line, never a line); the ID-first form keeps roster lines clear of Linear's close-keyword scan
 - **1.1.0** (2026-06-02): Add baseline-verification discipline (the "before"/"was broken" narrative must be verified against `$BASE`, not inferred from the diff) and a business-shareable Executive Summary that leads every description

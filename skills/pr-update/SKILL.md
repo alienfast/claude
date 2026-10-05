@@ -1,17 +1,17 @@
 ---
 name: PR Title and Description Generator
-description: "Generate or update GitHub Pull Request titles and descriptions from the actual code changes in the final state. Use whenever a PR is being opened or its title/description written — when the user says 'open a PR', 'create a PR', 'make/raise/submit a PR', 'update the PR', or mentions generating or writing PR descriptions, titles, or summaries. If no PR exists yet it pushes the branch and creates one; otherwise it updates the existing open PR. Analyzes the git diff to document what's actually in the code, not just commit history."
+description: "Generate or update GitHub Pull Request titles and descriptions from the actual code changes in the final state. Use whenever a PR is being opened or its title/description written — when the user says 'open a PR', 'create a PR', 'make/raise/submit a PR', 'update the PR', or mentions generating or writing PR descriptions, titles, or summaries. If no PR exists yet it pushes the branch and creates one; otherwise it updates the existing open PR. Given a PR number or URL, it updates that PR's title and description — open or merged — without touching the checkout. Analyzes the git diff to document what's actually in the code, not just commit history."
 ---
 
 # PR Title and Description Generator
 
-Generate or update a PR title and description based on the actual changes in the current branch.
+Generate or update a PR title and description based on the actual changes in the current branch, or in a PR named by number or URL (§1).
 
 ## Core Principle
 
 **Document ONLY what exists in the final state of the code, not the development history.**
 
-**The "before" you describe is what the base branch shipped (`origin/$BASE`) — never an intermediate branch commit.** A bug introduced and fixed within the same branch was never shipped: describe the net effect, not the intra-branch detour. Any "fixes / was broken / now works / adds" statement is implicitly a claim about the baseline — verify it against `origin/$BASE` (§4) before writing it. (`$BASE` is resolved in §2.)
+**The "before" you describe is what the base branch shipped (`origin/$BASE`, or `<mergeCommit>^1` for a PR already merged — §1) — never an intermediate branch commit.** A bug introduced and fixed within the same branch was never shipped: describe the net effect, not the intra-branch detour. Any "fixes / was broken / now works / adds" statement is implicitly a claim about the baseline — verify it against `origin/$BASE` (§4) before writing it. (`$BASE` is resolved in §2.)
 
 ## Bash Command Rule
 
@@ -21,7 +21,12 @@ If a feature was added in one commit and removed in another, it should NOT be in
 
 ## Analysis Process
 
-### 1. Identify Current Branch and PR
+### 1. Identify the PR
+
+**Targeting a PR by number or URL** (`/pr-update 545`, or another skill passing one from a checkout on an unrelated branch): the PR is the subject, not the checkout. Resolve it with `gh pr view <arg> --json number,title,state,mergedAt,headRefName,headRefOid,baseRefName,mergeCommit` in place of the bare `gh pr view` below. It must belong to this checkout's `origin` repository — `git fetch origin` and Case B's `gh pr edit <number>` both target it, so stop otherwise. A lookup that fails stops the skill; it is never "no PR exists", which would push the checked-out branch and open a PR for it. Never check out, switch, or push: the update is Case B, title and body only, and §1.1's prompt for a non-open PR offers update or cancel, never "create new PR". Fetch with `git fetch origin <base> "pull/<number>/head"` (GitHub keeps that ref after a merge), then run the rest of the skill against an explicit pair instead of the checkout:
+
+- **Head:** every `HEAD` in this skill is `<headRefOid>` — §2–§4, §6, the checklist, and the census's `$BASE...HEAD` test. `scripts/verify-feature.sh` reads only the local `HEAD`; use `git show <headRefOid>:<path>` instead.
+- **Base:** every `"$BASE"`, `origin/$BASE`, and §4 `$BASE_REF` is `origin/<base>` — unless the PR is MERGED, when it is `<mergeCommit>^1` (from `.mergeCommit.oid`), the base tip just before the merge. Once merged, `origin/<base>` carries the PR's change, so §4's baseline read shows it as already shipped — whatever the merge method. After a merge-commit merge it also contains the PR's head, so a three-dot diff against it comes back empty (`code-impact.sh` prints an all-zero table and exits 0); a squash or rebase merge leaves that diff intact, and the baseline is wrong all the same. Against `<mergeCommit>^1`, the three-dot diff to `<headRefOid>` is the PR's own change set — what GitHub's Files changed tab shows: `code-impact.sh <mergeCommit>^1 <headRefOid>`. A rebase merge is the exception: its `mergeCommit` has one parent and carries the PR's last commit, so `^1` already holds the PR's earlier commits; the three-dot diffs still resolve through ancestry, but find §4's baseline by hand before writing any "fixes" claim.
 
 ```bash
 git branch --show-current
@@ -114,7 +119,7 @@ The detected pull request is **{pr_status_type}**:
 - **State**: {pr_status_detail}
 
 **Options:**
-1. **Create new PR** - Open a fresh pull request for these changes (recommended for most cases)
+1. **Create new PR** - Open a fresh pull request for these changes (recommended for most cases; not offered when the PR was named by number or URL — "these changes" would be whatever branch is checked out)
 2. **Update {pr_status_type} PR anyway** - Modify the PR's title/description (rarely needed)
 3. **Cancel** - Stop without making changes
 
@@ -167,8 +172,8 @@ If implementing this skill as a non-interactive script, Claude should directly h
 - If user says "update anyway": Set `user_confirmed_update="true"`
 - If user says "cancel": Exit gracefully
 
-**When no PR exists (pr_info is empty):**
-Skip validation entirely - the skill will create a new PR (normal workflow).
+**When no PR exists and none was named (pr_info is empty):**
+Skip validation entirely - the skill will create a new PR (normal workflow). A PR named by number or URL that does not resolve is an error: stop.
 
 **API Failure Handling:**
 If `gh pr view` returns an error OTHER than "no pull requests found", treat as UNKNOWN state and ask user before proceeding.
@@ -194,7 +199,7 @@ if [[ -z "$BASE" ]]; then
 fi
 ```
 
-**Shell-variable persistence.** Each Bash tool call is a fresh shell — `BASE` (and the `pr_*` variables captured in §1) do **not** survive across calls. Resolve `BASE` in, or re-establish it within, the same Bash invocation that consumes it (the analysis commands below, and the final `gh pr create` / `gh pr edit` step). When updating a non-open PR via §1.1 option 2, `$pr_base` is the base the PR *had* — the diff against it may be approximate; this is rare and updating a non-open PR is already discouraged.
+**Shell-variable persistence.** Each Bash tool call is a fresh shell — `BASE` (and the `pr_*` variables captured in §1) do **not** survive across calls. Resolve `BASE` in, or re-establish it within, the same Bash invocation that consumes it (the analysis commands below, and the final `gh pr create` / `gh pr edit` step). When updating a merged PR via §1.1 option 2, `origin/$pr_base` already carries the PR's change, and after a merge-commit merge a diff against it comes back empty — use §1's merged pair (`<mergeCommit>^1` against `<headRefOid>`), which is exact. A closed, unmerged PR's base is the one it had; the diff against it may be approximate.
 
 Get commit count:
 
@@ -242,8 +247,9 @@ by path is subject to neither:
 "$HOME/.claude/skills/pr-update/scripts/code-impact.sh" "$BASE"
 ```
 
-A second argument diffs against something other than `HEAD` — `code-impact.sh origin/main origin/hotfixes`
-when analyzing a PR from outside its checkout.
+A second argument diffs against something other than `HEAD` — for a PR analyzed from outside its checkout, pass
+§1's pair: `code-impact.sh origin/<base> <headRefOid>` while it is open, `code-impact.sh <mergeCommit>^1 <headRefOid>`
+once it is merged (against `origin/<base>`, a PR merged by merge commit diffs empty and the table reads all zeros).
 
 **Notes:**
 
@@ -269,7 +275,7 @@ Include the resulting table in the PR description under a **Code Impact** sectio
 
 **Before writing any "fixes / was broken / now works / adds" narrative, confirm what the base branch actually shipped.** The diff shows the *net* change between `$BASE` and `HEAD`, but it does **not** tell you which side was production reality — infer that wrong and you describe a bug that never shipped (or an "add" that already existed).
 
-Resolve the baseline ref once. "What's live in production now" is the **remote** tip `origin/$BASE` (the local `$BASE` can lag the remote and would then misreport the baseline) — but a worktree PR's base may exist only locally with no `origin/` counterpart (§2 permits `BASE="$pr_base"`), so fall back to the local `$BASE` when the remote ref is absent:
+Resolve the baseline ref once. "What's live in production now" is the **remote** tip `origin/$BASE` (the local `$BASE` can lag the remote and would then misreport the baseline) — but a worktree PR's base may exist only locally with no `origin/` counterpart (§2 permits `BASE="$pr_base"`), so fall back to the local `$BASE` when the remote ref is absent. For a PR already merged, `origin/$BASE` includes the PR itself — set `BASE_REF` to `<mergeCommit>^1` (§1) instead of running this block:
 
 ```bash
 git fetch --quiet origin "$BASE" 2>/dev/null || true
@@ -355,7 +361,7 @@ For each change area:
 Before finalizing the description, verify:
 
 - [ ] Every feature mentioned exists in `git show HEAD:path/to/file`
-- [ ] Every "fixes / was broken / now works" claim is verified against the §4 baseline ref (`origin/$BASE`, or its local fallback when the base isn't on origin) — not inferred from the diff
+- [ ] Every "fixes / was broken / now works" claim is verified against the §4 baseline ref (`origin/$BASE`, its local fallback when the base isn't on origin, or `<mergeCommit>^1` for a merged PR) — not inferred from the diff
 - [ ] No bug is described as production-affecting if it was introduced and resolved within this branch
 - [ ] No references to features that were added then removed during development
 - [ ] All file links use relative paths from repo root (not absolute paths)
@@ -588,7 +594,7 @@ Also in this release, with no customer-visible change: BF-1698, BF-1703.
 
 For step-by-step examples of how to analyze and verify PR changes, see [resources/analysis-workflow.md](resources/analysis-workflow.md).
 
-You can also use the verification script:
+You can also use the verification script (it reads the local `HEAD` only — when targeting a PR by number, use `git show <headRefOid>:<path>`):
 
 Check if a feature exists in final state:
 
@@ -669,7 +675,7 @@ Create or update the PR using GitHub CLI — branch on whether a PR already exis
 
 ### Case A — no PR exists (create)
 
-`pr_info` is empty: either none was found in §1, or the user chose "create new" in §1.1. Push the branch (idempotent), then create the PR against the resolved `$BASE`:
+`pr_info` is empty: either none was found in §1, or the user chose "create new" in §1.1 — never for a PR named by number or URL, which updates through Case B or stops. Push the branch (idempotent), then create the PR against the resolved `$BASE`:
 
 ```bash
 branch="$(git branch --show-current)"
@@ -774,7 +780,7 @@ EOF
 
 ### Confirm
 
-Either path — view the PR for the current branch:
+Either path — view the PR (`gh pr view` for the current branch's, `gh pr view <number>` when it was named):
 
 ```bash
 gh pr view
