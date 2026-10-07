@@ -1,6 +1,6 @@
 ---
 name: reap-tmp
-description: Inspect and reclaim aged scratch under a project's tmp/. Classifies every top-level entry by name into a lane — never (fleet-metrics history, fleet markers, auto ledgers, triage proposals, tmp/keep/), state-gated (the /quality-review → /finish verdict once its branch is merged, a sequence marker once its branch is gone), cache, handoff, scratch — and ages only the deletable lanes out, while a directory the manifest does not know is reported and never deleted. A daily launchd agent runs it unattended; `list` shows what it would do. Use when the user says 'reap tmp', 'clean up tmp', 'prune tmp', 'what's in tmp', 'tmp is full of junk', or invokes /reap-tmp.
+description: Inspect and reclaim aged scratch under a project's tmp/. Classifies every top-level entry by name into a lane — never (fleet-metrics history, fleet markers, auto ledgers, triage and test-sweep proposals, tmp/keep/), state-gated (the /quality-review → /finish verdict once its branch is merged, a sequence marker once its branch is gone), cache, handoff, scratch — and ages only the deletable lanes out, while a directory the manifest does not know is reported and never deleted. A daily launchd agent runs it unattended; `list` shows what it would do. Use when the user says 'reap tmp', 'clean up tmp', 'prune tmp', 'what's in tmp', 'tmp is full of junk', or invokes /reap-tmp.
 ---
 
 # Reap Tmp
@@ -8,8 +8,8 @@ description: Inspect and reclaim aged scratch under a project's tmp/. Classifies
 Every skill writes to `<project>/tmp/` (CLAUDE.md § Guidelines), and most of what lands there is dead the
 moment its session ends: check logs, Linear staging bodies, fix-delta snapshots, test output. A small set of
 named files is the opposite — read later by a different skill, often from a different session: the
-`/quality-review` → `/finish` verdict, the fleet ledgers `/fleet-retro` measures, the triage scan → apply
-proposals — or never safe to lose at all (`fleet-metrics-history.jsonl`, the six-fleet trend ledger). Age
+`/quality-review` → `/finish` verdict, the fleet ledgers `/fleet-retro` measures, the triage and test-sweep scan →
+apply proposals — or never safe to lose at all (`fleet-metrics-history.jsonl`, the six-fleet trend ledger). Age
 is the wrong test for those and the only right test for the rest, so
 [reap-tmp.sh](../../scripts/reap-tmp.sh) classifies by **name first** and applies a per-lane rule. Measured
 before it existed: 359 files in `~/.claude/tmp`, 207 of them older than a month, and a project `tmp/` that
@@ -23,8 +23,9 @@ First match wins; the manifest is the `classify` function in the script.
 - **never** — kept whatever its age: `keep/` (the operator's hatch — move a file there to keep it),
   `fleet-metrics-history.jsonl`, `fleet-linear-window.json` and `fleet-shipped-issues.json` (retro inputs),
   `fleet-deadline.json`, `fleet-recommendation.json`, `auto-state-<runKey>.json` (ledger expiry is
-  `/fleet-launch`'s, against the agents registry), `triage-proposals/` (the next scan's skip check reads
-  `applied/`), and any registered git worktree parked under `tmp/` (`/reap-worktrees` owns it).
+  `/fleet-launch`'s, against the agents registry), `triage-proposals/` and `test-sweep-proposals/` (the next
+  scan's skip check reads `applied/`), `test-sweep-rules.md` (a project's hand-written governing-rule
+  citations for `/test-sweep`), and any registered git worktree parked under `tmp/` (`/reap-worktrees` owns it).
 - **state** — deleted only when the owner's own state says consumed, and never inside 7 days:
   - `quality-review-verdict-<issue>.md`: every local branch of that issue (`<user>/<issue>-…`) is merged into
     the default branch, or none exists; and the file was not written during a fleet window that
@@ -32,14 +33,18 @@ First match wins; the manifest is the `classify` function in the script.
     `session_set` is empty). `quality-review-verdict-no-issue.md` is plain scratch.
   - `fleet-sequence*.json` (+ its `.log`/`.pid`): not `running` under a live runner pid, and its
     integration branch is gone — resume needs the branch.
-- **handoff** (30 days) — the triage cheap-pass inputs the interactive apply reads later
-  (`triage-cheap.ndjson`, `triage-pool.ndjson`, `triage-head.sha`, `triage-commit-*.txt`, `triage-ls-files.txt`).
+- **handoff** (30 days) — the scan-time inputs and reports the interactive apply sessions read later: the triage
+  cheap-pass inputs (`triage-cheap.ndjson`, `triage-pool.ndjson`, `triage-head.sha`, `triage-commit-*.txt`,
+  `triage-ls-files.txt`) and the test-sweep tables and reports (`test-sweep-*.tsv`, `test-sweep-*.txt`, and
+  `test-sweep-scan.out` / `test-sweep-scan.log`, the only home of the `CANDIDATES` and `COST` lines the apply
+  report leads with).
 - **cache** (1 day) — reused on presence alone with no freshness check (`linear-context-*.md`,
   `triage-digest-*.md`) or poll markers a leftover copy would trip (`*.done`, `wait-*.sh`). A stale copy is
   worse than an absent one; every writer re-fetches when the file is missing.
-- **scratch** (7 days) — everything else at the top level, plus the known scratch directories
-  (`qr-fix-base-*`, `qr-probe-*`, `screenshots`, `triage-markers`, `triage-apply-bodies`,
-  `triage-proposals/raw`, `pool-pages-*`, `epic-merge`, `proposal-*`). A directory's age is its newest file.
+- **scratch** (7 days) — everything else at the top level (including `storybook-junit.xml`), plus the known
+  scratch directories (`qr-fix-base-*`, `qr-probe-*`, `screenshots`, `triage-markers`, `triage-apply-bodies`,
+  `triage-proposals/raw`, `test-sweep-proposals/raw`, `test-sweep-proposals/dry-run`, `test-sweep-scan.lock`,
+  `pool-pages-*`, `epic-merge`, `proposal-*`). A directory's age is its newest file.
 - **unknown** — a directory not in the manifest. **Never deleted.** Reported (`UNKNOWN`) once it is 30 days
   old so you add a rule or remove it by hand. A top-level file is scratch by construction, so a name the
   manifest does not know still ages out; a directory is structure someone built, so it does not.

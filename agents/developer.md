@@ -59,6 +59,7 @@ Follow project-specific error handling patterns from CLAUDE.md. General principl
 Implement tests according to CLAUDE.md requirements:
 
 - **Unit tests** for pure logic and utility functions
+- **No second copy of a matrix already pinned at a lower layer** — an enum, policy, or failure-mode matrix is written once at the unit that owns the switch; a consumer or a higher layer pins one wiring case, never the matrix again (the project's `.claude/rules/storybook.md` § A shared mechanism is pinned once, at its own stories; a request spec repeating a policy spec's cases is bound by `.claude/rules/api.md` § The policy spec owns the arm matrix).
 - **Visual tests** for any user interface component
 - **Integration tests** for any user inteface component with behavior and system interactions
 - **Edge case coverage** including error conditions

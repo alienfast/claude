@@ -213,6 +213,7 @@ In workflow order — seed, certify, fleet, then the per-issue tiers and upkeep:
 | [merge-queue](skills/merge-queue/) | Inspect and drain `/finish` merges that were deferred, then retried by the launchd drainer |
 | [reap-worktrees](skills/reap-worktrees/) | Inspect and reclaim leftover `/start wt` worktrees (PR/branch merged, or issue Done/Canceled) |
 | [reap-tmp](skills/reap-tmp/) | Inspect and reclaim aged `tmp/` scratch by name-based lane — never the handoff files other skills still read, never an unlisted directory |
+| [test-sweep](skills/test-sweep/) | Periodic audit of the test suites for cost and redundancy — ranks rspec and story files, proposes retire / consolidate / detag / hoist-ddl per candidate; `scan` is unattended and read-only, `apply` interactive under count, ledger and mutation gates |
 | [reflect](skills/reflect/) | Turn session friction into shared-config edits — auto-applies the safe ones, files the rest as Linear issues (scheduled surface is `/fleet-retro`'s batched `reflect fleet` step; `sweep` mode audits a project's config against its codebase) |
 | [keeper](skills/keeper/) | Interactive pickup for the config work autonomous runs cannot ship — uncommitted `~/.claude` edits, `keeper`-labeled issues, and contributor proposal PRs, adjudicated in one pass |
 

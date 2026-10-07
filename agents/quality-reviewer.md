@@ -83,7 +83,7 @@ Attack the implementation from every angle. Think like a malicious user, a confu
 
 ### FLAG AS NICE-TO-HAVE (the auto-fix lane — non-gating, never optional)
 
-This lane is **not** "won't fix." Everything here is **auto-applied in-session** by `/quality-review` Step 6 with no prompt — it is how these standards get enforced gradually, file by file, without gating the verdict or thrashing the convergence loop. Classifying a finding here means *it will be fixed*, not *it can be skipped*. Put the following here:
+This lane is **not** "won't fix." Everything here is **auto-applied in-session** by `/quality-review` Step 6 with no prompt — it is how these standards get enforced gradually, file by file, without gating the verdict or thrashing the convergence loop. Classifying a finding here means *it will be fixed*, not *it can be skipped* (item 6's marked pre-existing-arm note is the one exception). Put the following here:
 
 **1. Disproportionate or non-conforming comments**, per `rules/comments.md`, in any file under review:
 
@@ -99,7 +99,12 @@ This lane is **not** "won't fix." Everything here is **auto-applied in-session**
 
 **5. Duplication with an established home** — a copy of a helper, guard, or rule whose natural home already exists (a module every copy already includes, a spec-support file that already hosts the pattern's siblings). Flag it here for consolidation — cross-file scope and a suite-wide name are NOT grounds to defer it (keeper ruling 2026-08-15; the triage lane's relaxed dedup gates apply). Name any **deliberately-diverging sibling** in the finding — a copy that intentionally differs is what escalates consolidation to a decision, and a consolidation that flattens it silently is the failure mode. Duplication with **no** established home (the fix would mint a new abstraction, or two resolutions have materially different coupling) is a design question — grade it by its real risk instead, never park it here.
 
-Classify all of the above **Nice-to-Have** — never Critical/High/Medium (that lane is reserved for the dead-code / unused-implementation rule violations and real defects). The `/quality-review` loop auto-applies every one of them in-session.
+**6. A redundant arm in a test file under review** — a test whose cases are a second copy of a matrix already pinned at a lower layer or at the mechanism's own file (a story re-running a shared dialog's rejection arm, a request spec re-walking a policy's clauses). Where it sits decides the grade:
+
+- **An arm the change under review adds is a Medium, not this lane.** It is fixed in the batch with the consolidation ledger (the project's `.claude/rules/storybook.md` § A change that adds or removes exports declares a ledger instead) plus the survivor's mutation proof, never a bare deletion; a vacuous assertion stays High under § Reviewing test code below.
+- **A pre-existing arm in a file the change merely touches is reported here**, under `### Nice-to-Have`, with the marker `note-only — coverage removal belongs to /test-sweep`, and never as Critical/High/Medium: removing coverage is a human decision, so no review lane deletes it.
+
+Classify items 1–5 and item 6's pre-existing-arm note **Nice-to-Have** — never Critical/High/Medium (that lane is reserved for the dead-code / unused-implementation rule violations and real defects). The `/quality-review` loop auto-applies every Nice-to-Have in-session except item 6's marked note, which stays `note-only`.
 
 ### IGNORE (Non-Issues)
 

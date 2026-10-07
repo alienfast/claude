@@ -1,0 +1,33 @@
+{
+  "type": "object",
+  "properties": {
+    "sha": { "type": "string", "description": "git rev-parse --short=10 HEAD as measured by this agent; the scan's resumability test reads changes since it" },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "slug": { "type": "string", "description": "the candidate slug exactly as the prompt listed it; names the proposal file" },
+          "file": { "type": "string", "description": "repo-relative path of the file that loses tests (for a group candidate, the first one the disposition edits)" },
+          "suite": { "type": "string", "enum": ["rspec", "storybook"] },
+          "kind": {
+            "type": "string",
+            "enum": ["retire", "consolidate", "detag", "hoist-ddl", "keep"],
+            "description": "retire = delete examples or stories whose every assertion is pinned elsewhere (target names where; with no surviving owner it is keep); consolidate = fold a repeated matrix or repeated stories into the one surface that owns the mechanism, keeping one wiring case per consumer; detag = take a no-play story file out of the test-storybook run with the render-only tag (it renders and snapshots, but runs no play); hoist-ddl = an rspec example pinning presence, uniqueness, or a foreign key that db/schema.rb already enforces moves to a one-line schema assertion; keep = the candidate is expensive or repeated for a reason that holds — evidence says what that reason is"
+          },
+          "target": { "type": "string", "description": "where the surviving assertion lives after the change: file plus example or export name; empty only for keep, and for a detag that removes no export; the apply gate refuses a proposal that removes examples and leaves it empty" },
+          "evidence": { "type": "string", "description": "one line a human reads in the apply dialog: the measured count and the code fact that decides it" },
+          "estimated_seconds": { "type": ["number", "null"], "description": "suite seconds this saves, an order-of-magnitude figure from the most recent run's per-file times scaled by the share of examples removed; 0 for keep; null for storybook when no full junit report exists" },
+          "examples_removed": { "type": "integer", "description": "GROSS examples (rspec) or story exports (storybook) the change deletes or folds away, re-derived by reading the file, whether or not a copy is added back elsewhere (a consolidate that moves 3 and drops 1 is 4); the apply gate checks baseline minus this plus the hoisted additions equals the post-change count" },
+          "removed": { "type": "array", "items": { "type": "string" }, "description": "every it description or story export name the change deletes or folds, one entry per removed example (at least examples_removed entries); the apply gate checks the consolidation ledger names each one exactly" },
+          "governing_rule": { "type": "string", "description": "the rule file and section that licenses this disposition, e.g. .claude/rules/storybook.md § A shared mechanism is pinned once" },
+          "mechanical": { "type": "boolean", "description": "true only when the change is a deletion or move with no open question — no product decision, no coverage judgment a reviewer could dispute; false files the item as a needs-decision Linear issue instead of applying it" },
+          "mutation": { "type": "string", "description": "for each deleted routing arm, the one-line mutation of the implementation the surviving assertion must redden against (file, line or symbol, the swap); required whenever examples_removed is above 0; empty for detag and keep" },
+          "report": { "type": "string", "description": "full markdown write-up: what was re-derived, the matrix and where it is already pinned, the survivor, the ledger lines, risks" }
+        },
+        "required": ["slug", "file", "suite", "kind", "target", "evidence", "estimated_seconds", "examples_removed", "removed", "governing_rule", "mechanical", "mutation", "report"]
+      }
+    }
+  },
+  "required": ["sha", "candidates"]
+}

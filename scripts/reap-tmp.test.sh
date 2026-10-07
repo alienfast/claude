@@ -72,6 +72,20 @@ auto-state-3eeea4c4.json||never auto-ledger
 auto-state.json||scratch legacy-auto-state
 triage-proposals|d|never triage-proposals
 triage-proposals/raw|d|scratch-dir triage-raw
+test-sweep-proposals|d|never test-sweep-proposals
+test-sweep-proposals/raw|d|scratch-dir test-sweep-raw
+test-sweep-proposals/dry-run|d|scratch-dir test-sweep-dry-run
+test-sweep-rules.md||never test-sweep-rules
+test-sweep-scan.lock|d|scratch-dir test-sweep-lock
+test-sweep-scan.out||handoff test-sweep-scan-report
+test-sweep-scan.log||handoff test-sweep-scan-report
+test-sweep-scan.done||cache poll-marker
+test-sweep-candidates-both.tsv||handoff test-sweep-scan-inputs
+test-sweep-todo-rspec.tsv||handoff test-sweep-scan-inputs
+test-sweep-groups-storybook.txt||handoff test-sweep-scan-inputs
+test-sweep-rspec-rank.txt||handoff test-sweep-scan-inputs
+test-sweep-story-census.txt||handoff test-sweep-scan-inputs
+storybook-junit.xml||scratch run-output
 fleet-sequence-bf-2022.json||state sequence-marker
 fleet-sequence.json||state sequence-marker
 fleet-sequence-bf-2022.log||state sequence-sidecar
@@ -250,6 +264,40 @@ ckno "reap is quiet about a young unknown dir"      'UNKNOWN   investigations/' 
 [ -e "$r/tmp/triage-proposals/BF-1.json" ] && [ -e "$r/tmp/triage-proposals/applied/BF-2.json" ] && ck "proposals and applied/ survive" OK OK || ck "proposals and applied/ survive" OK GONE
 [ -d "$r/tmp/triage-proposals/raw" ] && ck "raw/ gone" GONE PRESENT || ck "raw/ gone" GONE GONE
 [ -e "$r/tmp/epic-merge/README" ] && ck "worktree survives" OK OK || ck "worktree survives" OK GONE
+
+echo "== test-sweep: scan reports are handoff, the rules file is never reaped, raw/dry-run/lock are scratch =="
+r=$(mk_repo testsweep)
+mkfile "$r/tmp/test-sweep-scan.out" $((20*D))
+mkfile "$r/tmp/test-sweep-scan.log" $((40*D))
+mkfile "$r/tmp/test-sweep-candidates-both.tsv" $((20*D))
+mkfile "$r/tmp/test-sweep-rules.md" $((60*D))
+mkfile "$r/tmp/storybook-junit.xml" $((8*D))
+mkfile "$r/tmp/test-sweep-scan.lock/holder" $((8*D)); age "$r/tmp/test-sweep-scan.lock" $((8*D))
+mkfile "$r/tmp/test-sweep-proposals/rspec-x.json" $((60*D)); mkfile "$r/tmp/test-sweep-proposals/applied/rspec-y.json" $((60*D))
+mkfile "$r/tmp/test-sweep-proposals/raw/group-1.json" $((60*D)); mkfile "$r/tmp/test-sweep-proposals/dry-run/rspec-z.json" $((60*D))
+for _d in applied raw dry-run; do age "$r/tmp/test-sweep-proposals/$_d" $((60*D)); done
+age "$r/tmp/test-sweep-proposals" $((60*D))
+out=$($SCRIPT list "$r" 2>&1)
+ck "scan report younger than 30d is kept"            'KEEP      test-sweep-scan.out — test-sweep-scan-report — 20d old, kept 30d' "$out"
+ck "scan log older than 30d is eligible"             'ELIGIBLE  test-sweep-scan.log — test-sweep-scan-report — 40d old (> 30d)' "$out"
+ck "candidate table is handoff"                      'KEEP      test-sweep-candidates-both.tsv — test-sweep-scan-inputs — 20d old, kept 30d' "$out"
+ck "rules file is never eligible"                    'KEEP      test-sweep-rules.md — test-sweep-rules' "$out"
+ck "storybook junit is scratch"                      'ELIGIBLE  storybook-junit.xml — run-output — 8d old (> 7d)' "$out"
+ck "scan lock directory ages out as scratch"         'ELIGIBLE  test-sweep-scan.lock — test-sweep-lock' "$out"
+ck "test-sweep proposals are kept"                   'KEEP      test-sweep-proposals — test-sweep-proposals' "$out"
+ck "test-sweep raw output ages out"                  'ELIGIBLE  test-sweep-proposals/raw — test-sweep-raw' "$out"
+ck "test-sweep dry-run output ages out"              'ELIGIBLE  test-sweep-proposals/dry-run — test-sweep-dry-run' "$out"
+out=$($SCRIPT reap "$r" 2>&1)
+ck "reap removes the raw directory"                  'REAPED    test-sweep-proposals/raw' "$out"
+ck "reap removes the dry-run directory"              'REAPED    test-sweep-proposals/dry-run' "$out"
+[ -d "$r/tmp/test-sweep-proposals/raw" ] && ck "test-sweep raw gone" GONE PRESENT || ck "test-sweep raw gone" GONE GONE
+[ -d "$r/tmp/test-sweep-proposals/dry-run" ] && ck "test-sweep dry-run gone" GONE PRESENT || ck "test-sweep dry-run gone" GONE GONE
+[ -d "$r/tmp/test-sweep-scan.lock" ] && ck "scan lock gone" GONE PRESENT || ck "scan lock gone" GONE GONE
+[ -e "$r/tmp/test-sweep-scan.log" ] && ck "aged scan log gone" GONE PRESENT || ck "aged scan log gone" GONE GONE
+[ -e "$r/tmp/test-sweep-scan.out" ] && ck "young scan report survives" OK OK || ck "young scan report survives" OK GONE
+[ -e "$r/tmp/test-sweep-rules.md" ] && ck "rules file survives at 60d" OK OK || ck "rules file survives at 60d" OK GONE
+[ -e "$r/tmp/test-sweep-proposals/rspec-x.json" ] && [ -e "$r/tmp/test-sweep-proposals/applied/rspec-y.json" ] \
+  && ck "proposals and applied/ survive" OK OK || ck "proposals and applied/ survive" OK GONE
 
 echo "== a running fleet widens the fresh guard to its launch =="
 r=$(mk_repo fleetrun)

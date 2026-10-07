@@ -12,20 +12,24 @@
 #
 #   never     kept whatever its age: keep/ (the user's hatch), fleet-metrics-history.jsonl, the retro inputs,
 #             fleet-deadline.json, fleet-recommendation.json, auto-state-<runKey>.json (expiry is
-#             /fleet-launch's, against the agents registry), triage-proposals/ (the next scan's skip check
-#             reads applied/), and any registered git worktree parked under tmp/ (/reap-worktrees owns it).
+#             /fleet-launch's, against the agents registry), triage-proposals/ and test-sweep-proposals/ (the next
+#             scan's skip check reads applied/), test-sweep-rules.md (a project's hand-written governing-rule
+#             citations), and any registered git worktree parked under tmp/ (/reap-worktrees owns it).
 #   state     deleted only when the owner's own state says consumed, and never inside SCRATCH_D days:
 #               quality-review-verdict-<issue>.md — every local branch of that issue is merged into the
 #                 default branch (or none exists), and the file was not written during a fleet window that
 #                 /fleet-retro has not yet measured (fleet_sessions ∩ a history row's session_set is empty).
 #               fleet-sequence*.json (+ its .log/.pid) — not `running` under a live runner pid, and its
 #                 integration branch is gone (resume needs the branch).
-#   handoff   scan-time inputs the interactive triage apply reads later; aged out at HANDOFF_D days.
+#   handoff   scan-time inputs and reports the interactive triage and test-sweep apply sessions read later
+#             (triage-*.ndjson/sha/txt, test-sweep-*.tsv/txt, and test-sweep-scan.out/.log, the only home of the
+#             CANDIDATES and COST lines the apply report leads with); aged out at HANDOFF_D days.
 #   cache     reused on presence alone with no freshness check (linear-context-*.md, triage-digest-*.md) or
 #             poll markers a leftover copy would trip (*.done, wait-*.sh): aged out at CACHE_D days, because
 #             a stale copy is worse than an absent one — every writer re-fetches when the file is missing.
-#   scratch   everything else at the top level, plus the known scratch DIRECTORIES (qr-fix-base-*, qr-probe-*,
-#             screenshots, ...): aged out at SCRATCH_D days. A directory's age is its newest file.
+#   scratch   everything else at the top level (storybook-junit.xml, the test-sweep scan lock, ...), plus the known
+#             scratch DIRECTORIES (qr-fix-base-*, qr-probe-*, screenshots, test-sweep-proposals/raw and /dry-run,
+#             ...): aged out at SCRATCH_D days. A directory's age is its newest file.
 #   unknown   a directory not in the manifest. NEVER deleted — reported once it is UNKNOWN_D days old so
 #             the operator adds a rule or removes it by hand. A top-level file is scratch by construction
 #             (CLAUDE.md), so a name this manifest does not know still ages out; a directory is structure
@@ -108,7 +112,7 @@ have_jq() { command -v jq >/dev/null 2>&1; }
 
 # ---------------------------------------------------------------------------------------------------------
 # The manifest. First match wins; the argument is a top-level tmp/ entry name (one path component), except
-# triage-proposals/raw, which the walker classifies separately. Prints "<lane> <rule>".
+# triage-proposals/raw and test-sweep-proposals/{raw,dry-run}, which the walker classifies separately. Prints "<lane> <rule>".
 # ---------------------------------------------------------------------------------------------------------
 classify() {
   local rel="$1" kind="${2:-f}"
@@ -123,6 +127,13 @@ classify() {
     auto-state.json)                   echo "scratch legacy-auto-state"; return ;;
     triage-proposals)                  echo "never triage-proposals"; return ;;
     triage-proposals/raw)              echo "scratch-dir triage-raw"; return ;;
+    test-sweep-proposals)              echo "never test-sweep-proposals"; return ;;
+    test-sweep-proposals/raw)          echo "scratch-dir test-sweep-raw"; return ;;
+    test-sweep-proposals/dry-run)      echo "scratch-dir test-sweep-dry-run"; return ;;
+    test-sweep-rules.md)               echo "never test-sweep-rules"; return ;;
+    test-sweep-scan.lock)              echo "scratch-dir test-sweep-lock"; return ;;
+    test-sweep-scan.out|test-sweep-scan.log)
+                                       echo "handoff test-sweep-scan-report"; return ;;
     fleet-sequence-pr-update-*)        echo "scratch-dir orphan-pr-worktree"; return ;;
     fleet-sequence*.json)              echo "state sequence-marker"; return ;;
     fleet-sequence*.log|fleet-sequence*.pid)
@@ -131,6 +142,7 @@ classify() {
     quality-review-verdict-*.md)       echo "state verdict"; return ;;
     triage-cheap.ndjson|triage-pool.ndjson|triage-head.sha|triage-commit-*.txt|triage-ls-files.txt)
                                        echo "handoff triage-scan-inputs"; return ;;
+    test-sweep-*.tsv|test-sweep-*.txt) echo "handoff test-sweep-scan-inputs"; return ;;
     linear-context-*.md|triage-digest-*.md)
                                        echo "cache presence-cache"; return ;;
     *.done|wait-*.sh)                  echo "cache poll-marker"; return ;;
@@ -148,7 +160,7 @@ classify() {
                                        echo "scratch staging-body" ;;
     qr-fix-delta-*.diff|qr-simple-delta-*.diff|qr-expected-hashes.txt|quality-review-nth-*.md|deferred-*|reflect-improvement-*|wt.diff)
                                        echo "scratch review-working" ;;
-    pool.json|pool.pages|pool-collisions.json|epic-graph.json|forecast-*.txt|perf.json|rank-perf.sh|testDebug_*|start-wt-verify-*.err|fleet-launch-scope.err|triage-scan-certified.out|sync-main-*.log|*.log|*.err|*.out|*.sql)
+    pool.json|pool.pages|pool-collisions.json|epic-graph.json|forecast-*.txt|perf.json|rank-perf.sh|testDebug_*|start-wt-verify-*.err|fleet-launch-scope.err|triage-scan-certified.out|sync-main-*.log|storybook-junit.xml|*.log|*.err|*.out|*.sql)
                                        echo "scratch run-output" ;;
     *)                                 echo "scratch default-file" ;;
   esac
@@ -369,6 +381,8 @@ walk_root() {
   while IFS= read -r rel; do [ -n "$rel" ] && entries+=("$rel"); done < <(
     find "$tmp" -mindepth 1 -maxdepth 1 \( -type f -o -type d -o -type l \) 2>/dev/null | sed "s|^$tmp/||" | sort
     [ -d "$tmp/triage-proposals/raw" ] && echo "triage-proposals/raw"
+    [ -d "$tmp/test-sweep-proposals/raw" ] && echo "test-sweep-proposals/raw"
+    [ -d "$tmp/test-sweep-proposals/dry-run" ] && echo "test-sweep-proposals/dry-run"
   )
   [ "${#entries[@]}" -gt 0 ] || { echo "  (empty)"; return 0; }
 
