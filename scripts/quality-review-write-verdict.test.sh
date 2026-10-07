@@ -66,6 +66,7 @@ case "$3" in
   *'"TT-41"'*)  routed TT-41 "needs decision" 3 ;;
   *'"BF-701"'*) routed BF-701 specified 2 ;;
   *'"TT-64"'*)  routed TT-64 human 4 ;;
+  *'"TT-65"'*)  routed TT-65 keeper 3 ;;
   *'"TT-60"'*)  printf '%s\n' '{"data":{"issue":{"identifier":"TT-60","labels":{"nodes":[]},"priority":0}}}' ;;
   *'"TT-61"'*)  printf '%s\n' '{"data":{"issue":{"identifier":"TT-61","labels":{"nodes":[{"name":"needs decision"}]},"priority":0}}}' ;;
   *'"TT-62"'*)  printf '%s\n' '{"data":{"issue":{"identifier":"TT-62","labels":{"nodes":[{"name":"bug"},{"name":"simple"}]},"priority":3}}}' ;;
@@ -287,8 +288,8 @@ route_body() { # route_body <filed-line>
 err=$(route_body 'TT-60 (sub-issues of TT-9)' | (cd "$wt" && "$SCRIPT" BF-800 -) 2>&1 >/dev/null); rc=$?
 ck "  no label + no priority -> exit 3" 3 $rc
 ck "  still published to main"     "yes" "$([ -f "$main/tmp/quality-review-verdict-bf-800.md" ] && echo yes || echo no)"
-ck "  ERROR names the issue and both gaps" "yes" "$(printf '%s' "$err" | grep -q 'filed issue TT-60 is unrouted — no routing label (specified, needs decision or human), priority None' && echo yes || echo no)"
-ck "  ERROR names the label command"     "yes" "$(printf '%s' "$err" | grep -q "linear-add-label.sh TT-60 <specified|'needs decision'|human>" && echo yes || echo no)"
+ck "  ERROR names the issue and both gaps" "yes" "$(printf '%s' "$err" | grep -q 'filed issue TT-60 is unrouted — no routing label (specified, needs decision, human or keeper), priority None' && echo yes || echo no)"
+ck "  ERROR names the label command"     "yes" "$(printf '%s' "$err" | grep -q "linear-add-label.sh TT-60 <specified|'needs decision'|human|keeper>" && echo yes || echo no)"
 ck "  ERROR names the priority command"  "yes" "$(printf '%s' "$err" | grep -q 'linear-cli issues update TT-60 -p <1-4>' && echo yes || echo no)"
 ck "  summary line carries the issue"    "yes" "$(printf '%s' "$err" | grep -q 'filed issue(s) are unrouted: TT-60: no routing label' && echo yes || echo no)"
 ck "  the parent in (sub-issues of …) is not read" "no" "$(grep -q '"TT-9"' "$QRV_STUB_LOG" && echo yes || echo no)"
@@ -301,7 +302,7 @@ ck "  only the priority gap is named" "yes" "$(printf '%s' "$err" | grep -q 'TT-
 # `bug` and `simple` are class labels: they rank a pickable issue and route nothing on their own.
 err=$(route_body 'TT-62 (sub-issues of TT-9)' | (cd "$wt" && "$SCRIPT" BF-802 -) 2>&1 >/dev/null); rc=$?
 ck "  class labels only -> exit 3" 3 $rc
-ck "  only the label gap is named" "yes" "$(printf '%s' "$err" | grep -q 'TT-62 is unrouted — no routing label (specified, needs decision or human):' && echo yes || echo no)"
+ck "  only the label gap is named" "yes" "$(printf '%s' "$err" | grep -q 'TT-62 is unrouted — no routing label (specified, needs decision, human or keeper):' && echo yes || echo no)"
 
 # One unrouted id among routed siblings fails the batch; the annotation parenthetical the recipe
 # writes for an exit-2 create (the id repeated inside it) is stripped before ids are read.
@@ -311,9 +312,11 @@ ck "  one unrouted id among routed siblings -> exit 3" 3 $rc
 ck "  routed siblings raise nothing" "no" "$(printf '%s' "$err" | grep -Eq 'TT-40 is unrouted|TT-64 is unrouted' && echo yes || echo no)"
 ck "  each id read once despite the annotation" "3" "$(sort -u "$QRV_STUB_LOG" | wc -l | tr -d ' ')"
 
-# Routed filings — specified, needs decision, human — are quiet and exit 0, so the earlier cases'
-# TT-40/TT-41/BF-701 filings are unchanged by the guard.
-err=$(route_body 'TT-40, TT-41, TT-64 (sub-issues of TT-9)' | (cd "$wt" && "$SCRIPT" BF-804 -) 2>&1 >/dev/null); rc=$?
+# Routed filings — specified, needs decision, human, keeper — are quiet and exit 0, so the earlier cases'
+# TT-40/TT-41/BF-701 filings are unchanged by the guard. `keeper` routes to the keeper's interactive pickup
+# (standards/issue-spec.md § An agent filing never lands unrouted); linear-file-improvement.sh --keeper files
+# it with no other routing label, so a verdict naming such a filing must pass.
+err=$(route_body 'TT-40, TT-41, TT-64, TT-65 (sub-issues of TT-9)' | (cd "$wt" && "$SCRIPT" BF-804 -) 2>&1 >/dev/null); rc=$?
 ck "  routed filings -> exit 0" 0 $rc
 ck "  quiet" "no" "$(printf '%s' "$err" | grep -Eq 'unrouted|unverified' && echo yes || echo no)"
 

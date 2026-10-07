@@ -198,7 +198,7 @@ if [ -n "$off_enum" ]; then
 fi
 
 # Routing guard — every issue the verdict says it filed must carry a label some consumer reads
-# (`specified`, `needs decision`, `human`) and a priority, or nothing ever picks it
+# (`specified`, `needs decision`, `human`, `keeper`) and a priority, or nothing ever picks it
 # (standards/issue-spec.md § An agent filing never lands unrouted). Prose has lost this three times:
 # fourteen filings over five weeks carrying only a minted `suggested` label, BF-1189's three unlabeled
 # filings, and BFP-251/BFP-252 on 2026-09-22 — two Nice-to-Have items a lane that never files filed
@@ -217,18 +217,18 @@ for fid in $filed_ids; do
   resp=$("$linear" api query "query { issue(id: \"$fid\") { identifier priority labels { nodes { name } } } }" -o json 2>/dev/null) || resp=""
   parsed=$(printf '%s' "$resp" | jq -r '.data.issue | select(. != null) | [(.priority // 0 | tostring), ([.labels.nodes[].name] | join("|"))] | join("\t")' 2>/dev/null || true)
   if [ -z "$parsed" ]; then
-    echo "WARN: could not read $fid's labels and priority from Linear — its routing is unverified; confirm it carries specified, needs decision or human, and a priority" >&2
+    echo "WARN: could not read $fid's labels and priority from Linear — its routing is unverified; confirm it carries specified, needs decision, human or keeper, and a priority" >&2
     continue
   fi
   prio=${parsed%%$'\t'*}
   labels=${parsed#*$'\t'}
   gaps=""
-  printf '%s\n' "$labels" | tr '|' '\n' | grep -Eqx 'specified|needs decision|human' \
-    || gaps="no routing label (specified, needs decision or human)"
+  printf '%s\n' "$labels" | tr '|' '\n' | grep -Eqx 'specified|needs decision|human|keeper' \
+    || gaps="no routing label (specified, needs decision, human or keeper)"
   [ "$prio" != "0" ] || gaps="${gaps:+$gaps, }priority None"
   if [ -n "$gaps" ]; then
     routing_bad="${routing_bad:+$routing_bad; }$fid: $gaps"
-    echo "ERROR: filed issue $fid is unrouted — $gaps: nothing ranks it and nothing parks it for a human, so it is never picked and the next session re-files it. Route it (~/.claude/scripts/linear-add-label.sh $fid <specified|'needs decision'|human>; linear-cli issues update $fid -p <1-4>) and re-run this call." >&2
+    echo "ERROR: filed issue $fid is unrouted — $gaps: nothing ranks it and nothing parks it for a human, so it is never picked and the next session re-files it. Route it (~/.claude/scripts/linear-add-label.sh $fid <specified|'needs decision'|human|keeper>; linear-cli issues update $fid -p <1-4>) and re-run this call." >&2
   fi
 done
 
