@@ -268,5 +268,5 @@
   "theme": "dark",
   "agentPushNotifEnabled": true,
   "skipAutoPermissionPrompt": true,
-  "model": "opus"
+  "model": "fable"
 }
