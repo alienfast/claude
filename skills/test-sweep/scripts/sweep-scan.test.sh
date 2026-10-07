@@ -161,6 +161,37 @@ SHA=$BASE_SHA
 mk nofiles-resolved 'spec/policies/x_spec.rb' '[]'
 check "$ROOT/nofiles-resolved.json"; ckrc "a resolved target alone is enough to watch" 1 "$rc"; ck "stale because the target changed" 'changed since' "$out"
 
+echo "== the agent invocation carries the read-only flags =="
+# Measured 2026-10-05: without --restricted a headless scan agent inherited the keeper's user-level allow rules (rm, mv, cp, tee,
+# pnpm, bundle exec rspec, linear-cli), each prompt-free under dontAsk, and a `mv` ran with no denial. The flags are pinned where
+# they are passed: a stub `claude` records its argv while the real script builds one rspec group from a one-row timings ledger.
+STUBDIR="$ROOT/stub"; mkdir -p "$STUBDIR"
+ARGV="$ROOT/claude.argv"
+cat > "$STUBDIR/claude" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > "$SWEEP_TEST_ARGV"
+printf '{"structured_output":{"sha":"abcdef0123","candidates":[]},"total_cost_usd":0,"is_error":false}'
+STUB
+chmod +x "$STUBDIR/claude"
+printf 'spec/requests/x_spec.rb\t1.5\n' > "$(git -C "$R" rev-parse --path-format=absolute --git-common-dir)/rspec-file-times.tsv"
+SCANOUT="$ROOT/scanout"
+out=$(PATH="$STUBDIR:$PATH" SWEEP_TEST_ARGV="$ARGV" bash "$SCRIPT" --repo "$R" --out "$SCANOUT" --suite rspec --max-groups 1 2>&1); rc=$?
+ckrc "the scan ran one group to completion" 0 "$rc"
+ck "one candidate, one group" 'CANDIDATES 1 current=0 to-scan=1 groups=1' "$out"
+if [ -f "$ARGV" ]; then
+  argline() { grep -qFx -- "$1" "$ARGV" && echo present || echo absent; }
+  ck "--restricted is passed" present "$(argline --restricted)"
+  ck "--strict-mcp-config is passed" present "$(argline --strict-mcp-config)"
+  ck "--permission-mode dontAsk is passed" present "$(argline dontAsk)"
+  ck "--disallowedTools is passed" present "$(argline --disallowedTools)"
+  for d in 'Bash(rm:*)' 'Bash(mv:*)' 'Bash(tee:*)' 'Bash(pnpm:*)' 'Bash(bundle exec:*)' 'Bash(./tools/ci:*)' 'Bash(git stash:*)' 'Bash(git restore:*)' 'Bash(git checkout:*)'; do
+    ck "denied: $d" present "$(argline "$d")"
+  done
+  ck "--add-dir names the out dir" "$(cd "$SCANOUT" && pwd)" "$(grep -A1 -Fx -- '--add-dir' "$ARGV" | tail -n 1)"
+else
+  fail=$((fail+1)); echo "  FAIL  the stub claude was never invoked"; echo "$out"
+fi
+
 echo
 echo "sweep-scan: $pass passed, $fail failed"
 [ "$fail" = 0 ]

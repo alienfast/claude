@@ -5,7 +5,12 @@
 # proposal per issue to DIR/triage-proposals/<ID>.json — verdict, disposition, evidence, curated subjects,
 # questions, the full report, the sha the agent measured — for the interactive apply step to consume.
 # Agents are headless `claude -p` runs with structured output (proposal.schema.json), read-only tools,
-# and an allow-list of read commands; nothing here writes to Linear or the tree.
+# and an allow-list of read commands; nothing here writes to Linear or the tree, and the agents have no
+# sanctioned route to: `--restricted` ignores the user, project and local settings files (a headless run
+# otherwise inherits every allow rule in them — rm, mv, cp, tee, pnpm, bundle exec rspec, linear-cli — each
+# prompt-free under dontAsk), `--strict-mcp-config` loads no MCP server, and a `--disallowedTools` deny list
+# closes the write-shaped commands and every linear-cli write. The residual a prefix allow-list cannot
+# exclude: `git diff|log|show --output=<file>`, `git grep -O`, `rg --pre`, `find -exec|-delete`, `sed -i`.
 #
 # Usage: triage-scan.sh [--out DIR] [--stage planned|backlog|triage|all] [--lane certified|uncertified|both]
 #                       [--ids ID,ID,...] [--group-size N] [--concurrency N] [--max-groups N]
@@ -97,7 +102,10 @@ rm -f "$sel" "$sel.sorted"
 echo "scan: $total issues in ${#groups[@]} groups (group-size $GROUP, concurrency $CONC, light=$LIGHT full=$FULL)"
 
 SCHEMA=$(cat "$HERE/proposal.schema.json")
-ALLOWED=( 'Bash(git log:*)' 'Bash(git show:*)' 'Bash(git grep:*)' 'Bash(git diff:*)' 'Bash(git ls-files:*)' 'Bash(git rev-parse:*)' 'Bash(git blame:*)' 'Bash(git tag:*)' 'Bash(git branch:*)' 'Bash(git merge-base:*)' 'Bash(jq:*)' 'Bash(cat:*)' 'Bash(ls:*)' 'Bash(grep:*)' 'Bash(rg:*)' 'Bash(head:*)' 'Bash(tail:*)' 'Bash(wc:*)' 'Bash(find:*)' 'Bash(sed:*)' 'Bash(linear-cli issues get:*)' 'Bash(linear-cli search issues:*)' 'Bash(linear-cli relations list:*)' 'Bash(linear-cli comments list:*)' 'Bash(linear-cli api query:*)' )
+ALLOWED=( 'Bash(cd:*)' 'Bash(git log:*)' 'Bash(git show:*)' 'Bash(git grep:*)' 'Bash(git diff:*)' 'Bash(git ls-files:*)' 'Bash(git rev-parse:*)' 'Bash(git blame:*)' 'Bash(git tag:*)' 'Bash(git branch:*)' 'Bash(git merge-base:*)' 'Bash(jq:*)' 'Bash(cat:*)' 'Bash(ls:*)' 'Bash(grep:*)' 'Bash(rg:*)' 'Bash(head:*)' 'Bash(tail:*)' 'Bash(wc:*)' 'Bash(find:*)' 'Bash(sed:*)' 'Bash(linear-cli issues get:*)' 'Bash(linear-cli search issues:*)' 'Bash(linear-cli relations list:*)' 'Bash(linear-cli comments list:*)' 'Bash(linear-cli api query:*)' )
+DENIED=( 'Bash(rm:*)' 'Bash(mv:*)' 'Bash(bundle exec:*)' 'Bash(pnpm:*)' 'Bash(./tools/ci:*)' 'Bash(git stash:*)' 'Bash(git restore:*)' 'Bash(git checkout:*)' 'Bash(tee:*)'
+  'Bash(linear-cli issues update:*)' 'Bash(linear-cli issues create:*)' 'Bash(linear-cli issues delete:*)' 'Bash(linear-cli issues comment:*)' 'Bash(linear-cli issues assign:*)' 'Bash(linear-cli issues start:*)'
+  'Bash(linear-cli comments create:*)' 'Bash(linear-cli comments delete:*)' 'Bash(linear-cli relations add:*)' 'Bash(linear-cli relations remove:*)' 'Bash(linear-cli labels create:*)' 'Bash(linear-cli api mutate:*)' )
 
 run_group() {   # $1 = group index, $2 = model, $3 = comma ids
   local gi="$1" model="$2" ids="$3" id lines="" row
@@ -108,7 +116,8 @@ run_group() {   # $1 = group index, $2 = model, $3 = comma ids
   done
   local prompt; prompt=$(<"$HERE/scan-prompt.md"); prompt=${prompt//\{\{OUT\}\}/$OUT}; prompt=${prompt//\{\{ISSUES\}\}/$lines}
   local t0=$(date +%s) raw="$PROP/raw/group-$gi-$model.json"
-  claude -p "$prompt" --model "$model" --output-format json --json-schema "$SCHEMA" --tools "Bash,Read,Grep,Glob" --allowedTools "${ALLOWED[@]}" --permission-mode dontAsk >| "$raw" 2>"$raw.err"
+  claude -p "$prompt" --model "$model" --output-format json --json-schema "$SCHEMA" --tools "Bash,Read,Grep,Glob" --restricted --strict-mcp-config \
+    --permission-mode dontAsk --allowedTools "${ALLOWED[@]}" --disallowedTools "${DENIED[@]}" --add-dir "${OUT:A}" >| "$raw" 2>"$raw.err"
   local rc=$? t1=$(date +%s) cost dur
   cost=$(jq -r '.total_cost_usd // 0' "$raw" 2>/dev/null); dur=$(( (t1-t0)*1000 ))
   local ok; ok=$(jq -r '.structured_output.issues | length' "$raw" 2>/dev/null)
