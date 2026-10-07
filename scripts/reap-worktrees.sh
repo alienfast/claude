@@ -94,6 +94,11 @@
 #     main checkout if it then resumed. Accepted: reaching that window takes a terminal issue AND
 #     idleness AND nothing uncommitted, which in combination is not a session in progress.
 #
+# Each pass also sweeps what a removed worktree leaves behind: host processes whose cwd was inside it
+# (sweep_orphan_processes), its docker stack (sweep_orphan_stacks), and its identity sidecar under
+# .claude/worktree-identity/ when no removal path deleted it (sweep_stale_identity_sidecars) — each documented
+# at its definition.
+#
 # Subcommands:
 #   reap [<repo_root>]   Reap eligible worktrees. No arg → every registered repo (the launchd path).
 #                        Mutating; serialized per repo under the common-git-dir lock.
@@ -499,6 +504,7 @@ evaluate_worktree() {
     git -C "$repo" branch -D "$branch" 2>/dev/null \
       || echo "    WARN: removed worktree but could not delete branch $branch; delete manually: git -C '$repo' branch -D '$branch'" >&2
     git -C "$repo" worktree prune 2>/dev/null || true
+    declare -f wt_identity_cleanup >/dev/null 2>&1 && wt_identity_cleanup "$dir" "$slug" "$repo"
     printf '  %-12s %s\n' "$issue" "REAPED — $reason; worktree and branch removed."
   else
     printf '  %-12s %s\n' "$issue" "FAILED — $reason, but git worktree remove refused; left intact for inspection."
@@ -700,6 +706,50 @@ sweep_orphan_processes() {
   return 0
 }
 
+# Reclaim identity sidecars whose worktree is gone. wt-identity.sh stamps every /start wt worktree into
+# <repo>/.claude/worktree-identity/wt-identity-<slug>.env, and the removal paths (finish-merge.sh, this script,
+# finish-recover.sh) delete it with the worktree — but a worktree removed by hand or by the harness's own
+# teardown leaves its file behind, and until 2026-10-07 no path deleted any: basefund held 1,025 of them
+# against one live worktree. A sidecar outliving its worktree is not inert, either — every loader has to
+# defend against a stale same-issue sidecar being read for a recreated worktree.
+#
+# A sidecar is stale iff the conventional path for its slug does not exist AND the directory it records
+# (WT_IDENTITY_WT_DIR, absent on a stamp from before the field) does not exist either — a repo moved since
+# the stamp keeps its sidecars. The REAP_GRACE_MIN window applies as to worktrees: a sidecar written within
+# it is left alone whatever it points at. Only `wt-identity-*.env` regular files are candidates — the
+# directory's .gitignore and finish-recover.sh's recover-<slug>.patch are not — and each goes with one
+# bounded `rm -f`. The slug list is capped so a backlog of hundreds prints as a count, not a page.
+sweep_stale_identity_sidecars() {
+  local repo="$1" mode="$2" id_dir="$1/.claude/worktree-identity" f slug wt_dir mtime now grace n=0 shown="" extra=0
+  [ -d "$id_dir" ] || return 0
+  now=$(date +%s); grace=$(( REAP_GRACE_MIN * 60 ))
+  shopt -s nullglob
+  for f in "$id_dir"/wt-identity-*.env; do
+    { [ -f "$f" ] && [ ! -L "$f" ]; } || continue
+    slug=$(basename "$f" .env); slug=${slug#wt-identity-}
+    [ -n "$slug" ] || continue
+    [ -d "$repo/$WT_SUBDIR/$slug" ] && continue
+    wt_dir=$(sed -n '/^WT_IDENTITY_WT_DIR=/{s///p;q;}' "$f" 2>/dev/null || true)
+    { [ -n "$wt_dir" ] && [ -d "$wt_dir" ]; } && continue
+    mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || true)
+    case "$mtime" in ''|*[!0-9]*) continue ;; esac
+    [ $(( now - mtime )) -ge "$grace" ] || continue
+    if [ "$mode" != list ]; then
+      rm -f "$f" 2>/dev/null || { err "WARN: could not remove stale identity sidecar $f"; continue; }
+    fi
+    n=$((n + 1))
+    if [ "$n" -le 8 ]; then shown="$shown $slug"; else extra=$((extra + 1)); fi
+  done
+  shopt -u nullglob
+  [ "$n" -gt 0 ] || return 0
+  [ "$extra" -gt 0 ] && shown="$shown (+$extra more)"
+  if [ "$mode" = list ]; then
+    printf '  STALE-IDENTITY %d sidecar(s) whose worktree is gone would be removed:%s\n' "$n" "$shown"
+  else
+    printf '  REAPED-IDENTITY %d sidecar(s) whose worktree is gone removed:%s\n' "$n" "$shown"
+  fi
+}
+
 # Body of a per-repo reap, run under the common-git-dir lock by cmd_reap. A best-effort fetch refreshes
 # remote-tracking refs so the merged/pushed checks see the current origin state (offline is fine).
 cmd_reap_one() {
@@ -721,6 +771,7 @@ cmd_reap_one() {
   else
     echo "  (no worktrees directory)"
   fi
+  sweep_stale_identity_sidecars "$repo" reap
   sweep_orphan_processes "$repo" reap
   sweep_orphan_stacks "$repo" reap
 }
@@ -786,6 +837,7 @@ cmd_list() {
     else
       echo "  (no worktrees directory)"
     fi
+    sweep_stale_identity_sidecars "$repo" list
     sweep_orphan_processes "$repo" list
     sweep_orphan_stacks "$repo" list
   done

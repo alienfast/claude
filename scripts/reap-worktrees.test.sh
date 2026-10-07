@@ -342,13 +342,77 @@ ck "a non-harness process inside (a dev server) does not hold the worktree → e
 
 echo "== reap mode removes what list called eligible =="
 
+# write_sidecar <id_dir> <slug> <wt_dir|''> <old|new> [baseline] — the repo-level identity sidecar as
+# wt_identity_stamp lays it out, with the recorded worktree path and the mtime under the case's control. An
+# empty <wt_dir> omits the field, as a stamp from before it was recorded did; `old` backdates past the grace.
+write_sidecar() {
+  local f="$1/wt-identity-$2.env" sha="${5:-0000000000000000000000000000000000000000}"
+  mkdir -p "$1"
+  { printf 'WT_IDENTITY_VERSION=1\nWT_IDENTITY_ISSUE=%s\nWT_IDENTITY_BRANCH=user/%s\nWT_IDENTITY_SOURCE_BRANCH=main\n' \
+      "$(printf '%s' "$2" | tr '[:lower:]' '[:upper:]')" "$2"
+    printf 'WT_IDENTITY_BASELINE_SHA=%s\nWT_IDENTITY_HEAD_SHA=%s\nWT_IDENTITY_STAMPED_AT=946684800\n' "$sha" "$sha"
+    [ -n "$3" ] && printf 'WT_IDENTITY_WT_DIR=%s\n' "$3"
+    printf 'WT_IDENTITY_OWNER=sess-fixture\nWT_IDENTITY_CREATED_AT=2000-01-01T00:00:00Z\n'
+  } > "$f"
+  [ "$4" = old ] && touch -t 200001010000 "$f"
+  return 0
+}
+
 r=$(build_case reap_zero BF-908 canceled 0 0 idle)
+# A FRESH sidecar for the worktree being reaped: the stale-sidecar sweep leaves anything inside the grace
+# alone, so only the removal path itself can be what deletes this one.
+write_sidecar "$r/.claude/worktree-identity" bf-908 "$r/.claude/worktrees/bf-908" new "$(git -C "$r" rev-parse main)"
 out=$($SCRIPT reap "$r" 2>&1)
 ck "reap removes the worktree" 'REAPED' "$out"
 ck "worktree directory is gone" GONE \
    "$([ -d "$r/.claude/worktrees/bf-908" ] && echo PRESENT || echo GONE)"
 ck "branch is deleted" NOBRANCH \
    "$(git -C "$r" rev-parse --verify --quiet user/bf-908 >/dev/null 2>&1 && echo PRESENT || echo NOBRANCH)"
+ck "the worktree's identity sidecar goes with it" GONE \
+   "$([ -f "$r/.claude/worktree-identity/wt-identity-bf-908.env" ] && echo PRESENT || echo GONE)"
+
+echo "== identity sidecars: one outlives its worktree only until the next pass =="
+
+# The leak this sweep closes: the removal paths now delete a worktree's sidecar with it, but a worktree removed
+# by hand never did, and before 2026-10-07 nothing deleted any — basefund held 1,025 against one live worktree.
+# Stale iff the recorded directory is gone AND the conventional path for the slug is gone; the grace applies as
+# to worktrees; only wt-identity-*.env files are candidates.
+r=$(build_case sidecars BF-950 started 1 1 fresh)      # dirty + fresh => the worktree itself is KEPT
+idd="$r/.claude/worktree-identity"
+base=$(git -C "$r" rev-parse main)
+write_sidecar "$idd" bf-950 "$r/.claude/worktrees/bf-950" old "$base"             # live worktree → keep
+write_sidecar "$idd" bf-951 "$r/.claude/worktrees/bf-951" old                     # worktree gone, old → stale
+write_sidecar "$idd" bf-952 "$r/.claude/worktrees/bf-952" new                     # worktree gone, inside the grace → keep
+write_sidecar "$idd" bf-953 "$ROOT/old-location/.claude/worktrees/bf-953" old     # recorded path gone, no conventional one → stale
+write_sidecar "$idd" bf-955 "" old                                                # pre-field stamp, slug has no worktree → stale
+# A repo moved since the stamp: the recorded path is gone but the worktree stands at the conventional path.
+git -C "$r" worktree add -q -b user/bf-954 "$r/.claude/worktrees/bf-954" main
+write_sidecar "$idd" bf-954 "$ROOT/old-location/.claude/worktrees/bf-954" old "$base"
+printf '*\n' > "$idd/.gitignore"
+: > "$idd/recover-bf-951.patch"
+out=$($SCRIPT list "$r" 2>&1)
+ck "list counts the stale sidecars" 'STALE-IDENTITY 3 sidecar(s)' "$out"
+ck "list names the stale slugs" 'bf-951 bf-953 bf-955' "$out"
+ck "list deletes nothing" '^6$' "$(ls "$idd"/wt-identity-*.env | wc -l | tr -d ' ')"
+out=$($SCRIPT reap "$r" 2>&1)
+ck "reap removes the stale sidecars" 'REAPED-IDENTITY 3 sidecar(s)' "$out"
+ck "a gone worktree's old sidecar is removed" GONE "$([ -f "$idd/wt-identity-bf-951.env" ] && echo PRESENT || echo GONE)"
+ck "a sidecar recording a path that no longer exists is removed" GONE "$([ -f "$idd/wt-identity-bf-953.env" ] && echo PRESENT || echo GONE)"
+ck "a pre-field sidecar whose slug has no worktree is removed" GONE "$([ -f "$idd/wt-identity-bf-955.env" ] && echo PRESENT || echo GONE)"
+ck "a live worktree's sidecar is kept" PRESENT "$([ -f "$idd/wt-identity-bf-950.env" ] && echo PRESENT || echo GONE)"
+ck "a sidecar inside the grace is kept whatever it points at" PRESENT "$([ -f "$idd/wt-identity-bf-952.env" ] && echo PRESENT || echo GONE)"
+ck "a moved repo's sidecar is kept while the conventional path stands" PRESENT "$([ -f "$idd/wt-identity-bf-954.env" ] && echo PRESENT || echo GONE)"
+ck "the directory's .gitignore is never a candidate" PRESENT "$([ -f "$idd/.gitignore" ] && echo PRESENT || echo GONE)"
+ck "a recovery patch beside the sidecars is never a candidate" PRESENT "$([ -f "$idd/recover-bf-951.patch" ] && echo PRESENT || echo GONE)"
+out=$($SCRIPT reap "$r" 2>&1)
+ck "a second pass finds nothing to sweep" NOLINE "$(printf '%s' "$out" | grep -q 'REAPED-IDENTITY' && echo LINE || echo NOLINE)"
+
+# The sweep does not depend on the worktrees dir existing — the state with the most leftovers.
+r=$(build_case sidecars_dirgone BF-960 started 1 0 fresh)
+write_sidecar "$r/.claude/worktree-identity" bf-961 "$r/.claude/worktrees/bf-961" old
+rm -rf "$r/.claude/worktrees"
+out=$($SCRIPT reap "$r" 2>&1)
+ck "sweep runs when the whole worktrees dir is gone" 'REAPED-IDENTITY 1 sidecar(s)' "$out"
 
 echo "== ancestry exclusion: the sweep never treats its own process tree as a victim =="
 

@@ -368,11 +368,7 @@ if [ "$merge_rc" = "0" ] || [ "$merge_rc" = "3" ]; then
 fi
 
 if [ "$merge_rc" = "0" ]; then
-  # Merge landed: finish-merge removed $rec_wt + $rec_branch (and its tmp/ merge msg).
-  # Clear the recovered worktree's own identity sidecars.
-  rec_lower="${issue_lower}-recovered"
-  [ -n "${CLAUDE_JOB_DIR:-}" ] && rm -f "$CLAUDE_JOB_DIR/wt-identity-${rec_lower}.env" 2>/dev/null || true
-  rm -f "$repo_root/.claude/worktree-identity/wt-identity-${rec_lower}.env" 2>/dev/null || true
+  # Merge landed: finish-merge removed $rec_wt + $rec_branch, their identity sidecars, and its tmp/ merge msg.
   echo "RECOVERED: $issue_upper — salvaged via '$diff_strategy', re-forked off $source_branch, merged." >&2
   exit 0
 fi

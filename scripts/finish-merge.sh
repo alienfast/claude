@@ -569,6 +569,12 @@ fi
 if git worktree remove "$wt_dir"; then
   git branch -D "$worktree_branch" || echo "WARN: could not delete branch $worktree_branch; remove manually: git branch -D $worktree_branch" >&2
   git update-ref -d "$orig_ref" 2>/dev/null || true
+  # The identity sidecars end with the worktree (wt_identity_cleanup). Sourced here as well because the
+  # recovery re-invocation skips the identity gate above, and with it the library.
+  if [ -f "$HOME/.claude/scripts/wt-identity.sh" ]; then
+    declare -f wt_identity_cleanup >/dev/null 2>&1 || . "$HOME/.claude/scripts/wt-identity.sh"
+    wt_identity_cleanup "$wt_dir" "$issue_slug" "$main_root" || true
+  fi
   echo "Merged successfully. Worktree and branch removed."
 else
   echo "Merged successfully, but git worktree remove failed for $wt_dir."

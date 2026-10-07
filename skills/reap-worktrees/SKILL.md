@@ -91,6 +91,18 @@ pid=… cwd=…` and left for you to close or resume. `list` prints
 proctitle, so a `pkill -f` pass misses real orphans and can hit unrelated processes. Without `lsof` the sweep
 notes itself and skips.
 
+## Identity sidecars
+
+`/start wt` stamps each worktree's tamper-evident identity into `<repo>/.claude/worktree-identity/wt-identity-<slug>.env`
+(the repo-level sidecar [wt-identity.sh](../../scripts/wt-identity.sh) reads when `/finish` checks for a
+hijack). The sidecar is a per-worktree artifact and ends with the worktree: `/finish merge`, recovery, and this
+reaper all delete it when they remove one. A worktree removed by hand leaves its sidecar behind, and nothing
+deleted any before 2026-10-07 (basefund held 1,025 against one live worktree), so each pass also sweeps the
+directory: a sidecar whose recorded worktree directory is gone **and** whose slug has no worktree at the
+conventional path, older than the grace, is removed. `list` prints `STALE-IDENTITY <n> sidecar(s) …` and
+deletes nothing; `reap` prints `REAPED-IDENTITY <n> …`. Only `wt-identity-*.env` files are candidates — the
+directory's `.gitignore` and a recovery patch beside them are never touched.
+
 ## Usage
 
 **Inspect (dry run — mutates nothing, takes no lock):**
@@ -101,7 +113,8 @@ notes itself and skips.
 ```
 
 Each worktree prints one of: `REAP-ELIGIBLE`, `KEEP` (with the reason — pinned, unmanaged, in use, active, unpushed, or dirty),
-`SKIP` (detached / merge-queued), or `STRAY`, followed by an `ORPHAN-PROC` line per leftover host process.
+`SKIP` (detached / merge-queued), or `STRAY`, followed by one `STALE-IDENTITY` line when sidecars are due and an
+`ORPHAN-PROC` line per leftover host process.
 
 **Reap (mutating — removes eligible worktrees, serialized per repo under the same common-git-dir lock
 `/finish merge` uses, so it can never race an in-flight merge):**

@@ -414,6 +414,11 @@ stamped, so once merged and idle with no session inside it is otherwise eligible
 lands. `--worktree` config needs `extensions.worktreeConfig`; `start-wt-setup.sh` enables it in every repo it
 has touched, and a repo without it refuses the write with a `fatal:` naming the extension.
 
+Each pass also removes identity sidecars (`.claude/worktree-identity/wt-identity-<id>.env`) whose worktree is
+gone and whose file is older than the grace. The merge, recovery, and reap paths delete a worktree's sidecar
+with the worktree, so the sweep catches hand removals and the backlog from before any path deleted them
+(basefund held 1,025 against one live worktree on 2026-10-07).
+
 A session that drives a worktree from the main checkout is the one a reap hurts most: `cd <wt>; cmd` against
 a worktree that no longer exists reports the failed `cd` on stderr, and `;` runs `cmd` anyway — in the main
 checkout (measured 2026-09-08: a tracked file on `hotfixes` was modified this way). Address the worktree

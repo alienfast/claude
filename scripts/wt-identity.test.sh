@@ -1520,6 +1520,16 @@ else
   skip "python3 not available — the config-wipe repair needs the real restamp"
 fi
 
+# --- wt_identity_cleanup: the sidecar ends with the worktree, and <main_root> reaches it once the dir is gone ---
+mkrepo cleanup_after_remove
+stamp "$WT"
+git -C "$REPO" worktree remove "$WT"
+bash -c '. "$1"; wt_identity_cleanup "$2" test-1' _ "$IDLIB" "$WT"
+ck "PRESENT" "$([ -f "$SIDE" ] && echo PRESENT || echo ABSENT)" "cleanup without main_root cannot reach the repo through a removed worktree dir — the sidecar survives"
+bash -c '. "$1"; wt_identity_cleanup "$2" test-1 "$3"' _ "$IDLIB" "$WT" "$MAINROOT"
+ck "ABSENT" "$([ -f "$SIDE" ] && echo PRESENT || echo ABSENT)" "cleanup with main_root removes the sidecar after the worktree is gone"
+ck "PRESENT" "$([ -f "$MAINROOT/.claude/worktree-identity/.gitignore" ] && echo PRESENT || echo ABSENT)" "cleanup leaves the identity directory's .gitignore"
+
 echo "----------------------------------------"
 echo "$pass passed, $fail failed, $skipped skipped"
 [ "$fail" = 0 ]

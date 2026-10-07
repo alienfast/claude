@@ -20,7 +20,8 @@
 #     undefined and git falls back to a normal text merge — the discard cases then CONFLICT instead of
 #     silently keeping ours, and case 2 fails loudly on the wrong message rather than passing vacuously.
 #   • Fixture worktrees are unstamped, so finish-merge.sh's wt-identity tier skips itself
-#     (wt_identity_load fails → no corruption gate interferes with the cases).
+#     (wt_identity_load fails → no corruption gate interferes with the cases). Case 9 stamps its own,
+#     because the stamp's sidecar is what that case is about.
 #   • Every finish-merge.sh invocation re-execs under with-repo-lock.py, which keys a lock file on the
 #     fixture repo and never deletes it — reclaim_locks below unlinks only locks whose recorded key
 #     resolves inside THIS run's workspace, since parallel sessions hold live locks in the same shared
@@ -252,6 +253,27 @@ ck_eq "signing off: exit 0" 0 "$RC"
 ck_eq "source has the feature" f1 "$(blob feat.txt)"
 ck_eq "merge commit rebuilt with two parents" 2 "$(git -C "$R" cat-file -p source | grep -c '^parent ')"
 ck_eq "and unsigned" 0 "$(git -C "$R" cat-file -p source | grep -c '^gpgsig')"
+
+echo "=== case 9: a successful merge removes the worktree's identity sidecar with the worktree ==="
+# CLAUDE_JOB_DIR is blanked on both the stamp and the merge so neither touches a real session's job dir. The
+# worktree sits at the production path: the sidecar is keyed on the directory's basename, which /start makes
+# the issue slug, and mk_repo's `wt` would name a sidecar nothing stamped.
+mk_repo c9
+git -C "$R" worktree remove "$WT"
+WT="$R/.claude/worktrees/bf-t"
+git -C "$R" worktree add -q "$WT" bf-t
+git -C "$R" config extensions.worktreeConfig true
+base=$(git -C "$R" rev-parse source)
+CLAUDE_JOB_DIR= bash -c '. "$1"; wt_identity_stamp "$2" "$2" BF-T bf-t source "$3" >/dev/null' _ "$DIR/wt-identity.sh" "$WT" "$base"
+SIDECAR="$R/.claude/worktree-identity/wt-identity-bf-t.env"
+ck_eq "fixture: the stamp wrote the repo sidecar" PRESENT "$([ -f "$SIDECAR" ] && echo PRESENT || echo ABSENT)"
+wt_commit feat.txt f1
+run_fm CLAUDE_JOB_DIR=
+ck_eq "exit 0" 0 "$RC"
+ck_eq "source has the feature" f1 "$(blob feat.txt)"
+ck_eq "worktree removed" GONE "$([ -d "$WT" ] && echo PRESENT || echo GONE)"
+ck_eq "the repo identity sidecar is removed with the worktree" ABSENT "$([ -f "$SIDECAR" ] && echo PRESENT || echo ABSENT)"
+ck_eq "the identity directory's .gitignore stays" PRESENT "$([ -f "$R/.claude/worktree-identity/.gitignore" ] && echo PRESENT || echo ABSENT)"
 
 echo ""
 echo "finish-merge.test.sh: $pass passed, $fail failed"

@@ -286,9 +286,9 @@ done
 ledgerless_keys=""
 for sc in "$main_checkout"/.claude/worktree-identity/wt-identity-*.env; do
   [ -f "$sc" ] || continue
-  # Sidecars OUTLIVE their worktree — the directory retains one per worktree ever created, so the
-  # bare glob yields every session that ever worked this repo (17 of them here on first run). Only
-  # a sidecar whose worktree still exists names a session that is plausibly mid-issue right now.
+  # A sidecar can outlive its worktree (one removed by hand waits for the reaper's next sweep), so the
+  # bare glob is not the live set. Only a sidecar whose worktree still exists names a session that is
+  # plausibly mid-issue right now.
   wt_name=$(basename "$sc" .env); wt_name=${wt_name#wt-identity-}
   [ -d "$main_checkout/.claude/worktrees/$wt_name" ] || continue
   o=$(sed -n 's/^WT_IDENTITY_OWNER=//p' "$sc" | head -1)

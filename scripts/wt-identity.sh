@@ -1216,14 +1216,19 @@ wt_force_remove() {
   return 1
 }
 
-# Remove all identity sidecars for an issue (both locations). Best-effort cleanup
-# called after a successful merge/recovery. Args: wt_dir issue_lower
+# Remove an issue's identity sidecars (job-dir and repo fallback). A sidecar is a per-worktree artifact whose
+# one job is to let /finish detect a hijacked worktree, so it ends with the worktree: every path that removes
+# one (finish-merge.sh, finish-recover.sh, reap-worktrees.sh) calls this, and reap-worktrees.sh sweeps the
+# sidecars a hand removal left behind. Best-effort; always returns 0.
+# <main_root> lets a caller run this AFTER `git worktree remove`: the repo root is otherwise resolved through
+# <wt_dir>, which must then still exist.
+# Args: wt_dir [issue_lower] [main_root]
 wt_identity_cleanup() {
-  local wt_dir="$1" issue_lower="${2-}" name main_root
+  local wt_dir="$1" issue_lower="${2-}" main_root="${3-}" name
   [ -z "$issue_lower" ] && issue_lower=$(basename "$wt_dir")
   name=$(_wtid_sidecar_name "$issue_lower")
   [ -n "${CLAUDE_JOB_DIR:-}" ] && rm -f "$CLAUDE_JOB_DIR/$name" 2>/dev/null || true
-  main_root=$(_wtid_main_root "$wt_dir" || true)
+  [ -n "$main_root" ] || main_root=$(_wtid_main_root "$wt_dir" || true)
   [ -n "$main_root" ] && rm -f "$main_root/.claude/worktree-identity/$name" 2>/dev/null || true
   return 0
 }
