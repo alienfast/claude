@@ -1727,6 +1727,52 @@ ck_has "price: footer names the unpriced release"  "excluded from \$ (no price r
 ck "price: unpriced list"                          "['claude-opus-5-9']" "$(q22 "d['unpriced_models']")"
 ck "price: fleet total"                            "7.7" "$(q22 "d['est_cost_usd']")"
 
+# ---- 23. resolved findings with no tag in the block: named with their path, and whether tags sit elsewhere ----
+# TT-61's tags were written under a `## Findings by cycle` section below the block, TT-62 carries none at all; TT-60
+# tags inline (the control) and stays unnamed. The block stays block-scoped, so the severity mix counts TT-60 alone.
+CK23="$WORK/ck23"; mkdir -p "$CK23/tmp"
+git -C "$CK23" init -q 2>/dev/null
+git -C "$CK23" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "TT-60: tags"
+M23="$(git -C "$CK23" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
+T23="$WORK/projects/$M23"; mkdir -p "$T23"
+echo '{"status":"drained","reason":"fleet deadline reached","mode":"loop","shipped":["TT-60","TT-61","TT-62"],"canceled":[],"skipped":[],"failed":[]}' > "$CK23/tmp/auto-state-tag00001.json"
+{
+  printf '{"type":"assistant","timestamp":"2026-10-02T04:00:00.000Z","isSidechain":false,"message":{"role":"assistant","id":"msg_tag0","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":50},"content":[{"type":"text","text":"working"}]}}\n'
+  printf '{"type":"assistant","timestamp":"2026-10-02T05:00:00.000Z","isSidechain":false,"message":{"role":"assistant","id":"msg_tag1","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":50},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-60 done"}]}}\n'
+} > "$T23/tag00001-0000.jsonl"
+cat > "$CK23/tmp/quality-review-verdict-tt-60.md" <<'VERDICT_EOF'
+Verdict: passed-after-fixes
+Cycles: 2
+Findings resolved: 1 (HIGH/impl: unchecked nil)
+Open items: none
+VERDICT_EOF
+cat > "$CK23/tmp/quality-review-verdict-tt-61.md" <<'VERDICT_EOF'
+Verdict: passed-after-fixes
+Cycles: 3
+Findings resolved: 3
+Open items: none
+
+## Findings by cycle
+- HIGH/impl: race in retry loop
+- MED/test: unpinned arm
+- MED/plan: missed criterion
+VERDICT_EOF
+cat > "$CK23/tmp/quality-review-verdict-tt-62.md" <<'VERDICT_EOF'
+Verdict: passed-after-fixes
+Cycles: 2
+Findings resolved: 2 (a race and a cast)
+Open items: none
+VERDICT_EOF
+# Inside the session's activity span, which is the verdict window an explicit session set gets.
+python3 -c "import os,sys,datetime; t=datetime.datetime(2026,10,2,4,30,tzinfo=datetime.timezone.utc).timestamp(); [os.utime(f,(t,t)) for f in sys.argv[1:]]" "$CK23"/tmp/quality-review-verdict-tt-6*.md
+MD23="$WORK/out23.md"; J23="$WORK/out23.json"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK23" --sessions tag00001 > "$MD23" 2>&1
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK23" --sessions tag00001 --json > "$J23" 2>/dev/null
+V23="$(git -C "$CK23" rev-parse --show-toplevel)/tmp"
+ck_has "untagged: flag names both"        "**Resolved findings with no severity tag in the \`Findings resolved:\` block**: TT-61 (\`$V23/quality-review-verdict-tt-61.md\` — 3 severity tag(s) elsewhere in the file); TT-62 (\`$V23/quality-review-verdict-tt-62.md\` — no severity tags anywhere in the file)" "$MD23"
+ck_lacks "untagged: inline control unnamed" "TT-60 (\`" "$MD23"
+ck "untagged: block stays block-scoped"   "1" "$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(sum(sum(v['severity'].values()) for v in d['review_churn']))" "$J23")"
+
 echo
 echo "$PASS passed / $FAIL failed / $SKIP skipped"
 [ "$FAIL" -eq 0 ]

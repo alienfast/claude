@@ -1212,11 +1212,13 @@ def parse_verdicts(checkout, cutoff, launch_epoch=None, until=None):
                    if not rx.search(text)]
         rows.append({
             "issue": p.stem.replace("quality-review-verdict-", "").upper(),
+            "path": str(p),
             "mtime": mtime,
             "verdict": (V_VERDICT.search(text) or [None, "?"])[1],
             "cycles": int(V_CYCLES.search(text).group(1)) if V_CYCLES.search(text) else None,
             "resolved": resolved,
             "sev": sev,
+            "sev_tags_in_file": len(V_SEVERITY.findall(text)),
             "origin": tag_counts(V_ORIGIN, blob, lambda m: m.group(1)),
             "filed": filed,
             "missing_fields": missing,
@@ -2635,6 +2637,19 @@ def main():
         print(f"- **Off-schema verdict body**: {detail} — composed as free-form prose instead of the "
               f"Output-block schema, so its findings data is unparseable and the churn totals "
               f"undercount. The review ran; only the machine-readable record is lost.")
+    # The block stays block-scoped on purpose: a file-wide read would fold deferred and open items' tags into the
+    # resolved-findings mix. So name the verdict instead, and say whether its tags exist somewhere a human can recover.
+    untagged = [v for v in verdicts if v["resolved"] > 0 and not v["missing_fields"] and not sum(v["sev"].values())]
+    if untagged:
+        flagged = True
+        detail = "; ".join(
+            f"{v['issue']} (`{v['path']}` — {v['sev_tags_in_file']} severity tag(s) elsewhere in the file)"
+            if v["sev_tags_in_file"] else f"{v['issue']} (`{v['path']}` — no severity tags anywhere in the file)"
+            for v in untagged)
+        print(f"- **Resolved findings with no severity tag in the `Findings resolved:` block**: {detail} — the "
+              f"count is read but the retro scans tags only inside that block (up to the next unindented line), so "
+              f"these findings add nothing to the severity mix, the origin mix or the trend ledger's plan% column. "
+              f"Tags elsewhere in the file are recoverable by hand; the schema puts them in the block's parenthetical.")
     no_edges = [v["issue"] for v in verdicts if v["filed"] and not v["edges_recorded"]]
     if no_edges:
         flagged = True
