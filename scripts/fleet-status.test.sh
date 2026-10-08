@@ -39,6 +39,10 @@ git -C "$REPO" commit -q --allow-empty -m "XX-1: land the widget"
 FHOME="$ROOT/home"
 STUB="$FHOME/.cargo/bin"
 mkdir -p "$STUB"
+# The headroom probe reads its ceiling from the faked HOME; a ceiling no fixture approaches keeps it silent outside section 19.
+CALIB="$FHOME/.claude/local/five-hour-ceiling.json"
+mkdir -p "$(dirname "$CALIB")"
+echo '{"ceiling_output_tokens": 100000000}' > "$CALIB"
 RUNPATH="$(dirname "$(command -v git)"):$(dirname "$(command -v jq)"):/usr/bin:/bin:/usr/sbin:/sbin"
 
 OUT="$ROOT/out.md" ERR="$ROOT/err.log" RC=0
@@ -385,6 +389,38 @@ ck_has "  recovery wording present" 'finished or partial work to recover' "$OUT"
 ck_has "  stalled row reads the label" '- XX-6 — ⚠️ failed (session sess-p), still [In Progress] — `stalled`, abandoned mid-flight — resume or release; no preserved worktree' "$OUT"
 ck_has "  unlabeled in-progress row stays a possible retry" '- XX-7 — failed (session sess-p), now [In Progress] — a retry may be in flight' "$OUT"
 ck_lacks "  generic look-for-stalled hint gone" 'look for a `stalled` label' "$OUT"
+
+echo "== 19. the headroom probe: a THROTTLE answer shows the park live; a default ceiling warns; no probe stays silent"
+# The probe reads the faked HOME's calibration. A 200,000 ceiling sits under the 250,000 reserve, so it answers THROTTLE
+# whatever the transcripts burned; with the file gone it falls back to its built-in 1.5M and says `(default)`.
+write_marker $((NOW - 500)) $((NOW + 7230))
+run_fs --no-runway
+ck "clean exit" "0" "$RC"
+ck_lacks "  calibrated, under the ceiling: no headroom line" "Headroom" "$OUT"
+echo '{"ceiling_output_tokens": 200000}' > "$CALIB"
+run_fs --no-runway
+ck_has "  THROTTLE shown live" '**Headroom: THROTTLE** — sessions park between picks and re-probe every ~30 min, so a quiet ledger may be a park rather than a death: `THROTTLE trailing-5h=' "$OUT"
+ck_lacks "  calibrated ceiling not warned" "built-in default" "$OUT"
+rm "$CALIB"
+run_fs --no-runway
+ck_has "  default ceiling warned" "**⚠️ Headroom ceiling is the probe's built-in default** — \`~/.claude/local/five-hour-ceiling.json\` is missing or unreadable" "$OUT"
+ck_lacks "  default ceiling under the reserve is not a THROTTLE" "Headroom: THROTTLE" "$OUT"
+# The probe scans the transcripts CLAUDE_PROJECTS_DIR names, like the rest of the script: 100,000 output tokens there put
+# a 300,000 ceiling under the reserve, while the faked HOME's own projects dir would not.
+echo '{"ceiling_output_tokens": 300000}' > "$CALIB"
+mkdir -p "$ROOT/altprojects/-x"
+printf '{"type":"assistant","timestamp":"%s","requestId":"req-h1","message":{"role":"assistant","usage":{"output_tokens":100000}}}\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" > "$ROOT/altprojects/-x/s.jsonl"
+run_fs --no-runway
+ck_lacks "  home projects dir under the reserve: no THROTTLE" "Headroom: THROTTLE" "$OUT"
+(cd "$REPO" && env HOME="$FHOME" PATH="$RUNPATH" CLAUDE_PROJECTS_DIR="$ROOT/altprojects" bash "$SCRIPT" --no-runway > "$OUT" 2> "$ERR")
+ck_has "  CLAUDE_PROJECTS_DIR is the probe's transcript root" "THROTTLE trailing-5h=100000" "$OUT"
+# A copy of the script beside no probe: the header says nothing about headroom.
+mkdir -p "$ROOT/noprobe"; cp "$SCRIPT" "$ROOT/noprobe/fleet-status.sh"
+(cd "$REPO" && env HOME="$FHOME" PATH="$RUNPATH" bash "$ROOT/noprobe/fleet-status.sh" --no-runway > "$OUT" 2> "$ERR"); RC=$?
+ck "no probe: clean exit" "0" "$RC"
+ck_lacks "  no probe: silent" "Headroom" "$OUT"
+echo '{"ceiling_output_tokens": 100000000}' > "$CALIB"
 
 echo ""
 echo "$PASS passed / $FAIL failed"
