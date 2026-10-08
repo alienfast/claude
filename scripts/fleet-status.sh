@@ -20,6 +20,8 @@
 #   linear-cli (optional)              issue state/title joins, failed/canceled cross-check,
 #                                      stalled flags, runway
 #   .claude/merge-queue/               deferred merges (via merge-queue.sh list)
+#   fleet-headroom.sh                  the pick-time headroom probe, run once against the same transcripts
+#                                      (CLAUDE_PROJECTS_DIR): a THROTTLE answer means sessions are parked
 #
 # Sessions are scoped to the CURRENT fleet: the marker's fleet_sessions decides membership when the
 # launch recorded it (every launch since 2026-08-29), and a single-run ledger (`mode: single` — a
@@ -104,6 +106,22 @@ else
   printf '**Deadline:** none — loops run until the certified backlog drains.\n\n'
 fi
 printf '_Wind down early: `/fleet-launch stop` — ends the timer, in-flight issues finish, nothing is killed._\n\n'
+
+# ---------- headroom ----------
+
+# A parked session writes nothing to its ledger, so without this line a park reads like a death. Silent when the probe is
+# missing or prints nothing (it fails open on its own errors).
+proj_root="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
+if [ -s "$marker" ] && [ -x "$SCRIPT_DIR/fleet-headroom.sh" ]; then
+  h_rc=0
+  h_line=$("$SCRIPT_DIR/fleet-headroom.sh" --projects-dir "$proj_root" 2>/dev/null) || h_rc=$?
+  if [ "$h_rc" -eq 2 ] && [ "${h_line#THROTTLE}" != "$h_line" ]; then
+    printf '**Headroom: THROTTLE** — sessions park between picks and re-probe every ~30 min, so a quiet ledger may be a park rather than a death: `%s`\n\n' "$h_line"
+  fi
+  case "$h_line" in
+    *'(default)'*) printf '**⚠️ Headroom ceiling is the probe'"'"'s built-in default** — `~/.claude/local/five-hour-ceiling.json` is missing or unreadable, so every pick parks against 1.5M. Restore it (fleet-headroom.sh header).\n\n' ;;
+  esac
+fi
 
 # ---------- epic scope + member burn-down ----------
 
@@ -201,7 +219,6 @@ registry_row() {
 # opening turn is a MULTI-LINE string ("<command-message>loop</command-message>\n<command-name>…"),
 # so without flattening, `head -1` takes the first LINE rather than the first MESSAGE and every
 # genuine /loop /auto session reads as interactive.
-proj_root="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
 # The harness names the dir by replacing every non-alphanumeric character of the session cwd with a dash (C:/Users/x/.claude
 # lives under c--Users-x--claude) and spells a Windows drive letter however the session's cwd did, so match either case.
 proj_mangled=$(printf '%s' "$main_checkout" | sed 's/[^A-Za-z0-9]/-/g')
