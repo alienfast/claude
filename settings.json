@@ -52,6 +52,10 @@
       "Bash(gcloud iam roles list:*)",
       "Bash(gcloud projects get-iam-policy:*)",
       "Bash(gcloud sql flags list:*)",
+      "Bash(gcloud sql backups:*)",
+      "Bash(gcloud sql operations:*)",
+      "Bash(gcloud sql instances:*)",
+      "Bash(gcloud sql users:*)",
       "Bash(gcloud sql users describe:*)",
       "Bash(gcloud sql users list:*)",
       "Bash(gh:*)",
@@ -167,7 +171,9 @@
       "mcp__descope-docs__search-descope-docs",
       "mcp__ide__getDiagnostics",
       "mcp__mui",
-      "mcp__storybook-react__preview-stories"
+      "mcp__storybook-react__preview-stories",
+      "ClaudeInChromeDomain(console.cloud.google.com)",
+      "ClaudeInChromeDomain(accounts.google.com)"
     ],
     "deny": [],
     "ask": [
