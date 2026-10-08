@@ -177,23 +177,26 @@ REWAKE_DELAY = re.compile(r"\bdelay=(\d+)")
 INJECTED_STOP = re.compile(r"armed at \d\d:\d\d:\d\dZ for \d+s never fired")
 INJECTED_API = "killed by an API error ("
 
-# $/MTok (input, output) at Claude API list prices, cached from the claude-api skill 2026-08-05.
-# Sonnet 5 has a $2/$10 intro rate through 2026-08-31 — the sticker is used so fleets stay comparable
-# across that boundary; current 1M-context models carry no long-context premium, so no per-request
-# tier logic. Cache reads bill at 0.1x input; cache writes at 2x — Claude Code sessions write 1h-TTL
-# cache entries (a 5m-TTL write would be 1.25x). Models are prefix-matched so dated ids
-# (claude-haiku-4-5-20251001) resolve; unmatched models are reported unpriced, never silently dropped.
+# $/MTok (input, output, cache_read) at Claude API list prices. The cache-read rate is per model — not a
+# fixed fraction of input — so it is listed rather than derived. Current 1M-context models carry no
+# long-context premium, so no per-request tier logic. Cache writes bill at 2x input on every model —
+# Claude Code sessions write 1h-TTL cache entries (a 5m-TTL write would be 1.25x). price_of strips a
+# bracketed suffix ([1m]) and a trailing -YYYYMMDD date, then requires an exact key: an unlisted model
+# — a new point release included — is reported unpriced, never billed at its base model's price.
 PRICES = {
-    "claude-fable-5": (10.00, 50.00),
-    "claude-opus-5": (5.00, 25.00),
-    "claude-opus-4-8": (5.00, 25.00),
-    "claude-opus-4-7": (5.00, 25.00),
-    "claude-opus-4-6": (5.00, 25.00),
-    "claude-sonnet-5": (3.00, 15.00),
-    "claude-sonnet-4-6": (3.00, 15.00),
-    "claude-haiku-4-5": (1.00, 5.00),
+    "claude-fable-5-1": (10.00, 50.00, 0.25),
+    "claude-fable-5": (10.00, 50.00, 1.00),
+    "claude-opus-5-5": (4.00, 20.00, 0.20),
+    "claude-opus-5": (5.00, 25.00, 0.50),
+    "claude-opus-4-8": (5.00, 25.00, 0.50),
+    "claude-opus-4-7": (5.00, 25.00, 0.50),
+    "claude-opus-4-6": (5.00, 25.00, 0.50),
+    "claude-sonnet-5-5": (2.00, 10.00, 0.20),
+    "claude-sonnet-5": (2.00, 10.00, 0.20),
+    "claude-sonnet-4-6": (3.00, 15.00, 0.30),
+    "claude-haiku-4-5": (1.00, 5.00, 0.10),
 }
-CACHE_READ_X, CACHE_WRITE_X = 0.1, 2.0
+CACHE_WRITE_X = 2.0
 # Transcripts never carry thinking text (display defaults to omitted — verified on live fleet
 # transcripts 2026-08-05, every thinking block empty), so thinking spend is estimated as the
 # residual: output_tokens minus visible output (text + tool_use inputs) at ~4 chars/token. Good for
@@ -1015,7 +1018,7 @@ def rewake_gauge(agg, run_key, rows):
 
 
 def price_of(model):
-    return next((p for k, p in PRICES.items() if model.startswith(k)), None)
+    return PRICES.get(re.sub(r"-\d{8}$", "", re.sub(r"\[[^\]]*\]$", "", model or "")))
 
 
 def est_cost(usage_by_key):
@@ -1026,9 +1029,9 @@ def est_cost(usage_by_key):
         if not p:
             unpriced.add(model)
             continue
-        inp, out = p
+        inp, out, cr = p
         total += (u["input"] * inp + u["cache_write"] * inp * CACHE_WRITE_X
-                  + u["cache_read"] * inp * CACHE_READ_X + u["output"] * out) / 1e6
+                  + u["cache_read"] * cr + u["output"] * out) / 1e6
     return total, unpriced
 
 

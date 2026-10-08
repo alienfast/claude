@@ -176,15 +176,15 @@ ck "subagent tokens"    "700"      "$(q "d['sessions'][0]['output_tokens']['deve
 ck "fleet token total"  "2800"     "$(q "sum(d['output_tokens'].values())")"
 
 # full usage + cost: input/cache fields dedup by message id exactly like output (msg_A once), cost is
-# price-weighted (input 5 + cache write 2x + cache read 0.1x + output 25, per MTok), the unknown
-# model is named rather than silently dropped, and per-shipped normalizes over all 3 fleet ships.
-# abc12345: opus (30*5 + 2000*10 + 100000*0.5 + 1750*25)/1e6 + sonnet (5*3 + 700*15)/1e6 = 0.1244.
+# price-weighted (input + cache write at 2x input + the model's own cache-read rate + output, per MTok),
+# the unknown model is named rather than silently dropped, and per-shipped normalizes over all 3 fleet ships.
+# abc12345: opus 5 (30*5 + 2000*10 + 100000*0.5 + 1750*25)/1e6 + sonnet 5 (5*2 + 700*10)/1e6 = 0.1209.
 ck "usage input dedup"  "30"       "$(q "d['sessions'][0]['usage']['main/claude-opus-5']['input']")"
 ck "usage cache write"  "2000"     "$(q "d['sessions'][0]['usage']['main/claude-opus-5']['cache_write']")"
 ck "usage cache read"   "100000"   "$(q "d['sessions'][0]['usage']['main/claude-opus-5']['cache_read']")"
 ck "subagent usage"     "5"        "$(q "d['sessions'][0]['usage']['developer/claude-sonnet-5']['input']")"
-ck "session est cost"   "0.1244"   "$(q "d['sessions'][0]['est_cost_usd']")"
-ck "fleet est cost"     "0.132"    "$(q "d['est_cost_usd']")"
+ck "session est cost"   "0.1209"   "$(q "d['sessions'][0]['est_cost_usd']")"
+ck "fleet est cost"     "0.1285"   "$(q "d['est_cost_usd']")"
 ck "unpriced named"     "['claude-nova-2']" "$(q "d['unpriced_models']")"
 ck "per-shipped tokens" "933"      "$(q "d['per_shipped']['output_tokens']")"
 ck "per-shipped cost"   "0.04"     "$(q "d['per_shipped']['est_cost_usd']")"
@@ -1581,7 +1581,8 @@ ck "streamed: fleet coverage share"                                 "0.5" "$(q19
 ck "streamed: share rides the history row"                          "0.5" "$(q19 "d['history'][-1]['subagent_final_row_share']")"
 ck_has "streamed: coverage line names the bound" "**Subagent usage rows** — 1 of 2 subagent messages (50%) carry a final usage row — every subagent output figure above is a LOWER BOUND" "$MD19"
 ck_has "streamed: trend column"                  "| sub-final% |" "$MD19"
-ck_has "streamed: trend cell"                    "| \$915.73 | 50% | - |" "$MD19"
+# $/Mtok-out: opus 5 (20*5 + 200*25) + sonnet 5 (4*2 + 82959*2*2 + 195285*0.2 + 420*10), over 620 output tokens.
+ck_has "streamed: trend cell"                    "| \$613.23 | 50% | - |" "$MD19"
 # Control: the same transcript once ep5nFLGK's final row lands — full coverage drops the bound
 # clause and the count rises to what that row carries, replacing the fleet's history row in place.
 printf '%s\n' "$SUB19_STREAMED" '{"type":"assistant","timestamp":"2026-09-22T04:40:46.500Z","agentId":"abf1c2f081891a45c","isSidechain":true,"message":{"role":"assistant","id":"msg_011CfHs1QVss8RuXep5nFLGK","model":"claude-sonnet-5","stop_reason":"tool_use","usage":{"input_tokens":2,"cache_creation_input_tokens":186,"cache_read_input_tokens":195285,"output_tokens":132,"service_tier":"standard"},"content":[{"type":"tool_use","id":"toolu_01CT1gjD3uZ4vP8wCXUgRSNP","name":"Bash","input":{"command":"ls"}}]}}' > "$S19/agent-abf1c2f081891a45c.jsonl"
@@ -1694,6 +1695,37 @@ ck_has "throttle: pool line names the overlap" "\`thr00001\` 5.0h), of which 2.0
 ck_has "throttle: trend column"             "| thr% |" "$MD21"
 ck_has "throttle: trend cell beside idle%"  "| 50% | 20% |" "$MD21"
 ck_has "throttle: default-ceiling flag"     "**Throttled against the probe's DEFAULT ceiling** — \`thr00001\` 3x (2.0h parked)" "$MD21"
+
+# ---- 22. price rows: per-model cache-read rates, exact ids after normalization, an unlisted release unpriced ----
+# Each message: 100k input, 100k cache write, 1M cache read, 100k output. Opus 5.5 at 4/20 with a 0.20 cache read is
+# (400000 + 800000 + 200000 + 2000000)/1e6 = $3.40 — a 0.1x-of-input cache read would read $3.60 and Opus 5's row
+# $4.50. Haiku 4.5 (1/5/0.10) is $0.90. A made-up point release must not inherit its base model's price.
+CK22="$WORK/ck22"; mkdir -p "$CK22/tmp"
+git -C "$CK22" init -q 2>/dev/null
+git -C "$CK22" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "TT-22: prices"
+M22="$(git -C "$CK22" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
+T22="$WORK/projects/$M22"; mkdir -p "$T22"
+echo '{"status":"drained","reason":"fleet deadline reached","mode":"loop","shipped":["TT-22"],"canceled":[],"skipped":[],"failed":[]}' > "$CK22/tmp/auto-state-pri00001.json"
+{
+  printf '{"type":"user","timestamp":"2026-10-01T04:00:00.000Z","isSidechain":false,"message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}\n'
+  n=0
+  for model in claude-opus-5-5 'claude-opus-5-5[1m]' claude-haiku-4-5-20251001 claude-opus-5-9; do
+    n=$((n+1))
+    printf '{"type":"assistant","timestamp":"2026-10-01T04:0%s:00.000Z","isSidechain":false,"message":{"role":"assistant","id":"msg_pri%s","model":"%s","usage":{"input_tokens":100000,"cache_creation_input_tokens":100000,"cache_read_input_tokens":1000000,"output_tokens":100000},"content":[{"type":"text","text":"working"}]}}\n' "$n" "$n" "$model"
+  done
+  printf '{"type":"assistant","timestamp":"2026-10-01T04:09:00.000Z","isSidechain":false,"message":{"role":"assistant","id":"msg_pri9","model":"claude-opus-5-5","content":[{"type":"text","text":"SHIPPED-MERGE: TT-22 done"}]}}\n'
+} > "$T22/pri00001-0000.jsonl"
+J22="$WORK/out22.json"; MD22="$WORK/out22.md"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK22" --sessions pri00001 --json > "$J22" 2>/dev/null
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK22" --sessions pri00001 > "$MD22" 2>&1
+q22() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J22"; }
+ck_has "price: opus 5.5 at 4/20/0.20"              "| main | claude-opus-5-5 | 100,000 | 25% | \$3.40 |" "$MD22"
+ck_has "price: [1m] suffix priced the same"        "| main | claude-opus-5-5[1m] | 100,000 | 25% | \$3.40 |" "$MD22"
+ck_has "price: dated haiku id priced"              "| main | claude-haiku-4-5-20251001 | 100,000 | 25% | \$0.90 |" "$MD22"
+ck_has "price: unlisted point release unpriced"    "| main | claude-opus-5-9 | 100,000 | 25% | unpriced |" "$MD22"
+ck_has "price: footer names the unpriced release"  "excluded from \$ (no price row): claude-opus-5-9" "$MD22"
+ck "price: unpriced list"                          "['claude-opus-5-9']" "$(q22 "d['unpriced_models']")"
+ck "price: fleet total"                            "7.7" "$(q22 "d['est_cost_usd']")"
 
 echo
 echo "$PASS passed / $FAIL failed / $SKIP skipped"
