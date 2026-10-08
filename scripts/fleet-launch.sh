@@ -2,7 +2,7 @@
 # fleet-launch.sh — dispatch N background `/loop /auto` sessions into `claude agents`,
 # staggered so each session's first pick sees the previous session's claim.
 #
-# Usage: fleet-launch.sh [count] [duration] [epic:<ID> | team] [backlog] [-- <claude flags...>]
+# Usage: fleet-launch.sh [count] [duration] [epic:<ID> | team] [backlog] [stale-ok] [-- <claude flags...>]
 #        fleet-launch.sh stop
 #
 #   [count]     Number of /loop /auto sessions to launch (1-12). Omitted → read the
@@ -52,6 +52,9 @@
 #               only. Recorded as `backlog: true` in the marker for /fleet-status and /fleet-retro.
 #               A session's mode is fixed at launch; a top-up launch with the token adds fallback
 #               sessions beside holding ones. Composes with epic:<ID> and team.
+#   [stale-ok]  Launch even though ~/.claude is behind origin/main in a file sessions load (TOOLING-STALE,
+#               claude-freshness.sh), with a one-line WARN. Without it that state refuses the launch, exit 4: every
+#               session would run the stale hooks, skills and scripts for the fleet's whole duration.
 #   [duration]  Optional fleet time budget — "10h", "10 hours", "90m", "45 minutes".
 #               Adds deadline_epoch to tmp/fleet-deadline.json; each session's /auto
 #               checks it before PICKING new work (never mid-issue), so at the deadline
@@ -103,16 +106,16 @@
 # or listed as done there; they deliberately persist from a fleet's end until the next launch
 # so /fleet-retro and the operator can examine them — retro before relaunching; dispatches
 # background claude sessions. Exit 1 on
-# argument/environment errors and exit 3 on SCOPE-CONFIRM (an inherited epic scope awaiting a
-# decision) — both before any dispatch or write; never mid-fleet: a dispatch failure stops
-# further launches but leaves prior sessions running.
+# argument/environment errors, exit 3 on SCOPE-CONFIRM (an inherited epic scope awaiting a
+# decision) and exit 4 on TOOLING-STALE (see [stale-ok]) — all before any dispatch or write; never
+# mid-fleet: a dispatch failure stops further launches but leaves prior sessions running.
 
 set -eo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
-  echo "usage: fleet-launch.sh [count] [duration e.g. '10h' or '10 hours'] [epic:<ID> | team] [backlog] [-- <claude flags...>] | fleet-launch.sh stop" >&2
+  echo "usage: fleet-launch.sh [count] [duration e.g. '10h' or '10 hours'] [epic:<ID> | team] [backlog] [stale-ok] [-- <claude flags...>] | fleet-launch.sh stop" >&2
   exit 1
 }
 
@@ -176,6 +179,7 @@ dur_tokens=()
 scope_token=""
 team_token=0
 backlog_token=0
+stale_ok=0
 while [ $# -gt 0 ] && [ "$1" != "--" ]; do
   case "$1" in
     [Ee][Pp][Ii][Cc]:*)
@@ -184,6 +188,7 @@ while [ $# -gt 0 ] && [ "$1" != "--" ]; do
       [[ "$scope_token" =~ ^[A-Z0-9]+-[0-9]+$ ]] || { echo "ERROR: epic token '$1' does not name an issue (epic:BF-123)" >&2; exit 1; } ;;
     [Tt][Ee][Aa][Mm]) team_token=1 ;;
     [Bb][Aa][Cc][Kk][Ll][Oo][Gg]) backlog_token=1 ;;
+    [Ss][Tt][Aa][Ll][Ee]-[Oo][Kk]) stale_ok=1 ;;
     *) dur_tokens+=("$1") ;;
   esac
   shift
@@ -311,6 +316,18 @@ if [ -n "$dirty" ]; then
     printf '%s\n' "$dirty" | sed 's/^/       /' >&2
     echo "       Commit or stash the above, then re-run. Nothing was dispatched." >&2
     exit 1
+  fi
+fi
+
+# Last of the refusals: it is the only one that touches the network (a fetch bounded at ~10s).
+fresh_rc=0
+"$script_dir/claude-freshness.sh" || fresh_rc=$?
+if [ "$fresh_rc" -eq 4 ]; then
+  if [ "$stale_ok" = 1 ]; then
+    echo "WARN: launching on the stale ~/.claude above (stale-ok) — every session runs that tooling for the fleet's whole duration" >&2
+  else
+    echo "Nothing was dispatched or written. Run /update and re-launch, or re-run with 'stale-ok' to launch on this tooling." >&2
+    exit 4
   fi
 fi
 

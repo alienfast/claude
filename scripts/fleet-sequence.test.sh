@@ -20,7 +20,8 @@
 # marker; `nomention` = shipped with a commit that never names the issue. A `/pr-update` dispatch records the
 # branch it ran on. `gh pr create` numbers PRs from $WORK/prseq and records the call; a bare remote backs
 # every push. One case launches a real detached runner to measure its process group; everything else runs
-# the runner inline.
+# the runner inline. The ~/.claude freshness check runs against a current fixture clone (CLAUDE_FRESHNESS_DIR)
+# except in the one case that pushes to its origin.
 set -uo pipefail
 
 SCRIPT="$(cd "$(dirname "$0")" && pwd)/fleet-sequence.sh"
@@ -129,6 +130,18 @@ esac
 STUB_GH
 chmod +x "$BIN"/*
 export PATH="$BIN:$PATH"
+CL_ORIGIN="$WORK/claude-origin.git"
+CL_UP="$WORK/claude-upstream"
+export CLAUDE_FRESHNESS_DIR="$WORK/claude-local"
+git init -q --bare "$CL_ORIGIN"
+git -C "$CL_ORIGIN" symbolic-ref HEAD refs/heads/main
+git clone -q "$CL_ORIGIN" "$CL_UP" 2>/dev/null
+git -C "$CL_UP" checkout -q -b main
+mkdir -p "$CL_UP/hooks"; echo base > "$CL_UP/hooks/auto-rewake.sh"
+git -C "$CL_UP" add -A
+git -C "$CL_UP" -c user.email=t@t -c user.name=t commit -q -m init
+git -C "$CL_UP" push -q origin main
+git clone -q "$CL_ORIGIN" "$CLAUDE_FRESHNESS_DIR"
 export FLEET_SEQUENCE_POLL=0 FLEET_SEQUENCE_GRACE=0 FLEET_SEQUENCE_FOREGROUND=1 FLEET_SEQUENCE_ISSUE_TIMEOUT=5 \
        FLEET_SEQUENCE_MERGE_TIMEOUT=1 FLEET_SEQUENCE_PR_UPDATE_TIMEOUT=5
 
@@ -217,6 +230,23 @@ ck "no origin exits 1 in pr mode" "1" "$(run BF-1 BF-2)"
 ck_has "explains the remote"    "no 'origin' remote" "$WORK/out"
 ck "merge mode needs no origin" "0" "$(run merge BF-1)"
 setup_remote
+
+# Stale ~/.claude tooling refuses before the branch, the marker or any dispatch; stale-ok launches with a WARN.
+reset
+echo "hooks: recover a lost wakeup" >> "$CL_UP/hooks/auto-rewake.sh"
+git -C "$CL_UP" -c user.email=t@t -c user.name=t commit -q -am "hooks: recover a lost wakeup"
+git -C "$CL_UP" push -q origin main
+ck "stale tooling exits 4"      "4" "$(run BF-1 BF-2)"
+ck_has "stale tooling named"    "TOOLING-STALE: ~/.claude is 1 commit behind origin/main, including:" "$WORK/out"
+ck_has "stale says nothing ran" "Nothing was dispatched or written." "$WORK/out"
+ck "stale dispatched nothing"   "0" "$(dispatches)"
+ck "stale created no branch"    "" "$(git -C "$REPO" branch --list 'seq/*')"
+ck "stale wrote no marker"      "no" "$([ -e "$REPO/tmp/fleet-sequence-bf-1.json" ] && echo yes || echo no)"
+ck "stale-ok exits 0"           "0" "$(run stale-ok BF-1)"
+ck_has "stale-ok warned"        "WARN: launching on the stale ~/.claude above (stale-ok)" "$WORK/out"
+ck "stale-ok dispatched"        "1" "$(dispatches)"
+ck_lacks "stale-ok not an issue" "stale-ok" "$WORK/dispatches"
+git -C "$CLAUDE_FRESHNESS_DIR" pull -q --ff-only
 
 # A checkout-wide start.wt-source-branch (an epic fleet's posture, or one left behind) is no concern of this
 # runner: it reads and writes only per-issue keys, and start-wt-setup.sh consults the checkout-wide key
