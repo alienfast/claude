@@ -1699,7 +1699,9 @@ ck_has "throttle: default-ceiling flag"     "**Throttled against the probe's DEF
 # ---- 22. price rows: per-model cache-read rates, exact ids after normalization, an unlisted release unpriced ----
 # Each message: 100k input, 100k cache write, 1M cache read, 100k output. Opus 5.5 at 4/20 with a 0.20 cache read is
 # (400000 + 800000 + 200000 + 2000000)/1e6 = $3.40 — a 0.1x-of-input cache read would read $3.60 and Opus 5's row
-# $4.50. Haiku 4.5 (1/5/0.10) is $0.90. A made-up point release must not inherit its base model's price.
+# $4.50. Sonnet 5.5 at 2/10 with a 0.10 cache read (0.05x, per the pricing page — the claude-api skill's prose says
+# 0.20, which would read $1.80) is $1.70. Haiku 4.5 (1/5/0.10) is $0.90. A made-up point release must not inherit
+# its base model's price.
 CK22="$WORK/ck22"; mkdir -p "$CK22/tmp"
 git -C "$CK22" init -q 2>/dev/null
 git -C "$CK22" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "TT-22: prices"
@@ -1709,7 +1711,7 @@ echo '{"status":"drained","reason":"fleet deadline reached","mode":"loop","shipp
 {
   printf '{"type":"user","timestamp":"2026-10-01T04:00:00.000Z","isSidechain":false,"message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}\n'
   n=0
-  for model in claude-opus-5-5 'claude-opus-5-5[1m]' claude-haiku-4-5-20251001 claude-opus-5-9; do
+  for model in claude-opus-5-5 'claude-opus-5-5[1m]' claude-sonnet-5-5 claude-haiku-4-5-20251001 claude-opus-5-9; do
     n=$((n+1))
     printf '{"type":"assistant","timestamp":"2026-10-01T04:0%s:00.000Z","isSidechain":false,"message":{"role":"assistant","id":"msg_pri%s","model":"%s","usage":{"input_tokens":100000,"cache_creation_input_tokens":100000,"cache_read_input_tokens":1000000,"output_tokens":100000},"content":[{"type":"text","text":"working"}]}}\n' "$n" "$n" "$model"
   done
@@ -1719,13 +1721,14 @@ J22="$WORK/out22.json"; MD22="$WORK/out22.md"
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK22" --sessions pri00001 --json > "$J22" 2>/dev/null
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK22" --sessions pri00001 > "$MD22" 2>&1
 q22() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J22"; }
-ck_has "price: opus 5.5 at 4/20/0.20"              "| main | claude-opus-5-5 | 100,000 | 25% | \$3.40 |" "$MD22"
-ck_has "price: [1m] suffix priced the same"        "| main | claude-opus-5-5[1m] | 100,000 | 25% | \$3.40 |" "$MD22"
-ck_has "price: dated haiku id priced"              "| main | claude-haiku-4-5-20251001 | 100,000 | 25% | \$0.90 |" "$MD22"
-ck_has "price: unlisted point release unpriced"    "| main | claude-opus-5-9 | 100,000 | 25% | unpriced |" "$MD22"
+ck_has "price: opus 5.5 at 4/20/0.20"              "| main | claude-opus-5-5 | 100,000 | 20% | \$3.40 |" "$MD22"
+ck_has "price: [1m] suffix priced the same"        "| main | claude-opus-5-5[1m] | 100,000 | 20% | \$3.40 |" "$MD22"
+ck_has "price: sonnet 5.5 at 2/10/0.10"            "| main | claude-sonnet-5-5 | 100,000 | 20% | \$1.70 |" "$MD22"
+ck_has "price: dated haiku id priced"              "| main | claude-haiku-4-5-20251001 | 100,000 | 20% | \$0.90 |" "$MD22"
+ck_has "price: unlisted point release unpriced"    "| main | claude-opus-5-9 | 100,000 | 20% | unpriced |" "$MD22"
 ck_has "price: footer names the unpriced release"  "excluded from \$ (no price row): claude-opus-5-9" "$MD22"
 ck "price: unpriced list"                          "['claude-opus-5-9']" "$(q22 "d['unpriced_models']")"
-ck "price: fleet total"                            "7.7" "$(q22 "d['est_cost_usd']")"
+ck "price: fleet total"                            "9.4" "$(q22 "d['est_cost_usd']")"
 
 # ---- 23. resolved findings with no tag in the block: named with their path, and whether tags sit elsewhere ----
 # TT-61's tags were written under a `## Findings by cycle` section below the block, TT-62 carries none at all; TT-60
