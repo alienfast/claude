@@ -202,7 +202,10 @@ is the reliable one — on that run the tag caught 8 of 27 ships and the call al
 The review-churn table reads `tmp/quality-review-verdict-*.md`: cycles, findings by severity, the
 SEVERITY/origin split (`plan`/`impl`/`spec`/`test`/`latent` — verdicts written before 2026-08-04
 predate the tag, so coverage is reported as tagged/total, not assumed), and deferred filings paired
-against the fleet's ships as a filed-per-shipped rate. Cycles alone is a weak churn signal — the
+against the fleet's ships as a filed-per-shipped rate. It counts only verdicts for issues the session set
+shipped, failed, canceled or dispatched a reviewer for; any other verdict in the window — typically an
+interactive review beside the fleet — is named on its own "Not this fleet's reviews" line and counted in
+nothing. Cycles alone is a weak churn signal — the
 review loop's convergence design pins it near 2 — so read findings volume, severity, and origin mix
 instead. The token table is what turns model/effort tuning into arithmetic: it shows where output
 tokens actually went (orchestration vs. exploration vs. review vs. fixes), by agent type and model.

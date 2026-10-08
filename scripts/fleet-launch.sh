@@ -66,7 +66,9 @@
 #               Bash permission prompt; autocompact capped because a session that
 #               never compacts re-reads its whole accumulated context on every call).
 #
-#   stop        Wind down a running fleet: write an already-passed deadline and exit.
+#   stop        Wind down a running fleet: write an already-passed deadline and exit — unless
+#               the marker's deadline has already passed, which is left unchanged (a stop never
+#               moves a deadline later; fleet-metrics reads it as the fleet's real end).
 #               Every session ends its loop at its next iteration boundary; in-flight
 #               issues run to completion. (To also abort in-flight work, use
 #               `claude agents` and kill sessions individually — this script never does.)
@@ -150,6 +152,14 @@ if [ "${1:-}" = "stop" ]; then
   # Merge onto the existing marker: count and launch_epoch must survive a stop, or
   # /fleet-status loses its session scoping during the wind-down it most needs it for.
   existing=$(jq -c '.' "$marker" 2>/dev/null || echo '{}')
+  # A stop never moves a deadline later: a fleet already past its own deadline is winding down by itself, and rewriting
+  # the deadline to now stretches fleet-metrics' idle tail, stall clipping and early-drain horizon by the gap.
+  prior=$(printf '%s' "$existing" | jq -r '.deadline_epoch // empty')
+  if [[ "$prior" =~ ^[0-9]+$ ]] && [ "$prior" -le "$now" ]; then
+    echo "Fleet deadline already passed ($(printf '%s' "$existing" | jq -r '.deadline // .deadline_epoch')) — marker left unchanged."
+    echo "Sessions still mid-issue finish it and end at their next pick boundary; nothing more to do."
+    exit 0
+  fi
   printf '%s' "$existing" | jq --argjson epoch "$now" --arg human "$(date '+%Y-%m-%d %H:%M %Z')" \
     '. + {deadline_epoch: $epoch, deadline: $human, stopped: true}' > "$marker"
   echo "Fleet wind-down marker written: $marker"

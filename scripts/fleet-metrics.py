@@ -18,7 +18,14 @@ either phrase counted, denials, unavailability and prose alike, so older `cls` c
 the merge path makes, beside the `SHIPPED-*: <ID>` tag — so older rows' obs counts read low: on the
 2026-10-04/05 fleet the tag caught 8 of 27 ships and the call all 27. The `throttle` gauge — session-
 hours parked by fleet-headroom.sh's THROTTLE between picks, with the ceiling source each probe named —
-was added the same day; rows before it carry no `throttle_*` fields.)
+was added the same day; rows before it carry no `throttle_*` fields. `filed_per_shipped`, the churn
+table's `filed` column and `review_churn[].filed` stopped counting the dedup recipe's `<ID> (existing
+— evidence appended)` citations 2026-10-08: no issue was created, and an append to an issue that
+predates the window inflated the rate — that fleet read 15 filings, 0.79 per ship, against a Linear
+census of 14, 0.74 — so older rows read high wherever a review appended instead of filing. Review
+churn and `avg_cycles` / `findings_per_review` / `crit_high_per_review` / `plan_origin_share` were
+narrowed the same day to verdicts for issues the session set worked; older rows can include an
+interactive review persisted inside the window.)
 
 WHAT IT READS
   <checkout>/tmp/auto-state-<runKey>.json   run bookkeeping written by /auto Step 4
@@ -213,6 +220,9 @@ V_SEVERITY = re.compile(r"\b(CRIT(?:ICAL)?|HIGH|MED(?:IUM)?)\b")
 # quality-review-write-verdict.sh's origin_re, which warns at write time on the same pattern.
 V_ORIGIN = re.compile(r"\b(?:CRIT(?:ICAL)?|HIGH|MED(?:IUM)?|NICE-TO-HAVE)/(plan|impl|spec|test|latent)\b")
 V_ISSUE_ID = re.compile(r"\b[A-Z][A-Z0-9]*-\d+\b")
+# quality-review's dedup recipe records a finding appended to an issue that already existed as
+# `<ID> (existing — evidence appended)`, often with more text before the close paren.
+V_EXISTING_ID = re.compile(r"\b[A-Z][A-Z0-9]*-\d+\s*\(existing\b[^)]*\)")
 SEV_SHORT = {"CRITICAL": "CRIT", "MEDIUM": "MED"}
 # A verdict author compresses a run of same-tag findings as `MED/impl: 9` or `HIGH/test ×6`, and the
 # headline `Findings resolved: N` counts every one, so a tag carries its multiplicity here too — read
@@ -1165,10 +1175,9 @@ def parse_verdicts(checkout, cutoff, launch_epoch=None, until=None):
     """One row per quality-review verdict file in the window: the review-churn half of the retro.
     Counts are self-reported by the review pipeline — the audit record, not independent ground truth.
 
-    launch_epoch drops verdicts written by a PRIOR fleet. The session filter alone does not reach these:
-    verdict files are globbed off disk, not attributed through the session set, so a prior run's reviews
-    keep landing in the churn totals after its ledger is correctly excluded — which is how the 2026-08-21
-    retro read 7 reviews / 58 findings / severity 1/5/28 for a fleet whose real numbers were 5 / 46 / 0/3/19."""
+    launch_epoch drops verdicts written by a PRIOR fleet. The caller's issue attribution does not make it
+    redundant: without the gate a prior run's verdict either lands on the not-this-fleet line or, for an
+    issue this fleet canceled or re-picked, counts in this fleet's churn as its own."""
     rows = []
     for p in sorted((checkout / "tmp").glob("quality-review-verdict-*.md")):
         mtime = datetime.fromtimestamp(p.stat().st_mtime, timezone.utc)
@@ -1188,10 +1197,11 @@ def parse_verdicts(checkout, cutoff, launch_epoch=None, until=None):
         blob = block.group(0) if block else ""
         sev = tag_counts(V_SEVERITY, blob, lambda m: SEV_SHORT.get(m.group(1), m.group(1)))
         m = V_FILED_LINE.search(text)
-        # Parenthetical annotations name OTHER issues — `(sub-issues of TT-9)`, `(collision edge to
-        # TT-8 not wired)` — so ids are extracted only from the unparenthesized remainder.
+        # An `(existing …)` id was appended to, not created, so it leaves with its annotation. Every other
+        # parenthetical names OTHER issues — `(sub-issues of TT-9)`, `(collision edge to TT-8 not
+        # wired)` — so ids are extracted only from the unparenthesized remainder.
         filed = [] if not m or m.group(1).strip().lower().startswith("none") \
-            else V_ISSUE_ID.findall(re.sub(r"\([^)]*\)", " ", m.group(1)))
+            else V_ISSUE_ID.findall(re.sub(r"\([^)]*\)", " ", V_EXISTING_ID.sub(" ", m.group(1))))
         # A free-form body (Verdict: present, schema lines absent) parses as 0 findings, which is
         # indistinguishable from a quiet review — 4 of the 2026-08-03 fleet's verdicts were composed
         # off-schema and silently deflated the totals. Name the missing fields so the flag can fire.
@@ -1555,8 +1565,8 @@ def main():
             issue_run.setdefault(issue, s["run_key"])
     merged = git_merged(checkout, all_shipped)
 
-    # The fleet deadline, when the marker survived (fleet-stop rewrites it; a launch without a
-    # duration never wrote one). Read once for every consumer: the stall clipping below, the
+    # The fleet deadline, when the marker survived (fleet-stop moves a future deadline to the stop time and
+    # leaves a passed one alone; a launch without a duration never wrote one). Read once for every consumer: the stall clipping below, the
     # pool-exhausted gauge and the early-drain flag.
     fleet_deadline_dt = None
     try:
@@ -1761,14 +1771,27 @@ def main():
         lasts = [s["agg"]["last"] for s in sessions if s["agg"]["last"]]
         v_cutoff = min(firsts) if firsts else None
         v_until = max(lasts) if lasts else None
-    verdicts = parse_verdicts(checkout, v_cutoff, launch_epoch, v_until)
-    # A verdict that routes a finding onto an existing issue records it as `BF-XX (existing — evidence
-    # appended)`, the dedup recipe's own bookkeeping — one filing cited by two reviews is one filing,
-    # so both counts run over unique ids (2026-09-16: 12 citations for 9 issues created).
+    window_verdicts = parse_verdicts(checkout, v_cutoff, launch_epoch, v_until)
+    # Churn is this fleet's reviews only: the window admits any verdict persisted while the fleet ran, and an interactive
+    # /full or /quality-review beside it writes the same tmp/ file. A verdict is the fleet's when a session in the set
+    # shipped, failed or canceled its issue, or dispatched a reviewer for it — the dispatch witness keeps what no ledger
+    # list or tag records: a ledger-less session's BLOCKED-ON-REVIEW, and a session killed between its review and Step 4.
+    # `skipped` stays out: a pick-time decline is often the operator's own claim on the issue.
+    fleet_issue_run = dict(issue_run)
+    for s in sessions:
+        worked = set(s["state"].get("failed") or []) | set(s["state"].get("canceled") or []) \
+            | s["agg"]["cancel_tags"] \
+            | {d["issue"] for d in s["agg"]["dispatches"]
+               if d["issue"] and d["agent_type"] in ("quality-reviewer", "quality-verifier")}
+        for issue in sorted(worked):
+            fleet_issue_run.setdefault(issue, s["run_key"])
+    verdicts = [v for v in window_verdicts if v["issue"] in fleet_issue_run]
+    foreign_verdicts = sorted(v["issue"] for v in window_verdicts if v["issue"] not in fleet_issue_run)
+    # Both counts run over unique ids, now only a backstop for an id one line names twice: the 2026-09-16 fleet's
+    # 12 citations for 9 created issues were three `(existing …)` re-citations of an issue another review created in
+    # the window, and parse_verdicts drops those itself.
     filed_total = len({i for v in verdicts for i in v["filed"]})
-    # The ratio pairs this fleet's filings with this fleet's ships: verdicts for issues no session in
-    # the window shipped (run `-` in the table) stay out of the numerator, or a window that catches an
-    # earlier run's reviews inflates the rate.
+    # The ratio is filings per ship, so verdicts for the fleet's own failed or canceled issues stay out of the numerator.
     filed_matched = len({i for v in verdicts if v["issue"] in all_shipped for i in v["filed"]})
     filed_per_shipped = round(filed_matched / len(all_shipped), 2) if all_shipped else None
     # Verdict existence is checked against every file on disk, not just the window — the filename
@@ -1780,16 +1803,17 @@ def main():
     for v in verdicts:
         if v["issue"] in impl_models:
             v["implemented_by"] = impl_models[v["issue"]]
-        elif issue_run.get(v["issue"]) in runs_with_records:
+        elif fleet_issue_run.get(v["issue"]) in runs_with_records:
             v["implemented_by"] = ["main-loop"]
         else:
             v["implemented_by"] = None
     # Impl-origin findings per issue grouped by implementing tier — the join that adjudicates the
     # flag table's impl-heavy row. Zero-impl issues count (a tier's clean record IS the signal);
-    # verdicts with findings but no origin tags stay out, since their impl count is unknown, not 0.
+    # verdicts with findings but no origin tags stay out, since their impl count is unknown, not 0 — as do
+    # off-schema verdicts, whose 0 resolved is a missing line rather than a quiet review.
     tier_join = {}
     for v in verdicts:
-        if v["implemented_by"] and (v["origin"] or v["resolved"] == 0):
+        if v["implemented_by"] and (v["origin"] or (v["resolved"] == 0 and "Findings resolved" not in v["missing_fields"])):
             label = "+".join(dict.fromkeys(tier_short(m) for m in v["implemented_by"]))
             tier_join.setdefault(label, []).append(v["origin"].get("impl", 0))
     fleet_tokens = Counter()
@@ -1990,11 +2014,12 @@ def main():
                               for g in sorted(s["agg"]["gaps"], reverse=True)[:5]],
             } for s in sessions],
             "review_churn": [{
-                "issue": v["issue"], "run": issue_run.get(v["issue"]),
+                "issue": v["issue"], "run": fleet_issue_run.get(v["issue"]),
                 "verdict": v["verdict"], "cycles": v["cycles"], "findings_resolved": v["resolved"],
                 "severity": dict(v["sev"]), "origin": dict(v["origin"]), "filed": v["filed"],
                 "missing_fields": v["missing_fields"], "implemented_by": v["implemented_by"],
             } for v in verdicts],
+            "foreign_verdicts": foreign_verdicts,
             "filed_per_shipped": filed_per_shipped,
             "developer_lanes": {lane: {m: n for m, n in c.most_common()}
                                 for lane, c in lanes.items()},
@@ -2187,7 +2212,7 @@ def main():
             findings = "?" if "Findings resolved" in v["missing_fields"] else v["resolved"]
             impl_by = "+".join(dict.fromkeys(tier_short(m) for m in v["implemented_by"])) \
                 if v["implemented_by"] else "-"
-            print(f"| {v['issue']} | `{issue_run.get(v['issue'], '-')}` | {v['verdict']} | "
+            print(f"| {v['issue']} | `{fleet_issue_run.get(v['issue'], '-')}` | {v['verdict']} | "
                   f"{v['cycles'] if v['cycles'] is not None else '?'} | {findings} | "
                   f"{v['sev']['CRIT']}/{v['sev']['HIGH']}/{v['sev']['MED']} | {origins} | "
                   f"{len(v['filed'])} | {impl_by} |")
@@ -2198,14 +2223,14 @@ def main():
         for v in verdicts:
             origin_tot.update(v["origin"])
         origins = " ".join(f"{k}:{n}" for k, n in origin_tot.most_common()) or "none"
-        ratio = (f"{filed_per_shipped} filed per shipped issue ({filed_matched} from this fleet's reviews)"
+        ratio = (f"{filed_per_shipped} filed per shipped issue ({filed_matched} from its shipped issues' reviews)"
                  if filed_per_shipped is not None else "no shipped issues to pair against")
         print(f"\n**Churn totals** — {len(verdicts)} reviews · avg cycles "
               f"{sum(cyc) / len(cyc):.1f} (max {max(cyc)}) · {resolved_total} findings resolved · "
               f"severity C/H/M {sum(v['sev']['CRIT'] for v in verdicts)}/"
               f"{sum(v['sev']['HIGH'] for v in verdicts)}/{sum(v['sev']['MED'] for v in verdicts)} · "
               f"origin-tagged {tagged}/{resolved_total} ({origins}) · "
-              f"{filed_total} deferred filings in window → {ratio}. Review-pipeline filings only — "
+              f"{filed_total} deferred filings from this fleet's reviews → {ratio}. Review-pipeline filings only — "
               f"the Linear window query (retro Step 3) is the full filing census.\n")
         if tier_join:
             parts = " | ".join(
@@ -2218,7 +2243,13 @@ def main():
                   f"route an impl-heavy mix at developer model/effort only when the impl findings sit "
                   f"on the lower tier HERE.\n")
     else:
-        print("- no verdict files in the window\n")
+        print("- no review verdicts for this fleet's issues in the window\n")
+    if foreign_verdicts:
+        # Capped because --all pools every verdict on disk.
+        shown = ", ".join(foreign_verdicts[:20]) + (f" (+{len(foreign_verdicts) - 20} more)" if len(foreign_verdicts) > 20 else "")
+        print(f"Not this fleet's reviews — verdicts in the window for issues no session in the set shipped, failed, "
+              f"canceled or dispatched a review for (typically an interactive review beside the fleet); counted in nothing "
+              f"above: {shown}\n")
 
     print("## Shipped-issue provenance\n")
     if not all_shipped:

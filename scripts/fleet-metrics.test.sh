@@ -44,8 +44,9 @@ mkdir -p "$CHECKOUT/tmp"
 git -C "$CHECKOUT" init -q 2>/dev/null
 git -C "$CHECKOUT" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "TT-1: fix the widget"
 
+# TT-3 and TT-4 failed in this session: their reviews are the fleet's churn, though neither is a ship.
 cat > "$CHECKOUT/tmp/auto-state-abc12345.json" <<'EOF'
-{"status": "halted", "reason": "test", "shipped": ["TT-1", "TT-2"], "canceled": [], "skipped": [], "failed": []}
+{"status": "halted", "reason": "test", "shipped": ["TT-1", "TT-2"], "canceled": [], "skipped": [], "failed": ["TT-3", "TT-4"]}
 EOF
 
 # New-format verdict: origin-tagged severities (the NICE-TO-HAVE tag pins V_ORIGIN's widened
@@ -61,8 +62,8 @@ Deferred dropped: none
 Open items: none
 EOF
 
-# Old-format verdict (pre-origin): bare severities, nothing filed. TT-3 was shipped by no session in
-# the window — its filing volume must stay out of the filed-per-shipped numerator.
+# Old-format verdict (pre-origin): bare severities, one filing. TT-3 failed rather than shipped, so its
+# review counts in churn but its filing stays out of the filed-per-shipped numerator.
 cat > "$CHECKOUT/tmp/quality-review-verdict-tt-3.md" <<'EOF'
 Verdict: passed-after-fixes
 Cycles: 2 (initial + 1 re-review)
@@ -85,6 +86,17 @@ Cycles: 2
 
 The review resolved two findings in prose form: a null deref in the handler and a race in the retry
 loop. Both fixed and confirmed.
+EOF
+
+# Foreign verdict: TT-5 is an interactive review persisted beside the fleet — no session shipped, failed
+# or canceled it or dispatched a reviewer for it. It must count in nothing, its filing TT-55 included.
+cat > "$CHECKOUT/tmp/quality-review-verdict-tt-5.md" <<'EOF'
+Verdict: passed-after-fixes
+Cycles: 2 (initial + 1 re-review)
+Findings resolved: 3 (HIGH/impl: unchecked nil; MED/plan: missed criterion; MED/test: unpinned arm)
+Deferred filed as issues: TT-55
+Deferred dropped: none
+Open items: none
 EOF
 
 # Mangle from git's resolved toplevel, not $CHECKOUT — the script resolves through git rev-parse,
@@ -191,8 +203,11 @@ ck "stateful not flagged" "False"   "$(q "[s['ledger_missing'] for s in d['sessi
 ck "non-auto ignored"    "0"        "$(q "len([s for s in d['sessions'] if s['run_key']=='99900001'])")"
 ck "non-auto ship excluded" "0"     "$(q "len([s for s in d['sessions'] if 'TT-99' in s['observed_shipped']])")"
 
-# review churn: three verdicts; TT-1 matched to the session, TT-3 unmatched, TT-4 off-schema.
+# review churn: three verdicts; TT-1 shipped and TT-3 failed by the session, TT-4 off-schema. Foreign TT-5
+# is named apart and counted nowhere.
 ck "churn rows"         "3"        "$(q "len(d['review_churn'])")"
+ck "foreign not churn"  "False"    "$(q "any(v['issue']=='TT-5' for v in d['review_churn'])")"
+ck "foreign verdicts"   "['TT-5']" "$(q "d['foreign_verdicts']")"
 ck "tt1 cycles"         "3"        "$(q "[v for v in d['review_churn'] if v['issue']=='TT-1'][0]['cycles']")"
 ck "tt1 findings"       "4"        "$(q "[v for v in d['review_churn'] if v['issue']=='TT-1'][0]['findings_resolved']")"
 ck "tt1 severity"       "{'CRIT': 1, 'HIGH': 1, 'MED': 2}" "$(q "[v for v in d['review_churn'] if v['issue']=='TT-1'][0]['severity']")"
@@ -201,7 +216,7 @@ ck "tt1 filed"          "['TT-40', 'TT-41']" "$(q "[v for v in d['review_churn']
 ck "tt1 run matched"    "abc12345" "$(q "[v for v in d['review_churn'] if v['issue']=='TT-1'][0]['run']")"
 ck "tt3 old-format sev" "{'HIGH': 1, 'MED': 1}" "$(q "[v for v in d['review_churn'] if v['issue']=='TT-3'][0]['severity']")"
 ck "tt3 no origins"     "{}"       "$(q "[v for v in d['review_churn'] if v['issue']=='TT-3'][0]['origin']")"
-ck "tt3 run unmatched"  "None"     "$(q "[v for v in d['review_churn'] if v['issue']=='TT-3'][0]['run']")"
+ck "tt3 run via failed" "abc12345" "$(q "[v for v in d['review_churn'] if v['issue']=='TT-3'][0]['run']")"
 ck "tt1 well-formed"    "[]"       "$(q "[v for v in d['review_churn'] if v['issue']=='TT-1'][0]['missing_fields']")"
 ck "tt4 missing fields" "['Findings resolved']" "$(q "[v for v in d['review_churn'] if v['issue']=='TT-4'][0]['missing_fields']")"
 
@@ -210,6 +225,9 @@ ck "tt4 missing fields" "['Findings resolved']" "$(q "[v for v in d['review_chur
 # Denominator is 3 now — TT-7 comes from the ledger-less session, which is exactly the point: a
 # discovered session's ships count toward the fleet's totals like any other.
 ck "filed per shipped"  "0.67"     "$(q "d['filed_per_shipped']")"
+# The filing total keeps TT-3's TT-50 (a fleet review) and drops foreign TT-5's TT-55.
+ck_has "filings exclude foreign" "3 deferred filings from this fleet's reviews" "$MD"
+ck_has "foreign line names it"   "counted in nothing above: TT-5" "$MD"
 
 # markdown-mode sections and flags
 ck_has "churn table row"     "| TT-1 | \`abc12345\` | passed-after-fixes | 3 | 4 | 1/1/2 |" "$MD"
@@ -225,7 +243,7 @@ ck_has "thinking footer"     "thinking ≈ 90% of its output tokens" "$MD"
 ck_has "unpriced footer"     "excluded from \$ (no price row): claude-nova-2" "$MD"
 ck_has "no-verdict flag"     "Shipped with no persisted review verdict**: TT-2" "$MD"
 ck_has "off-schema flag"     "Off-schema verdict body**: TT-4 (no Findings resolved line)" "$MD"
-ck_has "off-schema ? render" "| TT-4 | \`-\` | passed-after-fixes | 2 | ? |" "$MD"
+ck_has "off-schema ? render" "| TT-4 | \`abc12345\` | passed-after-fixes | 2 | ? |" "$MD"
 ck_has "origin coverage"     "origin-tagged 5/6" "$MD"
 ck_has "ledgerless flag"     "\`def45678\` ran without a surviving ledger" "$MD"
 ck_has "ledgerless names it" "no \`tmp/auto-state-def45678.json\`" "$MD"
@@ -578,13 +596,15 @@ EOF
 # Compressed tags — `HIGH/test ×3`, `MED/impl: 2 —` — carry their multiplicity (the 2026-09-16 BFP
 # fleet wrote 131 tags for 183 findings), while a description that merely STARTS with a number
 # (`NICE-TO-HAVE/plan: 3 callers …`) stays one, as does a number glued to a hyphenated word
-# (`MED/test: 255-character …`, which once read as 255 findings). TT-23 also re-cites TT-21's filing as the dedup
-# recipe's `(existing — evidence appended)` record: one filing, counted once across both verdicts.
+# (`MED/test: 255-character …`, which once read as 255 findings). TT-23 also records two dedup-recipe appends,
+# `(existing — evidence appended)` — TT-60, which TT-21's review created in this window, and TT-59, which no review
+# in the window created. Neither is a filing: the rate is TT-21's one over three ships, where counting appends reads
+# two (TT-59 is an append to an issue filed before the window).
 cat > "$CK9/tmp/quality-review-verdict-tt-23.md" <<'EOF'
 Verdict: passed-after-fixes
 Cycles: 2 (initial + 1 re-review)
 Findings resolved: 7 (HIGH/test ×3: cursor decode, empty page, mark regression; MED/impl: 2 — clamp to now, envelope keys optional; NICE-TO-HAVE/plan: 3 callers renamed for the new seam; MED/test: 255-character note cap untested)
-Deferred filed as issues: TT-60 (existing — evidence appended)
+Deferred filed as issues: TT-60 (existing — evidence appended), TT-59 (existing — evidence appended; MED/latent: filed before the window)
 Collision edges: none owed
 EOF
 
@@ -616,6 +636,20 @@ cat > "$SUB9/agent-f1.jsonl" <<'EOF'
 EOF
 cat > "$SUB9/agent-f1.meta.json" <<'EOF'
 {"agentType":"developer","description":"Fix TT-20 review findings","toolUseId":"tu_f1","spawnDepth":1}
+EOF
+# TT-24 is in no ledger list and carries no tag — a session killed between its review and Step 4. The
+# verifier dispatch alone makes its verdict the fleet's; its untagged finding keeps it out of the tier join.
+cat > "$SUB9/agent-v1.jsonl" <<'EOF'
+{"type":"assistant","timestamp":"2026-08-04T11:40:00Z","agentId":"v1","isSidechain":true,"message":{"role":"assistant","id":"msg_v1","model":"claude-opus-5","content":[{"type":"text","text":"verified"}]}}
+EOF
+cat > "$SUB9/agent-v1.meta.json" <<'EOF'
+{"agentType":"quality-verifier","description":"Verify fix delta TT-24","toolUseId":"tu_v1","spawnDepth":1}
+EOF
+cat > "$CK9/tmp/quality-review-verdict-tt-24.md" <<'EOF'
+Verdict: passed-after-fixes
+Cycles: 2
+Findings resolved: 1 (MED: stale cache key)
+Deferred filed as issues: none
 EOF
 # NAMED developer dispatch — the meta shape a live `Agent(name: …, subagent_type: developer)` writes
 # (snapshotted from the 2026-09-16 BFP fleet): agentType is the NAME, customAgentType the real type.
@@ -677,6 +711,7 @@ ck "impl lane by model"   "{'claude-sonnet-5': 110, 'claude-opus-5': 100}" "$(q9
 ck "fix lane by model"    "{'claude-sonnet-5': 200}" "$(q9 "d['developer_lanes']['fix']")"
 ck "unattributed lane"    "{'claude-opus-5': 30}"    "$(q9 "d['developer_lanes']['unattributed']")"
 ck "tt20 implemented_by"  "['claude-opus-5']" "$(q9 "[v for v in d['review_churn'] if v['issue']=='TT-20'][0]['implemented_by']")"
+ck "review dispatch makes it the fleet's" "['gg999999']" "$(q9 "[v['run'] for v in d['review_churn'] if v['issue']=='TT-24']")"
 ck "tt21 main-loop"       "['main-loop']"     "$(q9 "[v for v in d['review_churn'] if v['issue']=='TT-21'][0]['implemented_by']")"
 ck "tt23 named dispatch by custom type" "['claude-sonnet-5']" "$(q9 "[v for v in d['review_churn'] if v['issue']=='TT-23'][0]['implemented_by']")"
 ck "tier join sonnet"     "{'n': 1, 'mean': 2.0, 'median': 2, 'values': [2]}" "$(q9 "d['impl_origin_by_tier']['sonnet']")"
@@ -690,23 +725,24 @@ ck "named dispatches counted"                   "3"     "$(q9 "d['sessions'][0][
 ck_has "named dispatches in totals"             "3 named dispatches" "$MD9"
 ck "tt23 severity expanded" "{'HIGH': 3, 'MED': 3}" "$(q9 "[v for v in d['review_churn'] if v['issue']=='TT-23'][0]['severity']")"
 ck "tt23 origins expanded"  "{'test': 4, 'impl': 2, 'plan': 1}" "$(q9 "[v for v in d['review_churn'] if v['issue']=='TT-23'][0]['origin']")"
-ck "filed dedupes re-citation" "0.33" "$(q9 "d['filed_per_shipped']")"
+ck "existing citation is not a filing" "0.33" "$(q9 "d['filed_per_shipped']")"
+ck "tt23 appends file nothing" "[]" "$(q9 "[v for v in d['review_churn'] if v['issue']=='TT-23'][0]['filed']")"
 ck "tier join opus"       "{'n': 1, 'mean': 2.0, 'median': 2, 'values': [2]}" "$(q9 "d['impl_origin_by_tier']['opus']")"
 ck "tier join main-loop"  "{'n': 1, 'mean': 1.0, 'median': 1, 'values': [1]}" "$(q9 "d['impl_origin_by_tier']['main-loop']")"
 ck_has "churn impl-by header" "| filed | impl by |" "$MD9"
 ck_has "tt20 row impl by"     "| TT-20 | \`gg999999\` | passed-after-fixes | 2 | 3 | 0/1/2 | impl:2 test:1 | 0 | opus |" "$MD9"
 ck_has "tt21 row main-loop"   "| TT-21 | \`gg999999\` | passed | 1 | 1 | 0/0/1 | impl:1 | 1 | main-loop |" "$MD9"
-ck_has "tt23 row expanded"    "| TT-23 | \`gg999999\` | passed-after-fixes | 2 | 7 | 0/3/3 | test:4 impl:2 plan:1 | 1 | sonnet |" "$MD9"
+ck_has "tt23 row expanded"    "| TT-23 | \`gg999999\` | passed-after-fixes | 2 | 7 | 0/3/3 | test:4 impl:2 plan:1 | 0 | sonnet |" "$MD9"
 ck_has "join line groups"     "opus n=1 · mean 2.0 · median 2.0" "$MD9"
 ck_has "lanes line split"     "implementation 210 (claude-sonnet-5 110, claude-opus-5 100) · post-review fix 200 (claude-sonnet-5 200) · unattributed 30" "$MD9"
 
 # First fixture's new fields: agent-t1 ("fix batch", no issue id, no prompt row) stays unattributed;
-# TT-1 shipped by a session WITH dispatch records but no impl dispatch -> main-loop; TT-3's session
-# is unknown -> attribution honestly absent, and its old-format verdict (origin-untagged, 2 findings)
-# must stay OUT of the tier join rather than counting as zero impl findings.
+# TT-1 shipped and TT-3 failed in a session WITH dispatch records but no impl dispatch -> main-loop. TT-3's
+# old-format verdict (origin-untagged, 2 findings) and TT-4's off-schema one (no Findings resolved line, so
+# a parsed 0) must both stay OUT of the tier join rather than counting as zero impl findings.
 ck "t1 stays unattributed" "{'claude-sonnet-5': 700}" "$(q "d['developer_lanes']['unattributed']")"
 ck "tt1 main-loop fallback" "['main-loop']" "$(q "[v for v in d['review_churn'] if v['issue']=='TT-1'][0]['implemented_by']")"
-ck "tt3 attribution unknown" "None" "$(q "[v for v in d['review_churn'] if v['issue']=='TT-3'][0]['implemented_by']")"
+ck "tt3 failed main-loop" "['main-loop']" "$(q "[v for v in d['review_churn'] if v['issue']=='TT-3'][0]['implemented_by']")"
 # A {…,…} literal at the $(q …) call site is brace-expanded: bash's textual brace pass cannot see
 # that the braces sit inside a nested quoted string, so the word splits at the comma and q runs twice
 # on the halves, each a python error → empty $3. A variable passes through intact — parameter
@@ -895,7 +931,7 @@ ck_has "md reports late exclusion"   "started " "$MD14"
 CK12="$WORK/checkout12"
 mkdir -p "$CK12/tmp"
 git -C "$CK12" init -q 2>/dev/null
-git -C "$CK12" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "TT-40: fleet work"
+git -C "$CK12" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "TT-41: fleet work"
 M12="$(git -C "$CK12" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
 mkdir -p "$WORK/projects/$M12"
 
@@ -904,26 +940,36 @@ cat > "$CK12/tmp/fleet-deadline.json" <<EOF
 {"deadline_epoch": $((LAUNCH + 43200)), "deadline": "test", "count": 1, "launch_epoch": $LAUNCH}
 EOF
 
+# Numeric ids, because churn keeps only verdicts for issues the session set worked and a verdict's id is
+# its uppercased filename stem: the fleet ships TT-41, the prior run TT-42, and tt-43 is an interactive
+# review persisted after launch that no session worked.
 for run in prior001 fleet001; do
+  id=TT-42; [ "$run" = fleet001 ] && id=TT-41
   cat > "$CK12/tmp/auto-state-$run.json" <<EOF
-{"status": "drained", "reason": "deadline", "shipped": ["TT-$run"], "canceled": [], "skipped": [], "failed": []}
+{"status": "drained", "reason": "deadline", "shipped": ["$id"], "canceled": [], "skipped": [], "failed": []}
 EOF
   cat > "$WORK/projects/$M12/$run-0000.jsonl" <<EOF
 {"type":"user","timestamp":"$(ts_ago 6000)","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
-{"type":"assistant","timestamp":"$(ts_ago 1200)","message":{"role":"assistant","id":"msg_$run","model":"claude-opus-5","usage":{"input_tokens":10,"cache_read_input_tokens":1000,"output_tokens":400},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-$run done"}]}}
+{"type":"assistant","timestamp":"$(ts_ago 1200)","message":{"role":"assistant","id":"msg_$run","model":"claude-opus-5","usage":{"input_tokens":10,"cache_read_input_tokens":1000,"output_tokens":400},"content":[{"type":"text","text":"SHIPPED-MERGE: $id done"}]}}
 EOF
 done
-cat > "$CK12/tmp/quality-review-verdict-tt-prior.md" <<'EOF'
-# /quality-review verdict — TT-PRIOR
+cat > "$CK12/tmp/quality-review-verdict-tt-42.md" <<'EOF'
+# /quality-review verdict — TT-42
 Verdict: passed-after-fixes
 Cycles: 2
 Findings resolved: 6 (HIGH/impl: prior fleet finding)
 EOF
-cat > "$CK12/tmp/quality-review-verdict-tt-fleet.md" <<'EOF'
-# /quality-review verdict — TT-FLEET
+cat > "$CK12/tmp/quality-review-verdict-tt-41.md" <<'EOF'
+# /quality-review verdict — TT-41
 Verdict: passed-after-fixes
 Cycles: 1
 Findings resolved: 2 (MED/plan: this fleet finding)
+EOF
+cat > "$CK12/tmp/quality-review-verdict-tt-43.md" <<'EOF'
+# /quality-review verdict — TT-43
+Verdict: passed-after-fixes
+Cycles: 3
+Findings resolved: 9 (HIGH/impl: interactive review finding)
 EOF
 
 # The tie itself, carried with a SUB-SECOND remainder. launch_epoch is whole seconds while st_mtime
@@ -933,9 +979,10 @@ python3 - "$CK12" "$LAUNCH" <<'PY'
 import os, sys, pathlib
 ck, launch = pathlib.Path(sys.argv[1]), int(sys.argv[2])
 for name, mt in (("tmp/auto-state-prior001.json", launch + 0.448),
-                 ("tmp/quality-review-verdict-tt-prior.md", launch + 0.9),
+                 ("tmp/quality-review-verdict-tt-42.md", launch + 0.9),
                  ("tmp/auto-state-fleet001.json", launch + 60),
-                 ("tmp/quality-review-verdict-tt-fleet.md", launch + 60)):
+                 ("tmp/quality-review-verdict-tt-41.md", launch + 60),
+                 ("tmp/quality-review-verdict-tt-43.md", launch + 60)):
     os.utime(ck / name, (mt, mt))
 PY
 
@@ -950,9 +997,12 @@ ck "launch tie: prior ledger excluded"   "['fleet001']" "$(q12 "sorted(s['run_ke
 # both gone, which is the shape that would resurface the prior run as a phantom ledgerless session.
 ck "launch tie: no phantom ledgerless session" "0" "$(q12 "len([s for s in d['sessions'] if s['ledger_missing']])")"
 ck "launch tie: tokens fleet-only"       "400" "$(q12 "sum(d['output_tokens'].values())")"
-# Verdicts are globbed off disk, not attributed through the session set, so they need their own gate.
-ck "launch tie: prior verdict excluded"  "['TT-FLEET']" "$(q12 "sorted(v['issue'] for v in d['review_churn'])")"
+# Issue attribution alone would only move TT-42 from churn to the foreign line; the launch gate is what
+# keeps it out of both, so the foreign arm reddens if the gate goes.
+ck "launch tie: prior verdict excluded"  "['TT-41']" "$(q12 "sorted(v['issue'] for v in d['review_churn'])")"
 ck "launch tie: fleet verdict kept"      "2"   "$(q12 "d['review_churn'][0]['findings_resolved']")"
+ck "launch tie: foreign is post-launch only" "['TT-43']" "$(q12 "d['foreign_verdicts']")"
+ck "launch tie: history churn fleet-only" "2.0" "$(q12 "d['history'][-1]['findings_per_review']")"
 ck_lacks "launch tie: prior run absent from table" "prior001" "$MD12"
 
 # ---- landing shape + killed-mid-loop fixture ----

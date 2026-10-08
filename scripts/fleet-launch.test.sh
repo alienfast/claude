@@ -116,6 +116,19 @@ ck_has "lists untracked"     "stray.txt" "$WORK/out"
 # Winding down a fleet must work regardless of tree state — it is the remedy, not a launch.
 ck "stop exits 0 when dirty" "0" "$(run stop)"
 ck "stop wrote marker"       "true" "$(jq -r '.stopped' "$REPO/tmp/fleet-deadline.json")"
+# A stop never moves a deadline later: a passed deadline is left byte-identical, a future one becomes now.
+past=$(( $(date +%s) - 10800 ))
+printf '{"deadline_epoch":%s,"deadline":"earlier","count":3,"launch_epoch":1}\n' "$past" > "$REPO/tmp/fleet-deadline.json"
+cp "$REPO/tmp/fleet-deadline.json" "$WORK/marker.before"
+ck "stop past deadline exits 0"       "0" "$(run stop)"
+ck "stop past deadline leaves marker" "same" "$(cmp -s "$WORK/marker.before" "$REPO/tmp/fleet-deadline.json" && echo same || echo changed)"
+ck_has "stop past deadline says so"   "marker left unchanged" "$WORK/out"
+printf '{"deadline_epoch":9999999999,"deadline":"later","count":3,"launch_epoch":1}\n' > "$REPO/tmp/fleet-deadline.json"
+ck "stop future deadline exits 0"     "0" "$(run stop)"
+ck "stop future deadline moves to now" "true" "$(jq -r '.stopped == true and .deadline_epoch < 9999999999 and .launch_epoch == 1' "$REPO/tmp/fleet-deadline.json")"
+rm -f "$REPO/tmp/fleet-deadline.json"
+ck "stop with no marker exits 0"      "0" "$(run stop)"
+ck "stop with no marker writes one"   "true" "$(jq -r '.stopped == true and (.deadline_epoch > 0)' "$REPO/tmp/fleet-deadline.json")"
 
 # ---- case 6: the marker is written on EVERY launch and records the session set ----
 # A fleet is a session set, not a time window (header). ab000001/ab000002 went to cases 1 and 3.
