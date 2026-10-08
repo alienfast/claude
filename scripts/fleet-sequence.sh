@@ -5,7 +5,7 @@
 # launched from carries the lot. The `merge` token skips the branch and the PR — each issue then merges
 # straight into the launch branch, the shape an unscoped fleet ships in.
 #
-# Usage: fleet-sequence.sh [pr|merge] <ISSUE-ID>... [-- <claude flags...>]
+# Usage: fleet-sequence.sh [pr|merge] [stale-ok] <ISSUE-ID>... [-- <claude flags...>]
 #        fleet-sequence.sh status [<ISSUE-ID>]
 #        fleet-sequence.sh stop [<ISSUE-ID>]
 #        fleet-sequence.sh run <slug>     (internal: the detached runner; reads tmp/fleet-sequence-<slug>.json)
@@ -19,6 +19,8 @@
 #   pr | merge     pr (default): create `seq/<first-id>` from the launch branch, ship every issue onto it,
 #                  push it after each ship, open one PR onto the launch branch at the end, then run
 #                  /pr-update on it. merge: no branch, no PR — each issue merges into the launch branch.
+#   stale-ok       Launch even though ~/.claude is behind origin/main in a file sessions load (TOOLING-STALE,
+#                  claude-freshness.sh — checked once, at launch), with a one-line WARN; without it, exit 4.
 #   -- ...         Passed to every `claude --bg` verbatim; defaults added only for flags not present
 #                  (--model 'opus[1m]' --effort xhigh --autocompact 500000 --permission-mode auto —
 #                  skills/auto/SKILL.md's unattended-run prerequisites, same as fleet-launch.sh).
@@ -89,13 +91,13 @@
 # checkout; creates the integration branch, sets/unsets the per-issue `start.<id>.wt-source-branch` keys,
 # pushes the branch, opens its PR, adds and removes a throwaway worktree at tmp/fleet-sequence-pr-update-<slug>
 # for the closing /pr-update session, dispatches background claude sessions. Never moves the main checkout's
-# HEAD. Exit 1 on argument/environment errors before anything is dispatched; the runner exits 1 when the
-# sequence fails.
+# HEAD. Exit 1 on argument/environment errors and exit 4 on TOOLING-STALE, both before anything is dispatched
+# or written; the runner exits 1 when the sequence fails.
 
 set -eo pipefail
 
 usage() {
-  echo "usage: fleet-sequence.sh [pr|merge] <ISSUE-ID>... [-- <claude flags...>] | fleet-sequence.sh status [<ISSUE-ID>] | stop [<ISSUE-ID>]" >&2
+  echo "usage: fleet-sequence.sh [pr|merge] [stale-ok] <ISSUE-ID>... [-- <claude flags...>] | fleet-sequence.sh status [<ISSUE-ID>] | stop [<ISSUE-ID>]" >&2
   exit 1
 }
 
@@ -609,7 +611,7 @@ open(my $f, ">", $pf) or die "$pf: $!"; print $f $pid; close $f;'
 
 # =====================================================================================
 cmd_launch() {
-  local raw id norm prev json labels state current existing_issues dirty tok mode="pr" mode_set="" branch="" resume=0 carried=""
+  local raw id norm prev json labels state current existing_issues dirty tok mode="pr" mode_set="" branch="" resume=0 carried="" stale_ok=0 fresh_rc=0
   local ids=()
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -620,6 +622,8 @@ cmd_launch() {
         if [ "$tok" = "pr" ] || [ "$tok" = "merge" ]; then
           if [ -n "$mode_set" ] && [ "$mode_set" != "$tok" ]; then echo "ERROR: 'pr' and 'merge' together — pick one" >&2; exit 1; fi
           mode="$tok"; mode_set="$tok"
+        elif [ "$tok" = "stale-ok" ]; then
+          stale_ok=1
         else
           ids+=("$1")
         fi
@@ -721,6 +725,17 @@ cmd_launch() {
     exit 1
   fi
   [ -n "$current" ] || { echo "ERROR: HEAD is detached — check out the branch the sequence should ship onto, then re-run" >&2; exit 1; }
+
+  # Once, here: every child session is dispatched later by the detached runner, whose log nobody reads at launch.
+  "$here/claude-freshness.sh" || fresh_rc=$?
+  if [ "$fresh_rc" -eq 4 ]; then
+    if [ "$stale_ok" = 1 ]; then
+      echo "WARN: launching on the stale ~/.claude above (stale-ok) — every issue's session runs that tooling" >&2
+    else
+      echo "Nothing was dispatched or written. Run /update and re-launch, or re-run with 'stale-ok' to launch on this tooling." >&2
+      exit 4
+    fi
+  fi
 
   if [ "$mode" = "pr" ]; then
     # The PR's base is the launch branch, so it must exist on origin — an unpushed one would spend every

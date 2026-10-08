@@ -11,7 +11,8 @@
 # invocation — the refusal cases assert it was never called, which is the property that matters — and
 # prints the real `--bg` output shape (2026-08-29: `backgrounded · <id>` with the id ANSI-coloured, then
 # attach/logs hints) with a monotonic fake id, so the session-set cases can assert exact membership.
-# `claude agents` is answered from $WORK/agents.json (empty array when absent).
+# `claude agents` is answered from $WORK/agents.json (empty array when absent). The ~/.claude freshness check runs
+# against a fixture clone of a bare origin (CLAUDE_FRESHNESS_DIR), current except in the cases that push to it.
 set -uo pipefail
 
 SCRIPT="$(cd "$(dirname "$0")" && pwd)/fleet-launch.sh"
@@ -58,6 +59,27 @@ chmod +x "$BIN/linear-cli"
 mkdir -p "$WORK/home"
 export PATH="$BIN:$PATH"
 export FLEET_STAGGER_TIMEOUT=0
+
+# ---- ~/.claude fixture: a bare origin, an upstream clone that pushes, and the clone the launch checks ----
+CL_ORIGIN="$WORK/claude-origin.git"
+CL_UP="$WORK/claude-upstream"
+export CLAUDE_FRESHNESS_DIR="$WORK/claude-local"
+git init -q --bare "$CL_ORIGIN"
+git -C "$CL_ORIGIN" symbolic-ref HEAD refs/heads/main
+git clone -q "$CL_ORIGIN" "$CL_UP" 2>/dev/null
+git -C "$CL_UP" checkout -q -b main
+mkdir -p "$CL_UP/hooks"
+echo base > "$CL_UP/hooks/auto-rewake.sh"; echo base > "$CL_UP/settings.json"; echo base > "$CL_UP/README.md"
+git -C "$CL_UP" add -A
+git -C "$CL_UP" -c user.email=t@t -c user.name=t commit -q -m init
+git -C "$CL_UP" push -q origin main
+claude_upstream() { # <message> <path> — one upstream commit, pushed
+  echo "$1" >> "$CL_UP/$2"
+  git -C "$CL_UP" -c user.email=t@t -c user.name=t commit -q -am "$1"
+  git -C "$CL_UP" push -q origin main
+}
+claude_fresh() { rm -rf "$CLAUDE_FRESHNESS_DIR"; git clone -q "$CL_ORIGIN" "$CLAUDE_FRESHNESS_DIR"; }
+claude_fresh
 
 # ---- fixture repo ----
 REPO="$WORK/repo"
@@ -402,6 +424,76 @@ ck "plain launch records no backlog"      "" "$(jq -r '.backlog // empty' "$REPO
 ck_lacks "plain prompt carries no backlog" "backlog" "$WORK/dispatches"
 ck "override without backlog exits 0"     "0" "$(FLEET_PROMPT='/loop /auto EP' run 1 backlog)"
 ck_has "override without backlog warned"  "does not carry backlog" "$WORK/out"
+
+# ---- tooling freshness: a stale ~/.claude refuses before anything is written or dispatched ----
+# The prior-run ledger is the write the refusal must precede: the registry is empty, so a launch that got past the
+# check would clear it.
+stale_setup() {
+  rm -f "$REPO/tmp/fleet-deadline.json" "$REPO"/tmp/auto-state-*.json
+  echo '{"status":"active","shipped":["XX-7"]}' > "$REPO/tmp/auto-state-dead0003.json"
+  echo '[]' > "$WORK/agents.json"
+  : > "$WORK/dispatches"
+}
+claude_fresh
+claude_upstream "hooks: recover a lost wakeup" hooks/auto-rewake.sh
+stale_setup
+ck "stale tooling exits 4"               "4" "$(run 1)"
+ck_has "stale tooling named"             "TOOLING-STALE: ~/.claude is 1 commit behind origin/main, including:" "$WORK/out"
+ck_has "stale commit listed"             "hooks: recover a lost wakeup" "$WORK/out"
+ck_has "stale says nothing ran"          "Nothing was dispatched or written. Run /update and re-launch, or re-run with 'stale-ok'" "$WORK/out"
+ck "stale dispatched nothing"            "0" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
+ck "stale wrote no marker"               "no" "$([ -e "$REPO/tmp/fleet-deadline.json" ] && echo yes || echo no)"
+ck "stale cleared no ledger"             "yes" "$([ -f "$REPO/tmp/auto-state-dead0003.json" ] && echo yes || echo no)"
+
+stale_setup
+ck "stale-ok exits 0"                    "0" "$(run 1 STALE-OK)"
+ck "stale-ok dispatched"                 "1" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
+ck_has "stale-ok warned"                 "WARN: launching on the stale ~/.claude above (stale-ok)" "$WORK/out"
+ck_lacks "stale-ok prompt untouched"     "stale" "$WORK/dispatches"
+
+claude_fresh
+claude_upstream "docs: readme" README.md
+stale_setup
+ck "docs-only behind exits 0"            "0" "$(run 1)"
+ck_has "docs-only behind noted"          "NOTE: ~/.claude is 1 commit behind origin/main, none in a file sessions load — launching" "$WORK/out"
+ck "docs-only behind dispatched"         "1" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
+
+claude_fresh
+stale_setup
+ck "current tooling exits 0"             "0" "$(run 1)"
+ck_lacks "current tooling silent"        "~/.claude" "$WORK/out"
+ck "current tooling dispatched"          "1" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
+
+git -C "$CLAUDE_FRESHNESS_DIR" remote set-url origin "$WORK/no-such-origin.git"
+stale_setup
+ck "unreachable origin exits 0"          "0" "$(run 1)"
+ck_has "unreachable origin noted"        "NOTE: could not check ~/.claude freshness (fetch failed) — launching" "$WORK/out"
+ck "unreachable origin dispatched"       "1" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
+
+claude_fresh
+echo '{"outputStyle":"local"}' >> "$CLAUDE_FRESHNESS_DIR/settings.json"
+claude_upstream "settings: register a hook" settings.json
+stale_setup
+ck "settings clash exits 4"              "4" "$(run 1)"
+ck_has "settings clash names the pull"   "the ~/.claude pull will refuse (settings.json modified locally) — run /keeper first" "$WORK/out"
+ck "settings clash dispatched nothing"   "0" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
+
+# A fetch that hangs is killed at its limit and the launch proceeds; the stub hangs on `fetch` alone.
+mkdir -p "$WORK/hangbin"
+cat > "$WORK/hangbin/git" <<STUB_GIT
+#!/usr/bin/env bash
+for a in "\$@"; do [ "\$a" = "fetch" ] && exec sleep 29; done
+exec "$(command -v git)" "\$@"
+STUB_GIT
+chmod +x "$WORK/hangbin/git"
+claude_fresh
+claude_upstream "hooks: unseen behind a hung fetch" hooks/auto-rewake.sh
+stale_setup
+start=$SECONDS
+ck "hung fetch launch exits 0"           "0" "$(PATH="$WORK/hangbin:$PATH" CLAUDE_FRESHNESS_TIMEOUT=1 run 1)"
+ck "hung fetch bounded by the watchdog"  "yes" "$([ $(( SECONDS - start )) -le 5 ] && echo yes || echo "no ($(( SECONDS - start ))s)")"
+ck_has "hung fetch noted"                "NOTE: could not check ~/.claude freshness (fetch failed) — launching" "$WORK/out"
+ck "hung fetch dispatched"               "1" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
 
 echo
 echo "$PASS passed / $FAIL failed"

@@ -16,12 +16,13 @@ Why this shape:
 
 ## Arguments
 
-`/fleet-sequence [pr|merge] <ISSUE-ID> <ISSUE-ID>...` · `/fleet-sequence status [<ISSUE-ID>]` · `/fleet-sequence stop [<ISSUE-ID>]`
+`/fleet-sequence [pr|merge] [stale-ok] <ISSUE-ID> <ISSUE-ID>...` · `/fleet-sequence status [<ISSUE-ID>]` · `/fleet-sequence stop [<ISSUE-ID>]`
 
 - **Issue IDs** — every token matching `^[A-Za-z]+-[0-9]+$`, in the order they must ship. Each is probed the way `/auto`'s targeted mode probes (`specified` present, `human` absent) and refused if already Done, Canceled, Duplicate, or Ready For Release — except an issue the marker already records as shipped on this run, which a resume skips without probing (a merge lands at Ready For Release). `solo` is expressly welcome.
 - **`pr`** (default) — create `seq/<first-id>` from the launch branch, ship every issue onto it, push it after each ship, open one PR onto the launch branch when the list completes, then `/pr-update`. The launch branch must exist on origin. **`merge`** — no branch and no PR: each issue merges straight into the launch branch, the shape an unscoped fleet ships in; needs no remote.
+- `stale-ok` — launch even though `~/.claude` is behind `origin/main` in a file sessions load. Without it that state stops the launch with `TOOLING-STALE` (exit 4) before anything is created; handle it as [`/fleet-launch`'s Tooling confirmation](../fleet-launch/SKILL.md#tooling-confirmation--stale-claude-is-asked-about-never-launched-on) does. The check runs once, at launch.
 - `status` — read-only readout (below): with an ID, the sequence naming that issue; without, every running sequence, or the latest when none is running. `stop` — finish the issue in flight, then stop; what shipped stays on the branch, no PR is opened, nothing is killed. It needs an ID only when several sequences are running.
-- Anything else → error: `Unrecognized argument 'X'. /fleet-sequence takes an optional pr|merge, issue IDs in ship order, or status / stop with an optional issue ID.`
+- Anything else → error: `Unrecognized argument 'X'. /fleet-sequence takes an optional pr|merge and stale-ok, issue IDs in ship order, or status / stop with an optional issue ID.`
 
 ## Sequences are discrete
 
