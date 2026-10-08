@@ -60,9 +60,11 @@ is always safe to run):
 ~/.claude/scripts/merge-queue.sh drain '<repo-root>' # one whole repo's queue
 ```
 
-The drainer prints one line per marker: `DRAINED` (merged, marker removed), `STILL-BLOCKED`
-(transient, will retry), `NEEDS-RESOLUTION` (conflict — needs you), `NEEDS-GATE` (merged, the check
-gate needs you), or `HARD-FAIL`. Surface those lines and summarize.
+The drainer prints one line per marker: `DRAINED` (merged, marker removed — with a `CLEANUP-FAILED:`
+suffix when the merge landed but the worktree could not be removed; the leftover is the reaper's to
+report, not a failed merge), `STILL-BLOCKED` (transient, will retry), `NEEDS-RESOLUTION` (conflict —
+needs you), `NEEDS-GATE` (merged, the check gate needs you), or `HARD-FAIL`. Surface those lines and
+summarize.
 
 ### Resolving a `NEEDS-RESOLUTION` entry (conflict)
 

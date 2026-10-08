@@ -24,7 +24,9 @@
 #       Re-run finish-merge.sh for every marker (one repo, or all registered repos).
 #       Serialized per repo via with-repo-lock.py on the queue dir so two drainers
 #       never corrupt markers. Maps finish-merge.sh's exit to the marker:
-#         0 → marker already removed by finish-merge (DRAINED)
+#         0 → marker already removed by finish-merge (DRAINED); a CLEANUP-FAILED: line in its
+#             output (the merge landed, the worktree could not be removed) rides on the DRAINED
+#             line and notifies — a leftover, not a failed merge
 #         3 → marker already refreshed by finish-merge; bump attempts (STILL-BLOCKED)
 #         2 → flag needs_resolution + notify         (NEEDS-RESOLUTION)
 #         5 → flag needs_gate + notify               (NEEDS-GATE: source merged cleanly into the
@@ -184,10 +186,15 @@ process_marker() {
     return 0
   fi
 
+  # The output still streams to the drain log; the copy is read for finish-merge's CLEANUP-FAILED: line.
+  local fm_out cleanup_note=""
+  fm_out=$(mktemp)
   set +e
-  ( cd "$repo_root" && "$FINISH_MERGE" "$wt_dir" "$source_branch" "$worktree_branch" "$message_file" )
-  rc=$?
+  ( cd "$repo_root" && "$FINISH_MERGE" "$wt_dir" "$source_branch" "$worktree_branch" "$message_file" ) 2>&1 | tee "$fm_out"
+  rc=${PIPESTATUS[0]}
   set -e
+  grep -q '^CLEANUP-FAILED:' "$fm_out" 2>/dev/null && cleanup_note=" — CLEANUP-FAILED: the worktree could not be removed (blocking paths and remedy above); the hourly reaper reports it until it is cleared"
+  rm -f "$fm_out"
 
   case "$rc" in
     0)
@@ -196,11 +203,12 @@ process_marker() {
       # best-effort: the merge already succeeded; a Linear hiccup must not undo it.
       rm -f "$marker"   # finish-merge.sh self-dequeued on success; belt-and-suspenders
       if "$HOME/.claude/scripts/mark-ready-for-release.sh" "$issue" >/dev/null 2>&1; then
-        echo "DRAINED: $issue (marked Ready For Release)"
+        echo "DRAINED: $issue (marked Ready For Release)$cleanup_note"
       else
-        echo "DRAINED: $issue — WARNING: merged, but could not mark Ready For Release; set it manually" >&2
+        echo "DRAINED: $issue — WARNING: merged, but could not mark Ready For Release; set it manually$cleanup_note" >&2
         notify "Merge landed: $issue" "Merged, but the Linear state update failed — mark $issue Ready For Release manually."
       fi
+      [ -z "$cleanup_note" ] || notify "Merge landed: $issue" "Merged, but the worktree could not be removed — CLEANUP-FAILED in the drain log; clear it by hand."
       ;;
     3)
       # finish-merge.sh self-enqueued (refreshed reason/timestamps, preserved attempts). Bump attempts.

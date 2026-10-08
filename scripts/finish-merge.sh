@@ -45,7 +45,11 @@
 #      (queued for retry), not 1.
 #
 # Exit codes:
-#   0 — done: worktree branch fast-forwarded into source, worktree + branch removed.
+#   0 — done: the merge landed on source. Normally the worktree, its branch, and its refs/finish-merge/
+#       orig ref are removed too; when `git worktree remove` refuses (untracked or modified files — never
+#       forced here) they are left in place and named on a `CLEANUP-FAILED:` stdout line with the blocking
+#       paths and the remedy. The exit stays 0 because the merge is done and every consumer keys its landed-
+#       merge bookkeeping on 0 (see the cleanup block); callers carry the line into their own report.
 #   1 — precondition failure (setup issue; the merge was never completed).
 #   2 — worktree needs work before the merge can land, in one of two shapes; the
 #       orchestrator acts IN THE WORKTREE and re-invokes this script:
@@ -566,6 +570,15 @@ fi
 # Cleanup. Gate branch delete on worktree removal (reverse — deleted branch +
 # stale dir — is worse than dangling dir + intact branch). Guard each step so a
 # late failure can't abort (set -e) before the orig-ref is cleaned.
+#
+# Never --force: an untracked file here can be real work the session forgot to commit, so a refusal is
+# reported on a tagged stdout line the caller carries forward, not overridden. The exit stays 0 and the
+# landed-merge bookkeeping below still runs — the merge is done, and every consumer keys the Ready-For-Release
+# transition, the dequeue, and (finish-recover.sh) retiring the corrupted original on 0, while an unknown
+# non-zero code reads as a failed ship in each of them (merge-queue.sh's `*)` arm flags HARD-FAIL and
+# notifies). Measured 2026-10-07: eleven merges landed while a tool-written AGENTS.md blocked the remove, and
+# the former "Merged successfully, but …" line on exit 0 reached no ledger, comment, or report. The hourly
+# reaper now recognizes a landed merge by content and reports the leftover with the same remedy each pass.
 if git worktree remove "$wt_dir"; then
   git branch -D "$worktree_branch" || echo "WARN: could not delete branch $worktree_branch; remove manually: git branch -D $worktree_branch" >&2
   git update-ref -d "$orig_ref" 2>/dev/null || true
@@ -577,11 +590,16 @@ if git worktree remove "$wt_dir"; then
   fi
   echo "Merged successfully. Worktree and branch removed."
 else
-  echo "Merged successfully, but git worktree remove failed for $wt_dir."
-  echo "Branch $worktree_branch left intact. Investigate and remove manually:"
-  echo "  git worktree remove $wt_dir"
-  echo "  git branch -D $worktree_branch"
-  echo "  git update-ref -d $orig_ref"
+  blocking=$(git -C "$wt_dir" status --porcelain 2>/dev/null || true)
+  echo "Merged successfully, but the worktree could not be removed."
+  echo "CLEANUP-FAILED: worktree $wt_dir left in place — git worktree remove refused; branch $worktree_branch and $orig_ref kept."
+  if [ -n "$blocking" ]; then
+    echo "Blocking paths (git -C '$wt_dir' status --porcelain):"
+    printf '%s\n' "$blocking" | sed 's/^/  /'
+  fi
+  echo "Remedy: judge each path — delete scratch, or commit real work on $worktree_branch and merge it again — then, from the main checkout:"
+  echo "  git worktree remove '$wt_dir' && git branch -D '$worktree_branch' && git update-ref -d '$orig_ref'"
+  echo "Until then the hourly reaper reports this worktree as merged-but-dirty with the same remedy."
 fi
 # Merge landed — clear any pending merge-queue marker for this issue.
 dequeue_self

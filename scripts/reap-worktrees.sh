@@ -2,15 +2,18 @@
 # reap-worktrees.sh — reclaim completed/abandoned /start wt worktrees.
 #
 # /start wt creates a worktree at <repo>/.claude/worktrees/<issue-lower> (see start-wt-setup.sh).
-# Two flows leave that worktree behind on purpose, and nothing reclaims it afterward:
+# Three flows leave that worktree behind, and nothing else reclaims it afterward:
 #
 #   1. `/finish pr` (worktree mode) — the PR merges asynchronously on GitHub *later*, so /finish
 #      cannot clean up at the time it runs; the SHIPPED-PR tag tells the user to remove the worktree
 #      after the PR lands, but that hand-off is manual and easily forgotten.
 #   2. An issue Canceled/Done directly in Linear (no live /start session) — /start Step 8.5 only
 #      surfaces cleanup while a session is running, so a cancel outside that window orphans the worktree.
-#
-# (The `/finish merge` flow does NOT leak — finish-merge.sh removes the worktree on a successful merge.)
+#   3. `/finish merge` whose cleanup failed — finish-merge.sh lands the merge, then `git worktree remove`
+#      refuses over an untracked or modified file it will never --force past; it prints CLEANUP-FAILED and
+#      leaves the worktree, its branch, and its refs/finish-merge orig ref behind (2026-10-07: eleven basefund
+#      issues, a tool-written AGENTS.md in each). The branch tip is then a sibling of source, not an ancestor,
+#      so "merged" here is also decided by content (content_contained below).
 #
 # This is the missing reconciler: a local launchd job (reap-worktrees-cron.sh) runs it periodically.
 # It mirrors the deferred-merge drainer (drain-merge-queue.sh + merge-queue.sh): pure shell + git,
@@ -29,7 +32,9 @@
 #     • NOT PINNED: `git config --worktree reap.keep true` keeps any worktree, stamped or not, until it is
 #       unset; only a queued merge outranks it (the drainer removes that worktree when its merge lands).
 #     • completion evidence (any one):
-#         - its branch is an ancestor of its source branch or the repo default (merged), OR
+#         - its branch is merged into its source branch or the repo default: an ancestor of it, OR contained
+#           by content — a dry-run merge (`git merge-tree --write-tree <ref> <branch>`) yields <ref>'s own
+#           tree, which is how a finish-merge.sh divergent merge reads afterwards — OR
 #         - its PR state is MERGED (gh), OR
 #         - its Linear issue state type is terminal: completed|canceled|duplicate.
 #     • no unsaved commits: every commit on the branch is reachable from a durable ref — it is
@@ -56,7 +61,8 @@
 #           only after the session ends.
 #         - COMMITTED WORK, or completion evidence that does not depend on it. A zero-commit branch
 #           (tip == baseline) is what PL-459 tripped over, so for one the trivially-true "merged"
-#           evidence does not count. Evidence INDEPENDENT of commit count still does: a terminal Linear
+#           evidence — by ancestry or by content, it satisfies both — does not count. Evidence INDEPENDENT
+#           of commit count still does: a terminal Linear
 #           issue means the work is over whether or not it ever earned a commit, and an owning session
 #           that is provably dead or has released its claim (wt_owner_alive) means nobody is coming back
 #           for it. So a `/start wt` worktree whose issue was canceled in Linear before the first commit,
@@ -94,10 +100,11 @@
 #     main checkout if it then resumed. Accepted: reaching that window takes a terminal issue AND
 #     idleness AND nothing uncommitted, which in combination is not a session in progress.
 #
-# Each pass also sweeps what a removed worktree leaves behind: host processes whose cwd was inside it
-# (sweep_orphan_processes), its docker stack (sweep_orphan_stacks), and its identity sidecar under
-# .claude/worktree-identity/ when no removal path deleted it (sweep_stale_identity_sidecars) — each documented
-# at its definition.
+# Each pass also sweeps what a removed worktree leaves behind: the branch and refs/finish-merge orig ref a
+# landed merge kept when its directory later went by hand (sweep_merged_branch_leftovers), host processes
+# whose cwd was inside it (sweep_orphan_processes), its docker stack (sweep_orphan_stacks), and its identity
+# sidecar under .claude/worktree-identity/ when no removal path deleted it (sweep_stale_identity_sidecars) —
+# each documented at its definition. A worktree this script reaps loses its orig ref with its branch.
 #
 # Subcommands:
 #   reap [<repo_root>]   Reap eligible worktrees. No arg → every registered repo (the launchd path).
@@ -196,6 +203,28 @@ is_ancestor() {
   git -C "$repo" merge-base --is-ancestor "$child" "$parent" 2>/dev/null
 }
 
+# True when <ref> already carries <branch>'s content: a dry-run merge of <branch> into <ref> yields <ref>'s own
+# tree. This is what finish-merge.sh's divergent merge looks like afterwards — it lands a NEW merge commit on
+# source (parents [source, the branch's original tip], the worktree's resolved tree) and leaves the worktree
+# branch's own tip a sibling of source, which is_ancestor can never see: eleven basefund worktrees read
+# "active" that way on 2026-10-07. A conflict exits 1 and still prints a tree id on its first line, and a git
+# without --write-tree (< 2.38) exits non-zero too; both read as not merged. A zero-commit branch is trivially
+# contained, so guard A gates this exactly as it gates the ancestor test (PL-459).
+content_contained() {
+  local repo="$1" branch="$2" ref="$3" out tree
+  tree=$(git -C "$repo" rev-parse --verify --quiet "${ref}^{tree}" 2>/dev/null) || return 1
+  out=$(git -C "$repo" merge-tree --write-tree "$ref" "$branch" 2>/dev/null) || return 1
+  [ -n "$tree" ] && [ "${out%%$'\n'*}" = "$tree" ]
+}
+
+# Echo how <branch> is merged into <ref> — the ref alone (an ancestor) or "<ref> (by content)" — or nothing.
+merged_into_ref() {
+  local repo="$1" branch="$2" ref="$3"
+  if is_ancestor "$repo" "$branch" "$ref"; then printf '%s\n' "$ref"; return 0; fi
+  if content_contained "$repo" "$branch" "$ref"; then printf '%s (by content)\n' "$ref"; return 0; fi
+  return 1
+}
+
 # Echo the first durable ref the branch is merged into (local/remote source, local/remote default),
 # or nothing. Empty result ⇒ not merged anywhere we consider mainline.
 merged_into() {
@@ -203,10 +232,13 @@ merged_into() {
   def=$(default_branch_for "$repo")
   for ref in "$source" "origin/$source" "$def" "origin/$def"; do
     [ -n "$ref" ] || continue
-    if is_ancestor "$repo" "$branch" "$ref"; then printf '%s\n' "$ref"; return 0; fi
+    merged_into_ref "$repo" "$branch" "$ref" && return 0
   done
   return 1
 }
+
+# The ref finish-merge.sh keeps a worktree branch's original tip under (its orig_ref), deleted with the branch.
+orig_ref_for() { printf 'refs/finish-merge/%s-orig\n' "$(printf '%s' "$1" | tr '/' '-')"; }
 
 # True when every commit on <branch> is present on its origin remote-tracking branch (pushed).
 # Uses refs/remotes/origin/<branch> directly rather than @{upstream}, so it holds even when /finish
@@ -499,10 +531,13 @@ evaluate_worktree() {
 
   # mode=reap: remove without --force (the clean check guarantees nothing untracked is lost). Gate the
   # branch delete on a successful worktree removal — a deleted branch beside a stale dir is the worse
-  # half-state. -D is safe: we proved the branch is merged or fully pushed, so no commit is orphaned.
+  # half-state. -D is safe: we proved the branch is merged or fully pushed, so no work is orphaned — a branch
+  # merged by content has every change already in the ref's tree, and in the finish-merge.sh shape its own commits
+  # also stay reachable through the landed merge's second parent; only its catch-up merges of source go with it.
   if git -C "$repo" worktree remove "$dir"; then
     git -C "$repo" branch -D "$branch" 2>/dev/null \
       || echo "    WARN: removed worktree but could not delete branch $branch; delete manually: git -C '$repo' branch -D '$branch'" >&2
+    git -C "$repo" update-ref -d "$(orig_ref_for "$branch")" 2>/dev/null || true
     git -C "$repo" worktree prune 2>/dev/null || true
     declare -f wt_identity_cleanup >/dev/null 2>&1 && wt_identity_cleanup "$dir" "$slug" "$repo"
     printf '  %-12s %s\n' "$issue" "REAPED — $reason; worktree and branch removed."
@@ -750,6 +785,69 @@ sweep_stale_identity_sidecars() {
   fi
 }
 
+# Reclaim what a landed merge leaves when its worktree is gone but its branch is not. finish-merge.sh records
+# each worktree branch's original tip under refs/finish-merge/<branch, slashes as dashes>-orig and deletes the
+# ref with the branch on a clean removal; a removal it could not make (its CLEANUP-FAILED) keeps both, and the
+# hand cleanup of the directory that follows routinely forgets them (basefund 2026-10-07: three such branches).
+# A branch is a candidate only on that signature — its orig ref exists and no worktree has it checked out —
+# and goes only when it is merged (ancestor, or by content) into a ref that already carries its original tip,
+# the parent the landed merge commit names: the default branch first, then whatever else contains the tip,
+# never the branch's own remote copy, a branch checked out in a linked worktree, or a branch with an orig ref
+# of its own (an issue branch forked after the merge contains it too and is not a mainline). An orig ref whose
+# branch is gone is dead bookkeeping and goes on its own. The dashed ref name is not invertible, so the branch
+# is found by matching.
+sweep_merged_branch_leftovers() {
+  local repo="$1" mode="$2" refs heads def checked_out linked ref key branch b orig_tip cand target
+  refs=$(git -C "$repo" for-each-ref --format='%(refname)' refs/finish-merge/ 2>/dev/null) || return 0
+  [ -n "$refs" ] || return 0
+  heads=$(git -C "$repo" for-each-ref --format='%(refname)' refs/heads/ 2>/dev/null || true)
+  def=$(default_branch_for "$repo")
+  checked_out=$(git -C "$repo" worktree list --porcelain 2>/dev/null | sed -n 's/^branch refs\/heads\///p')
+  linked=$(git -C "$repo" worktree list --porcelain 2>/dev/null | awk 'NR>1 && /^worktree /{l=1} l && /^branch /{print substr($0,8)}')
+  while IFS= read -r ref; do
+    [ -n "$ref" ] || continue
+    key=${ref#refs/finish-merge/}; key=${key%-orig}
+    branch=""
+    while IFS= read -r b; do
+      [ -n "$b" ] || continue
+      [ "$(printf '%s' "${b#refs/heads/}" | tr '/' '-')" = "$key" ] && { branch="${b#refs/heads/}"; break; }
+    done <<< "$heads"
+    if [ -z "$branch" ]; then
+      if [ "$mode" = list ]; then
+        printf '  STALE-MERGE-REF %s — its branch is gone; reap deletes the ref\n' "$ref"
+      elif git -C "$repo" update-ref -d "$ref" 2>/dev/null; then
+        printf '  REAPED-MERGE-REF %s — its branch was gone\n' "$ref"
+      else
+        err "WARN: could not delete $ref; delete manually: git -C '$repo' update-ref -d '$ref'"
+      fi
+      continue
+    fi
+    printf '%s\n' "$checked_out" | grep -qxF -- "$branch" && continue
+    orig_tip=$(git -C "$repo" rev-parse --verify --quiet "$ref" 2>/dev/null) || continue
+    target=""
+    for cand in "$def" "origin/$def" $(git -C "$repo" for-each-ref --format='%(refname:short)' --contains "$orig_tip" refs/heads/ refs/remotes/origin/ 2>/dev/null); do
+      [ -n "$cand" ] || continue
+      [ "$cand" = "$branch" ] || [ "$cand" = "origin/$branch" ] && continue
+      printf '%s\n' "$linked" | grep -qxF -- "refs/heads/$cand" && continue
+      # A branch with an orig ref of its own is another finish-merge worktree branch (a sibling leftover forked
+      # after this one landed carries it too), never the mainline it merged into.
+      printf '%s\n' "$refs" | grep -qxF -- "$(orig_ref_for "$cand")" && continue
+      git -C "$repo" merge-base --is-ancestor "$orig_tip" "$cand" 2>/dev/null || continue
+      target=$(merged_into_ref "$repo" "$branch" "$cand") && break
+      target=""
+    done
+    [ -n "$target" ] || continue
+    if [ "$mode" = list ]; then
+      printf '  STALE-BRANCH %s — merged into %s; its worktree is gone; reap deletes the branch and %s\n' "$branch" "$target" "$ref"
+    elif git -C "$repo" branch -D "$branch" >/dev/null 2>&1; then
+      git -C "$repo" update-ref -d "$ref" 2>/dev/null || true
+      printf '  REAPED-BRANCH %s — merged into %s; worktree already gone; branch and %s deleted\n' "$branch" "$target" "$ref"
+    else
+      err "WARN: could not delete branch $branch (merged into $target); delete manually: git -C '$repo' branch -D '$branch' && git -C '$repo' update-ref -d '$ref'"
+    fi
+  done <<< "$refs"
+}
+
 # Body of a per-repo reap, run under the common-git-dir lock by cmd_reap. A best-effort fetch refreshes
 # remote-tracking refs so the merged/pushed checks see the current origin state (offline is fine).
 cmd_reap_one() {
@@ -771,6 +869,7 @@ cmd_reap_one() {
   else
     echo "  (no worktrees directory)"
   fi
+  sweep_merged_branch_leftovers "$repo" reap
   sweep_stale_identity_sidecars "$repo" reap
   sweep_orphan_processes "$repo" reap
   sweep_orphan_stacks "$repo" reap
@@ -837,6 +936,7 @@ cmd_list() {
     else
       echo "  (no worktrees directory)"
     fi
+    sweep_merged_branch_leftovers "$repo" list
     sweep_stale_identity_sidecars "$repo" list
     sweep_orphan_processes "$repo" list
     sweep_orphan_stacks "$repo" list

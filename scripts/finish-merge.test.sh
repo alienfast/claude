@@ -275,6 +275,36 @@ ck_eq "worktree removed" GONE "$([ -d "$WT" ] && echo PRESENT || echo GONE)"
 ck_eq "the repo identity sidecar is removed with the worktree" ABSENT "$([ -f "$SIDECAR" ] && echo PRESENT || echo ABSENT)"
 ck_eq "the identity directory's .gitignore stays" PRESENT "$([ -f "$R/.claude/worktree-identity/.gitignore" ] && echo PRESENT || echo ABSENT)"
 
+echo "=== case 10: the merge lands but the worktree cannot be removed — reported as CLEANUP-FAILED, never as success and never forced ==="
+# The 2026-10-07 shape: a tool wrote an untracked file into the worktree, so `git worktree remove` refuses after
+# the merge has landed. Eleven issues shipped that way with the leftover reported nowhere. Source advances during
+# the issue so the merge takes the divergent commit-tree path, which is what every fleet merge takes.
+mk_repo c10
+src_commit src.txt s1
+wt_commit feat.txt f1
+run_fm
+ck_eq "catch-up merge: exit 5" 5 "$RC"
+printf 'stray\n' > "$WT/AGENTS.md"
+mkdir -p "$R/.claude/merge-queue" && : > "$R/.claude/merge-queue/wt.json"   # the slug finish-merge dequeues is the worktree's basename
+run_fm
+ck_eq "the merge still lands: exit 0" 0 "$RC"
+ck_eq "source has the feature" f1 "$(blob feat.txt)"
+ck_eq "merge commit rebuilt with two parents" 2 "$(git -C "$R" cat-file -p source | grep -c '^parent ')"
+ck "the leftover is named on a tagged line" "CLEANUP-FAILED: worktree $WT" "$OUT"
+ck "the blocking path is listed" "?? AGENTS.md" "$OUT"
+ck "the remedy names the branch delete" "git branch -D 'bf-t'" "$OUT"
+ck "the remedy names the orig ref" "refs/finish-merge/bf-t-orig" "$OUT"
+ck_absent "no unconditional success line" "Worktree and branch removed" "$OUT"
+ck_eq "worktree left in place (never --force)" PRESENT "$([ -d "$WT" ] && echo PRESENT || echo GONE)"
+ck_eq "the untracked file survives" stray "$(cat "$WT/AGENTS.md")"
+ck_eq "branch left intact" PRESENT "$(git -C "$R" rev-parse --verify --quiet bf-t >/dev/null 2>&1 && echo PRESENT || echo GONE)"
+ck_eq "orig ref left intact" PRESENT "$(git -C "$R" show-ref --verify --quiet refs/finish-merge/bf-t-orig && echo PRESENT || echo GONE)"
+ck_eq "a pending merge-queue marker is still cleared (the merge landed)" ABSENT "$([ -f "$R/.claude/merge-queue/wt.json" ] && echo PRESENT || echo ABSENT)"
+# The remedy the message prints is what a human runs once the path is judged scratch.
+rm -f "$WT/AGENTS.md"
+git -C "$R" worktree remove "$WT" && git -C "$R" branch -D bf-t >/dev/null && git -C "$R" update-ref -d refs/finish-merge/bf-t-orig
+ck_eq "the printed remedy clears the leftover" GONE "$([ -d "$WT" ] && echo PRESENT || echo GONE)"
+
 echo ""
 echo "finish-merge.test.sh: $pass passed, $fail failed"
 [ "$fail" = 0 ]

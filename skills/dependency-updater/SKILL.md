@@ -393,8 +393,9 @@ new evidence instead.
 Worktree mode only; skip entirely in-place.
 
 - **After `/finish merge`** there is nothing to do — `finish-merge.sh` removes the worktree itself.
-  Confirm it did: on failure it prints `Merged successfully, but git worktree remove failed` plus the
-  manual command. Surface that rather than assuming the removal happened.
+  Confirm it did: when it could not, it prints a `CLEANUP-FAILED:` line with the blocking paths and the
+  remedy, and `/finish` Step 9 carries that into the tag and a follow-up comment. Surface it rather than
+  assuming the removal happened.
 - **After `/finish pr`** the worktree is still on disk and is this skill's to remove, because it is the
   one worktree `reap-worktrees.sh` will sit on: the issue stays In Progress and the branch is unmerged,
   which is precisely the ABANDONED-for-resumption shape reap preserves rather than reclaims.

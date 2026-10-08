@@ -28,9 +28,19 @@ case "$(uname -s)" in
 esac
 
 CLAUDE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-SCRIPT="$CLAUDE_DIR/scripts/reap-worktrees.sh"
+REAPER="$CLAUDE_DIR/scripts/reap-worktrees.sh"
+FM="$CLAUDE_DIR/scripts/finish-merge.sh"
 IDLIB="$CLAUDE_DIR/scripts/wt-identity.sh"
 ROOT=$(mktemp -d)
+# Every case drives the reaper through this wrapper, which refuses an empty repo argument. A fixture that fails
+# to build leaves its `r=$(build_case …)` empty, and `reap-worktrees.sh reap ""` then resolves the repo set from
+# the REGISTRIES under $HOME/.claude — the symlinked real checkout, so the real worktree-repos.txt — and runs a
+# live reap over every registered repo (measured 2026-10-08: one broken fixture sent the suite's `reap` at
+# basefund and two other repos; nothing was eligible that pass). The two probes that SOURCE the script use
+# $REAPER directly.
+SCRIPT="$ROOT/reap-guard.sh"
+printf '#!/usr/bin/env bash\n[ -n "${2:-}" ] || { echo "FIXTURE: reap-worktrees.sh invoked with no repo — a fixture failed to build; refusing, since the registries name live repos" >&2; exit 1; }\nexec %q "$@"\n' "$REAPER" > "$SCRIPT"
+chmod +x "$SCRIPT"
 # The live-owner sleepers are spawned inside build_case, which every caller runs under command substitution —
 # a shell variable set there dies with that subshell and the trap would never see the pid. A file crosses it.
 OWNER_PIDS="$ROOT/owner-pids"; : > "$OWNER_PIDS"
@@ -422,7 +432,7 @@ echo "== ancestry exclusion: the sweep never treats its own process tree as a vi
 # Sourced with an explicit "list <missing-dir>" so the CLI dispatch takes the harmless MISSING-repo branch
 # instead of falling through to the unknown-subcommand case, which calls `exit` and would kill this shell
 # before the probe lines below ever ran.
-probe=$(bash -c '. "$1" list "$2" >/dev/null 2>&1; echo "PID=$$"; echo "ANC=$(sweep_ancestry_pids)"' _ "$SCRIPT" "$ROOT/no-such-repo")
+probe=$(bash -c '. "$1" list "$2" >/dev/null 2>&1; echo "PID=$$"; echo "ANC=$(sweep_ancestry_pids)"' _ "$REAPER" "$ROOT/no-such-repo")
 probe_pid=$(printf '%s\n' "$probe" | sed -n 's/^PID=//p')
 probe_anc=$(printf '%s\n' "$probe" | sed -n 's/^ANC=//p')
 ck "ancestry set includes the sweep's own pid" " $probe_pid " "$probe_anc"
@@ -501,7 +511,7 @@ ck "list: kills nothing even when the worktrees dir itself is gone" ALIVE "$(pro
 ghost="$ROOT/ghost-repo"
 ghost_pid=$(spawn_sleeper "$ghost/.claude/worktrees/wt-gone/apps/api")
 rm -rf "$ghost"
-out=$(bash -c '. "$1" list "$2" >/dev/null 2>&1; set +e; sweep_orphan_processes "$2" reap; echo "EXIT=$?"' _ "$SCRIPT" "$ghost" 2>&1)
+out=$(bash -c '. "$1" list "$2" >/dev/null 2>&1; set +e; sweep_orphan_processes "$2" reap; echo "EXIT=$?"' _ "$REAPER" "$ghost" 2>&1)
 # Assert the GUARD fired, not merely that nothing died: with the guard gone the degenerate prefix still
 # happens to select nothing here, so a survival-only assertion would pin nothing.
 ck "unresolvable repo root skips the sweep outright" 'cannot resolve physical path' "$out"
@@ -558,6 +568,132 @@ ck "stack sweep: an unreachable daemon skips the sweep entirely" 'daemon unavail
 ck "stack sweep: an unreachable daemon calls stack-slot not at all" NOCALL \
    "$(printf '%s' "$out" | grep -q 'STACK-SLOT args=' && echo CALLED || echo NOCALL)"
 rm -f "$REG/2.slot" "$REG/3.slot"
+
+echo "== merged by content: the finish-merge.sh shape, whose branch tip is a sibling of source and never its ancestor =="
+
+# build_fm_shape <name> <issue> → repo path. The 2026-10-07 leftover, produced by the REAL finish-merge.sh: the branch
+# commits, source advances underneath it, a tool drops an untracked file into the worktree, and the merge lands on
+# main as a merge commit built with commit-tree — parents [main, original tip] — while `git worktree remove`
+# refuses. The branch tip is then a sibling of main, which the ancestor test can never see; eleven basefund
+# issues sat in exactly this state reading "active". The first invocation merges source into the worktree and
+# stops at the merged-tree gate (exit 5); the second lands it (exit 0).
+# An optional third argument names the source branch (default main): it is forked from main and the main checkout
+# moves onto it, so the merge lands there and the default branch stays behind — the basefund shape (day branch
+# `wednesday`, default `main`).
+build_fm_shape() {
+  local name="$1" issue="$2" source="${3:-main}" repo slug wt msg rc1 rc2
+  repo=$(build_case "$name" "$issue" started 1 0 idle)
+  slug=$(printf '%s' "$issue" | tr '[:upper:]' '[:lower:]')
+  wt="$repo/.claude/worktrees/$slug"
+  git -C "$repo" config user.email t@t; git -C "$repo" config user.name t   # the merge and commit-tree need an identity
+  if [ "$source" != main ]; then
+    git -C "$repo" checkout -q -b "$source" main
+    git -C "$wt" config --worktree start.source-branch "$source"
+  fi
+  echo sibling > "$repo/sibling"; git -C "$repo" add sibling; git -C "$repo" commit -q -m sibling
+  echo stray > "$wt/AGENTS.md"
+  msg="$repo/msg.md"; printf 'Merge %s\n' "$issue" > "$msg"
+  (cd "$repo" && _WT_SKIP_IDENTITY_CHECK=1 "$FM" "$wt" "$source" "user/$slug" "$msg") > "$ROOT/fm-$slug-1.log" 2>&1; rc1=$?
+  (cd "$repo" && _WT_SKIP_IDENTITY_CHECK=1 "$FM" "$wt" "$source" "user/$slug" "$msg") > "$ROOT/fm-$slug-2.log" 2>&1; rc2=$?
+  [ "$rc1/$rc2" = 5/0 ] || { echo "FIXTURE: finish-merge.sh exited $rc1 then $rc2 (want 5 then 0)" >&2; cat "$ROOT/fm-$slug-1.log" "$ROOT/fm-$slug-2.log" >&2; exit 1; }
+  idle_index "$wt"   # the catch-up merge touched the index
+  printf '%s' "$repo"
+}
+# Backdating the index makes every entry racily clean (file mtime ≥ index mtime), so the reaper's own `git status`
+# rewrites the index on its first pass through a fixture and the next pass reads it as live. Production indexes are
+# older than their files, so a real pass does not refresh them; a fixture evaluated twice re-idles in between.
+idle_index() { touch -t 200001010000 "$(git -C "$1" rev-parse --absolute-git-dir)/index"; }
+orig_ref_state() { git -C "$1" show-ref --verify --quiet "refs/finish-merge/$2-orig" && echo PRESENT || echo GONE; }
+branch_state() { git -C "$1" rev-parse --verify --quiet "$2" >/dev/null 2>&1 && echo PRESENT || echo NOBRANCH; }
+
+r=$(build_fm_shape fm_dirty BF-970)
+wt="$r/.claude/worktrees/bf-970"
+ck "fixture: the merge landed on main as a two-parent merge commit" '^2$' "$(git -C "$r" cat-file -p main | grep -c '^parent ')"
+ck "fixture: the branch tip is a sibling of main, not an ancestor" NOTANCESTOR \
+   "$(git -C "$r" merge-base --is-ancestor user/bf-970 main && echo ANCESTOR || echo NOTANCESTOR)"
+ck "fixture: worktree, branch and orig ref were all left behind" 'PRESENT/PRESENT/PRESENT' \
+   "$([ -d "$wt" ] && echo PRESENT || echo GONE)/$(branch_state "$r" user/bf-970)/$(orig_ref_state "$r" user-bf-970)"
+
+if git -C "$r" merge-tree --write-tree main main >/dev/null 2>&1; then
+  # The dirty-tree rule is unchanged: a merged-but-dirty worktree is reported with the blocker and the clear
+  # command, and never auto-removed — this is the line the AGENTS.md leftovers would have printed on the first pass.
+  ck "merged by content + dirty → KEEP, reported, never auto-removed" \
+     'KEEP — branch merged into main (by content), but the worktree is dirty' "$($SCRIPT list "$r" 2>&1)"
+  out=$($SCRIPT reap "$r" 2>&1)
+  ck "reap leaves a merged-but-dirty worktree in place" PRESENT "$([ -d "$wt" ] && echo PRESENT || echo GONE)"
+  rm -f "$wt/AGENTS.md"; idle_index "$wt"
+  ck "merged by content + clean → eligible" 'REAP-ELIGIBLE — branch merged into main (by content)' "$($SCRIPT list "$r" 2>&1)"
+  idle_index "$wt"
+  out=$($SCRIPT reap "$r" 2>&1)
+  ck "reap removes it" 'REAPED — branch merged into main (by content)' "$out"
+  ck "worktree gone" GONE "$([ -d "$wt" ] && echo PRESENT || echo GONE)"
+  ck "branch gone" NOBRANCH "$(branch_state "$r" user/bf-970)"
+  ck "its refs/finish-merge orig ref goes with it" GONE "$(orig_ref_state "$r" user-bf-970)"
+  ck "main still carries the work" '^x$' "$(git -C "$r" show main:f)"
+
+  # The PL-459 guard is load-bearing here: a just-forked worktree's tip equals its baseline, so a dry-run merge
+  # returns source's own tree and the content test reads "contained" — measured on a fresh basefund worktree.
+  r=$(build_case zero_contained BF-971 started 0 0 idle)
+  echo sibling > "$r/sibling"; git -C "$r" add sibling; git -C "$r" -c user.email=t@t -c user.name=t commit -q -m sibling
+  ck "fixture: a zero-commit branch reads contained by the dry-run merge" yes \
+     "$([ "$(git -C "$r" merge-tree --write-tree main user/bf-971 | head -n1)" = "$(git -C "$r" rev-parse 'main^{tree}')" ] && echo yes || echo no)"
+  ck "zero-commit + source advanced + issue active → KEEP (guard A gates the content evidence too)" \
+     'KEEP — no commits since baseline (just-forked' "$($SCRIPT list "$r" 2>&1)"
+
+  # Genuinely unmerged content: the dry-run merge produces a tree main does not have.
+  r=$(build_case unmerged_content BF-972 started 1 0 idle)
+  echo sibling > "$r/sibling"; git -C "$r" add sibling; git -C "$r" -c user.email=t@t -c user.name=t commit -q -m sibling
+  ck "commits main lacks + source advanced → KEEP — active" 'KEEP — active (not merged' "$($SCRIPT list "$r" 2>&1)"
+
+  # A conflicting dry-run merge exits 1 and still prints a tree id on its first line; that must never read as merged.
+  r=$(build_case conflicting BF-973 started 1 0 idle)
+  echo y > "$r/f"; git -C "$r" add f; git -C "$r" -c user.email=t@t -c user.name=t commit -q -m "main adds f too"
+  ck "fixture: the dry-run merge conflicts (exit 1)" '^1$' "$(git -C "$r" merge-tree --write-tree main user/bf-973 >/dev/null 2>&1; echo $?)"
+  ck "a conflicting dry-run merge → KEEP — active" 'KEEP — active (not merged' "$($SCRIPT list "$r" 2>&1)"
+
+  echo "== branch-only leftovers: a finish-merge.sh orig ref whose worktree is gone =="
+
+  # bf-1501/2428/2437 on 2026-10-07: the worktree went by hand, the branch and its refs/finish-merge ref stayed.
+  r=$(build_fm_shape fm_branch_only BF-974)
+  git -C "$r" worktree remove --force "$r/.claude/worktrees/bf-974"
+  git -C "$r" update-ref refs/finish-merge/user-bf-999-orig "$(git -C "$r" rev-parse main)"     # its branch is gone entirely
+  # Control: a branch-only leftover with an orig ref but unmerged content (finish-merge.sh ran and never landed it).
+  git -C "$r" worktree add -q -b user/bf-975 "$r/wt975" main
+  echo z > "$r/wt975/z"; git -C "$r/wt975" add z; git -C "$r/wt975" -c user.email=t@t -c user.name=t commit -q -m unlanded
+  git -C "$r" worktree remove "$r/wt975"
+  git -C "$r" update-ref refs/finish-merge/user-bf-975-orig user/bf-975
+  out=$($SCRIPT list "$r" 2>&1)
+  ck "list: a branch-only leftover merged by content is reported" 'STALE-BRANCH user/bf-974 — merged into main (by content)' "$out"
+  ck "list: an orig ref whose branch is gone is reported" 'STALE-MERGE-REF refs/finish-merge/user-bf-999-orig' "$out"
+  ck "list: an unmerged branch-only leftover is never a candidate" NOMATCH "$(printf '%s' "$out" | grep -q 'bf-975' && echo MATCHED || echo NOMATCH)"
+  ck "list deletes nothing" 'PRESENT/PRESENT' "$(branch_state "$r" user/bf-974)/$(orig_ref_state "$r" user-bf-999)"
+  out=$($SCRIPT reap "$r" 2>&1)
+  ck "reap deletes the merged branch-only leftover" 'REAPED-BRANCH user/bf-974' "$out"
+  ck "and its orig ref" GONE "$(orig_ref_state "$r" user-bf-974)"
+  ck "reap deletes the orig ref whose branch is gone" GONE "$(orig_ref_state "$r" user-bf-999)"
+  ck "the unmerged leftover and its orig ref survive" 'PRESENT/PRESENT' "$(branch_state "$r" user/bf-975)/$(orig_ref_state "$r" user-bf-975)"
+  ck "main still carries bf-974's work" '^x$' "$(git -C "$r" show main:f)"
+  # The basefund shape: the merge landed on a day branch the default branch does not carry, and a sibling leftover
+  # forked from that day branch afterwards contains the work too (and sorts before it). The target must be the day
+  # branch — a branch with an orig ref of its own is never a mainline.
+  r=$(build_fm_shape fm_day_branch BF-977 wednesday)
+  git -C "$r" worktree remove --force "$r/.claude/worktrees/bf-977"
+  git -C "$r" worktree add -q -b rosskevin/bf-978 "$r/wt978" wednesday
+  echo later > "$r/wt978/later"; git -C "$r/wt978" add later; git -C "$r/wt978" -c user.email=t@t -c user.name=t commit -q -m later
+  git -C "$r" worktree remove "$r/wt978"
+  git -C "$r" update-ref refs/finish-merge/rosskevin-bf-978-orig rosskevin/bf-978
+  ck "fixture: the default branch does not carry the work" NO "$(git -C "$r" merge-base --is-ancestor refs/finish-merge/user-bf-977-orig main && echo YES || echo NO)"
+  out=$($SCRIPT list "$r" 2>&1)
+  ck "a leftover merged into a day branch names that branch, not a sibling leftover that also contains it" \
+     'STALE-BRANCH user/bf-977 — merged into wednesday (by content)' "$out"
+  ck "the sibling leftover with unmerged content is untouched" NOMATCH "$(printf '%s' "$out" | grep -q 'STALE-BRANCH rosskevin/bf-978' && echo MATCHED || echo NOMATCH)"
+  # A branch checked out somewhere is live work whatever its refs say.
+  r=$(build_fm_shape fm_checked_out BF-976)
+  ck "a branch with a worktree is the worktree's verdict, never a branch-only candidate" NOMATCH \
+     "$($SCRIPT list "$r" 2>&1 | grep -q 'STALE-BRANCH' && echo MATCHED || echo NOMATCH)"
+else
+  echo "  SKIP  git merge-tree --write-tree is unsupported ($(git --version)); the content-containment arms need git >= 2.38"
+fi
 
 echo
 echo "reap-worktrees: $pass passed, $fail failed"
