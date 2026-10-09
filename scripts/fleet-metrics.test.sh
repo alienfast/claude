@@ -147,6 +147,20 @@ cat > "$TDIR/99900001-0000.jsonl" <<'EOF'
 {"type":"assistant","timestamp":"2026-08-04T12:01:00Z","message":{"role":"assistant","id":"msg_E","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":90},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-99 done"}]}}
 EOF
 
+# Effort-phase and spawn-policy ledgers for abc12345 (the mods name the file by the full session id, which
+# starts with the run key). def45678 has none, so its lanes must read null, never zero.
+cat > "$CHECKOUT/tmp/effort-ledger-abc12345-0000.jsonl" <<'EOF'
+{"event":"skill","skill":"finish","lane":"mechanical"}
+{"event":"step","index":0,"lane":"judgment","effortIn":"xhigh","effortOut":"xhigh","usage":{"output_tokens":600}}
+{"event":"step","index":1,"lane":"mechanical","effortIn":"xhigh","effortOut":"high","usage":{"output_tokens":300}}
+{"event":"step","index":2,"lane":"mechanical","effortIn":"xhigh","effortOut":"high","usage":{"output_tokens":100}}
+{"event":"step","index":3,"lane":"polling","effortIn":"xhigh","effortOut":"low","usage":{"output_tokens":50}}
+EOF
+cat > "$CHECKOUT/tmp/spawn-policy-abc12345-0000.jsonl" <<'EOF'
+{"type":"developer","rules":["model:developer->sonnet","sync:developer"],"enforced":true}
+{"type":"developer","rules":["model:developer->sonnet"],"enforced":false}
+EOF
+
 # ---- run ----
 JSON="$WORK/out.json"
 MD="$WORK/out.md"
@@ -198,6 +212,20 @@ ck "thinking share"     "0.94"     "$(q "d['sessions'][0]['main_thinking_share_e
 ck "ledgerless found"    "1"        "$(q "len([s for s in d['sessions'] if s['ledger_missing']])")"
 ck "ledgerless key"      "def45678" "$(q "[s['run_key'] for s in d['sessions'] if s['ledger_missing']][0]")"
 ck "ledgerless ships"    "['TT-7']" "$(q "[s['observed_shipped'] for s in d['sessions'] if s['ledger_missing']][0]")"
+
+# effort lanes: the skill row is not a request; mechanical sums two steps, both rewritten; the fleet shares are
+# 3 rewritten of 4 requests and 450 non-judgment of 1050 output tokens; a session without a ledger reads null.
+ck "lane mechanical out"   "400"   "$(q "d['sessions'][0]['effort_lanes']['lanes']['mechanical']['output_tokens']")"
+ck "lane mechanical rewr"  "2"     "$(q "d['sessions'][0]['effort_lanes']['lanes']['mechanical']['rewritten']")"
+ck "lane transitions"      "2"     "$(q "d['sessions'][0]['effort_lanes']['transitions']['xhigh->high']")"
+ck "fleet rewritten share" "0.75"  "$(q "d['effort_lanes']['rewritten_request_share']")"
+ck "fleet non-judgment"    "0.429" "$(q "d['effort_lanes']['non_judgment_token_share']")"
+ck "fleet ledgered"        "1"     "$(q "d['effort_lanes']['sessions_with_ledger']")"
+ck "no ledger is null"     "None"  "$(q "d['sessions'][1]['effort_lanes']")"
+ck "spawn enforced"        "1"     "$(q "d['spawn_policy']['enforced']")"
+ck "spawn would-rule"      "1"     "$(q "d['spawn_policy']['rules']['would:model']")"
+ck_has "md effort lanes"   "**Effort lanes** — 1 of 2 sessions carry an effort-phase ledger: judgment 1 req / 600 out · mechanical 2 req / 400 out (2 rewritten) · polling 1 req / 50 out (1 rewritten) → 75% of" "$MD"
+ck_has "md spawn policy"   "**Spawn policy** — 2 decisions in 1 session(s), 1 enforced (model x1, sync x1, would:model x1)" "$MD"
 ck "ledgerless no rec"   "[]"       "$(q "[s['recorded_shipped'] for s in d['sessions'] if s['ledger_missing']][0]")"
 ck "stateful not flagged" "False"   "$(q "[s['ledger_missing'] for s in d['sessions'] if s['run_key']=='abc12345'][0]")"
 ck "non-auto ignored"    "0"        "$(q "len([s for s in d['sessions'] if s['run_key']=='99900001'])")"

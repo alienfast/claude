@@ -1,0 +1,11 @@
+{
+  "name": "alienfast-claude",
+  "owner": { "name": "alienfast" },
+  "description": "Mods that ship with the alienfast ~/.claude config",
+  "metadata": { "pluginRoot": "./mods" },
+  "plugins": [
+    { "name": "effort-phase", "source": "effort-phase", "description": "Main-loop effort per request by skill phase, with a per-step usage ledger", "category": "fleet" },
+    { "name": "spawn-policy", "source": "spawn-policy", "description": "Role-to-model tiers and synchronous review dispatch enforced on agent.spawn", "category": "fleet" },
+    { "name": "effort-probe", "source": "effort-probe", "description": "Measures whether a turn.step effort rewrite preserves the prompt cache", "category": "fleet", "defaultEnabled": false }
+  ]
+}

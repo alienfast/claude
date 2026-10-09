@@ -164,7 +164,11 @@ Five gauges ride the same run and the retro reads all five, not just the tables:
   2026-08-05..14 fleets sat in individually-saved reports that nothing compared until it was found by
   hand. Read $/issue through its two factors — ktok/issue (work per issue) x $/Mtok out (context
   weight per unit of work) — before proposing levers, since they route differently (churn/specs vs
-  autocompact/model mix).
+  autocompact/model mix). `rewr%` is the effort-phase gauge: the share of the main loop's ledgered requests
+  that `mods/effort-phase` sent at a rewritten effort (its mechanical and polling lanes); read its direction
+  beside $/issue and ktok/issue across fleets with the mod on, with finish-recover and review churn as the
+  quality guard, and read the report's **Effort lanes** and **Spawn policy** lines (under Output tokens by
+  agent type) for the lane split and the spawn rewrites. A `-` is a fleet with no effort-phase ledger.
 - **Pool exhausted** — the idle-tail number Step 5's Capacity item leads with. Printed under **Totals**
   when the last ship landed an hour or more before the deadline: hours from that landing to the deadline,
   the session-hours the deadline-drained sessions then sat idle, and that as a share of the fleet (the

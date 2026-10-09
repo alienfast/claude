@@ -1044,6 +1044,97 @@ def thinking_share(aggs, agent_type="main"):
     return max(0.0, round(1 - visible / out, 2))
 
 
+def ledger_rows(checkout, pattern):
+    """Rows of the JSONL ledgers under tmp/ whose name matches `pattern`, oldest file first; [] when none."""
+    rows = []
+    for path in sorted((checkout / "tmp").glob(pattern)):
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                try:
+                    rows.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        except OSError:
+            continue
+    return rows
+
+
+LANES = ("judgment", "mechanical", "polling")
+
+
+def _lane_cell():
+    return {"requests": 0, "output_tokens": 0, "rewritten": 0}
+
+
+def effort_lanes(checkout, run_key):
+    """What mods/effort-phase recorded for a session: per lane, the main loop's requests, their output
+    tokens, and how many were sent at an effort other than the one the engine had set; None without a
+    ledger. The mod names the file by the full session id, which starts with the run key."""
+    rows = [r for r in ledger_rows(checkout, f"effort-ledger-{run_key}*.jsonl") if r.get("event") == "step"]
+    if not rows:
+        return None
+    lanes = {lane: _lane_cell() for lane in LANES}
+    transitions = Counter()
+    for r in rows:
+        cell = lanes.setdefault(r.get("lane") or "judgment", _lane_cell())
+        cell["requests"] += 1
+        cell["output_tokens"] += int((r.get("usage") or {}).get("output_tokens") or 0)
+        if r.get("effortOut") != r.get("effortIn"):
+            cell["rewritten"] += 1
+        transitions[f"{r.get('effortIn')}->{r.get('effortOut')}"] += 1
+    return {"lanes": lanes, "transitions": dict(transitions.most_common())}
+
+
+def spawn_policy_summary(checkout, run_key):
+    """What mods/spawn-policy recorded for a session: decisions, how many it enforced, and the rules by
+    kind (`model`, `sync`; `would:` prefixed when the mod only logged); None without a ledger."""
+    rows = ledger_rows(checkout, f"spawn-policy-{run_key}*.jsonl")
+    if not rows:
+        return None
+    rules = Counter()
+    for r in rows:
+        for rule in r.get("rules") or []:
+            kind = rule.split(":")[0]
+            rules[kind if r.get("enforced") else f"would:{kind}"] += 1
+    return {"decisions": len(rows), "enforced": sum(1 for r in rows if r.get("enforced")),
+            "rules": dict(rules.most_common())}
+
+
+def fleet_effort_lanes(sessions):
+    """The sessions' effort-lane ledgers summed, with the two headline shares; None when no session has one."""
+    have = [s["effort_lanes"] for s in sessions if s.get("effort_lanes")]
+    if not have:
+        return None
+    lanes = {lane: _lane_cell() for lane in LANES}
+    transitions = Counter()
+    for el in have:
+        for lane, v in el["lanes"].items():
+            cell = lanes.setdefault(lane, _lane_cell())
+            for k in cell:
+                cell[k] += v.get(k, 0)
+        transitions.update(el["transitions"])
+    requests = sum(v["requests"] for v in lanes.values())
+    out = sum(v["output_tokens"] for v in lanes.values())
+    return {
+        "sessions_with_ledger": len(have),
+        "lanes": lanes,
+        "transitions": dict(transitions.most_common()),
+        "rewritten_request_share": round(sum(v["rewritten"] for v in lanes.values()) / requests, 3) if requests else None,
+        "non_judgment_token_share": round((out - lanes["judgment"]["output_tokens"]) / out, 3) if out else None,
+    }
+
+
+def fleet_spawn_policy(sessions):
+    have = [s["spawn_policy"] for s in sessions if s.get("spawn_policy")]
+    if not have:
+        return None
+    rules = Counter()
+    for sp in have:
+        rules.update(sp["rules"])
+    return {"sessions_with_ledger": len(have), "decisions": sum(sp["decisions"] for sp in have),
+            "enforced": sum(sp["enforced"] for sp in have), "rules": dict(rules.most_common())}
+
+
 def developer_lanes(sessions):
     """Split developer output by lane — pre-review implementation vs post-review fix batches — and
     name the tier that implemented each issue.
@@ -1436,7 +1527,9 @@ def main():
                 scan_transcript(tpath, agg)
         return {"run_key": run_key, "state": state, "state_mtime": mtime,
                 "ledger_missing": ledger_missing,
-                "transcripts": len(transcripts), "agg": agg}
+                "transcripts": len(transcripts), "agg": agg,
+                "effort_lanes": effort_lanes(checkout, run_key),
+                "spawn_policy": spawn_policy_summary(checkout, run_key)}
 
     # Second discovery pass: an /auto session whose ledger no longer exists. See auto_session_mode —
     # a deleted state file must surface as a flagged session, never as a fleet that was one session
@@ -1850,6 +1943,8 @@ def main():
     cyc_all = [v["cycles"] for v in verdicts if v["cycles"] is not None]
     resolved_all = sum(v["resolved"] for v in verdicts)
     tagged_all = sum(sum(v["origin"].values()) for v in verdicts)
+    fleet_lanes = fleet_effort_lanes(sessions)
+    fleet_spawn = fleet_spawn_policy(sessions)
     headline = {
         "recorded_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "fleet_start": fleet_first.strftime("%Y-%m-%dT%H:%M:%SZ") if fleet_first else None,
@@ -1878,6 +1973,8 @@ def main():
         "idle_tail_share": None,  # filled below once session_hours exists
         "throttle_session_hours": throttle_parked_h,
         "throttle_share": None,  # filled below once session_hours exists
+        "rewritten_request_share": fleet_lanes["rewritten_request_share"] if fleet_lanes else None,
+        "non_judgment_token_share": fleet_lanes["non_judgment_token_share"] if fleet_lanes else None,
     }
 
     # Burn against the moving windows the account actually meters. /auto-prep sizes a fleet from
@@ -2015,6 +2112,8 @@ def main():
                     ctx_shares(s["agg"]["ctx_volume"])),
                 "est_cost_usd": round(est_cost(s["agg"]["usage"])[0], 4),
                 "main_thinking_share_est": thinking_share([s["agg"]]),
+                "effort_lanes": s["effort_lanes"],
+                "spawn_policy": s["spawn_policy"],
                 "long_gaps": [{"minutes": round(g[0] / 60, 1), "tool": g[1], "what": g[2]}
                               for g in sorted(s["agg"]["gaps"], reverse=True)[:5]],
             } for s in sessions],
@@ -2038,6 +2137,8 @@ def main():
             "est_cost_usd": round(fleet_cost, 4),
             "unpriced_models": sorted(unpriced),
             "main_thinking_share_est": fleet_think,
+            "effort_lanes": fleet_lanes,
+            "spawn_policy": fleet_spawn,
             "subagent_final_rows": {"messages": sub_msgs_total, "with_final_row": sub_msgs_final,
                                     "share": sub_final_share},
             "per_shipped": {"output_tokens": out_per_shipped, "est_cost_usd": cost_per_shipped},
@@ -2311,6 +2412,26 @@ def main():
                   f"({lane_cell(lanes['impl'])}) · post-review fix {sum(lanes['fix'].values()):,} "
                   f"({lane_cell(lanes['fix'])}){unattr}. The developer rows above sum both lanes; "
                   f"tier questions about /start Step 8 read the implementation lane only.\n")
+        if fleet_lanes:
+            cells = " · ".join(
+                f"{lane} {v['requests']} req / {v['output_tokens']:,} out"
+                + (f" ({v['rewritten']} rewritten)" if v["rewritten"] else "")
+                for lane, v in fleet_lanes["lanes"].items() if v["requests"])
+            trans = ", ".join(f"{k} x{n}" for k, n in fleet_lanes["transitions"].items())
+            print(f"**Effort lanes** — {fleet_lanes['sessions_with_ledger']} of {len(sessions)} sessions carry an "
+                  f"effort-phase ledger: {cells} → {100 * (fleet_lanes['rewritten_request_share'] or 0):.0f}% of "
+                  f"the main loop's ledgered requests went out at a rewritten effort ({trans}); "
+                  f"{100 * (fleet_lanes['non_judgment_token_share'] or 0):.0f}% of their output tokens fell in "
+                  f"the mechanical or polling lane. The lane split is the direct effort gauge; the thinking "
+                  f"share above stays a residual estimate over every request.\n")
+        else:
+            print("**Effort lanes** — no effort-phase ledger in this fleet (mods/effort-phase not loaded), so the "
+                  "thinking share above is the only effort gauge.\n")
+        if fleet_spawn:
+            rules = ", ".join(f"{k} x{n}" for k, n in fleet_spawn["rules"].items()) or "none"
+            print(f"**Spawn policy** — {fleet_spawn['decisions']} decisions in {fleet_spawn['sessions_with_ledger']} "
+                  f"session(s), {fleet_spawn['enforced']} enforced ({rules}). A `would:` rule is a spawn the mod "
+                  f"only logged, in a session it did not judge autonomous.\n")
     else:
         print("- no usage data found in transcripts\n")
 
@@ -2456,8 +2577,8 @@ def main():
         def pct(v):
             return f"{round(100 * v)}%" if v is not None else "-"
         print("| fleet start | n | hours | shipped | $/issue | ktok/issue | $/Mtok out | sub-final% | "
-              "cycles | find/rev | C+H/rev | plan% | ctx>=200k% | filed/ship | fresh% | idle% | thr% |")
-        print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+              "cycles | find/rev | C+H/rev | plan% | ctx>=200k% | filed/ship | fresh% | idle% | thr% | rewr% |")
+        print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
         for r in history[-6:]:
             mark = " ←" if r.get("session_set") == headline["session_set"] and not args.all else ""
             fs = (r.get("fleet_start") or "?")[:16].replace("T", " ")
@@ -2470,7 +2591,7 @@ def main():
                   f"{cell(r.get('crit_high_per_review'))} | {pct(r.get('plan_origin_share'))} | "
                   f"{pct(r.get('ctx_share_ge200k'))} | {cell(r.get('filed_per_shipped'))} | "
                   f"{pct(r.get('fresh_shipped_share'))} | {pct(r.get('idle_tail_share'))} | "
-                  f"{pct(r.get('throttle_share'))} |")
+                  f"{pct(r.get('throttle_share'))} | {pct(r.get('rewritten_request_share'))} |")
         if len(history) > 6:
             print(f"\n({len(history) - 6} earlier row(s) in the ledger, not shown)")
         print("\nRead $/issue as its two factors: ktok/issue is work per shipped issue (churn or harder "
@@ -2485,7 +2606,9 @@ def main():
               "holding only to its last turn — as a share of the fleet's summed transcript span. thr% is the "
               "headroom-throttle gauge: session-hours parked by fleet-headroom.sh's THROTTLE between picks, as a "
               "share of the same span; it overlaps idle% wherever a park ran past the last ship, and the Pool "
-              "exhausted line says by how much.\n")
+              "exhausted line says by how much. rewr% is the effort-phase gauge: the share of the main "
+              f"loop's ledgered requests sent at an effort other than the one the engine had set (the mechanical "
+              f"and polling lanes); a `-` is a fleet with no effort-phase ledger.\n")
     elif not args.all:
         print("- first recorded fleet — the trend accrues one row per windowed run in "
               "`tmp/fleet-metrics-history.jsonl`\n")

@@ -263,7 +263,17 @@
     "baseRef": "head"
   },
   "enabledPlugins": {
-    "typescript-lsp@claude-plugins-official": true
+    "typescript-lsp@claude-plugins-official": true,
+    "effort-phase@alienfast-claude": true,
+    "spawn-policy@alienfast-claude": true
+  },
+  "extraKnownMarketplaces": {
+    "alienfast-claude": {
+      "source": {
+        "source": "directory",
+        "path": "~/.claude"
+      }
+    }
   },
   "outputStyle": "concise",
   "effortLevel": "xhigh",

@@ -146,6 +146,10 @@ classify() {
     linear-context-*.md|triage-digest-*.md)
                                        echo "cache presence-cache"; return ;;
     *.done|wait-*.sh)                  echo "cache poll-marker"; return ;;
+    effort-ledger-*.jsonl|spawn-policy-*.jsonl)
+                                       echo "scratch mod-ledger"; return ;;
+    effort-probe-*)                    echo "scratch effort-probe"; return ;;
+    typecheck-*)                       echo "scratch-dir mod-typecheck"; return ;;
     fleet-quota-launch.json)           echo "scratch retired"; return ;;
   esac
   if [ "$kind" = d ]; then

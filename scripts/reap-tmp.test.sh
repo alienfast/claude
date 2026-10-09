@@ -80,6 +80,10 @@ test-sweep-scan.lock|d|scratch-dir test-sweep-lock
 test-sweep-scan.out||handoff test-sweep-scan-report
 test-sweep-scan.log||handoff test-sweep-scan-report
 test-sweep-scan.done||cache poll-marker
+effort-ledger-abc123.jsonl||scratch mod-ledger
+spawn-policy-abc123.jsonl||scratch mod-ledger
+effort-probe-switch-x.jsonl||scratch effort-probe
+typecheck-effort-phase|d|scratch-dir mod-typecheck
 test-sweep-candidates-both.tsv||handoff test-sweep-scan-inputs
 test-sweep-todo-rspec.tsv||handoff test-sweep-scan-inputs
 test-sweep-groups-storybook.txt||handoff test-sweep-scan-inputs

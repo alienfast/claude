@@ -62,6 +62,20 @@ echo "Updating plugin marketplaces..."
 claude plugin marketplace update
 claude plugin marketplace update claude-plugins-official
 
+# ~/.claude is itself a plugin marketplace (.claude-plugin/marketplace.json lists the mods under mods/), and the
+# shared settings.json declares it under extraKnownMarketplaces with the home-relative path `~/.claude`, which a
+# session start resolves. `claude plugin install`, though, reads only the machine-local registry
+# (plugins/known_marketplaces.json), which a fresh clone lacks, and `marketplace update` refuses a name that is not
+# in it (measured 2026-10-09) — so register here. `marketplace add` is idempotent, but it rewrites the settings
+# declaration with this machine's absolute path, a per-machine diff in a tracked file, so the sed puts the portable
+# form back on the one line it touches. The mods load in place from mods/, so a pull is their update.
+echo "Registering ~/.claude as a plugin marketplace and installing its mods..."
+claude plugin marketplace add "$claude_repo" || echo "  ⚠️  could not register $claude_repo as a marketplace; continuing."
+sed -i.bak -E 's#("path": ")[^"]*[/\\]\.claude"#\1~/.claude"#' "$claude_repo/settings.json" && rm -f "$claude_repo/settings.json.bak"
+for mod in effort-phase spawn-policy; do
+  claude plugin install "$mod@alienfast-claude" || echo "  ⚠️  could not install $mod@alienfast-claude; continuing."
+done
+
 echo "Installing lsp servers..."
 claude plugin install typescript-lsp
 

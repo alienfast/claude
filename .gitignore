@@ -50,3 +50,4 @@ daemon-auth-*
 /skills/synced
 /skills/.trash
 /local
+/mods/*/.claude-plugin/types/
