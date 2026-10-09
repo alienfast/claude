@@ -1,0 +1,48 @@
+{
+  "name": "effort-phase",
+  "version": "0.1.0",
+  "description": "Sets main-loop effort per model request from the phase of the skill flow (judgment, mechanical, polling) and writes a per-step usage ledger",
+  "author": { "name": "alienfast" },
+  "userConfig": {
+    "enabled": {
+      "type": "boolean",
+      "title": "Enabled",
+      "description": "Rewrite main-loop effort by phase. Off changes nothing and writes no ledger.",
+      "default": true
+    },
+    "judgment_effort": {
+      "type": "string",
+      "title": "Judgment effort",
+      "description": "Effort for planning, triage, implementation and review phases. session keeps the session's own setting.",
+      "options": ["session", "low", "medium", "high", "xhigh", "max"],
+      "default": "session"
+    },
+    "mechanical_effort": {
+      "type": "string",
+      "title": "Mechanical effort",
+      "description": "Effort once a mechanical skill (finish, checkpoint, pr-update, ...) has been expanded in the turn.",
+      "options": ["low", "medium", "high", "xhigh", "max"],
+      "default": "high"
+    },
+    "polling_effort": {
+      "type": "string",
+      "title": "Polling effort",
+      "description": "Effort for a request that follows a step made only of wait-shaped tool calls (sleep loops, Monitor).",
+      "options": ["low", "medium", "high", "xhigh", "max"],
+      "default": "low"
+    },
+    "max_switches_per_turn": {
+      "type": "number",
+      "title": "Max effort switches per turn",
+      "description": "Cap on effort changes within one turn, 0 for unlimited. The probe measured a switch as cache-safe on Opus 5.5, so the cap is a fallback for a build where that changes.",
+      "default": 0,
+      "min": 0
+    },
+    "ledger": {
+      "type": "boolean",
+      "title": "Write ledger",
+      "description": "Append one JSONL row per main-loop request to tmp/effort-ledger-<session>.jsonl under the session root.",
+      "default": true
+    }
+  }
+}

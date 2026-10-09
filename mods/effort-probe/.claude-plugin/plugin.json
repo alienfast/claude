@@ -1,0 +1,6 @@
+{
+  "name": "effort-probe",
+  "version": "0.1.0",
+  "description": "Measures whether a turn.step effort rewrite preserves the prompt cache: switches one middle step and logs each step's usage",
+  "author": { "name": "alienfast" }
+}
