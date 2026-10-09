@@ -51,3 +51,4 @@ daemon-auth-*
 /skills/.trash
 /local
 /mods/*/.claude-plugin/types/
+/mods/*/tsconfig.json

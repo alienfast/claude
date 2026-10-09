@@ -1,0 +1,6 @@
+{
+  "name": "loop-boundary-probe",
+  "version": "0.1.0",
+  "description": "Measures whether a compaction called from inside a prompt.submit hook is accepted while the session is idle, and what origin a /loop wakeup's prompt carries",
+  "author": { "name": "alienfast" }
+}

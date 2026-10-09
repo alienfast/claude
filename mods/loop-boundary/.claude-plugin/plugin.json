@@ -1,0 +1,34 @@
+{
+  "name": "loop-boundary",
+  "version": "0.1.0",
+  "description": "Compacts the main conversation to a near-clear at each /loop /auto iteration boundary (a turn ending with an iteration outcome line), with one ledger row per boundary",
+  "author": { "name": "alienfast" },
+  "userConfig": {
+    "enabled": {
+      "type": "boolean",
+      "title": "Enabled",
+      "description": "Compact at iteration boundaries. Off changes nothing and writes no ledger.",
+      "default": true
+    },
+    "loop_prefixes": {
+      "type": "string",
+      "title": "Loop prompt prefixes",
+      "description": "Comma-separated prefixes of the loop prompts whose iteration boundaries compact (the text after /loop and its interval).",
+      "default": "/auto"
+    },
+    "min_context_percent": {
+      "type": "number",
+      "title": "Minimum context percent",
+      "description": "Below this context fill a boundary is logged but not compacted. 0 compacts at every boundary.",
+      "default": 0,
+      "min": 0,
+      "max": 100
+    },
+    "ledger": {
+      "type": "boolean",
+      "title": "Write ledger",
+      "description": "Append one JSONL row per boundary and per passed-through looping turn to tmp/loop-boundary-<session>.jsonl under the session root.",
+      "default": true
+    }
+  }
+}
