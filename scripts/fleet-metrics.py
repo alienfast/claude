@@ -1135,6 +1135,43 @@ def fleet_spawn_policy(sessions):
             "enforced": sum(sp["enforced"] for sp in have), "rules": dict(rules.most_common())}
 
 
+def boundary_compactions(checkout, run_key):
+    """What mods/loop-boundary recorded for a session: the iteration-boundary compactions (count, tokens before
+    and after, the path each took) and the loop wakeups it passed through by reason; None without a ledger."""
+    rows = ledger_rows(checkout, f"loop-boundary-{run_key}*.jsonl")
+    if not rows:
+        return None
+    boundaries = [r for r in rows if r.get("event") == "boundary"]
+    passes = Counter(r.get("reason") or "unknown" for r in rows if r.get("event") == "pass")
+    paths = Counter(r.get("path") or "unknown" for r in boundaries)
+    before = [int(r["tokensBefore"]) for r in boundaries if isinstance(r.get("tokensBefore"), (int, float))]
+    after = [int(r["tokensAfter"]) for r in boundaries if isinstance(r.get("tokensAfter"), (int, float))]
+    return {"compactions": len(boundaries), "accepted": sum(1 for r in boundaries if r.get("accepted")),
+            "tokens_before": sum(before), "tokens_before_n": len(before),
+            "tokens_after": sum(after), "tokens_after_n": len(after),
+            "paths": dict(paths.most_common()), "passes": dict(passes.most_common())}
+
+
+def fleet_boundary_compactions(sessions, shipped_count):
+    """The sessions' loop-boundary ledgers summed, with compactions per shipped issue; None when no session has one."""
+    have = [s["boundary_compactions"] for s in sessions if s.get("boundary_compactions")]
+    if not have:
+        return None
+    n = sum(b["compactions"] for b in have)
+    paths, passes = Counter(), Counter()
+    for b in have:
+        paths.update(b["paths"])
+        passes.update(b["passes"])
+    before, before_n = sum(b["tokens_before"] for b in have), sum(b["tokens_before_n"] for b in have)
+    after, after_n = sum(b["tokens_after"] for b in have), sum(b["tokens_after_n"] for b in have)
+    return {"sessions_with_ledger": len(have), "compactions": n, "accepted": sum(b["accepted"] for b in have),
+            "tokens_before": before, "tokens_after": after,
+            "mean_before": round(before / before_n) if before_n else None,
+            "mean_after": round(after / after_n) if after_n else None,
+            "per_shipped": round(n / shipped_count, 2) if shipped_count else None,
+            "paths": dict(paths.most_common()), "passes": dict(passes.most_common())}
+
+
 def developer_lanes(sessions):
     """Split developer output by lane — pre-review implementation vs post-review fix batches — and
     name the tier that implemented each issue.
@@ -1529,7 +1566,8 @@ def main():
                 "ledger_missing": ledger_missing,
                 "transcripts": len(transcripts), "agg": agg,
                 "effort_lanes": effort_lanes(checkout, run_key),
-                "spawn_policy": spawn_policy_summary(checkout, run_key)}
+                "spawn_policy": spawn_policy_summary(checkout, run_key),
+                "boundary_compactions": boundary_compactions(checkout, run_key)}
 
     # Second discovery pass: an /auto session whose ledger no longer exists. See auto_session_mode —
     # a deleted state file must surface as a flagged session, never as a fleet that was one session
@@ -1945,6 +1983,7 @@ def main():
     tagged_all = sum(sum(v["origin"].values()) for v in verdicts)
     fleet_lanes = fleet_effort_lanes(sessions)
     fleet_spawn = fleet_spawn_policy(sessions)
+    fleet_boundary = fleet_boundary_compactions(sessions, len(all_shipped))
     headline = {
         "recorded_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "fleet_start": fleet_first.strftime("%Y-%m-%dT%H:%M:%SZ") if fleet_first else None,
@@ -2114,6 +2153,7 @@ def main():
                 "main_thinking_share_est": thinking_share([s["agg"]]),
                 "effort_lanes": s["effort_lanes"],
                 "spawn_policy": s["spawn_policy"],
+                "boundary_compactions": s["boundary_compactions"],
                 "long_gaps": [{"minutes": round(g[0] / 60, 1), "tool": g[1], "what": g[2]}
                               for g in sorted(s["agg"]["gaps"], reverse=True)[:5]],
             } for s in sessions],
@@ -2139,6 +2179,7 @@ def main():
             "main_thinking_share_est": fleet_think,
             "effort_lanes": fleet_lanes,
             "spawn_policy": fleet_spawn,
+            "boundary_compactions": fleet_boundary,
             "subagent_final_rows": {"messages": sub_msgs_total, "with_final_row": sub_msgs_final,
                                     "share": sub_final_share},
             "per_shipped": {"output_tokens": out_per_shipped, "est_cost_usd": cost_per_shipped},
@@ -2298,16 +2339,17 @@ def main():
                              for b in CTX_BUCKETS if fleet_ctx[b])
         print(f"**Context distribution** — {ctx_total_vol:,} billable prompt tokens, by context size "
               f"at call time: {buckets} → **{100 * ctx_ge150_share:.0f}% at >=150k, "
-              f"{100 * ctx_ge200_share:.0f}% at >=200k**. The autocompact gauge: fleet-launch pins "
-              f"`--autocompact 500000` (since 2026-08-15; the session floor is ~115-177k so the "
-              f"sawtooth runs ~135k→~450k and a large >=200k shoulder is EXPECTED — the engagement "
-              f"signal is nothing above ~460k). If volume appears above ~460k, compaction did not "
-              f"engage (check the dispatch flags). Size distribution alone cannot show compaction "
-              f"THRASH — also check cadence: compact_boundary rows per session should be a handful "
-              f"per issue, tens of minutes apart; spacing collapsing to minutes is the orbit "
-              f"signature (band ≈ live working set). It means the threshold is too low only when the "
-              f"orbiting compacts' postTokens are normal; a compact carrying 140k+ forward is re-injected "
-              f"path-scoped rules, fixed by trimming the rule, not by raising the cap.\n")
+              f"{100 * ctx_ge200_share:.0f}% at >=200k**. The context gauge: since 2026-10-09 "
+              f"fleet-launch adds no `--autocompact` cap — mods/loop-boundary compacts each /auto session "
+              f"at its iteration boundaries (Boundary compactions, below) and the engine's own threshold "
+              f"governs inside an iteration — so this share is read against the 2026-09-24 baseline under "
+              f"the retired 500k cap (96% at >=200k, 36% at >=400k): a fall is the boundary compaction "
+              f"working, a rise with volume above ~460k is iterations outgrowing the old cap, and the "
+              f"launch override `-- --autocompact 500000` restores it if $/Mtok out rises with it. Size "
+              f"distribution alone cannot show compaction THRASH — also check cadence: compact_boundary "
+              f"rows per session should be a handful per issue, tens of minutes apart; spacing collapsing "
+              f"to minutes is the orbit signature (band ≈ live working set), and a compact carrying 140k+ "
+              f"forward is re-injected path-scoped rules, fixed by trimming the rule.\n")
 
     print("## Review churn\n")
     if verdicts:
@@ -2432,6 +2474,20 @@ def main():
             print(f"**Spawn policy** — {fleet_spawn['decisions']} decisions in {fleet_spawn['sessions_with_ledger']} "
                   f"session(s), {fleet_spawn['enforced']} enforced ({rules}). A `would:` rule is a spawn the mod "
                   f"only logged, in a session it did not judge autonomous.\n")
+        if fleet_boundary:
+            paths = ", ".join(f"{k} x{n}" for k, n in fleet_boundary["paths"].items()) or "none"
+            passes = ", ".join(f"{k} x{n}" for k, n in fleet_boundary["passes"].items()) or "none"
+            per = fleet_boundary["per_shipped"]
+            print(f"**Boundary compactions** — {fleet_boundary['compactions']} in "
+                  f"{fleet_boundary['sessions_with_ledger']} of {len(sessions)} session(s)"
+                  + (f", {per} per shipped issue" if per is not None else "")
+                  + f": mean {fleet_boundary['mean_before'] or 0:,} → {fleet_boundary['mean_after'] or 0:,} tokens "
+                  f"({paths}; {fleet_boundary['accepted']} accepted); looping turns passed through: {passes}. "
+                  f"Tokens are the context of the last request before the boundary and of the next iteration's "
+                  f"first request, so the mean after is the session floor the mod restarts each iteration at.\n")
+        else:
+            print("**Boundary compactions** — no loop-boundary ledger in this fleet (mods/loop-boundary not loaded), so "
+                  "context accumulated across iterations up to the engine's own threshold.\n")
     else:
         print("- no usage data found in transcripts\n")
 
@@ -2596,7 +2652,7 @@ def main():
             print(f"\n({len(history) - 6} earlier row(s) in the ledger, not shown)")
         print("\nRead $/issue as its two factors: ktok/issue is work per shipped issue (churn or harder "
               "issues — cycles, find/rev and plan% say which), $/Mtok out is billable context per unit "
-              "of work (ctx>=200k% names the driver — the autocompact lever). sub-final% is the share of "
+              "of work (ctx>=200k% names the driver — the loop-boundary lever since 2026-10-09, the autocompact cap before). sub-final% is the share of "
               "subagent messages whose final usage row was written: below 100% that row's ktok/issue is a "
               "floor and its $/Mtok out a ceiling, and a `-` is a row measured before the gauge existed. "
               "fresh% is the treadmill "

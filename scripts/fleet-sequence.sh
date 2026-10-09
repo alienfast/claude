@@ -22,8 +22,10 @@
 #   stale-ok       Launch even though ~/.claude is behind origin/main in a file sessions load (TOOLING-STALE,
 #                  claude-freshness.sh — checked once, at launch), with a one-line WARN; without it, exit 4.
 #   -- ...         Passed to every `claude --bg` verbatim; defaults added only for flags not present
-#                  (--model 'opus[1m]' --effort xhigh --autocompact 500000 --permission-mode auto —
-#                  skills/auto/SKILL.md's unattended-run prerequisites, same as fleet-launch.sh).
+#                  (--model 'opus[1m]' --effort xhigh --permission-mode auto — skills/auto/SKILL.md's
+#                  unattended-run prerequisites, same as fleet-launch.sh; no --autocompact since 2026-10-09:
+#                  mods/loop-boundary compacts at iteration boundaries, and the launch refuses, exit 5, where
+#                  it is not enabled unless an explicit --autocompact is passed).
 #
 #   status         One-screen readout of a marker: mode, branch, PR, per-issue session, liveness,
 #                  outcome and where it landed, the branch's position against its base, the runner's
@@ -91,8 +93,8 @@
 # checkout; creates the integration branch, sets/unsets the per-issue `start.<id>.wt-source-branch` keys,
 # pushes the branch, opens its PR, adds and removes a throwaway worktree at tmp/fleet-sequence-pr-update-<slug>
 # for the closing /pr-update session, dispatches background claude sessions. Never moves the main checkout's
-# HEAD. Exit 1 on argument/environment errors and exit 4 on TOOLING-STALE, both before anything is dispatched
-# or written; the runner exits 1 when the sequence fails.
+# HEAD. Exit 1 on argument/environment errors, exit 4 on TOOLING-STALE and exit 5 on BOUNDARY-MOD-MISSING, all
+# before anything is dispatched or written; the runner exits 1 when the sequence fails.
 
 set -eo pipefail
 
@@ -737,6 +739,19 @@ cmd_launch() {
     fi
   fi
 
+  # Same guard as fleet-launch.sh: no --autocompact default, so the loop-boundary mod must be enabled unless the
+  # operator passed a cap of their own after --.
+  local explicit_cap=0 a
+  for a in "${claude_args[@]}"; do case "$a" in --autocompact|--autocompact=*) explicit_cap=1 ;; esac; done
+  if ! "$here/mod-enabled.sh" loop-boundary; then
+    if [ "$explicit_cap" = 1 ]; then
+      echo "WARN: launching without the loop-boundary mod — the explicit --autocompact after -- is the only compaction control these sessions have" >&2
+    else
+      echo "Nothing was dispatched or written. Install the mod (above), or pass an explicit --autocompact after -- to launch without it." >&2
+      exit 5
+    fi
+  fi
+
   if [ "$mode" = "pr" ]; then
     # The PR's base is the launch branch, so it must exist on origin — an unpushed one would spend every
     # session and then fail at the PR. Launching off the default branch is legitimate (the sequence sits on
@@ -785,7 +800,6 @@ cmd_launch() {
   }
   have_flag --model "${claude_args[@]}" || claude_args+=(--model 'opus[1m]')
   have_flag --effort "${claude_args[@]}" || claude_args+=(--effort xhigh)
-  have_flag --autocompact "${claude_args[@]}" || claude_args+=(--autocompact 500000)
   if ! have_flag --permission-mode "${claude_args[@]}" && ! have_flag --dangerously-skip-permissions "${claude_args[@]}"; then
     claude_args+=(--permission-mode auto)
   fi

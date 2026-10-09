@@ -34,7 +34,7 @@ Several sequences may run at once, each strictly serial within itself, and a fle
 
 (2026-09-21: with one marker per checkout and a resume decided by launch branch and mode alone, `/fleet-sequence BF-2034 BF-1794` — launched from the branch an earlier `BF-2022 …` sequence had used, its runner dead under a harness restart and its BF-2022 session still working — was read as a resume, forked BF-2034 from `seq/bf-2022`, and rewrote that sequence's marker and log.)
 
-Model and permission defaults follow `/auto`'s unattended-run prerequisites, identical to `/fleet-launch` (`--model 'opus[1m]' --effort xhigh --autocompact 500000 --permission-mode auto`); pass overrides after `--` when calling the script directly.
+Model and permission defaults follow `/auto`'s unattended-run prerequisites, identical to `/fleet-launch` (`--model 'opus[1m]' --effort xhigh --permission-mode auto`, no `--autocompact` since 2026-10-09 — the `loop-boundary` mod owns iteration-boundary compaction, and the launch refuses, exit 5, where that mod is not enabled unless an explicit `--autocompact` is passed); pass overrides after `--` when calling the script directly.
 
 ## Behavior
 

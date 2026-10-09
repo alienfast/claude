@@ -265,7 +265,8 @@
   "enabledPlugins": {
     "typescript-lsp@claude-plugins-official": true,
     "effort-phase@alienfast-claude": true,
-    "spawn-policy@alienfast-claude": true
+    "spawn-policy@alienfast-claude": true,
+    "loop-boundary@alienfast-claude": true
   },
   "extraKnownMarketplaces": {
     "alienfast-claude": {
@@ -280,6 +281,13 @@
   "modelSettings": {
     "claude-opus-5-5": {
       "effortLevel": "xhigh"
+    }
+  },
+  "pluginConfigs": {
+    "loop-boundary@alienfast-claude": {
+      "options": {
+        "loop_prefixes": "/auto"
+      }
     }
   },
   "tui": "fullscreen",

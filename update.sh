@@ -72,7 +72,7 @@ claude plugin marketplace update claude-plugins-official
 echo "Registering ~/.claude as a plugin marketplace and installing its mods..."
 claude plugin marketplace add "$claude_repo" || echo "  ⚠️  could not register $claude_repo as a marketplace; continuing."
 sed -i.bak -E 's#("path": ")[^"]*[/\\]\.claude"#\1~/.claude"#' "$claude_repo/settings.json" && rm -f "$claude_repo/settings.json.bak"
-for mod in effort-phase spawn-policy; do
+for mod in effort-phase spawn-policy loop-boundary; do
   claude plugin install "$mod@alienfast-claude" || echo "  ⚠️  could not install $mod@alienfast-claude; continuing."
 done
 

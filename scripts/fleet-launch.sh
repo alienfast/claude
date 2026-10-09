@@ -63,11 +63,12 @@
 #               loops run until the certified backlog drains.
 #   -- ...      Everything after -- is passed to `claude --bg` verbatim. Defaults are
 #               added only for flags not present there: --model 'opus[1m]'
-#               --effort xhigh --autocompact 500000 --permission-mode auto
-#               (skills/auto/SKILL.md's unattended-run prerequisites; auto — never
-#               acceptEdits — because a background session has nobody to answer a
-#               Bash permission prompt; autocompact capped because a session that
-#               never compacts re-reads its whole accumulated context on every call).
+#               --effort xhigh --permission-mode auto (skills/auto/SKILL.md's
+#               unattended-run prerequisites; auto — never acceptEdits — because a
+#               background session has nobody to answer a Bash permission prompt). No
+#               --autocompact: mods/loop-boundary compacts each session at its iteration
+#               boundaries, and the launch refuses (exit 5) where that mod is not enabled
+#               unless an explicit --autocompact after -- supplies a cap of its own.
 #
 #   stop        Wind down a running fleet: write an already-passed deadline and exit — unless
 #               the marker's deadline has already passed, which is left unchanged (a stop never
@@ -107,7 +108,8 @@
 # so /fleet-retro and the operator can examine them — retro before relaunching; dispatches
 # background claude sessions. Exit 1 on
 # argument/environment errors, exit 3 on SCOPE-CONFIRM (an inherited epic scope awaiting a
-# decision) and exit 4 on TOOLING-STALE (see [stale-ok]) — all before any dispatch or write; never
+# decision), exit 4 on TOOLING-STALE (see [stale-ok]) and exit 5 on BOUNDARY-MOD-MISSING (the
+# loop-boundary mod is not enabled and no explicit --autocompact was given) — all before any dispatch or write; never
 # mid-fleet: a dispatch failure stops further launches but leaves prior sessions running.
 
 set -eo pipefail
@@ -319,6 +321,20 @@ if [ -n "$dirty" ]; then
   fi
 fi
 
+# mods/loop-boundary owns compaction between iterations (the --autocompact 500000 cap it replaced from 2026-10-09 is
+# history in doc/compacting-investigation.md); without it a /loop /auto session on opus[1m] never compacts. An
+# explicit cap after -- is the operator's own control, so there the refusal softens to a WARN.
+explicit_cap=0
+for a in "${claude_args[@]}"; do case "$a" in --autocompact|--autocompact=*) explicit_cap=1 ;; esac; done
+if ! "$script_dir/mod-enabled.sh" loop-boundary; then
+  if [ "$explicit_cap" = 1 ]; then
+    echo "WARN: launching without the loop-boundary mod — the explicit --autocompact after -- is the only compaction control these sessions have" >&2
+  else
+    echo "Nothing was dispatched or written. Install the mod (above), or pass an explicit --autocompact after -- to launch without it." >&2
+    exit 5
+  fi
+fi
+
 # Last of the refusals: it is the only one that touches the network (a fetch bounded at ~10s).
 fresh_rc=0
 "$script_dir/claude-freshness.sh" || fresh_rc=$?
@@ -436,18 +452,9 @@ have_flag() {
 }
 have_flag --model "${claude_args[@]}" || claude_args+=(--model 'opus[1m]')
 have_flag --effort "${claude_args[@]}" || claude_args+=(--effort xhigh)
-# 500k, not the model default: on opus[1m] auto-compact's default threshold sits near the 1M
-# window, so a /loop /auto session accumulating across iterations never compacts — measured
-# 2026-08-13/14, 91% of fleet billable volume was context re-read at >200k tokens, and cache
-# reads scale linearly with context size. /auto's real state lives in tmp/ + Linear, not context.
-# Sizing (under-sized twice; measure before touching): compaction triggers at ~90% of the window,
-# and the trigger must clear the DEEP-issue post-compact floor (~152-177k: re-injected overhead
-# plus a summary carrying the issue) + the live working set a review/fix loop re-reads after
-# every compact (>=110k) + one worst-case single ingestion (~130k). 150000 thrash-aborted the
-# 2026-08-14 fleet at launch; 300000 survived launch but fell into a compaction orbit mid-review
-# the same night (9 compacts in 36 min — the band matched the working set, so every compact
-# forced re-reads that refilled it). Details: doc/compacting-investigation.md verdict log.
-have_flag --autocompact "${claude_args[@]}" || claude_args+=(--autocompact 500000)
+# No --autocompact default since 2026-10-09: the loop-boundary mod (checked above) compacts at iteration boundaries,
+# and the engine's own threshold governs inside an iteration. The retired 500k cap and its sizing history are in
+# doc/compacting-investigation.md; `-- --autocompact 500000` restores it for one launch.
 if ! have_flag --permission-mode "${claude_args[@]}" && ! have_flag --dangerously-skip-permissions "${claude_args[@]}"; then
   # auto, not acceptEdits: acceptEdits only auto-accepts FILE EDITS, so the first gated
   # Bash command (e.g. /start wt's worktree validation) prompts into a background session

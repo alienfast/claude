@@ -1,6 +1,6 @@
 ---
 name: fleet-retro
-description: Post-mortem on a finished fleet of parallel /loop /auto sessions — measures each session with scripts/fleet-metrics.py (blind-sleep burn, dispatch mode, heartbeat compliance, classifier blocks, state-vs-reality drift, review churn with findings origins and the implementing-tier join, token and estimated-dollar attribution by agent type and model plus the developer-lane split (implementation vs fix batch) — cache-aware, with main-loop thinking share, cost per shipped issue, the context-size distribution (the autocompact gauge), shipped-issue provenance (the treadmill share), and a cross-run trend ledger diffing the last six fleets' headline gauges), reconciles the shipped ledger against git and Linear, audits the issues the run FILED for duplicates and stranded states, then reports ranked findings and applies the fixes you approve. The bookend to /auto-prep. Use when the user says 'fleet retro', 'review the fleet run', 'how did the fleet do', 'post-mortem the auto run', or invokes /fleet-retro.
+description: Post-mortem on a finished fleet of parallel /loop /auto sessions — measures each session with scripts/fleet-metrics.py (blind-sleep burn, dispatch mode, heartbeat compliance, classifier blocks, state-vs-reality drift, review churn with findings origins and the implementing-tier join, token and estimated-dollar attribution by agent type and model plus the developer-lane split (implementation vs fix batch) — cache-aware, with main-loop thinking share, cost per shipped issue, the context-size distribution (the context gauge), shipped-issue provenance (the treadmill share), and a cross-run trend ledger diffing the last six fleets' headline gauges), reconciles the shipped ledger against git and Linear, audits the issues the run FILED for duplicates and stranded states, then reports ranked findings and applies the fixes you approve. The bookend to /auto-prep. Use when the user says 'fleet retro', 'review the fleet run', 'how did the fleet do', 'post-mortem the auto run', or invokes /fleet-retro.
 argument-hint: "[--since YYYY-MM-DD | --hours N] [checkout-path]"
 model: opus
 effort: xhigh
@@ -136,11 +136,15 @@ and 15% on 2026-09-22, all on harness 2.1.278 — so a low share is a finding to
 Five gauges ride the same run and the retro reads all five, not just the tables:
 
 - **Context distribution** — share of billable prompt volume by context size at call time. This is the
-  autocompact gauge: fleet-launch pins `--autocompact 500000` (150000 shipped 2026-08-14 and
-  thrash-aborted its first fleet; 300000 orbited mid-review; 500000 kept across all four 2026-08-15/16
-  fleets — doc/compacting-investigation.md, verdict log). Under 500k the session floor is ~115–177k and
-  the sawtooth tops out at the ~460k trigger, so a LARGE >=200k share (84–94% on the verified fleets) is
-  the expected pre-compact shoulder, not a failure — the engagement signal is no volume above ~460k, and
+  context gauge. Since 2026-10-09 fleet-launch adds no `--autocompact` cap: the `loop-boundary` mod compacts
+  each session to one boundary message at every iteration boundary (its **Boundary compactions** line, under
+  Output tokens by agent type, gives the count, the per-shipped-issue rate and the mean context before and
+  after — the after is the floor each iteration restarts at), and the engine's own threshold governs inside
+  an iteration. Read the share against the last capped baseline, 2026-09-24 (96% at >=200k, 36% at >=400k):
+  a fall is the boundary compaction working; a rise with volume above ~460k is iterations outgrowing the
+  retired cap, and `-- --autocompact 500000` on the launch restores it if $/Mtok out rises with it. The cap's
+  own history (150000 thrash-aborted its first fleet; 300000 orbited mid-review; 500000 kept 2026-08-15 to
+  2026-10-09) is doc/compacting-investigation.md's verdict log. Under that cap the session floor was ~115–177k and
   the health signal is cadence (a handful of compact_boundary rows per session at tens-of-minutes
   spacing; spacing collapsing to minutes is the orbit signature). Before reading an orbit as the
   threshold, check what each orbiting compact carried: its `compactMetadata.postTokens`, its `preTokens`
@@ -164,7 +168,7 @@ Five gauges ride the same run and the retro reads all five, not just the tables:
   2026-08-05..14 fleets sat in individually-saved reports that nothing compared until it was found by
   hand. Read $/issue through its two factors — ktok/issue (work per issue) x $/Mtok out (context
   weight per unit of work) — before proposing levers, since they route differently (churn/specs vs
-  autocompact/model mix). `rewr%` is the effort-phase gauge: the share of the main loop's ledgered requests
+  boundary-compaction/model mix). `rewr%` is the effort-phase gauge: the share of the main loop's ledgered requests
   that `mods/effort-phase` sent at a rewritten effort (its mechanical and polling lanes); read its direction
   beside $/issue and ktok/issue across fleets with the mod on, with finish-recover and review churn as the
   quality guard, and read the report's **Effort lanes** and **Spawn policy** lines (under Output tokens by

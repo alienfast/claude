@@ -35,6 +35,7 @@ BIN="$WORK/bin"; mkdir -p "$BIN"
 cat > "$BIN/claude" <<EOF
 #!/usr/bin/env bash
 if [ "\${1:-}" = "agents" ]; then cat "$WORK/agents.json" 2>/dev/null || echo '[]'; exit 0; fi
+if [ "\${1:-}" = "plugin" ]; then cat "$WORK/plugins.json" 2>/dev/null || echo '[{"id":"loop-boundary@alienfast-claude","enabled":true}]'; exit 0; fi
 echo "\$@" >> "$WORK/dispatches"
 n=\$(( \$(cat "$WORK/seq" 2>/dev/null || echo 0) + 1 )); echo "\$n" > "$WORK/seq"
 printf 'backgrounded · \033[36mab%06d\033[39m\n\033[2m  claude agents             list sessions\033[22m\n\033[2m  claude attach ab%06d    open in this terminal\033[22m\n' "\$n" "\$n"
@@ -230,6 +231,7 @@ ck "status-less row's ledger kept"       "yes" "$([ -f "$REPO/tmp/auto-state-ab0
 # ---- case 9: an unreadable --bg output warns and launches anyway ----
 cat > "$BIN/claude" <<EOF
 #!/usr/bin/env bash
+if [ "\${1:-}" = "plugin" ]; then cat "$WORK/plugins.json" 2>/dev/null || echo '[{"id":"loop-boundary@alienfast-claude","enabled":true}]'; exit 0; fi
 if [ "\${1:-}" = "agents" ]; then echo '[]'; exit 0; fi
 echo "\$@" >> "$WORK/dispatches"
 echo "started"
@@ -247,6 +249,7 @@ ck "set left empty, not invented"   "" "$(jq -r '.fleet_sessions | join(" ")' "$
 cat > "$BIN/claude" <<EOF
 #!/usr/bin/env bash
 if [ "\${1:-}" = "agents" ]; then cat "$WORK/agents.json" 2>/dev/null || echo '[]'; exit 0; fi
+if [ "\${1:-}" = "plugin" ]; then cat "$WORK/plugins.json" 2>/dev/null || echo '[{"id":"loop-boundary@alienfast-claude","enabled":true}]'; exit 0; fi
 echo "\$@" >> "$WORK/dispatches"
 n=\$(( \$(cat "$WORK/seq" 2>/dev/null || echo 0) + 1 )); echo "\$n" > "$WORK/seq"
 printf 'backgrounded · \033[36mab%06d\033[39m\n' "\$n"
@@ -494,6 +497,24 @@ ck "hung fetch launch exits 0"           "0" "$(PATH="$WORK/hangbin:$PATH" CLAUD
 ck "hung fetch bounded by the watchdog"  "yes" "$([ $(( SECONDS - start )) -le 5 ] && echo yes || echo "no ($(( SECONDS - start ))s)")"
 ck_has "hung fetch noted"                "NOTE: could not check ~/.claude freshness (fetch failed) — launching" "$WORK/out"
 ck "hung fetch dispatched"               "1" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
+
+# ---- loop-boundary guard: no cap by default; refuse without the mod; an explicit cap softens the refusal to a WARN ----
+claude_fresh
+: > "$WORK/dispatches"
+ck "no-cap launch exits 0"           "0" "$(run 1)"
+ck "no-cap launch dispatched"        "1" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
+ck_lacks "no default autocompact"    "--autocompact" "$WORK/dispatches"
+echo '[{"id":"effort-phase@alienfast-claude","enabled":true}]' > "$WORK/plugins.json"
+: > "$WORK/dispatches"
+ck "missing mod exits 5"             "5" "$(run 1)"
+ck "missing mod dispatches nothing"  "0" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
+ck_has "missing mod names install"   "claude plugin install loop-boundary@alienfast-claude" "$WORK/out"
+ck_has "missing mod says nothing ran" "Nothing was dispatched or written." "$WORK/out"
+: > "$WORK/dispatches"
+ck "explicit cap launches"           "0" "$(run 1 -- --autocompact 700000)"
+ck_has "explicit cap warns"          "WARN: launching without the loop-boundary mod" "$WORK/out"
+ck_has "explicit cap passes through" "--autocompact 700000" "$WORK/dispatches"
+rm -f "$WORK/plugins.json"
 
 echo
 echo "$PASS passed / $FAIL failed"

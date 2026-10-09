@@ -8,12 +8,14 @@ behaves the same in a terminal, the VS Code panel, and a `claude --bg` fleet ses
 | `effort-phase` | Main-loop effort per model request by skill phase; per-step usage ledger | BF-2501 |
 | `spawn-policy` | Role-to-model tiers and synchronous review dispatch enforced on `agent.spawn` | BF-2502 |
 | `effort-probe` | One-shot measurement that an effort rewrite is cache-safe on this build | BF-2501 |
+| `loop-boundary` | Near-clear compaction of the main conversation at each `/loop /auto` iteration boundary; per-boundary ledger | BF-2510 |
+| `loop-boundary-probe` | One-shot measurement of where a plugin compaction is accepted and what origin a `/loop` wakeup carries | BF-2510 |
 
 ## Loading
 
 Every machine that pulls this repo gets the mods through `update.sh`: it registers the repo as the `alienfast-claude`
 marketplace (the shared `settings.json` declares it with the home-relative path `~/.claude`, and `update.sh` keeps
-that portable form after the CLI rewrites it) and installs `effort-phase` and `spawn-policy` user-wide. An installed
+that portable form after the CLI rewrites it) and installs `effort-phase`, `spawn-policy` and `loop-boundary` user-wide. An installed
 mod loads in place from `mods/<name>`, so a pull is its update, and an edit takes effect at the next session start or
 `/reload-plugins`. Each mod ships a kill switch in its `userConfig` (`/plugin configure <name>@alienfast-claude`), and
 `claude plugin disable <name>@alienfast-claude` turns one off on a machine without touching the shared settings.

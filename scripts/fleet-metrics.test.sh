@@ -160,6 +160,11 @@ cat > "$CHECKOUT/tmp/spawn-policy-abc12345-0000.jsonl" <<'EOF'
 {"type":"developer","rules":["model:developer->sonnet","sync:developer"],"enforced":true}
 {"type":"developer","rules":["model:developer->sonnet"],"enforced":false}
 EOF
+cat > "$CHECKOUT/tmp/loop-boundary-abc12345-0000.jsonl" <<'EOF'
+{"event":"boundary","accepted":true,"turnId":"t1","outcome":"SHIPPED-MERGE: TT-1","tokensBefore":480000,"tokensAfter":112000,"path":"turn-complete","nearClear":true}
+{"event":"pass","reason":"no-outcome","turnId":"t2"}
+{"event":"boundary","accepted":true,"turnId":"t3","outcome":"SKIPPED-BLOCKED: TT-2","tokensBefore":220000,"tokensAfter":null,"path":"turn-complete","nearClear":true}
+EOF
 
 # ---- run ----
 JSON="$WORK/out.json"
@@ -226,6 +231,18 @@ ck "spawn enforced"        "1"     "$(q "d['spawn_policy']['enforced']")"
 ck "spawn would-rule"      "1"     "$(q "d['spawn_policy']['rules']['would:model']")"
 ck_has "md effort lanes"   "**Effort lanes** — 1 of 2 sessions carry an effort-phase ledger: judgment 1 req / 600 out · mechanical 2 req / 400 out (2 rewritten) · polling 1 req / 50 out (1 rewritten) → 75% of" "$MD"
 ck_has "md spawn policy"   "**Spawn policy** — 2 decisions in 1 session(s), 1 enforced (model x1, sync x1, would:model x1)" "$MD"
+
+# boundary compactions: two boundary rows and one pass row on abc12345; the session without a ledger reads null
+ck "boundary count"        "2"      "$(q "d['sessions'][0]['boundary_compactions']['compactions']")"
+ck "boundary tokens after" "112000" "$(q "d['sessions'][0]['boundary_compactions']['tokens_after']")"
+ck "boundary after count"  "1"      "$(q "d['sessions'][0]['boundary_compactions']['tokens_after_n']")"
+ck "boundary passes"       "1"      "$(q "d['sessions'][0]['boundary_compactions']['passes']['no-outcome']")"
+ck "boundary no ledger"    "None"   "$(q "d['sessions'][1]['boundary_compactions']")"
+ck "fleet boundary mean"   "350000" "$(q "d['boundary_compactions']['mean_before']")"
+ck "fleet boundary path"   "2"      "$(q "d['boundary_compactions']['paths']['turn-complete']")"
+ck_has "md boundary line"  "**Boundary compactions** — 2 in 1 of 2 session(s)" "$MD"
+ck "fleet boundary after"  "112000" "$(q "d['boundary_compactions']['mean_after']")"
+ck_has "md boundary mean"  "mean 350,000 → 112,000 tokens (turn-complete x2; 2 accepted); looping turns passed through: no-outcome x1" "$MD"
 ck "ledgerless no rec"   "[]"       "$(q "[s['recorded_shipped'] for s in d['sessions'] if s['ledger_missing']][0]")"
 ck "stateful not flagged" "False"   "$(q "[s['ledger_missing'] for s in d['sessions'] if s['run_key']=='abc12345'][0]")"
 ck "non-auto ignored"    "0"        "$(q "len([s for s in d['sessions'] if s['run_key']=='99900001'])")"

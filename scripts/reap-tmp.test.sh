@@ -82,7 +82,10 @@ test-sweep-scan.log||handoff test-sweep-scan-report
 test-sweep-scan.done||cache poll-marker
 effort-ledger-abc123.jsonl||scratch mod-ledger
 spawn-policy-abc123.jsonl||scratch mod-ledger
-effort-probe-switch-x.jsonl||scratch effort-probe
+effort-probe-switch-x.jsonl||scratch mod-probe
+loop-boundary-abc123.jsonl||scratch mod-ledger
+loop-boundary-probe-20261009T1200.jsonl||scratch mod-probe
+loop-boundary-probe-20261009T1200.jsonl.stderr||scratch mod-probe
 typecheck-effort-phase|d|scratch-dir mod-typecheck
 test-sweep-candidates-both.tsv||handoff test-sweep-scan-inputs
 test-sweep-todo-rspec.tsv||handoff test-sweep-scan-inputs

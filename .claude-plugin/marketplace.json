@@ -6,6 +6,8 @@
   "plugins": [
     { "name": "effort-phase", "source": "effort-phase", "description": "Main-loop effort per request by skill phase, with a per-step usage ledger", "category": "fleet" },
     { "name": "spawn-policy", "source": "spawn-policy", "description": "Role-to-model tiers and synchronous review dispatch enforced on agent.spawn", "category": "fleet" },
-    { "name": "effort-probe", "source": "effort-probe", "description": "Measures whether a turn.step effort rewrite preserves the prompt cache", "category": "fleet", "defaultEnabled": false }
+    { "name": "effort-probe", "source": "effort-probe", "description": "Measures whether a turn.step effort rewrite preserves the prompt cache", "category": "fleet", "defaultEnabled": false },
+    { "name": "loop-boundary", "source": "loop-boundary", "description": "Compacts the main conversation to a near-clear at each /loop /auto iteration boundary, with a per-boundary ledger", "category": "fleet" },
+    { "name": "loop-boundary-probe", "source": "loop-boundary-probe", "description": "Measures where a plugin compaction is accepted and what origin a /loop wakeup carries", "category": "fleet", "defaultEnabled": false }
   ]
 }

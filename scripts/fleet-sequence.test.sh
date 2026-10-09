@@ -53,6 +53,7 @@ BIN="$WORK/bin"; mkdir -p "$BIN"
 cat > "$BIN/claude" <<STUB_CLAUDE
 #!/usr/bin/env bash
 if [ "\${1:-}" = "agents" ]; then cat "$WORK/agents.json" 2>/dev/null || echo '[]'; exit 0; fi
+if [ "\${1:-}" = "plugin" ]; then cat "$WORK/plugins.json" 2>/dev/null || echo '[{"id":"loop-boundary@alienfast-claude","enabled":true}]'; exit 0; fi
 echo "\$@" >> "$WORK/dispatches"
 n=\$(( \$(cat "$WORK/seq" 2>/dev/null || echo 0) + 1 )); echo "\$n" > "$WORK/seq"
 sid=\$(printf 'ab%06d' "\$n")
@@ -523,8 +524,19 @@ reset
 ck "flags exit 0"               "0" "$(run BF-1 -- --model fable --effort high)"
 ck_has "flag passthrough"       "--model fable --effort high" "$WORK/dispatches"
 ck_lacks "no default model"     "opus[1m]" "$WORK/dispatches"
-ck_has "default autocompact still added" "--autocompact 500000" "$WORK/dispatches"
+ck_lacks "no default autocompact"  "--autocompact" "$WORK/dispatches"
 ck_has "single-issue PR title"  "create seq/bf-1 main BF-1: Title of BF-1" "$WORK/gh-calls"
+# loop-boundary guard: refuse without the mod; an explicit cap softens the refusal to a WARN
+reset
+echo '[{"id":"effort-phase@alienfast-claude","enabled":true}]' > "$WORK/plugins.json"
+ck "missing mod exits 5"            "5" "$(run BF-1)"
+ck "missing mod dispatches nothing" "0" "$(dispatches)"
+ck_has "missing mod names install"  "claude plugin install loop-boundary@alienfast-claude" "$WORK/out"
+reset
+ck "explicit cap launches"          "0" "$(run BF-1 -- --autocompact 700000)"
+ck_has "explicit cap warns"         "WARN: launching without the loop-boundary mod" "$WORK/out"
+ck_has "explicit cap passes through" "--autocompact 700000" "$WORK/dispatches"
+rm -f "$WORK/plugins.json"
 reset
 export FLEET_SEQUENCE_PR_UPDATE=0
 ck "explicit pr token exits 0"  "0" "$(run pr BF-1)"
