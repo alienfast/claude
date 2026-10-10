@@ -607,7 +607,8 @@ mkdir -p tmp
 #    `blocks` edge for such an item — the parent->child edge below, the search-before-filing
 #    edge above, and the same-method batch chain — wiring `related` instead: issue-spec.md's
 #    collision-edge guard forbids `blocks` on either side of an issue that will not ship
-#    unattended. Getting it wrong costs one wasted pickup, not a permanent loop: the item is
+#    unattended (a `human` route-out has its own edge rule, below — never this skip).
+#    Getting it wrong costs one wasted pickup, not a permanent loop: the item is
 #    fleet-pickable, so an /auto session ranks and claims it and pays /start Step 0's worktree
 #    create + `pnpm install` before the reason surfaces, then durably declines and applies
 #    `needs decision` itself (skills/auto/SKILL.md), after which no session re-picks it.
@@ -615,6 +616,17 @@ mkdir -p tmp
 #    § Out of Scope bounds the deliverable, never the evidence — passes `human` in
 #    the label arg the same way, and keeps `specified` (attached last, as always)
 #    when the body meets the bar: `human` records the executor, not spec quality.
+#    Its edge to this issue follows the act, not the labels (standards/issue-spec.md
+#    § Certification includes collision edges, the reverse agent → `human` carve-out).
+#    When the act is performed on what this issue ships — a deploy of its stack, a
+#    verification on an environment running its code — this issue blocks it. The parent
+#    link is not an edge: the parent→child step below wires
+#    `linear-cli relations add <ISSUE-ID> <new-ID> -r blocks` whether or not the item
+#    carries `specified`. An act needing none of this issue's code (a vendor template,
+#    a secret, a DNS record) takes `-r related` there instead. Measured 2026-10-10,
+#    two tails filed after the ruling through this recipe: BF-2518 (verify BF-2513's
+#    narrowed grant on a PR stack) carried no `BF-2513 blocks BF-2518` edge until the
+#    retro wired it, and BF-2485 still carries none.
 body_file=$(mktemp -u tmp/deferred-XXXXXX)   # -u = name only; Write creates it. Plain mktemp pre-creates and Write then refuses.
 # ...write body to "$body_file" via the Write tool...
 
@@ -720,7 +732,9 @@ ranks a child of an In Progress parent **best** (weight 1) — which is how BF-8
 still-in-flight parent could change its premise. After a successful create, wire `linear-cli relations add <ISSUE-ID> <new-ID> -r blocks` (parent blocks child; `/next`
 observes only `blocks` edges). Scope it exactly like the search-before-filing edge above, honoring both halves of standards/issue-spec.md's guard: wire it **only for
 severity-carrying items** (the ones filed `specified`, hence fleet-pickable — an unlabeled deferred item `/auto` cannot pick gains nothing and only loses its place in
-a bare `/next`), and **only while this run's verdict is still passing** — a run already headed for `terminated-with-open-items` (Step 5's option 2 reaches this
+a bare `/next`) — plus any `human` route-out whose act is performed on what this issue ships, `specified` or not, since that edge orders the person's act rather
+than a fleet pick (a `human` act needing none of this issue's code takes `related` here instead; see the human route-out note in the recipe above) — and **only
+while this run's verdict is still passing** — a run already headed for `terminated-with-open-items` (Step 5's option 2 reaches this
 sub-step) ends with `/auto` abandoning the parent In Progress and `stalled`, which is precisely the blocker-that-never-ships that strands the child invisibly. Skip it
 when Step 1 resolved no issue (`-` parent, a top-level issue) or when the helper reported the nesting cap (create_status 3/4), where the issue is a `related` peer
 rather than a child. On a passing verdict the edge is self-clearing: `/finish` moves the parent to `Ready For Release`, which `next-candidates.sh` counts as terminal
