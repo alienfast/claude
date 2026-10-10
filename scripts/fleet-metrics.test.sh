@@ -1821,6 +1821,75 @@ ck_has "untagged: flag names both"        "**Resolved findings with no severity 
 ck_lacks "untagged: inline control unnamed" "TT-60 (\`" "$MD23"
 ck "untagged: block stays block-scoped"   "1" "$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(sum(sum(v['severity'].values()) for v in d['review_churn']))" "$J23")"
 
+# ---- quota-stall fixture: ONE weekly outage the rewake hook kept re-waking, from the 2026-10-10 fleet ----
+# fixtures/fleet-metrics-weekly-rewake/ holds trimmed REAL records from sessions 8c16860d, b2bb1003 and
+# cbc11f9e: the first refused turn, a StopFailure rewake injection and its refused turn, a refused
+# /loop scheduled fire, then the operator's account switch ("finish your issue") and real work. Every
+# re-woken turn was refused again with `isApiErrorMessage` + `error: rate_limit`; counting those rows
+# as activity printed one 6.25h outage as 27 ~0.5h recoveries with lags near -88h.
+CKW="$WORK/checkoutw"
+mkdir -p "$CKW/tmp"
+git -C "$CKW" init -q 2>/dev/null
+MW="$(git -C "$CKW" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
+mkdir -p "$WORK/projects/$MW"
+FIXW="$(cd "$(dirname "$0")" && pwd)/fixtures/fleet-metrics-weekly-rewake"
+for run in 8c16860d b2bb1003 cbc11f9e; do
+  cp "$FIXW/$run-0000.jsonl" "$WORK/projects/$MW/$run-0000.jsonl"
+  cat > "$CKW/tmp/auto-state-$run.json" <<'EOF'
+{"status": "drained", "reason": "fleet deadline reached", "shipped": [], "canceled": [], "skipped": [], "failed": []}
+EOF
+done
+echo '{"deadline_epoch": 1791628818}' > "$CKW/tmp/fleet-deadline.json"
+JW="$WORK/outw.json"; MDW="$WORK/outw.md"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CKW" --sessions 8c16860d,b2bb1003,cbc11f9e --json > "$JW" 2>/dev/null
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CKW" --sessions 8c16860d,b2bb1003,cbc11f9e > "$MDW" 2>&1
+qw() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$JW"; }
+ck "rewake outage is one group"   "1" "$(qw "len(d['windows']['quota_stall_groups'])")"
+ck "rewake group names all 3"     "['8c16860d', 'b2bb1003', 'cbc11f9e']" \
+   "$(qw "sorted(d['windows']['quota_stall_groups'][0]['runs'])")"
+ck "rewake resumed at real work"  "2026-10-10T14:22:05Z" "$(qw "d['windows']['quota_stall_groups'][0]['resumed_at']")"
+ck "rewake lost hours to deadline" "18.7" "$(qw "d['windows']['quota_stall_groups'][0]['lost_session_hours']")"
+ck "rewake limit kind"            "['weekly']" "$(qw "d['windows']['quota_stall_groups'][0]['limit_kind']")"
+ck "rewake reset parsed (date form)" "2026-10-13T22:00:00Z" "$(qw "d['windows']['quota_stall_groups'][0]['reset_at']")"
+ck "rewake resumed before reset"  "True" "$(qw "d['windows']['quota_stall_groups'][0]['resumed_before_reset']")"
+ck "rewake no avoidable lag"      "0.0" "$(qw "d['windows']['quota_stall_groups'][0]['avoidable_recovery_lag_hours']")"
+ck "rewake one fingerprint in md" "1" "$(grep -c 'quota-stall fingerprint' "$MDW")"
+ck_has "md reports resumed-before-reset" "Resumed before the named reset" "$MDW"
+ck_lacks "md prints no negative lag" "worst single session -" "$MDW"
+
+# A genuine 5h cutoff (clock-form reset) that recovers AFTER its reset keeps its measured lag. Built from
+# the fixture's own real refusal and work records with only the text and timestamps replaced, so the
+# record shape is never hand-written.
+CKS="$WORK/checkouts"
+mkdir -p "$CKS/tmp"
+git -C "$CKS" init -q 2>/dev/null
+MS="$(git -C "$CKS" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
+mkdir -p "$WORK/projects/$MS"
+python3 - "$FIXW/8c16860d-0000.jsonl" "$WORK/projects/$MS" "$CKS/tmp" <<'MK_SHORT_CUTOFF'
+import json, sys
+src, dest, tmp = sys.argv[1:4]
+rows = [json.loads(l) for l in open(src)]
+work = next(r for r in rows if r["type"] == "assistant" and not r.get("isApiErrorMessage"))
+refusal = next(r for r in rows if r.get("isApiErrorMessage"))
+for run, cut, resume in (("s1111111", "04:48:00", "10:15:00"), ("s2222222", "04:48:30", "10:15:30")):
+    out = []
+    for i, (kind, at) in enumerate((("work", "04:30:00"), ("refusal", cut), ("work", resume))):
+        r = json.loads(json.dumps(work if kind == "work" else refusal))
+        r["timestamp"] = f"2026-10-11T{at}.000Z"
+        if kind == "refusal":
+            r["message"]["content"][0]["text"] = "You've hit your session limit · resets 5:10am (America/Chicago)"
+        else:
+            r["message"]["id"] = f"msg_{run}_{i}"
+        out.append(json.dumps(r))
+    open(f"{dest}/{run}-0000.jsonl", "w").write("\n".join(out) + "\n")
+    open(f"{tmp}/auto-state-{run}.json", "w").write(json.dumps(
+        {"status": "drained", "reason": "t", "shipped": [], "canceled": [], "skipped": [], "failed": []}))
+MK_SHORT_CUTOFF
+MDS="$WORK/outs.md"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CKS" --sessions s1111111,s2222222 > "$MDS" 2>&1
+ck_has "5h cutoff keeps its lag"  "Recovery lag: 0.17 session-hours idle AFTER the allowance had already reset** (worst single session 0.09h)" "$MDS"
+ck_lacks "5h cutoff not early"    "Resumed before the named reset" "$MDS"
+
 echo
 echo "$PASS passed / $FAIL failed / $SKIP skipped"
 [ "$FAIL" -eq 0 ]

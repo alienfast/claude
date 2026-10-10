@@ -270,6 +270,43 @@ retire_case "drained, idle, 20m, no --retire         -> left alone"           dr
 retire_case "active ledger, idle, 20m, --retire      -> left alone (stall)"   active  idle 1200 --retire none
 retire_case "drained, idle, 6m, --retire-min 5       -> retired (floor moved)" drained idle  360 --retire --retire-min 5 retired
 
+# ---- a session working inside a linked worktree (BF-fleet 2026-10-10) ----
+# /auto spends most of its time in <checkout>/.claude/worktrees/bf-NNNN, whose tmp/ holds no ledger: the ledger is in the MAIN
+# checkout's tmp/. The rows come from a real `claude agents --json` snapshot (cwds rewritten onto a sandbox repo built with real
+# `git worktree add`, so the owning-checkout lookup runs real git). The watcher read 0 in scope on four consecutive fleets.
+FIXTURE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fixtures/auto-stall-watch-agents-2026-10-10.json"
+GIT="git -c user.name=t -c user.email=t@t -c init.defaultBranch=main"
+MAIN="$TMP/wtmain"; OTHER="$TMP/wtother"
+rm -rf "$MAIN" "$OTHER"; mkdir -p "$MAIN" "$OTHER"
+$GIT -C "$MAIN" init -q && $GIT -C "$MAIN" commit -q --allow-empty -m init
+$GIT -C "$OTHER" init -q && $GIT -C "$OTHER" commit -q --allow-empty -m init
+$GIT -C "$MAIN" worktree add -q "$MAIN/.claude/worktrees/bf-2473" -b bf-2473
+$GIT -C "$MAIN" worktree add -q "$MAIN/.claude/worktrees/bf-2009" -b bf-2009
+mkdir -p "$MAIN/.claude/worktrees/bf-2473/apps/sub" "$MAIN/tmp"
+
+wt_case() { # <name> <session-prefix> <cwd> <ledger-dir-or-none> <want "stalled-quota/1"|"none/0">
+  local name="$1" pfx="$2" cwd="$3" ledger="$4" want="$5" sid got
+  sid=$(jq -r --arg p "$pfx" '.[] | select(.sessionId | startswith($p)) | .sessionId' "$FIXTURE")
+  rm -f "$PROJ"/*.jsonl "$MAIN"/tmp/auto-state-*.json
+  tail_quota 8940 > "$PROJ/$sid.jsonl"; touch_ago 8940 "$PROJ/$sid.jsonl"
+  [ "$ledger" = "none" ] || { mkdir -p "$ledger/tmp"; printf '{"status":"active","reason":"","shipped":[]}\n' > "$ledger/tmp/auto-state-$pfx.json"; }
+  jq --arg p "$pfx" --arg cwd "$cwd" 'map(select(.sessionId | startswith($p)) | .cwd = $cwd)' "$FIXTURE" > "$TMP/agents.json"
+  got=$("$SCRIPT" --agents-json "$TMP/agents.json" --now "$NOW" --json 2>/dev/null \
+        | jq -r 'if (.stalled | length) == 0 then "none/\(.in_scope)" else "\(.stalled[0].verdict)/\(.in_scope)" end')
+  if [ "$got" = "$want" ]; then echo "  PASS  $name"; PASS=$((PASS+1));
+  else echo "  FAIL  $name — expected '$want', got '$got'"; FAIL=$((FAIL+1)); fi
+  rm -f "$OTHER"/tmp/auto-state-*.json
+}
+WT="$MAIN/.claude/worktrees/bf-2473"
+wt_case "fleet row in a linked worktree, ledger in the main checkout  -> in scope" 8c16860d "$WT" "$MAIN" "stalled-quota/1"
+wt_case "  ... cwd a subdirectory of the worktree                       -> in scope" 8c16860d "$WT/apps/sub" "$MAIN" "stalled-quota/1"
+wt_case "  ... cwd the main checkout itself                             -> in scope" 8c16860d "$MAIN" "$MAIN" "stalled-quota/1"
+wt_case "  ... ledger in the worktree's own tmp/ still wins             -> in scope" 8c16860d "$WT" "$WT" "stalled-quota/1"
+wt_case "worktree of the checkout but NO ledger for this runKey         -> out of scope" 3db66d01 "$MAIN/.claude/worktrees/bf-2009" "none" "none/0"
+wt_case "cwd in an unrelated repo that holds no ledger                  -> out of scope" 8c16860d "$OTHER" "none" "none/0"
+wt_case "cwd a plain directory (no repo) holding no ledger              -> out of scope" 8c16860d "$TMP" "none" "none/0"
+wt_case "cwd gone from disk, ledger in a sibling checkout               -> out of scope" 8c16860d "$TMP/vanished/bf-1" "$MAIN" "none/0"
+
 echo ""
 echo "  $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

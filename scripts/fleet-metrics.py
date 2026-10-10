@@ -360,19 +360,73 @@ def subagent_meta(path, named_types):
         return "unknown", ""
 
 
+def is_limit_refusal(r, content):
+    """The synthetic assistant record the harness writes when an allowance refuses a turn — marked
+    `isApiErrorMessage` with `error: rate_limit`, its text the limit message. A refusal is not work."""
+    return (r.get("type") == "assistant" and bool(r.get("isApiErrorMessage"))
+            and (r.get("error") == "rate_limit" or bool(LIMIT_HIT.search(text_of(content)))))
+
+
+class ActivityTimes:
+    """Collects the times a transcript did real work into `out`, for all_silences().
+
+    hooks/auto-rewake.sh re-wakes a refused session every ~15 minutes and each woken turn is refused
+    again with the same limit message, so counting every row as activity ends the silence at the first
+    rewake: the 2026-10-10 fleet's one 6.25h weekly outage printed as 27 ~0.5h "recoveries" with
+    recovery lags of -80h. The first refusal after real work stays (it is where the silence begins);
+    later refused turns — their opener rows and the refusal — are dropped until work resumes.
+    """
+
+    def __init__(self, out):
+        self.out, self.buf, self.turn_at, self.limited, self.skip_tail = out, [], None, False, False
+
+    def _flush(self, upto=None):
+        self.out.extend(t for t in self.buf[:upto] if t)
+        self.buf, self.turn_at = [], None
+
+    def feed(self, r, t, content):
+        kind = r.get("type")
+        if is_limit_refusal(r, content):
+            if self.limited:
+                self._flush(self.turn_at)
+                self.skip_tail = True
+            else:
+                self._flush()
+                self.buf.append(t)
+                self.limited = True
+            return
+        is_result = kind == "user" and isinstance(content, list) \
+            and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content)
+        if (kind == "assistant" and not r.get("isApiErrorMessage")) or is_result:
+            self._flush()
+            self.buf.append(t)
+            self.limited = self.skip_tail = False
+        elif kind == "queue-operation" or kind == "user" or r.get("subtype") == "scheduled_task_fire":
+            self.skip_tail = False
+            if self.turn_at is None:
+                self.turn_at = len(self.buf)
+            self.buf.append(t)
+        elif not self.skip_tail:
+            self.buf.append(t)
+
+    def finish(self):
+        self._flush()
+
+
 def scan_transcript(path, agg, agent_type="main", description=""):
     """Fold one transcript (session or subagent) into agg. Subagents share the parent's totals on
     purpose: a classifier block inside a delegated reviewer is the parent's lost time."""
     rows = load(path)
     pending, times = {}, []
     d_model, d_out, d_first_user = None, 0, None
+    activity = ActivityTimes(agg["activity_times"])
     for r in rows:
         t = ts(r.get("timestamp"))
         if t:
             times.append(t)
-            agg["activity_times"].append(t)
         msg = r.get("message")
         content = msg.get("content") if isinstance(msg, dict) else None
+        activity.feed(r, t, content)
 
         # A message's rows share one id, so a row-wise sum double-counts — credit each id once. The
         # prompt-side fields repeat verbatim across those rows, but output_tokens does NOT in a subagent
@@ -602,6 +656,7 @@ def scan_transcript(path, agg, agent_type="main", description=""):
         if p_name == "Agent":
             _census_dispatch_typed(agg, p_inp.get("run_in_background"))
     agg["dangling"] += len(pending)
+    activity.finish()
     if times:
         agg["first"] = min([agg["first"], min(times)]) if agg["first"] else min(times)
         agg["last"] = max([agg["last"], max(times)]) if agg["last"] else max(times)
@@ -895,9 +950,14 @@ def quota_stalls(sessions, cluster_s=120, min_silence_s=1800):
             # The reset the harness named is what the wait SHOULD have been; anything past it is
             # recovery lag, and recovery lag is the only part a fix can reach.
             reset = reset_named_at(s["agg"], x[0])
-            lag = (x[1] - reset).total_seconds() if reset else None
+            vs_reset = (x[1] - reset).total_seconds() if reset else None
+            # Recovery lag is time idle AFTER the allowance freed, so it cannot be negative: a session
+            # that resumed before the named reset (an operator switching accounts) had none, and the raw
+            # signed gap rides along as resume_vs_reset_s.
             marks.append((x[0], s, {"kind": "recovered", "resumed": x[1], "seconds": x[2],
-                                    "reset_at": reset, "recovery_lag_s": lag}))
+                                    "reset_at": reset, "resume_vs_reset_s": vs_reset,
+                                    "recovery_lag_s": None if vs_reset is None else max(0.0, vs_reset),
+                                    "resumed_before_reset": vs_reset is not None and vs_reset < 0}))
         if not sil and not anchored and (not s["agg"]["terminal_tags"]
                                          and (now - s["agg"]["last"]).total_seconds() >= min_silence_s):
             marks.append((s["agg"]["last"], s, {"kind": "unrecovered", "resumed": None, "seconds": None}))
@@ -2237,6 +2297,12 @@ def main():
                                    if any(m[2]["resumed"] for m in g) else None),
                     "lost_session_hours": round(lost_seconds(g) / 3600, 1),
                     "lost_clipped_at_deadline": fleet_deadline_dt is not None,
+                    "reset_at": (f"{max(m[2]['reset_at'] for m in g if m[2].get('reset_at')):%Y-%m-%dT%H:%M:%SZ}"
+                                 if any(m[2].get("reset_at") for m in g) else None),
+                    "resumed_before_reset": any(m[2].get("resumed_before_reset") for m in g),
+                    "avoidable_recovery_lag_hours": (
+                        round(sum(m[2]["recovery_lag_s"] for m in g if m[2].get("recovery_lag_s")) / 3600, 2)
+                        if any(m[2].get("recovery_lag_s") is not None for m in g) else None),
                     # Which allowance refused the run, straight from the harness message. Decides the
                     # sizing lever: weekly -> duration, 5-hour -> concurrency, session -> neither.
                     "limit_kind": sorted({m[1]["agg"]["first_limit_hit"][1] for m in g
@@ -2591,7 +2657,12 @@ def main():
                       + " Do not infer this from the stall's shape — the limits produce the same "
                         "synchronized-silence fingerprint and carry different levers.")
             lags = [m[2].get("recovery_lag_s") for m in g if m[2].get("recovery_lag_s") is not None]
-            if lags:
+            if lags and not any(l > 0 for l in lags) and any(m[2].get("resumed_before_reset") for m in g):
+                reset_at = max(m[2]["reset_at"] for m in g if m[2].get("reset_at"))
+                print(f"  **Resumed before the named reset ({reset_at:%Y-%m-%d %H:%M UTC}): no avoidable recovery "
+                      f"lag.** The wait was the allowance's own, ended early from outside the loop (an "
+                      f"operator switching accounts, say), so nothing here points at the recovery hook.")
+            elif lags:
                 worst = max(lags) / 3600
                 avoidable = sum(l for l in lags if l > 0) / 3600
                 print(f"  **Recovery lag: {avoidable:.2f} session-hours idle AFTER the allowance had "

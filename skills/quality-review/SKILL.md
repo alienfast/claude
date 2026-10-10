@@ -586,7 +586,19 @@ mkdir -p tmp
 #    "Filing before the decision exists" carve-out. This is for a genuine human PICK only —
 #    an empirical question the session could not settle is not one: write it as a directed
 #    measurement and certify (standards/issue-spec.md § An agent filing never lands
-#    unrouted). Keep the severity priority (1-3), say in the body what must be decided, and
+#    unrouted). A pick already recorded is not an open one: before filing, read the
+#    decisions on the worked issue and on every ancestor in its parent chain (their
+#    Decisions sections and `(decided: …)` markers). The digest lists ancestors by title
+#    only, so fetch each description (`linear-cli issues get <ID> -o json | jq -r .description`).
+#    Measured 2026-10-10: BF-2524 asked whether a shared entry's history shows other
+#    teams' transactions, a pick its grandparent epic BF-2514 had recorded the day
+#    before; BF-2522, filed the same night, quoted BF-2194's decision and asked to
+#    reopen it. When one already answers the question, file the item as a request to
+#    reopen it, never as a fresh question: quote the decision with the issue that
+#    records it, state the evidence it did not weigh, and close with the two outcomes —
+#    it stands (cancel this issue, citing it) or it is reversed (record the reversal
+#    there, keep this issue as the work). Keep the severity priority (1-3), say in the
+#    body what must be decided, and
 #    pass `needs decision` IN the label arg alongside any class label ("bug,needs decision")
 #    so the item is gated from the moment it exists — the helper keeps a label's internal
 #    spacing and heals a near-miss to the canonical name (linear-create-child.test.sh pins

@@ -70,6 +70,9 @@
 #     is not evidence of silence, and waking a healthy session is the costlier mistake: it is told to run an iteration.
 #   - The per-session caps (AUTO_REWAKE_STOP_MAX 12 consecutive rewakes, AUTO_REWAKE_API_MAX 24 = six hours of retries),
 #     so a session whose scheduler is simply broken, or a multi-day quota block, cannot be revived forever.
+#   - A usage limit whose named reset lies beyond the retries left (`skip reason=reset-beyond-horizon`), at once instead of
+#     after the cap. Measured 2026-10-10: every fleet session hit "weekly limit · resets Oct 13 at 5pm" ~3.5 days out and
+#     spent all 24 retries, each an immediate 429, before api-cap. An absent or unparseable reset keeps retrying.
 #
 # THE THIRD JOB — RETIRING A FINISHED LOOP. A `/loop /auto` session that ends its loop (ScheduleWakeup stop:true after
 # writing a `drained`/`halted` ledger) never leaves the session registry on its own: the harness settles a `--bg` session
@@ -230,13 +233,47 @@ oneshot_anchored() { # → true|false
        | select((utext(.message.content // "")) | test("<command-name>/auto</command-name>")) ] | length) > 0' "$TRANSCRIPT_PATH" 2>/dev/null
 }
 
+# Epoch of the reset a usage-limit message names, empty when it names none or cannot be read — the caller then retries.
+# Real shapes: "resets 5:10am (America/Chicago)" (the next occurrence of that time) and "resets Oct 13 at 5pm (America/Chicago)".
+reset_epoch() { # <message> <now-epoch>
+  python3 -c '
+import re, sys
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+m = re.search(r"resets\s+(?:([A-Z][a-z]{2})\s+(\d{1,2})\s+at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*\(([A-Za-z0-9_+/-]+)\)", sys.argv[1])
+if not m:
+    sys.exit(0)
+mon, day, hh, mm, ap, tz = m.groups()
+now = datetime.fromtimestamp(int(sys.argv[2]), ZoneInfo(tz))
+hour = int(hh) % 12 + (12 if ap == "pm" else 0)
+at = dict(hour=hour, minute=int(mm or 0), second=0, microsecond=0)
+if mon:
+    month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].index(mon) + 1
+    r = now.replace(month=month, day=int(day), **at)
+    if r < now - timedelta(days=1):
+        r = r.replace(year=now.year + 1)
+else:
+    r = now.replace(**at)
+    if r <= now:
+        r += timedelta(days=1)
+print(int(r.timestamp()))' "$1" "$2" 2>/dev/null || true
+}
+
 api_failure_decision() { # <session: loop|one-shot> → the StopFailure verdict once the session is known to be ours and unheld
-  local session="$1" n
+  local session="$1" n msg reset horizon
   case "$API_ERROR" in
     rate_limit|overloaded|server_error|unknown) ;;
     *) jq -nc --arg e "$API_ERROR" --arg s "$session" '{action:"skip", reason:"not-transient", error:$e, in_scope:true, session:$s}'; return ;;
   esac
   n=$(counter api_rewakes)
+  msg=$(jq -r '.last_assistant_message // empty' <<<"$INPUT" 2>/dev/null || true)
+  reset=$(reset_epoch "$msg" "$(now)")
+  horizon=$(( (API_MAX - n) * API_DELAY ))
+  if [[ "$reset" =~ ^[0-9]+$ ]] && (( reset - $(now) > horizon )); then
+    jq -nc --argjson r "$reset" --arg s "$session" \
+      '{action:"skip", reason:"reset-beyond-horizon", reset:($r | todate), kind:"api", in_scope:true, session:$s}'
+    return
+  fi
   [[ "$n" -ge "$API_MAX" ]] && { jq -nc --argjson n "$n" --arg s "$session" '{action:"skip", reason:"api-cap", n:$n, in_scope:true, session:$s}'; return; }
   jq -nc --arg e "$API_ERROR" --argjson w "$API_DELAY" --argjson n "$n" --arg s "$session" \
     '{action:"wait", kind:"api", wait_s:$w, error:$e, n:$n, in_scope:true, session:$s}'
@@ -341,7 +378,7 @@ if [[ "$ACTION" == "retire" ]]; then
 fi
 
 if [[ "$ACTION" != "wait" ]]; then
-  [[ "$IN_SCOPE" == "true" ]] && log "skip reason=$(jq -r '.reason' <<<"$DEC")"
+  [[ "$IN_SCOPE" == "true" ]] && log "skip reason=$(jq -r '.reason' <<<"$DEC")$(jq -r 'if .reset then " reset=\(.reset) kind=\(.kind)" else "" end' <<<"$DEC")"
   exit 0
 fi
 

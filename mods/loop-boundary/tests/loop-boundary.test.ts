@@ -131,13 +131,29 @@ test('the turn that ends the loop (ScheduleWakeup stop) is not compacted', async
   expect(h.rows()[0]).toMatchObject({ event: 'pass', reason: 'loop-ended', outcome: 'NO-CANDIDATES: backlog drained' })
 })
 
+// The input is a fleet session's real ScheduleWakeup call (b2bb1003, 2026-10-09): /auto re-arms with the whole /loop command, so a
+// prompt stored unstripped never matches the `/auto` prefix — that fleet turned away its looping turns at the prefix check and compacted nothing.
+const REAL_WAKEUP = { delaySeconds: 1800, prompt: '/loop /auto backlog', reason: "Fallback heartbeat while BF-2475's exploration agents run; their completion notifications are the real wake signal.", noop: false }
+
 test('a ScheduleWakeup call carrying the loop prompt marks the session as looping', async ($, on) => {
-  const h = harness(on, { tools: { 0: [{ name: 'ScheduleWakeup', input: { delaySeconds: 60, prompt: '/auto', noop: false, reason: 'next pick' } }] } })
+  const h = harness(on, { tools: { 0: [{ name: 'ScheduleWakeup', input: REAL_WAKEUP }] } })
   await $.session.start(SESSION)
   await $.turn.start({ turnId: 't1', text: 'carry on' })
   await drain($.turn.step({ ...STEP, turnId: 't1', index: 0 }))
   await $.turn.complete(done('t1', SHIPPED))
-  expect(h.rows()[0]).toMatchObject({ event: 'boundary', loopPrompt: '/auto' })
+  expect(h.rows()[0]).toMatchObject({ event: 'boundary', loopPrompt: '/auto backlog' })
+})
+
+test('a fleet session that re-arms with its /loop command still compacts at the boundary', async ($, on) => {
+  const h = harness(on, { tools: { 0: [{ name: 'ScheduleWakeup', input: REAL_WAKEUP }] } })
+  await $.session.start(SESSION)
+  await $.prompt.submit(typed('/loop /auto backlog'))
+  await $.turn.start({ turnId: 't1', text: '/loop /auto backlog' })
+  await drain($.turn.step({ ...STEP, turnId: 't1', index: 0 }))
+  await $.turn.complete(done('t1', SHIPPED))
+  expect(h.coreCompactions).toEqual([])
+  expect(h.rows()).toHaveLength(1)
+  expect(h.rows()[0]).toMatchObject({ event: 'boundary', accepted: true, nearClear: true, loopPrompt: '/auto backlog' })
 })
 
 test('below the context floor a boundary is logged, not compacted', { options: { min_context_percent: 60 } }, async ($, on) => {
@@ -185,6 +201,7 @@ test('pure helpers: outcome lines, loop prompts, prefixes, wakeups, request toke
   expect(matchesPrefix('/auto-prep', ['/auto'])).toBe(false)
   expect(matchesPrefix('/babysit', ['/auto', '/babysit'])).toBe(true)
   expect(wakeupPromptOf([{ name: 'ScheduleWakeup', input: { prompt: '/auto', delaySeconds: 60 } }])).toEqual({ prompt: '/auto', stop: false })
+  expect(wakeupPromptOf([{ name: 'ScheduleWakeup', input: REAL_WAKEUP }])).toEqual({ prompt: '/auto backlog', stop: false })
   expect(wakeupPromptOf([{ name: 'ScheduleWakeup', input: { stop: true } }])).toEqual({ prompt: null, stop: true })
   expect(wakeupPromptOf([{ name: 'Bash', input: { command: 'ls' } }])).toEqual({ prompt: null, stop: false })
   expect(requestTokensOf(USAGE)).toBe(112002)

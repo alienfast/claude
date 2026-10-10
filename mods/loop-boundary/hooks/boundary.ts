@@ -27,7 +27,8 @@ function inputOf(use: ToolUse): Record<string, unknown> {
   return typeof use.input === 'object' && use.input !== null ? (use.input as Record<string, unknown>) : {}
 }
 
-// The loop prompt a ScheduleWakeup call carries forward, or null when the call ends the loop or there is no such call.
+// The loop prompt a ScheduleWakeup call carries forward, or null when the call ends the loop or there is no such call. /auto re-arms
+// with its whole `/loop /auto …` command, so the prompt is stripped the same way a typed one is before the prefix list sees it.
 export function wakeupPromptOf(uses: readonly ToolUse[]): { prompt: string | null; stop: boolean } {
   let prompt: string | null = null
   let stop = false
@@ -35,7 +36,7 @@ export function wakeupPromptOf(uses: readonly ToolUse[]): { prompt: string | nul
     if (use.name !== 'ScheduleWakeup') continue
     const input = inputOf(use)
     if (input.stop === true) stop = true
-    else if (typeof input.prompt === 'string') prompt = input.prompt
+    else if (typeof input.prompt === 'string') prompt = loopPromptOf(input.prompt) ?? input.prompt.trim()
   }
   return { prompt, stop }
 }

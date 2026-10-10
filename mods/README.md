@@ -37,3 +37,11 @@ mods/typecheck.sh mods/<name>
 `typecheck.sh` runs tsc through `pnpm dlx` against the build's `claude-code.d.ts`, which the engine writes beside a mod
 only when an interactive session loads it; otherwise it uses the copy the `plugin-authoring` skill extracted this
 session. The engine-written `.claude-plugin/types/` folders are gitignored.
+
+**A test replays the real shape of what the mod reads.** Copy a tool call's input, a prompt, or an event payload from a
+live transcript or ledger rather than writing it from memory. loop-boundary's suite fed `ScheduleWakeup` a hand-written
+`prompt: '/auto'` and stayed green through its first fleet (2026-10-09), where every real call carried the whole
+`/loop /auto backlog` command: the stored prompt never matched the `/auto` prefix, so the mod turned away more than 130
+looping turns across three sessions at the prefix check and compacted none. An acceptance run has to replay the real
+dispatch too — that mod's ran a fixed-interval `/loop 1m` with a synthetic prompt, which cron re-arms, so the
+`ScheduleWakeup` path a self-paced `/loop /auto` takes never ran.

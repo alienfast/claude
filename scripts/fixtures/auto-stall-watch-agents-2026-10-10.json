@@ -1,0 +1,44 @@
+[
+  {
+    "pid": 37317,
+    "cwd": "/Users/kross/projects/basefund/.claude/worktrees/bf-2009",
+    "kind": "interactive",
+    "startedAt": 1791476229878,
+    "sessionId": "3db66d01-63c8-4a8a-9763-0c3f7bda618e",
+    "name": "BF-2009 sql prep",
+    "status": "idle"
+  },
+  {
+    "pid": 45390,
+    "id": "b2bb1003",
+    "cwd": "/Users/kross/projects/basefund/.claude/worktrees/bf-2415",
+    "kind": "background",
+    "startedAt": 1791642105120,
+    "sessionId": "b2bb1003-5683-4b0d-8b3d-b1201abbdc38",
+    "name": "recurring auto backlog sweep",
+    "status": "busy",
+    "state": "working"
+  },
+  {
+    "pid": 34907,
+    "id": "8c16860d",
+    "cwd": "/Users/kross/projects/basefund/.claude/worktrees/bf-2473",
+    "kind": "background",
+    "startedAt": 1791642118268,
+    "sessionId": "8c16860d-d02b-4364-af52-2d5a27d9dd9c",
+    "name": "auto backlog loop",
+    "status": "busy",
+    "state": "working"
+  },
+  {
+    "pid": 35270,
+    "id": "cbc11f9e",
+    "cwd": "/Users/kross/projects/basefund/.claude/worktrees/bf-2266",
+    "kind": "background",
+    "startedAt": 1791642123269,
+    "sessionId": "cbc11f9e-389c-4160-9baf-c4b05cb2726a",
+    "name": "backlog automation loop",
+    "status": "busy",
+    "state": "working"
+  }
+]

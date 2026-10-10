@@ -37,7 +37,7 @@
 # `claude rm <id>`: measured that day, `stop` leaves the row listed with `status`/`pid` gone and `rm` removes it while
 # the transcript stays on disk for /fleet-retro.
 #
-# SCOPING: an agent is in scope iff its cwd carries a matching /auto run-state file — NEVER by the agent
+# SCOPING: an agent is in scope iff its cwd — or the main checkout owning its worktree — carries a matching /auto run-state file — NEVER by the agent
 # list's `kind` field, and never by an `id` field. Measured 2026-08-17: the live `claude agents --json`
 # rows carry NO `id` at all and report `kind:"interactive"` for every session, fleet agents included. The
 # original version selected `kind=="background"` and joined state files on `.id`, so it matched nothing —
@@ -114,10 +114,20 @@ last_entry_epoch() {
 # Resolve the /auto run-state file for a background session. /auto names it after the runKey, which is
 # the session-id prefix the harness also reports as the agent `id` — so the agent list joins to the
 # ledger with no guessing. Older runs used the full uuid; try both.
+#
+# The ledger lives in the checkout that OWNS the session, not in the cwd: /auto spends most of its time in a linked worktree
+# (<checkout>/.claude/worktrees/bf-NNNN), whose tmp/ holds none. Measured 2026-10-06..10: with every fleet session in a worktree
+# this read 0 in scope. `git rev-parse --git-common-dir` names the main checkout's .git from a worktree or any subdirectory of
+# one; a cwd outside any repo yields no second root, and the runKey in the file name keeps another repo's ledger from matching.
 state_file_for() {
-  local cwd="$1" id="$2" sid="$3"
-  for cand in "$cwd/tmp/auto-state-${sid%%-*}.json" "$cwd/tmp/auto-state-$id.json" "$cwd/tmp/auto-state-$sid.json"; do
-    [ -f "$cand" ] && { printf '%s' "$cand"; return 0; }
+  local cwd="$1" id="$2" sid="$3" root common
+  local roots=("$cwd")
+  common=$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || common=""
+  [ "${common##*/}" = ".git" ] && [ "${common%/.git}" != "$cwd" ] && roots+=("${common%/.git}")
+  for root in "${roots[@]}"; do
+    for cand in "$root/tmp/auto-state-${sid%%-*}.json" "$root/tmp/auto-state-$id.json" "$root/tmp/auto-state-$sid.json"; do
+      [ -f "$cand" ] && { printf '%s' "$cand"; return 0; }
+    done
   done
   return 1
 }

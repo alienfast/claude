@@ -22,6 +22,9 @@
 # such a death was read as manual control for the rest of the session and the next 429 five hours later went unrecovered, so
 # no human prompt holds the StopFailure path any more (#19, #33, #39); the Stop path keeps the hold (#10).
 #
+# #42-#44 are the 2026-10-10 weekly-limit outage (24 futile retries against a reset 3.5 days out); the messages are the real
+# strings from the fleet transcripts.
+#
 # GROW THIS SUITE, NEVER PRUNE IT. Every newly observed silent-death shape becomes a numbered case, added WITH its fix.
 
 set -uo pipefail
@@ -171,6 +174,39 @@ set_state s-twenty '{"api_rewakes":24}'
 ck "20 24 retries already (six hours) -> skip api-cap"         api-cap "$(dec "$(ev StopFailure "$f" s-twenty "$SF")" .reason)"
 ck "20b a hook event that is not a stop -> skip"               not-a-stop-event "$(dec "$(ev SubagentStop "$f" s-twentyb)" .reason)"
 
+# 42. A limit whose named reset lies beyond the retries left stands down at once (2026-10-10: every fleet session hit "weekly
+#     limit · resets Oct 13 at 5pm" ~3.5 days out and spent all 24 retries before api-cap). The message is the real one, from the
+#     fleet transcripts; the horizon is (24 - n) retries x 900s. An absent or unparseable reset keeps the old retrying.
+T0=$(jq -rn '"2026-10-10T16:00:00Z" | fromdateiso8601')   # 11:00 in America/Chicago (CDT)
+sf() { jq -nc --arg m "$1" '{error:"rate_limit", last_assistant_message:$m}'; }
+WEEKLY="You've hit your weekly limit · resets Oct 13 at 5pm (America/Chicago)"
+SESSION5="You've hit your session limit · resets 5:10am (America/Chicago)"
+f=$(tfile); { rec_loop $((B-300)); rec_work $((B-10)); rec_apierr "$B"; } > "$f"
+ck "42 weekly reset 3.5 days out -> skip reset-beyond-horizon" reset-beyond-horizon "$(dec "$(ev StopFailure "$f" s-fortytwo "$(sf "$WEEKLY")")" .reason "$T0")"
+ck "42 ... naming the reset (Oct 13 5pm CDT) in UTC"          2026-10-13T22:00:00Z "$(dec "$(ev StopFailure "$f" s-fortytwo "$(sf "$WEEKLY")")" .reset "$T0")"
+ck "42 ... as an api-kind skip, still in scope (it is logged)" "api true" "$(dec "$(ev StopFailure "$f" s-fortytwo "$(sf "$WEEKLY")")" '"\(.kind) \(.in_scope)"' "$T0")"
+ck "42 ... the same message with the error text trailing"      reset-beyond-horizon "$(dec "$(ev StopFailure "$f" s-fortytwo "$(sf "$WEEKLY (error type rate_limit, HTTP 429, request id req_011CfsvPez6yVakt)")")" .reason "$T0")"
+g=$(tfile); { rec_auto $((B-300)); rec_500 "$B"; } > "$g"
+ck "42 ... a one-shot session stands down the same way"        reset-beyond-horizon "$(dec "$(ev StopFailure "$g" s-fortytwoa "$(sf "$WEEKLY")")" .reason "$T0")"
+# Within the horizon: the normal 5-hour limit. 11:00 -> 5:10am is 18h10m away; at 00:30 it is 4h40m, inside 24 x 900s = 6h.
+T1=$(jq -rn '"2026-10-10T05:30:00Z" | fromdateiso8601')   # 00:30 CDT
+ck "43 5-hour limit resetting in 4h40m -> wait"                wait "$(dec "$(ev StopFailure "$f" s-fortythree "$(sf "$SESSION5")")" .action "$T1")"
+ck "43 ... as the usual api-kind wait of 900s"                 "api 900" "$(dec "$(ev StopFailure "$f" s-fortythree "$(sf "$SESSION5")")" '"\(.kind) \(.wait_s)"' "$T1")"
+ck "43 ... the same time 18h away (next 5:10am) -> skip"       reset-beyond-horizon "$(dec "$(ev StopFailure "$f" s-fortythree "$(sf "$SESSION5")")" .reason "$T0")"
+set_state s-fortythreeb '{"api_rewakes":10}'
+ck "43 ... the horizon shrinks with the retries spent: 14 left (3.5h) < 4h40m -> skip" reset-beyond-horizon "$(dec "$(ev StopFailure "$f" s-fortythreeb "$(sf "$SESSION5")")" .reason "$T1")"
+ck "43 ... 12pm is 1h away -> wait"                            wait "$(dec "$(ev StopFailure "$f" s-fortythreec "$(sf "You've hit your session limit · resets 12pm (America/Chicago)")")" .action "$T0")"
+ck "43 ... 12am is 13h away -> skip"                           reset-beyond-horizon "$(dec "$(ev StopFailure "$f" s-fortythreec "$(sf "You've hit your session limit · resets 12am (America/Chicago)")")" .reason "$T0")"
+T2=$(jq -rn '"2026-12-30T18:00:00Z" | fromdateiso8601')
+ck "43 ... a Jan reset read in late December is next year"     2027-01-02T23:00:00Z "$(dec "$(ev StopFailure "$f" s-fortythreed "$(sf "You've hit your weekly limit · resets Jan 2 at 5pm (America/Chicago)")")" .reset "$T2")"
+# FAIL TOWARD RETRYING: no reset, a reset that cannot be read, an unknown zone, a missing message.
+for m in "API Error: Request rejected (429)" "You've hit your weekly limit" "You've hit your weekly limit · resets soon (America/Chicago)" \
+         "You've hit your weekly limit · resets Oct 13 at 5pm (Mars/Olympus)" "You've hit your weekly limit · resets Oct 13 at 5pm" \
+         "You've hit your weekly limit · resets Feb 31 at 5pm (America/Chicago)"; do
+  ck "44 no usable reset [${m:0:60}] -> wait"                  wait "$(dec "$(ev StopFailure "$f" s-fortyfour "$(sf "$m")")" .action "$T0")"
+done
+ck "44 no last_assistant_message at all -> wait"               wait "$(dec "$(ev StopFailure "$f" s-fortyfour '{"error":"rate_limit"}')" .action "$T0")"
+
 echo "auto-rewake.sh — decisions (one-shot /auto):"
 SE='{"error":"server_error","last_assistant_message":"API Error: 500 Internal server error"}'
 # 31. THE FLEET-SEQUENCE DEATH (2026-09-21): `claude --bg "/auto BF-2034"`, a targeted run with no /loop anywhere, killed by a
@@ -264,6 +300,15 @@ ck "38 a Stop on the one-shot run resets its API retry count"  0 "$(get_state s-
 run_hook "$(ev Stop "$f" s-e2e-quiet)" 1 1
 ck "38 ... an ordinary targeted run leaves no state file"      missing "$(get_state s-e2e-quiet api_rewakes)"
 ck "38 ... and no log line"                                    0 "$(grep -c 's-e2e-qu' "$LOGS/auto-rewake.log")"
+
+# 42e. The same stand-down for real: no wait, no rewake, no counter, one distinct log line.
+N=$(date +%s); f=$(tfile); { rec_loop $((N-3000)); rec_work $((N-5)); rec_apierr "$N"; } > "$f"
+AUTO_REWAKE_NOW="$T0" run_hook "$(ev StopFailure "$f" s-e2e-beyond "$(sf "$WEEKLY")")" 300 1
+ck "42e weekly limit, reset days out -> exit 0 at once"        0 "$RC"
+ck "42e ... nothing is said to the model"                      0 "$(wc -c < "$TMP/err" | tr -d ' ')"
+ck "42e ... the log carries the distinct reason and the reset" 1 "$(grep -c 's-e2e-be StopFailure skip reason=reset-beyond-horizon reset=2026-10-13T22:00:00Z kind=api$' "$LOGS/auto-rewake.log")"
+ck "42e ... no wait was scheduled"                             0 "$(grep -c 's-e2e-be StopFailure wait' "$LOGS/auto-rewake.log")"
+ck "42e ... no retry was counted"                              missing "$(get_state s-e2e-beyond api_rewakes)"
 
 # 23. Counters: any completed turn proves the API answers; only a stop no hook caused proves the loop turns unaided.
 f=$(tfile); { rec_loop $((B-300)); rec_wake_stop "$B"; } > "$f"
