@@ -516,6 +516,43 @@ ck_has "explicit cap warns"          "WARN: launching without the loop-boundary 
 ck_has "explicit cap passes through" "--autocompact 700000" "$WORK/dispatches"
 rm -f "$WORK/plugins.json"
 
+# ---- the weekly readout: never silent, never blocking ----
+# Read from the rate-limits mod's file under HOME. With no file and no mod (the stub registry lists loop-boundary only) the line
+# says both; a reading past 70% warns when the reset falls after the deadline or the launch has none, and only notes when the
+# reset falls inside a dated run; below 70% it is the reading alone. Each shape launches.
+: > "$WORK/dispatches"
+ck "weekly: no file launches"           "0" "$(run 1)"
+ck_has "weekly: no file explained"      "Weekly: no reading (" "$WORK/out"
+ck_has "weekly: no file names the fix"  "rate-limits@alienfast-claude is not enabled on this machine" "$WORK/out"
+mkdir -p "$WORK/home/.claude/local"
+iso_at() { date -u -r "$1" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -d "@$1" '+%Y-%m-%dT%H:%M:%SZ'; }
+reading() { # <percent> <resets-epoch>
+  printf '{"measured_at":"%s","session":"s","windows":[{"kind":"five_hour","percentUsed":12.5},{"kind":"seven_day","percentUsed":%s,"resetsAt":"%s"}]}\n' \
+    "$(iso_at "$(date +%s)")" "$1" "$(iso_at "$2")" > "$WORK/home/.claude/local/rate-limits.json"
+}
+far=$(( $(date +%s) + 3 * 86400 ))
+reading 71 "$far"
+ck "weekly: reading launches"           "0" "$(run 1)"
+ck_has "weekly: reading printed"        "Weekly (seven_day): 71% used, resets $(iso_at "$far"), measured 0m ago" "$WORK/out"
+ck_has "weekly: undated past 70 warns"  "WARN: the weekly window is 71% used" "$WORK/out"
+ck "weekly: dated, reset after, launches" "0" "$(run 1 5h)"
+ck_has "weekly: reset after deadline warns" "WARN: the weekly window is 71% used" "$WORK/out"
+reading 71 $(( $(date +%s) + 3600 ))
+ck "weekly: dated, reset inside, launches" "0" "$(run 1 5h)"
+ck_has "weekly: reset inside run notes"  "NOTE: the weekly window is 71% used but resets before this fleet's deadline" "$WORK/out"
+ck_lacks "weekly: reset inside run no warn" "WARN: the weekly window" "$WORK/out"
+reading 30 "$far"
+ck "weekly: low launches"                "0" "$(run 1)"
+ck_has "weekly: low printed"             "Weekly (seven_day): 30% used" "$WORK/out"
+ck_lacks "weekly: low says nothing more" "the weekly window is" "$WORK/out"
+printf '{"measured_at":"%s","session":"s","windows":[{"kind":"five_hour","percentUsed":1}]}\n' "$(iso_at "$(date +%s)")" > "$WORK/home/.claude/local/rate-limits.json"
+ck "weekly: no seven_day launches"       "0" "$(run 1)"
+ck_has "weekly: no seven_day explained"  "Weekly: no reading (the last measurement in" "$WORK/out"
+echo 'not json' > "$WORK/home/.claude/local/rate-limits.json"
+ck "weekly: unreadable launches"         "0" "$(run 1)"
+ck_has "weekly: unreadable explained"    "is not readable JSON)" "$WORK/out"
+rm -rf "$WORK/home/.claude"
+
 echo
 echo "$PASS passed / $FAIL failed"
 [ "$FAIL" -eq 0 ]

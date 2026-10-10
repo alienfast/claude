@@ -442,6 +442,45 @@ if [ -n "$ceiling_line" ]; then
   esac
 fi
 
+# The active account's weekly window, from the reading mods/rate-limits last wrote (every session on this machine rewrites it on
+# each measurement, so it names whichever account the latest session ran on). The 2026-10-10 fleet was launched on an account
+# 5.75h from its weekly limit and lost 18.75 of its 36 session-hours; nothing at launch said so. Never silent, never blocking: a
+# reading or `Weekly: no reading (<why>)`, and a WARN only when the window could plausibly end this run — 70 is an unmeasured
+# starting threshold (fleet-launch SKILL.md).
+iso_epoch() { jq -rn --arg t "$1" '$t | sub("\\.[0-9]+"; "") | try fromdateiso8601 catch empty'; }
+weekly_file="$HOME/.claude/local/rate-limits.json"
+if [ ! -f "$weekly_file" ]; then
+  if "$script_dir/mod-enabled.sh" rate-limits >/dev/null 2>&1; then
+    echo "Weekly: no reading ($weekly_file is missing — rate-limits@alienfast-claude is enabled but no session has measured since it loaded; start one and relaunch, or launch without)"
+  else
+    echo "Weekly: no reading ($weekly_file is missing and rate-limits@alienfast-claude is not enabled on this machine — update.sh installs it, or: claude plugin install rate-limits@alienfast-claude)"
+  fi
+elif ! weekly_json=$(jq -c '{at: (.measured_at // ""), w: ((.windows // []) | map(select(.kind == "seven_day")) | .[0])}' "$weekly_file" 2>/dev/null) || [ -z "$weekly_json" ]; then
+  echo "Weekly: no reading ($weekly_file is not readable JSON)"
+elif [ -z "$(jq -r '.w.percentUsed // empty' <<<"$weekly_json")" ]; then
+  echo "Weekly: no reading (the last measurement in $weekly_file carried no seven_day window)"
+else
+  weekly_pct=$(jq -r '.w.percentUsed' <<<"$weekly_json")
+  weekly_reset=$(jq -r '.w.resetsAt // "unknown"' <<<"$weekly_json")
+  weekly_at=$(jq -r '.at' <<<"$weekly_json")
+  weekly_at_epoch=$(iso_epoch "$weekly_at")
+  weekly_reset_epoch=$(iso_epoch "$weekly_reset")
+  if [ -n "$weekly_at_epoch" ]; then
+    weekly_age=$(( $(date +%s) - weekly_at_epoch )); [ "$weekly_age" -lt 0 ] && weekly_age=0
+    if [ "$weekly_age" -lt 3600 ]; then weekly_age="$(( weekly_age / 60 ))m"; else weekly_age="$(( weekly_age / 3600 ))h $(( (weekly_age % 3600) / 60 ))m"; fi
+  else
+    weekly_age="an unknown time (measured_at '$weekly_at' is unreadable)"
+  fi
+  echo "Weekly (seven_day): ${weekly_pct}% used, resets $weekly_reset, measured $weekly_age ago"
+  if [ "$(jq -rn --argjson p "$weekly_pct" '$p >= 70' 2>/dev/null)" = "true" ]; then
+    if [ -n "$deadline_epoch" ] && [ -n "$weekly_reset_epoch" ] && [ "$weekly_reset_epoch" -le "$deadline_epoch" ]; then
+      echo "NOTE: the weekly window is ${weekly_pct}% used but resets before this fleet's deadline, so it should not end the run."
+    else
+      echo "WARN: the weekly window is ${weekly_pct}% used and resets $weekly_reset — after this fleet's deadline, or the launch has none. A fleet that exhausts it stops until the reset (2026-10-10: 52% of session-hours lost). Rotate to an account with room before launching." >&2
+    fi
+  fi
+fi
+
 have_flag() {
   local f="$1"; shift
   local a

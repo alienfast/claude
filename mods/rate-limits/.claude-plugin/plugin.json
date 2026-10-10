@@ -1,0 +1,14 @@
+{
+  "name": "rate-limits",
+  "version": "0.1.0",
+  "description": "Writes the account's rate-limit windows (five_hour, seven_day) to ~/.claude/local/rate-limits.json on every measurement, for the weekly readout fleet-launch.sh prints before dispatching",
+  "author": { "name": "alienfast" },
+  "userConfig": {
+    "enabled": {
+      "type": "boolean",
+      "title": "Enabled",
+      "description": "Write the reading on every measurement that carries one. Off writes nothing.",
+      "default": true
+    }
+  }
+}

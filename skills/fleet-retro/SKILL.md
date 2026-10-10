@@ -222,10 +222,13 @@ The schema is fixed so two retros are comparable — that cross-run diff is the 
 columns freely; never quietly redefine an existing one.
 
 **Do not ask for `/usage` readings** (keeper-settled 2026-08-10): the launch/close quota-bracket
-calibration is retired — the weekly allowance stopped being a constraint when the keeper moved to
-multiple accounts, and concurrency is fixed at 3 by the measured 5h-burst bracket (`/auto-prep`
-Step 5). No `tmp/fleet-quota-launch.json` is written at dispatch anymore, so there is nothing to
-close here.
+calibration is retired — the weekly allowance is handled by account rotation, not by fleet sizing,
+since the keeper moved to multiple accounts, and concurrency is fixed at 3 by the measured 5h-burst
+bracket (`/auto-prep` Step 5). It still ends a fleet whose account has less of its week left than the
+run burns (2026-10-10: a 3-session 12h fleet hit `weekly` 5.75h in and lost 18.75 of its 36
+session-hours, 52%; it was the fourth fleet launched in six days), which is why `/fleet-launch` prints
+the active account's `seven_day` reading at dispatch — a mechanical readout asks no one. No
+`tmp/fleet-quota-launch.json` is written at dispatch anymore, so there is nothing to close here.
 
 **Report four numbers**, all in the `windows` block already emitted:
 
