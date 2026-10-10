@@ -1,5 +1,5 @@
 import type { Register } from 'claude-code'
-import { decide, readOptions } from './policy'
+import { decide, dotGitOf, owningCheckout, readOptions } from './policy'
 
 let autonomous = false
 let sessionId = ''
@@ -12,7 +12,8 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     sessionId = await $.session.id()
     if (opts.ledger) {
-      ledgerPath = `${await $.session.root()}/tmp/spawn-policy-${sessionId}.jsonl`
+      const reported = await $.session.root()
+      ledgerPath = `${owningCheckout(reported, await dotGitOf((path) => $.fs.read(path), reported))}/tmp/spawn-policy-${sessionId}.jsonl`
       if (await $.fs.exists(ledgerPath)) rows = (await $.fs.read(ledgerPath)).split('\n').filter((line) => line !== '')
     }
     return next(e)

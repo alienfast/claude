@@ -165,6 +165,11 @@ cat > "$CHECKOUT/tmp/loop-boundary-abc12345-0000.jsonl" <<'EOF'
 {"event":"pass","reason":"no-outcome","turnId":"t2"}
 {"event":"boundary","accepted":true,"turnId":"t3","outcome":"SKIPPED-BLOCKED: TT-2","tokensBefore":220000,"tokensAfter":null,"path":"turn-complete","nearClear":true}
 EOF
+# A ledger under a still-open worktree's tmp/ (where the mods wrote on a session resumed inside one, before 2026-10-10) is read too.
+mkdir -p "$CHECKOUT/.claude/worktrees/tt-1/tmp"
+cat > "$CHECKOUT/.claude/worktrees/tt-1/tmp/loop-boundary-abc12345-0000.jsonl" <<'EOF'
+{"event":"pass","reason":"prefix","turnId":"t4","loopPrompt":"/loop /auto"}
+EOF
 
 # ---- run ----
 JSON="$WORK/out.json"
@@ -237,6 +242,7 @@ ck "boundary count"        "2"      "$(q "d['sessions'][0]['boundary_compactions
 ck "boundary tokens after" "112000" "$(q "d['sessions'][0]['boundary_compactions']['tokens_after']")"
 ck "boundary after count"  "1"      "$(q "d['sessions'][0]['boundary_compactions']['tokens_after_n']")"
 ck "boundary passes"       "1"      "$(q "d['sessions'][0]['boundary_compactions']['passes']['no-outcome']")"
+ck "boundary worktree row" "1"      "$(q "d['sessions'][0]['boundary_compactions']['passes']['prefix']")"
 ck "boundary no ledger"    "None"   "$(q "d['sessions'][1]['boundary_compactions']")"
 ck "fleet boundary mean"   "350000" "$(q "d['boundary_compactions']['mean_before']")"
 ck "fleet boundary path"   "2"      "$(q "d['boundary_compactions']['paths']['turn-complete']")"
@@ -1889,6 +1895,35 @@ MDS="$WORK/outs.md"
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CKS" --sessions s1111111,s2222222 > "$MDS" 2>&1
 ck_has "5h cutoff keeps its lag"  "Recovery lag: 0.17 session-hours idle AFTER the allowance had already reset** (worst single session 0.09h)" "$MDS"
 ck_lacks "5h cutoff not early"    "Resumed before the named reset" "$MDS"
+
+# ---- loop-boundary loaded but never firing: the flag the 2026-10-10 retro lacked ----
+# One shipped issue and a ledger of only `pass` rows (the re-armed `/loop /auto backlog` never matched the `/auto` prefix,
+# so nothing compacted): the Flags list must say so and name the dominant pass reason. The main fixture (2 accepted
+# compactions) and the rewake fixture (no ledger at all, as an explicit --autocompact launch has none) stay unflagged.
+CKB="$WORK/checkoutb"
+mkdir -p "$CKB/tmp"
+git -C "$CKB" init -q 2>/dev/null
+MB="$(git -C "$CKB" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
+mkdir -p "$WORK/projects/$MB"
+cat > "$WORK/projects/$MB/bbbb1111-0000.jsonl" <<'EOF'
+{"type":"user","timestamp":"2026-10-10T01:00:00Z","message":{"role":"user","content":"/loop /auto backlog"}}
+{"type":"assistant","timestamp":"2026-10-10T01:05:00Z","message":{"role":"assistant","id":"msg_B1","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":90},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-50 done"},{"type":"tool_use","id":"toolu_b1","name":"ScheduleWakeup","input":{"delaySeconds":60,"prompt":"/loop /auto backlog","noop":false,"reason":"next"}}]}}
+EOF
+cat > "$CKB/tmp/auto-state-bbbb1111.json" <<'EOF'
+{"status": "drained", "reason": "t", "shipped": ["TT-50"], "canceled": [], "skipped": [], "failed": []}
+EOF
+cat > "$CKB/tmp/loop-boundary-bbbb1111-0000.jsonl" <<'EOF'
+{"event":"pass","reason":"prefix","turnId":"t1","loopPrompt":"/loop /auto backlog"}
+{"event":"pass","reason":"prefix","turnId":"t2","loopPrompt":"/loop /auto backlog"}
+{"event":"pass","reason":"error","turnId":"t3","loopPrompt":"/loop /auto backlog"}
+EOF
+MDB="$WORK/outb.md"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CKB" --sessions bbbb1111 > "$MDB" 2>&1
+ck_has "short fixture: no peak rate"  "**n/a output tokens per session-hour**" "$MDB"
+ck_has "never-fired flag"           '**`loop-boundary` compacted nothing across 1 shipped issue(s)**' "$MDB"
+ck_has "never-fired names prefix"   '`prefix` x2' "$MDB"
+ck_lacks "main fixture unflagged"   "compacted nothing" "$MD"
+ck_lacks "no-ledger run unflagged"  "compacted nothing" "$MDW"
 
 echo
 echo "$PASS passed / $FAIL failed / $SKIP skipped"

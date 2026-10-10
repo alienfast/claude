@@ -1,5 +1,5 @@
 import { expect, test, type TestBody } from 'claude-code/testing'
-import { isMechanicalCommand, isWaitShaped, phaseForSkill, readOptions } from '../hooks/phase'
+import { dotGitOf, isMechanicalCommand, isWaitShaped, owningCheckout, phaseForSkill, readOptions } from '../hooks/phase'
 
 type TestOn = Parameters<TestBody>[1]
 
@@ -19,16 +19,18 @@ type Seen = { effort: unknown; index: number }
 
 // Stubs every hook the mod reaches, records the effort each request carried, and lets a test script which tools each
 // step's answer claims to have called (so the following steps can be classified as polling or not).
-function harness(on: TestOn, tools: Record<number, { name: string; input: unknown }[]> = {}) {
+function harness(on: TestOn, tools: Record<number, { name: string; input: unknown }[]> = {}, dotGit = '') {
   const seen: Seen[] = []
   let written = ''
+  let writtenPath = ''
   on('session.start', () => ({ cwd: '/work' }))
   on('session.id', () => ({ value: 'sid' }))
   on('session.root', () => ({ value: '/work' }))
   on('fs.exists', () => ({ value: false }))
-  on('fs.read', () => ({ value: '' }))
+  on('fs.read', ($, e) => ({ value: e.path === '/work/.git' ? dotGit : '' }))
   on('fs.write', ($, e) => {
     written = e.text
+    writtenPath = e.path
     return { value: undefined }
   })
   on('ui.status', () => ({ value: undefined }))
@@ -42,7 +44,7 @@ function harness(on: TestOn, tools: Record<number, { name: string; input: unknow
     return { turnId: e.turnId, index: e.index, answer: 'ok', toolUses, stopReason: toolUses.length ? 'tool_use' : 'end_turn', usage: USAGE }
   })
   const rows = () => written.trim().split('\n').filter(Boolean).map((l) => JSON.parse(l))
-  return { seen, rows, steps: () => rows().filter((r) => r.event === 'step') }
+  return { seen, rows, steps: () => rows().filter((r) => r.event === 'step'), path: () => writtenPath }
 }
 
 test('judgment steps keep the session effort and are logged', async ($, on) => {
@@ -203,4 +205,22 @@ test('pure helpers classify skills, wait-shaped steps, and options', async () =>
     cap: 2,
     ledger: true,
   })
+  expect(owningCheckout('/w', null)).toBe('/w')
+  expect(owningCheckout('/r/.claude/worktrees/bf-1', 'gitdir: /r/.git/worktrees/bf-1\n')).toBe('/r')
+  expect(owningCheckout('/r/.claude/worktrees/bf-1', 'gitdir: ../../../.git/worktrees/bf-1\n')).toBe('/r')
+  expect(owningCheckout('/r/sub', 'gitdir: ../.git/modules/sub\n')).toBe('/r/sub')
+  expect(owningCheckout('C:/u/r/.claude/worktrees/bf-1', 'gitdir: C:/u/r/.git/worktrees/bf-1\r\n')).toBe('C:/u/r')
+  expect(await dotGitOf(async () => { throw new Error('EISDIR') }, '/w')).toBe(null)
+  expect(await dotGitOf(async (p) => `gitdir: ${p}`, '/w')).toBe('gitdir: /w/.git')
+})
+
+// The `.git` text is what `git worktree add` writes; the root is what a session resumed inside that worktree reports (the three
+// 2026-10-10 fleet sessions, resumed at 14:22Z, wrote their later rows under the worktree until this resolution).
+test('a session whose root is a linked worktree writes its ledger under the owning checkout', async ($, on) => {
+  const h = harness(on, {}, 'gitdir: /main/.git/worktrees/bf-1\n')
+  await $.session.start(SESSION)
+  await $.turn.start({ turnId: 't', text: 'plan it' })
+  await drain($.turn.step({ ...STEP, index: 0 }))
+  expect(h.path()).toBe('/main/tmp/effort-ledger-sid.jsonl')
+  expect(h.steps()).toHaveLength(1)
 })

@@ -1,5 +1,5 @@
 import { expect, test, type TestBody } from 'claude-code/testing'
-import { decide, isCompliant, readOptions } from '../hooks/policy'
+import { decide, dotGitOf, isCompliant, owningCheckout, readOptions } from '../hooks/policy'
 
 type TestOn = Parameters<TestBody>[1]
 
@@ -15,17 +15,19 @@ const BASE = {
 
 type Spawned = { model?: string; background: boolean; subagentType: string }
 
-function harness(on: TestOn) {
+function harness(on: TestOn, dotGit = '') {
   const spawned: Spawned[] = []
   const logs: string[] = []
   let written = ''
+  let writtenPath = ''
   on('session.start', () => ({ cwd: '/work' }))
   on('session.id', () => ({ value: 'sid' }))
   on('session.root', () => ({ value: '/work' }))
   on('fs.exists', () => ({ value: false }))
-  on('fs.read', () => ({ value: '' }))
+  on('fs.read', ($, e) => ({ value: e.path === '/work/.git' ? dotGit : '' }))
   on('fs.write', ($, e) => {
     written = e.text
+    writtenPath = e.path
     return { value: undefined }
   })
   on('ui.log', ($, e) => {
@@ -37,8 +39,19 @@ function harness(on: TestOn) {
     spawned.push({ model: e.model, background: e.background, subagentType: e.subagentType })
     return { model: e.model ?? e.parentModel, agentId: 'a1' }
   })
-  return { spawned, logs, rows: () => written.trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) }
+  return { spawned, logs, rows: () => written.trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)), path: () => writtenPath }
 }
+
+// The `.git` text is what `git worktree add` writes; the root is what a session resumed inside that worktree reports (the three
+// 2026-10-10 fleet sessions, resumed at 14:22Z, wrote their later rows under the worktree until this resolution).
+test('a session whose root is a linked worktree writes its ledger under the owning checkout', async ($, on) => {
+  const h = harness(on, 'gitdir: /main/.git/worktrees/bf-1\n')
+  await $.session.start({ surface: 'terminal', isInteractive: false, cwd: '/work' })
+  await $.skill.prompt({ skill: 'auto', text: '# auto' })
+  await $.agent.spawn({ ...BASE, subagentType: 'developer', permissionMode: 'default' })
+  expect(h.path()).toBe('/main/tmp/spawn-policy-sid.jsonl')
+  expect(h.rows()).toHaveLength(1)
+})
 
 test('an unpinned developer spawn runs on sonnet once the auto skill has run', async ($, on) => {
   const h = harness(on)
@@ -118,4 +131,11 @@ test('pure helpers: compliance, decisions, and options', async () => {
   expect(decide({ subagentType: 'developer', background: true, fork: false, isTeammate: true }, policy)).toEqual({ rules: [] })
   expect(readOptions({ enforce: 'bogus', sync_review_dispatch: false }).enforce).toBe('auto')
   expect(readOptions({ sync_review_dispatch: false }).policy.syncReview).toBe(false)
+  expect(owningCheckout('/w', null)).toBe('/w')
+  expect(owningCheckout('/r/.claude/worktrees/bf-1', 'gitdir: /r/.git/worktrees/bf-1\n')).toBe('/r')
+  expect(owningCheckout('/r/.claude/worktrees/bf-1', 'gitdir: ../../../.git/worktrees/bf-1\n')).toBe('/r')
+  expect(owningCheckout('/r/sub', 'gitdir: ../.git/modules/sub\n')).toBe('/r/sub')
+  expect(owningCheckout('C:/u/r/.claude/worktrees/bf-1', 'gitdir: C:/u/r/.git/worktrees/bf-1\r\n')).toBe('C:/u/r')
+  expect(await dotGitOf(async () => { throw new Error('EISDIR') }, '/w')).toBe(null)
+  expect(await dotGitOf(async (p) => `gitdir: ${p}`, '/w')).toBe('gitdir: /w/.git')
 })

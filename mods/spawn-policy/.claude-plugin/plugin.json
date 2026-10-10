@@ -38,7 +38,7 @@
     "ledger": {
       "type": "boolean",
       "title": "Write ledger",
-      "description": "Append one JSONL row per decision to tmp/spawn-policy-<session>.jsonl under the session root.",
+      "description": "Append one JSONL row per decision to tmp/spawn-policy-<session>.jsonl under the checkout that owns the session root.",
       "default": true
     }
   }

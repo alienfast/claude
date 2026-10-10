@@ -33,7 +33,9 @@ it a boundary is logged, not compacted; default 0), `ledger`.
 
 ## Ledger
 
-`<session root>/tmp/loop-boundary-<sessionId>.jsonl`:
+`<checkout>/tmp/loop-boundary-<sessionId>.jsonl`, where the checkout is the one that owns the session root — a linked worktree
+resolves to its main checkout, so a session resumed inside one keeps writing where `fleet-metrics.py` reads (the three
+2026-10-10 fleet sessions, resumed at 14:22Z, split their ledgers into the worktrees until this resolution):
 
 ```json
 {"ts":"...","session":"...","event":"boundary","accepted":true,"outcome":"SHIPPED-MERGE: BF-1","tokensBefore":480210,"tokensAfter":112340,"path":"turn-complete","nearClear":true,"turnId":"...","loopPrompt":"/auto"}

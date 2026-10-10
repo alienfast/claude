@@ -1105,9 +1105,14 @@ def thinking_share(aggs, agent_type="main"):
 
 
 def ledger_rows(checkout, pattern):
-    """Rows of the JSONL ledgers under tmp/ whose name matches `pattern`, oldest file first; [] when none."""
+    """Rows of the JSONL ledgers under tmp/ whose name matches `pattern`, oldest file first; [] when none.
+
+    A linked worktree's tmp/ is read too: before 2026-10-10 the mods wrote under the session root, which is
+    the worktree on a session resumed inside one, and /finish deletes it with the worktree — so this reaches
+    only the ledgers of worktrees still open."""
     rows = []
-    for path in sorted((checkout / "tmp").glob(pattern)):
+    paths = sorted((checkout / "tmp").glob(pattern)) + sorted((checkout / ".claude" / "worktrees").glob(f"*/tmp/{pattern}"))
+    for path in paths:
         try:
             for line in path.read_text(encoding="utf-8").splitlines():
                 try:
@@ -2579,10 +2584,11 @@ def main():
         # legitimately, so WARN and let the operator re-scope; never refuse or alter a figure.
         rate_inverted = (burn_rate_all is not None and peak_5h_rate is not None
                          and burn_rate_all > peak_5h_rate)
+        # A fleet too short for a 5h window (a one-turn fixture, a run killed at its first pick) has no peak rate.
         print(f"\nAt the 5h peak: **{peak_5h_concurrency} concurrent sessions**, "
-              f"**{peak_5h_rate:,} output tokens per session-hour**.  "
+              f"**{'n/a' if peak_5h_rate is None else f'{peak_5h_rate:,}'} output tokens per session-hour**.  "
               f"Across all {len(sessions)} sessions ({session_hours:,.0f} session-hours) the mean is "
-              f"{burn_rate_all:,}"
+              f"{'n/a' if burn_rate_all is None else f'{burn_rate_all:,}'}"
               + (".\n" if rate_inverted else
                  " — lower because it pools idle and interactive sessions with fleet "
                  "ones. **Size with the peak rate, not the mean.**\n"))
@@ -2870,6 +2876,17 @@ def main():
               f"time and the gate parked on 1,500,000 instead of the keeper's 100,000,000 (2026-08-30, multi-account: "
               f"it should throttle on nothing). {throttle_parked_h:.1f} session-hours parked this run. Restore the "
               f"file; /fleet-launch prints the ceiling in effect, so check that line before the next run.")
+    # fleet-launch.sh checks only that mods/loop-boundary is enabled, not that it fires; its first fleet (2026-10-10) passed
+    # every looping turn as `prefix`, and the context gauge read the uncompacted run as the mod working.
+    if fleet_boundary and all_shipped and fleet_boundary["accepted"] == 0:
+        flagged = True
+        passes = ", ".join(f"`{k}` x{n}" for k, n in fleet_boundary["passes"].items()) or "none"
+        tried = fleet_boundary["compactions"]
+        print(f"- **`loop-boundary` compacted nothing across {len(all_shipped)} shipped issue(s)** — "
+              f"{fleet_boundary['sessions_with_ledger']} session(s) carried its ledger"
+              + (f"; {tried} boundary attempt(s), none accepted (read the rows' `skipped`/`error`)" if tried else "")
+              + f"; looping turns passed through: {passes}. The mod is loaded but never fired, so these sessions had no "
+              f"compaction between iterations: read the context gauge as uncapped, not as the mod working.")
     missing = [i for i, m in merged.items() if not m["commit"]]
     if missing:
         flagged = True

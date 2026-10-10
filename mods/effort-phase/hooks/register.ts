@@ -1,5 +1,5 @@
 import type { Register } from 'claude-code'
-import { POLL_STREAK, commandsOf, effortFor, isMechanicalCommand, isWaitShaped, phaseForSkill, readOptions, type Lane, type Phase } from './phase'
+import { POLL_STREAK, commandsOf, dotGitOf, effortFor, isMechanicalCommand, isWaitShaped, owningCheckout, phaseForSkill, readOptions, type Lane, type Phase } from './phase'
 
 let phase: Phase = 'judgment'
 let waitStreak = 0
@@ -26,8 +26,10 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     sessionId = await $.session.id()
     if (active) {
-      // Resolved once: a worktree move later in the session would otherwise split the ledger across two tmp/ dirs.
-      ledgerPath = `${await $.session.root()}/tmp/effort-ledger-${sessionId}.jsonl`
+      // Resolved once, to the owning checkout: a worktree move later in the session, or a resume inside one, would otherwise split
+      // the ledger across two tmp/ dirs.
+      const reported = await $.session.root()
+      ledgerPath = `${owningCheckout(reported, await dotGitOf((path) => $.fs.read(path), reported))}/tmp/effort-ledger-${sessionId}.jsonl`
       if (await $.fs.exists(ledgerPath)) rows = (await $.fs.read(ledgerPath)).split('\n').filter((line) => line !== '')
     }
     return next(e)

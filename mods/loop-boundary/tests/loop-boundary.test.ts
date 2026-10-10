@@ -1,5 +1,5 @@
 import { expect, test, type TestBody } from 'claude-code/testing'
-import { boundaryMessage, loopPromptOf, matchesPrefix, outcomeLineOf, readOptions, requestTokensOf, wakeupPromptOf } from '../hooks/boundary'
+import { boundaryMessage, dotGitOf, loopPromptOf, matchesPrefix, outcomeLineOf, owningCheckout, readOptions, requestTokensOf, wakeupPromptOf } from '../hooks/boundary'
 
 type TestOn = Parameters<TestBody>[1]
 
@@ -16,17 +16,23 @@ async function drain(stream: AsyncGenerator<unknown, unknown, unknown>) {
   return step.value
 }
 
-function harness(on: TestOn, opts: { contextTokens?: number; percent?: number; stateExists?: boolean; tools?: Record<number, { name: string; input: unknown }[]> } = {}) {
+function harness(on: TestOn, opts: { contextTokens?: number; percent?: number; stateExists?: boolean; dotGit?: string; tools?: Record<number, { name: string; input: unknown }[]> } = {}) {
   const coreCompactions: string[] = []
   const logs: string[] = []
+  const existsAsked: string[] = []
   let written = ''
+  let writtenPath = ''
   on('session.start', () => ({ cwd: '/work' }))
   on('session.id', () => ({ value: 'abcd1234-0000-4000-8000-000000000000' }))
   on('session.root', () => ({ value: '/work' }))
-  on('fs.exists', ($, e) => ({ value: e.path.includes('auto-state') ? (opts.stateExists ?? true) : false }))
-  on('fs.read', () => ({ value: '' }))
+  on('fs.exists', ($, e) => {
+    existsAsked.push(e.path)
+    return { value: e.path.includes('auto-state') ? (opts.stateExists ?? true) : false }
+  })
+  on('fs.read', ($, e) => ({ value: e.path === '/work/.git' ? (opts.dotGit ?? '') : '' }))
   on('fs.write', ($, e) => {
     written = e.text
+    writtenPath = e.path
     return { value: undefined }
   })
   on('ui.log', ($, e) => {
@@ -47,7 +53,7 @@ function harness(on: TestOn, opts: { contextTokens?: number; percent?: number; s
   })
   on('turn.complete', ($, e) => ({ text: e.answer }))
   const rows = () => written.trim().split('\n').filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>)
-  return { coreCompactions, logs, rows }
+  return { coreCompactions, logs, rows, existsAsked, path: () => writtenPath }
 }
 
 const SHIPPED = 'Issue done.\n\n**SHIPPED-MERGE: BF-1** — merged onto main.'
@@ -156,6 +162,20 @@ test('a fleet session that re-arms with its /loop command still compacts at the 
   expect(h.rows()[0]).toMatchObject({ event: 'boundary', accepted: true, nearClear: true, loopPrompt: '/auto backlog' })
 })
 
+// The `.git` text is what `git worktree add` writes; the root is what a session resumed inside that worktree reports (the three
+// 2026-10-10 fleet sessions, resumed at 14:22Z, wrote their later rows under the worktree until this resolution).
+test('a session whose root is a linked worktree keeps its ledger and run state in the owning checkout', async ($, on) => {
+  const h = harness(on, { dotGit: 'gitdir: /main/.git/worktrees/bf-1\n' })
+  await $.session.start(SESSION)
+  await $.prompt.submit(typed('/loop /auto'))
+  await $.turn.start({ turnId: 't1', text: '/loop /auto' })
+  await drain($.turn.step({ ...STEP, turnId: 't1', index: 0 }))
+  await $.turn.complete(done('t1', SHIPPED))
+  expect(h.path()).toBe('/main/tmp/loop-boundary-abcd1234-0000-4000-8000-000000000000.jsonl')
+  expect(h.existsAsked).toContain('/main/tmp/auto-state-abcd1234.json')
+  expect(h.rows()[0]).toMatchObject({ event: 'boundary', accepted: true, loopPrompt: '/auto' })
+})
+
 test('below the context floor a boundary is logged, not compacted', { options: { min_context_percent: 60 } }, async ($, on) => {
   const h = harness(on, { percent: 48 })
   await $.session.start(SESSION)
@@ -209,4 +229,12 @@ test('pure helpers: outcome lines, loop prompts, prefixes, wakeups, request toke
   expect(boundaryMessage({ outcome: 'SHIPPED-PR: BF-1', runKey: 'abcd1234', statePath: '/w/tmp/auto-state-abcd1234.json', stateExists: true })).toContain('run state in /w/tmp/auto-state-abcd1234.json')
   expect(readOptions({})).toEqual({ enabled: true, prefixes: ['/auto'], minContextPercent: 0, ledger: true })
   expect(readOptions({ loop_prefixes: '/auto, /babysit-prs', min_context_percent: 250, ledger: false })).toEqual({ enabled: true, prefixes: ['/auto', '/babysit-prs'], minContextPercent: 100, ledger: false })
+  expect(owningCheckout('/w', null)).toBe('/w')
+  expect(owningCheckout('/w', '')).toBe('/w')
+  expect(owningCheckout('/r/.claude/worktrees/bf-1', 'gitdir: /r/.git/worktrees/bf-1\n')).toBe('/r')
+  expect(owningCheckout('/r/.claude/worktrees/bf-1', 'gitdir: ../../../.git/worktrees/bf-1\n')).toBe('/r')
+  expect(owningCheckout('/r/sub', 'gitdir: ../.git/modules/sub\n')).toBe('/r/sub')
+  expect(owningCheckout('C:/u/r/.claude/worktrees/bf-1', 'gitdir: C:/u/r/.git/worktrees/bf-1\r\n')).toBe('C:/u/r')
+  expect(await dotGitOf(async () => { throw new Error('EISDIR') }, '/w')).toBe(null)
+  expect(await dotGitOf(async (p) => `gitdir: ${p}`, '/w')).toBe('gitdir: /w/.git')
 })

@@ -63,6 +63,33 @@ export type Options = {
   readonly ledger: boolean
 }
 
+// The checkout a ledger belongs to. A session resumed inside a /start wt worktree reports the worktree as its root — measured
+// 2026-10-10: three fleet sessions resumed at 14:22Z wrote their later rows under <worktree>/tmp, where /finish deletes them and
+// fleet-metrics.py never looked — so a linked worktree (its `.git` is a file naming the owning repo's worktrees dir) resolves to
+// the checkout that owns it. Anything else, a main checkout's `.git` directory included, keeps the root as reported.
+export function owningCheckout(root: string, dotGit: string | null): string {
+  const target = /^gitdir:\s*(.+?)\s*$/m.exec(dotGit ?? '')?.[1]
+  if (target === undefined) return root
+  const gitdir = (/^(?:\/|[A-Za-z]:[\\/])/.test(target) ? target : `${root}/${target}`).replace(/\\/g, '/')
+  const at = gitdir.indexOf('/.git/worktrees/')
+  if (at === -1) return root
+  const out: string[] = []
+  for (const seg of gitdir.slice(0, at).split('/')) {
+    if (seg === '..') out.pop()
+    else if (seg !== '.' && (seg !== '' || out.length === 0)) out.push(seg)
+  }
+  return out.join('/')
+}
+
+// A main checkout's `.git` is a directory, which the read rejects; a linked worktree's is a one-line file.
+export async function dotGitOf(read: (path: string) => Promise<string>, root: string): Promise<string | null> {
+  try {
+    return await read(`${root}/.git`)
+  } catch {
+    return null
+  }
+}
+
 export function readOptions(raw: Readonly<Record<string, unknown>>): Options {
   const prefixes =
     typeof raw.loop_prefixes === 'string'

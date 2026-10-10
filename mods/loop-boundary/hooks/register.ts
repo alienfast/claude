@@ -1,5 +1,5 @@
 import type { Register } from 'claude-code'
-import { boundaryMessage, loopPromptOf, matchesPrefix, outcomeLineOf, readOptions, requestTokensOf, wakeupPromptOf } from './boundary'
+import { boundaryMessage, dotGitOf, loopPromptOf, matchesPrefix, outcomeLineOf, owningCheckout, readOptions, requestTokensOf, wakeupPromptOf } from './boundary'
 
 let sessionId = ''
 let runKey = ''
@@ -31,7 +31,8 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     sessionId = await $.session.id()
     runKey = sessionId.split('-')[0] ?? sessionId
-    root = await $.session.root()
+    const reported = await $.session.root()
+    root = owningCheckout(reported, await dotGitOf((path) => $.fs.read(path), reported))
     if (opts.enabled && opts.ledger) {
       ledgerPath = `${root}/tmp/loop-boundary-${sessionId}.jsonl`
       if (await $.fs.exists(ledgerPath)) rows = (await $.fs.read(ledgerPath)).split('\n').filter((line) => line !== '')

@@ -41,7 +41,7 @@
     "ledger": {
       "type": "boolean",
       "title": "Write ledger",
-      "description": "Append one JSONL row per main-loop request to tmp/effort-ledger-<session>.jsonl under the session root.",
+      "description": "Append one JSONL row per main-loop request to tmp/effort-ledger-<session>.jsonl under the checkout that owns the session root.",
       "default": true
     }
   }
