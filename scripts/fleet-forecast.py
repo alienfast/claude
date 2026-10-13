@@ -56,6 +56,7 @@ import json
 import os
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Windows Python writes stdio in the console code page with CRLF: the arrows and dashes in the report lines raised
@@ -339,14 +340,17 @@ def unreached_reason(issue, issues, pool, shipped, ship_time, horizon, seen=None
     return "UNREACHED", "capacity — ranked below what the sessions reached before the deadline"
 
 
-def throttle_line(rec, n_sessions):
+def throttle_line(n_sessions):
+    """The account's 5h window as mods/rate-limits last read it: past fleet-headroom.sh's reserve (20 points), every session parks
+    at its first pick until the reset."""
     try:
-        rate = (rec.get("sizing") or {}).get("rate_tok_per_session_hour")
-        cal = json.loads((Path.home() / ".claude/local/five-hour-ceiling.json").read_text(encoding="utf-8"))
-        ceiling = cal.get("ceiling_output_tokens")
-        if rate and ceiling and n_sessions * rate * 5 > 0.9 * ceiling:
-            return (f"THROTTLE-RISK: {n_sessions} sessions × {rate / 1000:.0f}k tok/session-hour ≈ "
-                    f"{n_sessions * rate * 5 / 1e6:.2f}M per 5h window vs ceiling {ceiling / 1e6:.2f}M — "
+        snap = json.loads((Path.home() / ".claude/local/rate-limits.json").read_text(encoding="utf-8"))
+        five = next((w for w in snap.get("windows") or [] if w.get("kind") == "five_hour"), None) or {}
+        pct, resets = five.get("percentUsed"), five.get("resetsAt")
+        reset_passed = bool(resets) and datetime.fromisoformat(str(resets).replace("Z", "+00:00")) <= datetime.now(timezone.utc)
+        if isinstance(pct, (int, float)) and pct > 80 and not reset_passed:
+            return (f"THROTTLE-RISK: the account's 5h window reads {pct}% used (resets {resets or '?'}, measured "
+                    f"{snap.get('measured_at') or '?'}) — {n_sessions} sessions park at their first pick until the reset; "
                     f"expect fleet-headroom parking to stretch this timeline")
     except Exception:
         pass
@@ -502,7 +506,7 @@ def main():
         else:
             stage += "; no Backlog candidates in the pool"
     print(stage)
-    tl = throttle_line(rec, n_sessions)
+    tl = throttle_line(n_sessions)
     if tl:
         print(tl)
     for _, _, line in sorted(events, key=lambda e: (e[0], e[1], e[2])):

@@ -389,9 +389,19 @@ done
 [ -n "$cleared" ] && echo "Cleared prior-run ledger(s):$cleared (not running per the registry; /fleet-retro can no longer measure those runs)"
 [ -z "$agents_json" ] && echo "WARN: claude agents --json unavailable — no prior-run ledger cleared, and running siblings cannot be carried into fleet_sessions" >&2
 
-# A member of the previous launch that the registry still lists is carried even without a ledger:
-# a session still in preflight has not written one yet.
-if [ -n "$agents_json" ] && [ -s "$marker" ]; then
+winding_down=0
+if [ -s "$marker" ]; then
+  old_deadline=$(jq -r '.deadline_epoch // empty' "$marker" 2>/dev/null || true)
+  old_stopped=$(jq -r '.stopped // false' "$marker" 2>/dev/null || true)
+  { [[ "$old_deadline" =~ ^[0-9]+$ ]] && [ "$old_deadline" -le "$launch_now" ]; } && winding_down=1
+  [ "$old_stopped" = "true" ] && winding_down=1
+fi
+
+# A member of the previous launch that the registry still lists is carried even without a ledger: a session still in preflight has
+# not written one yet. Only while that launch is live — a winding-down marker's members are past preflight, so one with no ledger has
+# finished and been cleared. The registry can still list such a session: 2026-10-12, one killed 17h earlier was re-claimed by the
+# daemon (`claimed-spare … (fleet)`), carried into the next fleet as retiring with no work to finish, and counted by every observer.
+if [ -n "$agents_json" ] && [ -s "$marker" ] && [ "$winding_down" = 0 ]; then
   for k in $(jq -r '(.fleet_sessions // [])[]' "$marker" 2>/dev/null); do
     case " $carried " in *" $k "*) continue ;; esac
     registry_alive "$k" && carried="$carried $k"
@@ -406,12 +416,7 @@ fi
 # top-up), or that has none, retires nobody; sessions an earlier relaunch already retired stay retired.
 retiring=""
 if [ -n "$carried" ] && [ -s "$marker" ]; then
-  old_deadline=$(jq -r '.deadline_epoch // empty' "$marker" 2>/dev/null || true)
-  old_stopped=$(jq -r '.stopped // false' "$marker" 2>/dev/null || true)
   old_retiring=$(jq -r '(.retiring // [])[]' "$marker" 2>/dev/null || true)
-  winding_down=0
-  { [[ "$old_deadline" =~ ^[0-9]+$ ]] && [ "$old_deadline" -le "$launch_now" ]; } && winding_down=1
-  [ "$old_stopped" = "true" ] && winding_down=1
   for k in $carried; do
     if [ "$winding_down" = 1 ] || printf '%s\n' "$old_retiring" | grep -qxF -- "$k"; then
       retiring="$retiring $k"
@@ -474,52 +479,60 @@ if [ -n "$deadline_epoch" ]; then
   echo "Fleet deadline: $deadline_human ($marker)"
 fi
 
-# Every pick parks against this ceiling, so name the one the fleet will run on. A `(default)` source means
-# the calibration file is missing and the probe throttles at 1.5M: the 2026-10-04/05 fleet parked 6
-# session-hours that way with 146 issues pickable, and no launch or retro output said so.
-ceiling_line=$("$script_dir/fleet-headroom.sh" --ceiling-only 2>/dev/null || true)
-if [ -n "$ceiling_line" ]; then
-  echo "Headroom ceiling: $ceiling_line"
-  case "$ceiling_line" in
-    *'(default)'*) echo "WARN: the headroom probe is on its built-in default ceiling — the calibration file named above is missing. Restore it before an overnight run, or every session parks against 1.5M (fleet-headroom.sh header)." >&2 ;;
-  esac
-fi
-
-# The active account's weekly window, from the reading mods/rate-limits last wrote (every session on this machine rewrites it on
-# each measurement, so it names whichever account the latest session ran on). The 2026-10-10 fleet was launched on an account
-# 5.75h from its weekly limit and lost 18.75 of its 36 session-hours; nothing at launch said so. Never silent, never blocking: a
-# reading or `Weekly: no reading (<why>)`, and a WARN only when the window could plausibly end this run — 70 is an unmeasured
-# starting threshold (fleet-launch SKILL.md).
+# The active account's windows, from the reading mods/rate-limits last wrote (every session on this machine rewrites it on each
+# measurement, so it names whichever account the latest session ran on). Burst: every pick parks once the 5h window is within
+# fleet-headroom.sh's reserve of full, so a launch into a nearly-full window parks every session at its first pick. Weekly: the
+# 2026-10-10 fleet was launched on an account 5.75h from its weekly limit and lost 18.75 of its 36 session-hours; nothing at launch
+# said so. Never silent, never blocking: a reading per window or `<Window>: no reading (<why>)`, and a WARN only when the window
+# could plausibly end or stall this run — 70 is an unmeasured starting threshold for the weekly (fleet-launch SKILL.md).
 iso_epoch() { jq -rn --arg t "$1" '$t | sub("\\.[0-9]+"; "") | try fromdateiso8601 catch empty'; }
-weekly_file="$HOME/.claude/local/rate-limits.json"
-if [ ! -f "$weekly_file" ]; then
+age_of() { # <epoch> — "<n>m" or "<h>h <m>m" since it
+  local a=$(( $(date +%s) - $1 )); [ "$a" -lt 0 ] && a=0
+  if [ "$a" -lt 3600 ]; then echo "$(( a / 60 ))m"; else echo "$(( a / 3600 ))h $(( (a % 3600) / 60 ))m"; fi
+}
+reading_file="$HOME/.claude/local/rate-limits.json"
+if [ ! -f "$reading_file" ]; then
   if "$script_dir/mod-enabled.sh" rate-limits >/dev/null 2>&1; then
-    echo "Weekly: no reading ($weekly_file is missing — rate-limits@alienfast-claude is enabled but no session has measured since it loaded; start one and relaunch, or launch without)"
+    echo "Rate limits: no reading ($reading_file is missing — rate-limits@alienfast-claude is enabled but no session has measured since it loaded; start one and relaunch, or launch without)"
   else
-    echo "Weekly: no reading ($weekly_file is missing and rate-limits@alienfast-claude is not enabled on this machine — update.sh installs it, or: claude plugin install rate-limits@alienfast-claude)"
+    echo "Rate limits: no reading ($reading_file is missing and rate-limits@alienfast-claude is not enabled on this machine — update.sh installs it, or: claude plugin install rate-limits@alienfast-claude)"
   fi
-elif ! weekly_json=$(jq -c '{at: (.measured_at // ""), w: ((.windows // []) | map(select(.kind == "seven_day")) | .[0])}' "$weekly_file" 2>/dev/null) || [ -z "$weekly_json" ]; then
-  echo "Weekly: no reading ($weekly_file is not readable JSON)"
-elif [ -z "$(jq -r '.w.percentUsed // empty' <<<"$weekly_json")" ]; then
-  echo "Weekly: no reading (the last measurement in $weekly_file carried no seven_day window)"
+elif ! reading_json=$(jq -c '{at: (.measured_at // ""), five: ((.windows // []) | map(select(.kind == "five_hour")) | .[0]), week: ((.windows // []) | map(select(.kind == "seven_day")) | .[0])}' "$reading_file" 2>/dev/null) || [ -z "$reading_json" ]; then
+  echo "Rate limits: no reading ($reading_file is not readable JSON)"
 else
-  weekly_pct=$(jq -r '.w.percentUsed' <<<"$weekly_json")
-  weekly_reset=$(jq -r '.w.resetsAt // "unknown"' <<<"$weekly_json")
-  weekly_at=$(jq -r '.at' <<<"$weekly_json")
-  weekly_at_epoch=$(iso_epoch "$weekly_at")
-  weekly_reset_epoch=$(iso_epoch "$weekly_reset")
-  if [ -n "$weekly_at_epoch" ]; then
-    weekly_age=$(( $(date +%s) - weekly_at_epoch )); [ "$weekly_age" -lt 0 ] && weekly_age=0
-    if [ "$weekly_age" -lt 3600 ]; then weekly_age="$(( weekly_age / 60 ))m"; else weekly_age="$(( weekly_age / 3600 ))h $(( (weekly_age % 3600) / 60 ))m"; fi
+  reading_at=$(jq -r '.at' <<<"$reading_json")
+  reading_at_epoch=$(iso_epoch "$reading_at")
+  if [ -n "$reading_at_epoch" ]; then reading_age=$(age_of "$reading_at_epoch"); else reading_age="an unknown time (measured_at '$reading_at' is unreadable)"; fi
+  burst_pct=$(jq -r '.five.percentUsed // empty' <<<"$reading_json")
+  if [ -z "$burst_pct" ]; then
+    echo "Burst: no reading (the last measurement in $reading_file carried no five_hour window)"
   else
-    weekly_age="an unknown time (measured_at '$weekly_at' is unreadable)"
+    burst_reset=$(jq -r '.five.resetsAt // "unknown"' <<<"$reading_json")
+    burst_reset_epoch=$(iso_epoch "$burst_reset")
+    echo "Burst (five_hour): ${burst_pct}% used, resets $burst_reset, measured $reading_age ago"
+    if [ "$(jq -rn --argjson p "$burst_pct" '$p > 80' 2>/dev/null)" = "true" ]; then
+      if [ -n "$burst_reset_epoch" ] && [ "$burst_reset_epoch" -le "$(date +%s)" ]; then
+        echo "NOTE: the 5h window read ${burst_pct}% used, but that reading predates its reset at $burst_reset — the window is empty again."
+      elif [ -n "$burst_reset_epoch" ] && [ $(( burst_reset_epoch - $(date +%s) )) -le 900 ]; then
+        echo "NOTE: the 5h window is ${burst_pct}% used but resets in $(( (burst_reset_epoch - $(date +%s)) / 60 ))m, so the first picks park only until then."
+      else
+        echo "WARN: the 5h window is ${burst_pct}% used — over fleet-headroom.sh's reserve, so every session parks at its first pick until the reset at $burst_reset. Launch after the reset, or accept the park." >&2
+      fi
+    fi
   fi
-  echo "Weekly (seven_day): ${weekly_pct}% used, resets $weekly_reset, measured $weekly_age ago"
-  if [ "$(jq -rn --argjson p "$weekly_pct" '$p >= 70' 2>/dev/null)" = "true" ]; then
-    if [ -n "$deadline_epoch" ] && [ -n "$weekly_reset_epoch" ] && [ "$weekly_reset_epoch" -le "$deadline_epoch" ]; then
-      echo "NOTE: the weekly window is ${weekly_pct}% used but resets before this fleet's deadline, so it should not end the run."
-    else
-      echo "WARN: the weekly window is ${weekly_pct}% used and resets $weekly_reset — after this fleet's deadline, or the launch has none. A fleet that exhausts it stops until the reset (2026-10-10: 52% of session-hours lost). Rotate to an account with room before launching." >&2
+  weekly_pct=$(jq -r '.week.percentUsed // empty' <<<"$reading_json")
+  if [ -z "$weekly_pct" ]; then
+    echo "Weekly: no reading (the last measurement in $reading_file carried no seven_day window)"
+  else
+    weekly_reset=$(jq -r '.week.resetsAt // "unknown"' <<<"$reading_json")
+    weekly_reset_epoch=$(iso_epoch "$weekly_reset")
+    echo "Weekly (seven_day): ${weekly_pct}% used, resets $weekly_reset, measured $reading_age ago"
+    if [ "$(jq -rn --argjson p "$weekly_pct" '$p >= 70' 2>/dev/null)" = "true" ]; then
+      if [ -n "$deadline_epoch" ] && [ -n "$weekly_reset_epoch" ] && [ "$weekly_reset_epoch" -le "$deadline_epoch" ]; then
+        echo "NOTE: the weekly window is ${weekly_pct}% used but resets before this fleet's deadline, so it should not end the run."
+      else
+        echo "WARN: the weekly window is ${weekly_pct}% used and resets $weekly_reset — after this fleet's deadline, or the launch has none. A fleet that exhausts it stops until the reset (2026-10-10: 52% of session-hours lost). Rotate to an account with room before launching." >&2
+      fi
     fi
   fi
 fi

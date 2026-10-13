@@ -203,16 +203,17 @@ Five gauges ride the same run and the retro reads all five, not just the tables:
   Measured 2026-09-19: 5.3 held (32%) and 19.4 forfeited, on a run where the gauge had printed nothing.
 - **Headroom throttle** — session-hours parked by `/auto`'s fleet headroom gate between picks: the
   `throttled` column per session (`parked hours (THROTTLE probes/probes)`), a clause on the **Totals** line
-  naming the ceiling source every probe reported, `thr%` in the trend, and `throttle` in the JSON. A
+  naming the reading source every probe reported, `thr%` in the trend, and `throttle` in the JSON. A
   THROTTLE parks the session until its next probe, so the hours are those intervals summed; where a park
   ran past the last ship it also sits inside idle%, and the Pool exhausted line prints the overlap rather
-  than subtracting it. Against a calibrated ceiling this is the gate working — read it with the
-  rate-limit windows below. Against the probe's DEFAULT (`ceiling=1500000(default)`) it is a config
-  fault with its own flag: the calibration file at `~/.claude/local/five-hour-ceiling.json` was not read,
-  and under the keeper's 100M ceiling the gate should throttle on nothing. Measured 2026-10-04/05: 12 of
-  39 probes said THROTTLE against the default, 6.2 session-hours (16%) parked with 146 issues pickable,
-  the file having vanished from its old home under the harness-owned `~/.claude/telemetry/` six days
-  earlier — and the only trace was 2.5h riding idle% as an empty pool.
+  than subtracting it. Against a reading this is the gate working — read it with the rate-limit windows
+  below. `source=none` on every probe is a config fault with its own flag (`Headroom gate ran blind`):
+  no mods/rate-limits reading existed for the session or the machine, so the gate failed open on every
+  pick. The same fault wore a different face before 2026-10-13, when the probe summed transcript tokens
+  against a calibration file: on 2026-10-04/05, 12 of 39 probes said THROTTLE against the probe's
+  built-in default after that file vanished from the harness-owned `~/.claude/telemetry/`, 6.2
+  session-hours (16%) parked with 146 issues pickable — and the only trace was 2.5h riding idle% as an
+  empty pool.
 - **Mid-run holds** — session-hours a session spent in `PLANNED-HOLD` / `BLOCKED-HOLD`, read from its
   `AUTO-CONTINUE: no pick` ticks (a hold writes no ledger status): the `held` column per session (`hours
   (ticks)`), a clause on the **Totals** line, `hold%` in the trend, and `holds` plus each session's `held`
@@ -296,32 +297,15 @@ the active account's `seven_day` reading at dispatch — a mechanical readout as
    check each session's entry count in the window before concluding a limit spared it. Route a
    `session` cutoff exactly as a `5-hour` one: the levers are **n** and stall recovery.
 
-   Derive the ceiling per cutoff rather than trusting one number: sum output tokens in the 5h window
-   ending at each cutoff, deduped by `requestId` across every transcript on the machine (the meter is
-   account-wide, so fleet-scoped sums undercount, and subagent transcripts double-count without the
-   dedup). The 2026-08-14 run measured **1,394,893** and **1,213,190** — two independent ceilings for
-   one `limit_kind`, ~13% apart.
-
-   **Unit trap since 2026-09-22:** `fleet-metrics.py` now credits each message its final usage row, but
-   `scripts/fleet-headroom.sh` still credits the FIRST row per `requestId` — on a streamed subagent
-   message a placeholder of a few tokens, since every row of one message shares its `requestId` (3,442
-   of 3,442 messages across one 2026-09-22 BFP session's 142 subagent transcripts, and the shape is as
-   old as the oldest transcript on disk, 2026-08-14 on 2.1.232), while a main-session message carries
-   its final count on every row. So the probe's trailing-5h meter, its 1,500,000 default, both
-   2026-08-17 observations in `~/.claude/local/five-hour-ceiling.json`, and every figure in this
-   section are in the old unit; on a fleet-dominated window the script's unit runs roughly 3× higher
-   (its re-measured peaks moved 1.9M → 4.3–5.5M), less when interactive work fills the window. The
-   file's `ceiling_output_tokens` is 100,000,000 by keeper directive 2026-08-30 (multi-account: the
-   machine-wide meter maps to no one account's window), so the probe throttles on nothing today, and
-   the trap fires when that note's "restore a measured per-account ceiling" is followed: a new-unit
-   observation restored against the old-unit meter is a ceiling the probe can never approach, and the
-   fleet dies mid-issue with the gate silent. Do NOT write the script's cutoff-window figure into that
-   file — `skills/fleet-launch/SKILL.md` and `skills/auto/SKILL.md` still say to; record it in the
-   retro report only, until the probe counts the largest row per `requestId`
-   (still a floor where a subagent's final row was never written — the `Subagent usage rows` share
-   above), its default is re-derived, and `scripts/fleet-forecast.py`'s throttle line — the same
-   ceiling read against a rate the re-measured history already states in the new unit — is converted
-   with it.
+   The ceiling is read, not derived. Until 2026-10-13 this step summed output tokens in the 5h window
+   ending at each cutoff to calibrate the probe's ceiling file, and the sum was in a unit nobody could
+   compare: the probe credited the FIRST usage row per `requestId` (a few-token placeholder on a streamed
+   subagent message) while `fleet-metrics.py` credits the final row, ~3× apart on a fleet-dominated
+   window — and the machine-wide sum mapped to no one account's window on a multi-account machine, so
+   the ceiling was set to 100M on 2026-08-30 and the gate parked nothing for six weeks. `mods/rate-limits`
+   now records the account's own `five_hour` reading per session, the probe parks on it, and the
+   `Window readings` line below with its Headroom verdict is the sizing evidence. The cutoff-window token
+   meters stay in the report as cost figures only; carry them forward for cost, never as a ceiling.
 
    **Cross-run token comparisons are valid only within one `limit_kind`.** The 2026-08-08 retro nearly
    shipped a confident, wrong conclusion here: trailing-5h total-billable at three cutoffs agreed to
@@ -343,6 +327,16 @@ the active account's `seven_day` reading at dispatch — a mechanical readout as
    right trade at ~5–22min of reset wait per stall, and ruinous only when recovery is not automatic
    (it cost 4.85 session-hours and ~2 issues that run). Shrinking to n=2 forfeits ~30% of the
    allowance to fix a stall that costs minutes. Check the recovery mechanism before touching n.
+
+**Read the `Window readings` line and its Headroom verdict before sizing anything on the token peaks.** Since
+2026-10-13, mods/rate-limits keeps each session's history of the account's own window meter
+(`~/.claude/local/rate-limits/<session>.jsonl`); the line names each window's highest reading (`5h%` in the trend), and
+the verdict divides the peak `five_hour` reading by the sessions active when it was taken to say how many sessions the
+window fits at that workload — so whether more would have fit, the question the four numbers above can only bracket.
+Take it as a bracket of one: the meter is account-wide (the operator's own sessions count), the share assumes burn scales
+with the count, and a reading moves only when the window moves a whole point. It reads `none` for a fleet launched
+before the mod was enabled on the machine: the 2026-10-12 retro could only estimate headroom (one more session, possibly
+two) from a single snapshot taken two days earlier, and could not say which unit the 5h meter counts.
 
 **A session that wound down deliberately is not a stalled one, however long it then sits quiet.** The
 detector already excludes a silence beginning at a `ScheduleWakeup(stop: true)` with no limit message,
@@ -382,7 +376,7 @@ The script finds *shapes*; it does not explain them. Each flag is a lead:
 | held N.Nh while siblings landed K ship(s) | A mixed launch: sessions without the `backlog` token park in `PLANNED-HOLD` on a gated Planned/Todo column while `backlog` siblings ship from Backlog (the flag says so when the ledgers differ). `BLOCKED-HOLD` is a by-design wait on a sibling's in-flight issue, so a landing inside it is the wait ending — read its hours, not the count | the held session's ledger for `backlog` and `/fleet-launch`'s recorded tokens; the tick lines' own counts ("0 pickable now; N need the keeper") |
 | ledger carries N off-schema entries | /auto Step 4 (or a hand edit) wrote objects where the ledger takes bare ids. The analyzer reads `.issue` and drops entries without a string id, and `fleet-status.sh` warns the same, so the counts hold — but the writer drifted | that session's last ledger write in its transcript; `skills/auto/SKILL.md` Step 4 |
 | rewakes classified spurious | `hooks/auto-rewake.sh` woke a session that was alive and told it to run an iteration — invisible in every other column, because the injected turn looks like ordinary loop activity and arrives as `task-notification`, not `human`. Two shapes are known and both were fixed 2026-09-20, so on a log newer than that a flag is a regression or a third shape. The transcript MOVED while the hook slept: a worktree enter or exit re-keys the session's project directory, and the instance read the emptied path as silence (73 of that run's 74; now logged `stood-down … reason=transcript-unreadable`). The ZERO WAIT: an arm already past due + grace when its turn ended was checked before the overdue wakeup's record could exist (1 of 74; the wait is now never shorter than the grace) | the flagged line in `~/.claude/logs/auto-rewake.log`, then the transcript between its `armed_at` and its timestamp: which opener landed there. A turn that ran while the hook slept means its stand-down read failed — check whether the session's cwd changed in the window. A `scheduled_task_fire` inside the line's own second, under a `wait kind=stop wait_s=0` line, is the zero-wait race |
-| Throttled against the probe's DEFAULT ceiling | `fleet-headroom.sh` answered `ceiling=1500000(default)` on a THROTTLE, so `~/.claude/local/five-hour-ceiling.json` was missing or unreadable at pick time and sessions parked on 1.5M instead of the keeper's 100M (which throttles on nothing). Every parked hour is capacity lost to config, not to the pool or the session. Measured 2026-10-04/05: the file had vanished from `~/.claude/telemetry/` on 2026-09-29 (a 2.1.284→2.1.285 harness self-upgrade landed in the same hour; the harness owns that directory), and every fleet after it ran throttled with nothing saying so | `~/.claude/scripts/fleet-headroom.sh --ceiling-only` now, and the `Headroom ceiling:` line `/fleet-launch` prints at dispatch; restore the file (the probe's header records the directive and the unit), then confirm the probe answers `(calibration)` before the next launch |
+| Headroom gate ran blind | every `fleet-headroom.sh` probe a session made answered `source=none`: no mods/rate-limits reading existed for the session or the machine, so the gate failed open on every pick and nothing would have parked the session short of a mid-issue cutoff. No capacity was lost — the fault is that the protection was off. (Before 2026-10-13 the token-sum probe's version of this fault parked 6.2 session-hours on its built-in default after its calibration file vanished from the harness-owned `~/.claude/telemetry/`, 2026-10-04/05) | `claude plugin list --json` for `rate-limits@alienfast-claude`, and the `Burst (five_hour):` line `/fleet-launch` printed at dispatch — `Rate limits: no reading` there is the same fault seen early; enable the mod, start a session so it measures, and relaunch |
 | `loop-boundary` compacted nothing | The mod is loaded (fleet-launch.sh checks only that it is enabled) but its match conditions never fired, so the sessions ran with no compaction between iterations and any fall in the context gauge is not the mod's doing (2026-10-10: main-loop sessions peaked near 970k with 76% of prompt volume at >=500k). Read the dominant pass reason. `prefix`: the loop prompt never matched `loop_prefixes` (default `/auto`); on 2026-10-10 the re-armed `/loop /auto …` was not stripped. `no-outcome`: the answer carried no outcome line, so /auto's outcome-tag format changed under `outcomeLineOf`. `below-floor`: `min_context_percent` is set above the fleet's context. A non-`answer` turn end such as `error` (on 2026-10-10, likely the rate-limit-refused rewake turns) and `loop-ended` are expected noise, never the cause alone. Attempted-but-rejected boundaries carry `skipped`/`error` on their rows | `tmp/loop-boundary-<sessionId>.jsonl` in the main checkout AND every worktree (pass `reason` counts and the `loopPrompt` values beside them), then `mods/loop-boundary/hooks/boundary.ts` (`matchesPrefix`, `loopPromptOf`, `wakeupPromptOf`, `outcomeLineOf`) and the mod's `userConfig` |
 
 **Correlate across sessions before concluding.** The 2026-08-01 run's biggest finding existed only in the
@@ -514,10 +508,10 @@ Lead with where the capacity went, in hours. Then, ranked by cost:
    could not have used, charged to prep — the pool — rather than to any session. Its **forfeited** hours
    are the opposite charge and are reported separately: sessions that died before the deadline, a
    session fault with its own finding, however gated the pool was when they died. **Headroom-parked**
-   hours (the Totals clause, `thr%` in the trend) are a third charge: against a calibrated ceiling they are
-   the gate working and cost what the limit would have; against the DEFAULT ceiling (its flag) they are a
-   config fault — charge them to config, not to the pool or the session, and restore the file before the
-   next launch.
+   hours (the Totals clause, `thr%` in the trend) are a third charge: against a reading they are the gate
+   working and cost what the limit would have. A session whose probes all ran blind (its flag) parked
+   nothing, so there is no charge — but the protection was off; charge that to config and enable the mod
+   before the next launch.
 3. **Findings** — one per fault: evidence (numbers + `file:line` or transcript timestamps), root cause,
    and the specific fix. Distinguish a **compliance failure** (the rule exists and was ignored — prose
    will not fix it again) from a **gap** (no rule covers it).

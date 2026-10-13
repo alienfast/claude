@@ -162,10 +162,8 @@ ck "session set recorded"         "ab000005 ab000006" "$(jq -r '.fleet_sessions 
 ck "count recorded"               "2" "$(jq -r '.count' "$REPO/tmp/fleet-deadline.json")"
 ck_has "each id surfaced"         "session ab000005 recorded" "$WORK/out"
 ck_has "set surfaced at the end"  "Fleet session set: ab000005 ab000006" "$WORK/out"
-# The ceiling every pick will park against is named at launch; HOME is empty here, so the probe answers
-# with its default and the launch warns that the calibration file is missing.
-ck_has "ceiling in effect printed"   "Headroom ceiling: ceiling=" "$WORK/out"
-ck_has "default ceiling warned"       "WARN: the headroom probe is on its built-in default ceiling" "$WORK/out"
+# The account's windows are read at launch; HOME is empty here, so the launch says there is no reading and why.
+ck_has "no reading explained"        "Rate limits: no reading (" "$WORK/out"
 
 # ---- case 7: a dated launch carries the deadline AND the set; a dead prior set is not inherited ----
 : > "$WORK/dispatches"
@@ -483,6 +481,17 @@ retire_setup "$ledger_pl" "$ledger_pl"; old_marker "$ahead" '. + {retiring: ["b2
 ck "prior retiring: launch exits 0"           "0" "$(run 1 19h)"
 ck "prior retiring: only the listed stays"    "b2bb1003" "$(rkeys)"
 
+# case 18d: a member with no ledger is carried only while its launch is live (still in preflight). Under a passed deadline it has
+# finished — the registry listing it is a re-claimed transcript, which must not join the new set as a retiring phantom.
+retire_setup "$ledger_pl" "$ledger_pl"; rm -f "$REPO"/tmp/auto-state-*.json; old_marker "$past"
+ck "ledger-less, wound down: launch exits 0"  "0" "$(run 3 19h)"
+ck "ledger-less, wound down: none carried"    "" "$(jq -r '.fleet_sessions | map(select(startswith("8c") or startswith("b2"))) | join(" ")' "$REPO/tmp/fleet-deadline.json")"
+ck "ledger-less, wound down: no retiring"     "false" "$(jq 'has("retiring")' "$REPO/tmp/fleet-deadline.json")"
+ck_lacks "ledger-less, wound down: silent"    "Retiring session(s)" "$WORK/out"
+retire_setup "$ledger_pl" "$ledger_pl"; rm -f "$REPO"/tmp/auto-state-*.json; old_marker "$ahead"
+ck "ledger-less, live: launch exits 0"        "0" "$(run 1 19h)"
+ck "ledger-less, live: preflight carried"     "8c16860d b2bb1003" "$(jq -r '.fleet_sessions | map(select(startswith("8c") or startswith("b2"))) | sort | join(" ")' "$REPO/tmp/fleet-deadline.json")"
+
 # case 19: the cap — 2 carried + 3 new warns, 1 carried + 2 new is exactly at it, 0 carried + 3 new is silent.
 retire_setup "$ledger_pl" "$ledger_pl"; old_marker "$ahead"
 ck "cap: 2+3 launch exits 0"                  "0" "$(run 3 19h)"
@@ -606,7 +615,7 @@ rm -f "$WORK/plugins.json"
 # reset falls inside a dated run; below 70% it is the reading alone. Each shape launches.
 : > "$WORK/dispatches"
 ck "weekly: no file launches"           "0" "$(run 1)"
-ck_has "weekly: no file explained"      "Weekly: no reading (" "$WORK/out"
+ck_has "weekly: no file explained"      "Rate limits: no reading (" "$WORK/out"
 ck_has "weekly: no file names the fix"  "rate-limits@alienfast-claude is not enabled on this machine" "$WORK/out"
 mkdir -p "$WORK/home/.claude/local"
 iso_at() { date -u -r "$1" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -d "@$1" '+%Y-%m-%dT%H:%M:%SZ'; }
@@ -618,6 +627,8 @@ far=$(( $(date +%s) + 3 * 86400 ))
 reading 71 "$far"
 ck "weekly: reading launches"           "0" "$(run 1)"
 ck_has "weekly: reading printed"        "Weekly (seven_day): 71% used, resets $(iso_at "$far"), measured 0m ago" "$WORK/out"
+ck_has "burst: reading printed"         "Burst (five_hour): 12.5% used, resets unknown, measured 0m ago" "$WORK/out"
+ck_lacks "burst: low says nothing more" "the 5h window" "$WORK/out"
 ck_has "weekly: undated past 70 warns"  "WARN: the weekly window is 71% used" "$WORK/out"
 ck "weekly: dated, reset after, launches" "0" "$(run 1 5h)"
 ck_has "weekly: reset after deadline warns" "WARN: the weekly window is 71% used" "$WORK/out"
@@ -632,6 +643,24 @@ ck_lacks "weekly: low says nothing more" "the weekly window is" "$WORK/out"
 printf '{"measured_at":"%s","session":"s","windows":[{"kind":"five_hour","percentUsed":1}]}\n' "$(iso_at "$(date +%s)")" > "$WORK/home/.claude/local/rate-limits.json"
 ck "weekly: no seven_day launches"       "0" "$(run 1)"
 ck_has "weekly: no seven_day explained"  "Weekly: no reading (the last measurement in" "$WORK/out"
+# ---- the burst readout: over fleet-headroom.sh's reserve, the launch says every session parks at its first pick ----
+burst() { # <percent> <resets-epoch>
+  printf '{"measured_at":"%s","session":"s","windows":[{"kind":"five_hour","percentUsed":%s,"resetsAt":"%s"},{"kind":"seven_day","percentUsed":30,"resetsAt":"%s"}]}\n' \
+    "$(iso_at "$(date +%s)")" "$1" "$(iso_at "$2")" "$(iso_at "$far")" > "$WORK/home/.claude/local/rate-limits.json"
+}
+soon=$(( $(date +%s) + 7200 ))
+burst 90 "$soon"
+ck "burst: over the reserve launches"    "0" "$(run 1)"
+ck_has "burst: over the reserve printed" "Burst (five_hour): 90% used, resets $(iso_at "$soon"), measured 0m ago" "$WORK/out"
+ck_has "burst: over the reserve warns"   "WARN: the 5h window is 90% used — over fleet-headroom.sh's reserve, so every session parks at its first pick until the reset at $(iso_at "$soon")" "$WORK/out"
+burst 90 $(( $(date +%s) + 600 ))
+ck "burst: reset imminent launches"      "0" "$(run 1)"
+ck_has "burst: reset imminent notes"     "NOTE: the 5h window is 90% used but resets in" "$WORK/out"
+ck_lacks "burst: reset imminent no warn" "WARN: the 5h window" "$WORK/out"
+burst 90 $(( $(date +%s) - 60 ))
+ck "burst: reset passed launches"        "0" "$(run 1)"
+ck_has "burst: reset passed notes"       "NOTE: the 5h window read 90% used, but that reading predates its reset" "$WORK/out"
+ck_lacks "burst: reset passed no warn"   "WARN: the 5h window" "$WORK/out"
 echo 'not json' > "$WORK/home/.claude/local/rate-limits.json"
 ck "weekly: unreadable launches"         "0" "$(run 1)"
 ck_has "weekly: unreadable explained"    "is not readable JSON)" "$WORK/out"

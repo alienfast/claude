@@ -20,8 +20,8 @@
 #   linear-cli (optional)              issue state/title joins, failed/canceled cross-check,
 #                                      stalled flags, runway
 #   .claude/merge-queue/               deferred merges (via merge-queue.sh list)
-#   fleet-headroom.sh                  the pick-time headroom probe, run once against the same transcripts
-#                                      (CLAUDE_PROJECTS_DIR): a THROTTLE answer means sessions are parked
+#   fleet-headroom.sh                  the pick-time headroom probe, run once per fleet session on its own
+#                                      mods/rate-limits history: a THROTTLE answer means sessions are parked
 #
 # Sessions are scoped to the CURRENT fleet: the marker's fleet_sessions decides membership when the
 # launch recorded it (every launch since 2026-08-29), and a single-run ledger (`mode: single` — a
@@ -119,18 +119,25 @@ printf '_Wind down early: `/fleet-launch stop` — ends the timer, in-flight iss
 
 # ---------- headroom ----------
 
-# A parked session writes nothing to its ledger, so without this line a park reads like a death. Silent when the probe is
-# missing or prints nothing (it fails open on its own errors).
-proj_root="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
+# A parked session writes nothing to its ledger, so without this line a park reads like a death. Each fleet session is probed on
+# its own mods/rate-limits history (the account it runs on), the machine's snapshot standing in for a session with none; silent
+# while every reading is under the reserve, and a warning when no reading exists at all — the gate then fails open on every pick.
 if [ -s "$marker" ] && [ -x "$SCRIPT_DIR/fleet-headroom.sh" ]; then
-  h_rc=0
-  h_line=$("$SCRIPT_DIR/fleet-headroom.sh" --projects-dir "$proj_root" 2>/dev/null) || h_rc=$?
-  if [ "$h_rc" -eq 2 ] && [ "${h_line#THROTTLE}" != "$h_line" ]; then
-    printf '**Headroom: THROTTLE** — sessions park between picks and re-probe every ~30 min, so a quiet ledger may be a park rather than a death: `%s`\n\n' "$h_line"
+  h_throttle=""; h_seen=0
+  for k in ${fleet_set:-snapshot}; do
+    if [ "$k" = snapshot ]; then h_line=$("$SCRIPT_DIR/fleet-headroom.sh" 2>/dev/null) || true
+    else h_line=$("$SCRIPT_DIR/fleet-headroom.sh" --session "$k" 2>/dev/null) || true; fi
+    case "$h_line" in
+      THROTTLE*) h_seen=1; [ -z "$h_throttle" ] && h_throttle="$h_line" ;;
+      *'source=none'*) ;;
+      PICK-OK*) h_seen=1 ;;
+    esac
+  done
+  if [ -n "$h_throttle" ]; then
+    printf '**Headroom: THROTTLE** — sessions park between picks and re-probe at the window reset (every ~30 min at most), so a quiet ledger may be a park rather than a death: `%s`\n\n' "$h_throttle"
+  elif [ "$h_seen" = 0 ]; then
+    printf '**⚠️ Headroom gate is blind** — no mods/rate-limits reading for this fleet'"'"'s sessions or this machine (`~/.claude/local/rate-limits/`), so every pick fails open and nothing parks a session short of a mid-issue cutoff. Enable rate-limits@alienfast-claude (update.sh installs it) before the next launch.\n\n'
   fi
-  case "$h_line" in
-    *'(default)'*) printf '**⚠️ Headroom ceiling is the probe'"'"'s built-in default** — `~/.claude/local/five-hour-ceiling.json` is missing or unreadable, so every pick parks against 1.5M. Restore it (fleet-headroom.sh header).\n\n' ;;
-  esac
 fi
 
 # ---------- epic scope + member burn-down ----------
@@ -237,7 +244,8 @@ case "$main_checkout" in
               proj_mangled="[$(printf '%s' "$d0" | tr A-Z a-z)$(printf '%s' "$d0" | tr a-z A-Z)]${proj_mangled#?}" ;;
 esac
 is_auto_run() {
-  local key="$1" d f first
+  local key="$1" d f first proj_root
+  proj_root="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
   for d in "$proj_root"/$proj_mangled*; do
     [ -d "$d" ] || continue
     for f in "$d/$key"*.jsonl; do

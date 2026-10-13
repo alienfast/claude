@@ -10,7 +10,7 @@ behaves the same in a terminal, the VS Code panel, and a `claude --bg` fleet ses
 | `effort-probe` | One-shot measurement that an effort rewrite is cache-safe on this build | BF-2501 |
 | `loop-boundary` | Near-clear compaction of the main conversation at each `/loop /auto` iteration boundary; per-boundary ledger | BF-2510 |
 | `loop-boundary-probe` | One-shot measurement of where a plugin compaction is accepted and what origin a `/loop` wakeup carries | BF-2510 |
-| `rate-limits` | The account's rate-limit windows (`five_hour`, `seven_day`) written to `~/.claude/local/rate-limits.json` on every measurement; `fleet-launch.sh` prints the weekly reading from it | BF-2525 |
+| `rate-limits` | The account's rate-limit windows (`five_hour`, `seven_day`) written to `~/.claude/local/rate-limits.json` on every measurement, plus a per-session history under `~/.claude/local/rate-limits/`; `fleet-launch.sh` prints the burst and weekly readings, `fleet-headroom.sh` parks a fleet session on its own history, and `fleet-metrics.py` reads the fleet's peak | BF-2525 |
 
 ## Loading
 

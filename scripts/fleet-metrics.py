@@ -18,7 +18,7 @@ either phrase counted, denials, unavailability and prose alike, so older `cls` c
 the merge path makes, beside the `SHIPPED-*: <ID>` tag — so older rows' obs counts read low: on the
 2026-10-04/05 fleet the tag caught 8 of 27 ships and the call all 27. A third, 2026-10-12: /auto's
 `AUTO-CONTINUE: <ID> shipped (…)` line, the only witness a queued merge leaves (`observed_by.outcomes`). The `throttle` gauge — session-
-hours parked by fleet-headroom.sh's THROTTLE between picks, with the ceiling source each probe named —
+hours parked by fleet-headroom.sh's THROTTLE between picks, with the reading source each probe named —
 was added the same day; rows before it carry no `throttle_*` fields. `filed_per_shipped`, the churn
 table's `filed` column and `review_churn[].filed` stopped counting the dedup recipe's `<ID> (existing
 — evidence appended)` citations 2026-10-08: no issue was created, and an append to an issue that
@@ -122,10 +122,11 @@ CLASSIFIER_UNAVAILABLE = re.compile(r"\A(?:<tool_use_error>)?[^\n]*?cannot deter
 # The merge path's Ready-For-Release call, at a command position (start, or after ; & | ( ) — a quoted mention
 # inside a grep or a comment body does not count. The path prefix is optional and whatever the session typed.
 SHIP_CALL = re.compile(r"(?:^|[;&|(])\s*(?:[\w~./-]*/)?mark-ready-for-release\.sh\s+([A-Z]+-\d+)", re.M)
-# fleet-headroom.sh's text and --json answers; the ceiling source (calibration|default|flag) rides along.
-HEADROOM_PROBE = re.compile(r"^(THROTTLE|PICK-OK)\s+trailing-5h=(\d+)\s+ceiling=(\d+)\((\w+)\)", re.M)
-HEADROOM_PROBE_JSON = re.compile(r"\"trailing_5h_output\":\s*(\d+).*?\"ceiling\":\s*(\d+).*?\"pick_ok\":\s*(true|false)"
-                                 r".*?\"ceiling_source\":\s*\"(\w+)\"", re.S)
+# fleet-headroom.sh's text and --json answers; the source of its reading (session|snapshot|none) rides along. Transcripts before
+# 2026-10-13 carry the token-sum form, whose source names the ceiling it parked against (calibration|default|flag).
+HEADROOM_PROBE = re.compile(r"^(THROTTLE|PICK-OK)\s+five_hour=[^\n]*?\bsource=(\w+)", re.M)
+HEADROOM_PROBE_JSON = re.compile(r"\"pick_ok\":\s*(true|false).*?\"source\":\s*\"(\w+)\"", re.S)
+HEADROOM_PROBE_LEGACY = re.compile(r"^(THROTTLE|PICK-OK)\s+trailing-5h=\d+\s+ceiling=\d+\((\w+)\)", re.M)
 SHIPPED_TAG = re.compile(r"\b(SHIPPED-MERGE|SHIPPED-PR|RELEASED|DEFERRED-MERGE):\s*([A-Z]+-\d+)")
 # /auto Step 4's iteration line, `AUTO-CONTINUE: <ID> shipped (<inherited tag>). …` — the only witness a queued ship is sure to leave:
 # the drainer, not the session, makes its mark-ready call, and the bare tag drifts. On the 2026-10-11 basefund fleet BF-1484, BF-1542
@@ -181,6 +182,9 @@ GAP_MIN = 240  # seconds; a tool call slower than this is worth naming, not nece
 # points the hook and this gauge at the same place (as CLAUDE_PROJECTS_DIR does for transcripts).
 REWAKE_LOG = Path(os.environ.get("AUTO_REWAKE_LOG_DIR",
                                  str(Path.home() / ".claude" / "logs"))) / "auto-rewake.log"
+# mods/rate-limits keeps one history file per session id: every reading in which a rate-limit window moved. The token peaks
+# below bound the allowance from one side only; these readings are the account's own meter of how full the window got.
+RATE_LIMITS_DIR = Path(os.environ.get("RATE_LIMITS_DIR", str(Path.home() / ".claude" / "local" / "rate-limits")))
 # `<iso> <run key> <event> rewake kind=<stop|api> …` — field 2 is the session id's leading 8
 # characters, which is the run key everything else here is keyed on.
 REWAKE_LINE = re.compile(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ) (\S+) \S+ rewake kind=(stop|api)\b(.*)$")
@@ -664,11 +668,10 @@ def scan_transcript(path, agg, agent_type="main", description=""):
                         agg["classifier_blocks"].append(label)
                 if name == "Bash" and t and agent_type == "main" and not r.get("isSidechain") \
                         and "fleet-headroom" in str(inp.get("command", "")):
-                    for kind, trailing, ceiling, src in HEADROOM_PROBE.findall(body):
-                        agg["headroom_probes"].append((t, kind, int(trailing), int(ceiling), src))
-                    for trailing, ceiling, ok, src in HEADROOM_PROBE_JSON.findall(body):
-                        agg["headroom_probes"].append((t, "PICK-OK" if ok == "true" else "THROTTLE",
-                                                       int(trailing), int(ceiling), src))
+                    for kind, src in HEADROOM_PROBE.findall(body) + HEADROOM_PROBE_LEGACY.findall(body):
+                        agg["headroom_probes"].append((t, kind, src))
+                    for ok, src in HEADROOM_PROBE_JSON.findall(body):
+                        agg["headroom_probes"].append((t, "PICK-OK" if ok == "true" else "THROTTLE", src))
                 if t and t0:
                     secs = (t - t0).total_seconds()
                     if name == "Bash":
@@ -798,7 +801,7 @@ def new_agg():
         "sleep_blind_s": 0.0, "sleep_blind_n": 0, "sleep_marker_s": 0.0, "sleep_marker_n": 0,
         "ship_tags": set(), "ship_outcomes": set(), "cancel_tags": set(), "subagents": 0,
         # Issues named by a main-loop `mark-ready-for-release.sh <ID>` call, and every fleet-headroom.sh
-        # answer as (time, THROTTLE|PICK-OK, trailing, ceiling, source) — main loop only for both.
+        # answer as (time, THROTTLE|PICK-OK, source) — main loop only for both.
         "ship_calls": set(), "headroom_probes": [],
         # issue -> earliest SHIPPED-tag time, and every CANCELED-tag time: the transcript side of
         # "when was this session last productive" (git's committer dates are the primary, see
@@ -1327,6 +1330,59 @@ def boundary_compactions(checkout, run_key):
             "paths": dict(paths.most_common()), "passes": dict(passes.most_common())}
 
 
+def rate_limit_peaks(run_key):
+    """The highest reading of each window in a session's mods/rate-limits history, with when it was taken; None without one."""
+    peaks, n = {}, 0
+    for p in sorted(RATE_LIMITS_DIR.glob(f"{run_key}*.jsonl")):
+        try:
+            lines = p.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            n += 1
+            for w in row.get("windows") or []:
+                kind, pct = w.get("kind"), w.get("percentUsed")
+                if not isinstance(kind, str) or not isinstance(pct, (int, float)):
+                    continue
+                if kind not in peaks or pct > peaks[kind]["percent"]:
+                    peaks[kind] = {"percent": pct, "at": row.get("measured_at")}
+    return {"readings": n, "peaks": peaks} if n else None
+
+
+def fleet_rate_limit_peaks(sessions):
+    """Each window's highest reading across the sessions, with the session that saw it; None when no session kept a history."""
+    have = [(s["run_key"], s["rate_limit_peaks"]) for s in sessions if s.get("rate_limit_peaks")]
+    if not have:
+        return None
+    peaks = {}
+    for key, rp in have:
+        for kind, pk in rp["peaks"].items():
+            if kind not in peaks or pk["percent"] > peaks[kind]["percent"]:
+                peaks[kind] = {**pk, "run_key": key}
+    return {"sessions_with_history": len(have), "readings": sum(rp["readings"] for _, rp in have), "peaks": peaks}
+
+
+def headroom_verdict(sessions, fleet_rl):
+    """How many sessions the 5h window fits at this workload: the peak five_hour reading over the sessions active when it was
+    taken. The meter is account-wide, so the share per session is the peak over that concurrency, and the fit assumes burn scales
+    with it. None without a non-zero reading."""
+    pk = (fleet_rl or {}).get("peaks", {}).get("five_hour")
+    if not pk or not pk.get("percent"):
+        return None
+    at = ts(pk.get("at"))
+    active = sum(1 for s in sessions if at and s["agg"]["first"] and s["agg"]["last"]
+                 and s["agg"]["first"] <= at <= s["agg"]["last"])
+    n = active or len(sessions)
+    share = pk["percent"] / n
+    fits = int(100 // share)
+    return {"at": pk.get("at"), "five_hour_pct": pk["percent"], "sessions_active": n, "pct_per_session": round(share, 1),
+            "fits_sessions": fits, "more_sessions": fits - n}
+
+
 def fleet_boundary_compactions(sessions, shipped_count):
     """The sessions' loop-boundary ledgers summed, with compactions per shipped issue; None when no session has one."""
     have = [s["boundary_compactions"] for s in sessions if s.get("boundary_compactions")]
@@ -1760,7 +1816,8 @@ def main():
                 "transcripts": len(transcripts), "agg": agg,
                 "effort_lanes": effort_lanes(checkout, run_key),
                 "spawn_policy": spawn_policy_summary(checkout, run_key),
-                "boundary_compactions": boundary_compactions(checkout, run_key)}
+                "boundary_compactions": boundary_compactions(checkout, run_key),
+                "rate_limit_peaks": rate_limit_peaks(run_key)}
 
     # Second discovery pass: an /auto session whose ledger no longer exists. See auto_session_mode —
     # a deleted state file must surface as a flagged session, never as a fleet that was one session
@@ -1996,16 +2053,16 @@ def main():
 
     # Headroom throttle: session-hours parked by /auto's fleet headroom gate (fleet-headroom.sh). A THROTTLE
     # answer parks the session until its next probe — or its last turn, when none follows — so parked time
-    # is the sum of those intervals, per session and fleet-wide, with the ceiling source each probe named.
-    # The gauge the 2026-10-04/05 run lacked: 12 of 39 probes said THROTTLE against the 1,500,000 default
-    # (the calibration file had vanished a week earlier), 6.2 session-hours sat parked with 146 issues
-    # pickable, and the 2.5h of it after the last ships rode the idle-tail gauge (idle%) as an empty pool.
-    # Reported BESIDE that gauge, never folded into it: idle% keeps its meaning and the overlap is printed.
+    # is the sum of those intervals, per session and fleet-wide, with the reading source each probe named.
+    # The gauge the 2026-10-04/05 run lacked: 12 of 39 probes said THROTTLE against the token-sum probe's
+    # 1,500,000 default (its calibration file had vanished a week earlier), 6.2 session-hours sat parked with
+    # 146 issues pickable, and the 2.5h of it after the last ships rode the idle-tail gauge (idle%) as an empty
+    # pool. Reported BESIDE that gauge, never folded into it: idle% keeps its meaning and the overlap is printed.
     throttle = {}
     for s in sessions:
         probes = sorted(s["agg"]["headroom_probes"], key=lambda pr: pr[0])
         intervals = []
-        for i, (pt, kind, _trailing, _ceiling, _src) in enumerate(probes):
+        for i, (pt, kind, _src) in enumerate(probes):
             if kind != "THROTTLE":
                 continue
             end = probes[i + 1][0] if i + 1 < len(probes) else s["agg"]["last"]
@@ -2023,7 +2080,7 @@ def main():
             "throttled": sum(1 for pr in probes if pr[1] == "THROTTLE"),
             "parked_h": round(sum((hi - lo).total_seconds() for lo, hi in intervals) / 3600, 2),
             "parked_in_idle_tail_h": round(in_tail, 2),
-            "ceiling_sources": dict(Counter(f"{c}({src})" for _, _, _, c, src in probes)),
+            "sources": dict(Counter(src for _, _, src in probes)),
         }
     throttle_parked_h = round(sum(v["parked_h"] for v in throttle.values()), 1)
     throttle_in_tail_h = round(sum(v["parked_in_idle_tail_h"] for v in throttle.values()), 1)
@@ -2031,7 +2088,7 @@ def main():
     throttle_throttled = sum(v["throttled"] for v in throttle.values())
     throttle_sources = Counter()
     for v in throttle.values():
-        throttle_sources.update(v["ceiling_sources"])
+        throttle_sources.update(v["sources"])
 
     # Mid-run holds: PLANNED-HOLD / BLOCKED-HOLD hours per session (hold_gauge). Reported BESIDE idle% like the throttle gauge,
     # never folded into it: idle% keys on the fleet's last ship and a hold writes no ledger status, so a session held for ten
@@ -2199,6 +2256,8 @@ def main():
     fleet_lanes = fleet_effort_lanes(sessions)
     fleet_spawn = fleet_spawn_policy(sessions)
     fleet_boundary = fleet_boundary_compactions(sessions, len(all_shipped))
+    fleet_rl = fleet_rate_limit_peaks(sessions)
+    fleet_headroom = headroom_verdict(sessions, fleet_rl)
     headline = {
         "recorded_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "fleet_start": fleet_first.strftime("%Y-%m-%dT%H:%M:%SZ") if fleet_first else None,
@@ -2231,6 +2290,8 @@ def main():
         "hold_share": None,  # filled below once session_hours exists
         "rewritten_request_share": fleet_lanes["rewritten_request_share"] if fleet_lanes else None,
         "non_judgment_token_share": fleet_lanes["non_judgment_token_share"] if fleet_lanes else None,
+        "peak_five_hour_pct": (fleet_rl["peaks"].get("five_hour") or {}).get("percent") if fleet_rl else None,
+        "five_hour_fits_sessions": fleet_headroom["fits_sessions"] if fleet_headroom else None,
     }
 
     # Burn against the moving windows the account actually meters. /auto-prep sizes a fleet from
@@ -2461,7 +2522,7 @@ def main():
                 "parked_session_hours": throttle_parked_h,
                 "share": headline["throttle_share"],
                 "probes": throttle_probes, "throttled_probes": throttle_throttled,
-                "ceiling_sources": dict(throttle_sources),
+                "sources": dict(throttle_sources),
             },
             "windows": {
                 "peak_5h_output_tokens": peak_5h,
@@ -2470,6 +2531,8 @@ def main():
                 "peak_5h_window_start": peak_5h_at.isoformat() if peak_5h_at else None,
                 "peak_168h_output_tokens": peak_wk,
                 "peak_168h_window_start": peak_wk_at.isoformat() if peak_wk_at else None,
+                "readings": fleet_rl,
+                "headroom": fleet_headroom,
                 "session_hours": round(session_hours, 2),
                 "peak_5h_concurrency": peak_5h_concurrency,
                 "output_tokens_per_session_hour_at_peak": peak_5h_rate,
@@ -2562,7 +2625,7 @@ def main():
           f"{named} named dispatches · {tot['cls']} classifier denials / {tot['cls_unavail']} unavailable · "
           f"{sum(fleet_tokens.values()):,} output tokens · headroom-parked {throttle_parked_h:.1f}h"
           + (f" ({100 * headline['throttle_share']:.0f}% of fleet; {throttle_throttled}/{throttle_probes} probes THROTTLE; "
-             f"ceiling {', '.join(f'{k} x{n}' for k, n in throttle_sources.most_common())})"
+             f"source {', '.join(f'{k} x{n}' for k, n in throttle_sources.most_common())})"
              if throttle_probes else " (no headroom probes seen)")
           + (f" · held {hold_total_h:.1f}h ({100 * headline['hold_share']:.0f}% of fleet; {hold_ticks_total} no-pick ticks in "
              f"{len(hold_sessions)} of {len(sessions)} sessions)" if hold_sessions and headline["hold_share"] is not None else "")
@@ -2813,6 +2876,30 @@ def main():
                   "serialization buys idle time.\n")
     else:
         print("- no timestamped usage found; rolling-window burn not computable\n")
+    if fleet_rl:
+        def reading(kind):
+            pk = fleet_rl["peaks"].get(kind)
+            return f"**{pk['percent']}% used** at {pk.get('at') or '?'} (`{pk['run_key']}`)" if pk else "no reading"
+        print(f"**Window readings** — {fleet_rl['sessions_with_history']} of {len(sessions)} session(s) kept a mods/rate-limits "
+              f"history ({fleet_rl['readings']} readings): peak five_hour {reading('five_hour')}; peak seven_day "
+              f"{reading('seven_day')}. These are the account's own meter, so they answer what the token peaks above cannot — "
+              f"how close the 5h window came to its limit. Sessions on one account share its windows, so the fleet's peak is "
+              f"the highest any of them saw.\n")
+        if fleet_headroom:
+            hv = fleet_headroom
+            more = hv["more_sessions"]
+            verdict = (f"**{more} more session{'s' if more != 1 else ''} would have fit**" if more > 0 else
+                       f"**{-more} too many: the window would have filled**" if more < 0 else
+                       "**exactly at capacity — no room for another**")
+            print(f"**Headroom verdict** — at the peak reading ({hv['five_hour_pct']}% at {hv['at']}) {hv['sessions_active']} "
+                  f"session(s) were active, ~{hv['pct_per_session']}% of the 5h window each, so the window fits ~{hv['fits_sessions']} "
+                  f"concurrent session(s) at this workload: {verdict}. The meter is account-wide (the operator's own sessions "
+                  f"count against it), the share assumes burn scales with the session count, and a reading moves only when "
+                  f"the window moves a whole point — so take the fit as a bracket of one, not a count to the session.\n")
+    else:
+        print("**Window readings** — none: no session kept a mods/rate-limits history (`~/.claude/local/rate-limits/"
+              "<session>.jsonl`), so how full the 5h window got is unmeasured. rate-limits@alienfast-claude must be enabled "
+              "before a launch for its sessions to record one.\n")
     for c in cutoff_meters:
         print(f"- **cutoff-window meters** — in the 5h ENDING at {c['at']:%Y-%m-%d %H:%M UTC}, when the "
               f"allowance bound: **{c['output_tokens']:,} output**, "
@@ -2900,8 +2987,8 @@ def main():
         def pct(v):
             return f"{round(100 * v)}%" if v is not None else "-"
         print("| fleet start | n | hours | shipped | $/issue | ktok/issue | $/Mtok out | sub-final% | "
-              "cycles | find/rev | C+H/rev | plan% | ctx>=200k% | filed/ship | fresh% | idle% | thr% | hold% | rewr% |")
-        print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+              "cycles | find/rev | C+H/rev | plan% | ctx>=200k% | filed/ship | fresh% | idle% | thr% | hold% | rewr% | 5h% |")
+        print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
         for r in history[-6:]:
             mark = " ←" if r.get("session_set") == headline["session_set"] and not args.all else ""
             fs = (r.get("fleet_start") or "?")[:16].replace("T", " ")
@@ -2914,7 +3001,8 @@ def main():
                   f"{cell(r.get('crit_high_per_review'))} | {pct(r.get('plan_origin_share'))} | "
                   f"{pct(r.get('ctx_share_ge200k'))} | {cell(r.get('filed_per_shipped'))} | "
                   f"{pct(r.get('fresh_shipped_share'))} | {pct(r.get('idle_tail_share'))} | "
-                  f"{pct(r.get('throttle_share'))} | {pct(r.get('hold_share'))} | {pct(r.get('rewritten_request_share'))} |")
+                  f"{pct(r.get('throttle_share'))} | {pct(r.get('hold_share'))} | {pct(r.get('rewritten_request_share'))} | "
+                  f"{cell(r.get('peak_five_hour_pct'), '{}%')} |")
         if len(history) > 6:
             print(f"\n({len(history) - 6} earlier row(s) in the ledger, not shown)")
         print("\nRead $/issue as its two factors: ktok/issue is work per shipped issue (churn or harder "
@@ -2934,7 +3022,9 @@ def main():
               "so it overlaps idle% on the part of a hold past a session's last ship and thr% never, and it is the only gauge that "
               "sees a session held while a sibling kept shipping. rewr% is the effort-phase gauge: the share of the main "
               f"loop's ledgered requests sent at an effort other than the one the engine had set (the mechanical "
-              f"and polling lanes); a `-` is a fleet with no effort-phase ledger.\n")
+              f"and polling lanes); a `-` is a fleet with no effort-phase ledger. 5h% is the highest five_hour reading any "
+              f"session's mods/rate-limits history recorded — the account's own meter, so read it beside n for headroom (the "
+              f"Headroom verdict line does that arithmetic); a `-` is a fleet with no history.\n")
     elif not args.all:
         print("- first recorded fleet — the trend accrues one row per windowed run in "
               "`tmp/fleet-metrics-history.jsonl`\n")
@@ -3088,20 +3178,17 @@ def main():
                   f"`task-notification` and are main-loop output in every other table.")
             for c in rw["spurious_lines"][:3]:
                 print(f"    - `{c}`")
-    # Parked against the probe's built-in default: the calibration file was not read. The keeper's ceiling
-    # (100,000,000 since 2026-08-30) means the gate should throttle on nothing, so every default-sourced
-    # THROTTLE is capacity parked for no reason — 6.2 session-hours on 2026-10-04/05, silent in every table.
-    default_throttled = {k: v for k, v in throttle.items()
-                         if v["throttled"] and any(src.endswith("(default)") for src in v["ceiling_sources"])}
-    if default_throttled:
+    # The gate reads the account's own window meter and fails open without one, so a session whose every probe answered
+    # `source=none` ran the whole fleet ungated: nothing would have parked it short of a mid-issue cutoff. The same fault wore a
+    # different face before 2026-10-13 — the token-sum probe parked 6.2 session-hours on its built-in default on 2026-10-04/05.
+    blind = {k: v for k, v in throttle.items() if v["probes"] and v["sources"].get("none", 0) == v["probes"]}
+    if blind:
         flagged = True
-        who = ", ".join(f"`{k}` {v['throttled']}x ({v['parked_h']:.1f}h parked)"
-                        for k, v in sorted(default_throttled.items()))
-        print(f"- **Throttled against the probe's DEFAULT ceiling** — {who}: fleet-headroom.sh answered "
-              f"`ceiling=…(default)`, so `~/.claude/local/five-hour-ceiling.json` was missing or unreadable at pick "
-              f"time and the gate parked on 1,500,000 instead of the keeper's 100,000,000 (2026-08-30, multi-account: "
-              f"it should throttle on nothing). {throttle_parked_h:.1f} session-hours parked this run. Restore the "
-              f"file; /fleet-launch prints the ceiling in effect, so check that line before the next run.")
+        who = ", ".join(f"`{k}` ({v['probes']} probe{'s' if v['probes'] != 1 else ''})" for k, v in sorted(blind.items()))
+        print(f"- **Headroom gate ran blind** — {who}: every fleet-headroom.sh probe answered `source=none` (no "
+              f"mods/rate-limits reading for the session or the machine), so the gate failed open on every pick and nothing "
+              f"would have parked the session short of a mid-issue cutoff. rate-limits@alienfast-claude must be enabled before "
+              f"launch; /fleet-launch prints the burst reading, so check that line before the next run.")
     # fleet-launch.sh checks only that mods/loop-boundary is enabled, not that it fires; its first fleet (2026-10-10) passed
     # every looping turn as `prefix`, and the context gauge read the uncompacted run as the mod working.
     if fleet_boundary and all_shipped and fleet_boundary["accepted"] == 0:

@@ -39,10 +39,13 @@ git -C "$REPO" commit -q --allow-empty -m "XX-1: land the widget"
 FHOME="$ROOT/home"
 STUB="$FHOME/.cargo/bin"
 mkdir -p "$STUB"
-# The headroom probe reads its ceiling from the faked HOME; a ceiling no fixture approaches keeps it silent outside section 19.
-CALIB="$FHOME/.claude/local/five-hour-ceiling.json"
-mkdir -p "$(dirname "$CALIB")"
-echo '{"ceiling_output_tokens": 100000000}' > "$CALIB"
+# The headroom probe reads mods/rate-limits' snapshot under the faked HOME; a low reading keeps it silent outside section 19.
+RL="$FHOME/.claude/local/rate-limits.json"
+mkdir -p "$(dirname "$RL")"
+rl_snapshot() { # <five_hour pct> — the snapshot shape the mod writes; a 2099 reset keeps every reading current
+  printf '{"measured_at":"2026-10-13T14:55:12.144Z","session":"fefdc843-16c7-45a2-921c-a101e09239f6","windows":[{"kind":"five_hour","percentUsed":%s,"resetsAt":"2099-01-01T00:00:00.000Z"},{"kind":"seven_day","percentUsed":86,"resetsAt":"2099-01-01T00:00:00.000Z"}]}\n' "$1" > "$RL"
+}
+rl_snapshot 19
 RUNPATH="$(dirname "$(command -v git)"):$(dirname "$(command -v jq)"):/usr/bin:/bin:/usr/sbin:/sbin"
 
 OUT="$ROOT/out.md" ERR="$ROOT/err.log" RC=0
@@ -390,37 +393,48 @@ ck_has "  stalled row reads the label" '- XX-6 — ⚠️ failed (session sess-p
 ck_has "  unlabeled in-progress row stays a possible retry" '- XX-7 — failed (session sess-p), now [In Progress] — a retry may be in flight' "$OUT"
 ck_lacks "  generic look-for-stalled hint gone" 'look for a `stalled` label' "$OUT"
 
-echo "== 19. the headroom probe: a THROTTLE answer shows the park live; a default ceiling warns; no probe stays silent"
-# The probe reads the faked HOME's calibration. A 200,000 ceiling sits under the 250,000 reserve, so it answers THROTTLE
-# whatever the transcripts burned; with the file gone it falls back to its built-in 1.5M and says `(default)`.
-write_marker $((NOW - 500)) $((NOW + 7230))
+echo "== 19. the headroom probe: a THROTTLE answer shows the park live; no reading warns the gate is blind; no probe stays silent"
+# The probe reads each fleet session's own mods/rate-limits history under the faked HOME, the snapshot standing in for a session
+# with none. Readings are the shapes the mod writes, with resets in 2099 so none counts as already reset.
+rl_history() { # <session id> <five_hour pct>
+  mkdir -p "$FHOME/.claude/local/rate-limits"
+  printf '{"measured_at":"2026-10-13T14:55:09.760Z","windows":[{"kind":"five_hour","percentUsed":%s,"resetsAt":"2099-01-01T00:00:00.000Z"},{"kind":"seven_day","percentUsed":86,"resetsAt":"2099-01-01T00:00:00.000Z"}]}\n' "$2" > "$FHOME/.claude/local/rate-limits/$1.jsonl"
+}
+write_marker $((NOW - 500)) $((NOW + 7230))   # no fleet_sessions: the snapshot is the reading
 run_fs --no-runway
 ck "clean exit" "0" "$RC"
-ck_lacks "  calibrated, under the ceiling: no headroom line" "Headroom" "$OUT"
-echo '{"ceiling_output_tokens": 200000}' > "$CALIB"
+ck_lacks "  snapshot under the reserve: no headroom line" "Headroom" "$OUT"
+rl_snapshot 90
 run_fs --no-runway
-ck_has "  THROTTLE shown live" '**Headroom: THROTTLE** — sessions park between picks and re-probe every ~30 min, so a quiet ledger may be a park rather than a death: `THROTTLE trailing-5h=' "$OUT"
-ck_lacks "  calibrated ceiling not warned" "built-in default" "$OUT"
-rm "$CALIB"
+ck_has "  THROTTLE shown live" '**Headroom: THROTTLE** — sessions park between picks and re-probe at the window reset (every ~30 min at most), so a quiet ledger may be a park rather than a death: `THROTTLE five_hour=90% used' "$OUT"
+ck_lacks "  a reading is not blind" "Headroom gate is blind" "$OUT"
+rm "$RL"
 run_fs --no-runway
-ck_has "  default ceiling warned" "**⚠️ Headroom ceiling is the probe's built-in default** — \`~/.claude/local/five-hour-ceiling.json\` is missing or unreadable" "$OUT"
-ck_lacks "  default ceiling under the reserve is not a THROTTLE" "Headroom: THROTTLE" "$OUT"
-# The probe scans the transcripts CLAUDE_PROJECTS_DIR names, like the rest of the script: 100,000 output tokens there put
-# a 300,000 ceiling under the reserve, while the faked HOME's own projects dir would not.
-echo '{"ceiling_output_tokens": 300000}' > "$CALIB"
-mkdir -p "$ROOT/altprojects/-x"
-printf '{"type":"assistant","timestamp":"%s","requestId":"req-h1","message":{"role":"assistant","usage":{"output_tokens":100000}}}\n' \
-  "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" > "$ROOT/altprojects/-x/s.jsonl"
+ck_has "  no reading: blind warned" "**⚠️ Headroom gate is blind** — no mods/rate-limits reading for this fleet's sessions or this machine" "$OUT"
+ck_lacks "  no reading is not a THROTTLE" "Headroom: THROTTLE" "$OUT"
+# With a session set, each member is probed on its own history: a1's 95% throttles while the snapshot says 10, and a member with
+# no history (b2) reads the snapshot. One member's history is a reading, so the gate is not blind even without the snapshot.
+rl_snapshot 10
+jq '. + {fleet_sessions: ["a1a1a1a1", "b2b2b2b2"]}' "$REPO/tmp/fleet-deadline.json" > "$REPO/tmp/fd.tmp" && mv "$REPO/tmp/fd.tmp" "$REPO/tmp/fleet-deadline.json"
+rl_history a1a1a1a1-0000-4000-8000-000000000000 95
 run_fs --no-runway
-ck_lacks "  home projects dir under the reserve: no THROTTLE" "Headroom: THROTTLE" "$OUT"
-(cd "$REPO" && env HOME="$FHOME" PATH="$RUNPATH" CLAUDE_PROJECTS_DIR="$ROOT/altprojects" bash "$SCRIPT" --no-runway > "$OUT" 2> "$ERR")
-ck_has "  CLAUDE_PROJECTS_DIR is the probe's transcript root" "THROTTLE trailing-5h=100000" "$OUT"
+ck_has "  a member's own history throttles" "THROTTLE five_hour=95% used" "$OUT"
+ck_has "  named by its session" "source=session(a1a1a1a1)" "$OUT"
+rl_history a1a1a1a1-0000-4000-8000-000000000000 10
+run_fs --no-runway
+ck_lacks "  every member under the reserve: silent" "Headroom" "$OUT"
+rm "$RL"
+run_fs --no-runway
+ck_lacks "  one member's history: not blind" "Headroom gate is blind" "$OUT"
+rm -rf "$FHOME/.claude/local/rate-limits"
+run_fs --no-runway
+ck_has "  no history, no snapshot: blind" "Headroom gate is blind" "$OUT"
 # A copy of the script beside no probe: the header says nothing about headroom.
 mkdir -p "$ROOT/noprobe"; cp "$SCRIPT" "$ROOT/noprobe/fleet-status.sh"
 (cd "$REPO" && env HOME="$FHOME" PATH="$RUNPATH" bash "$ROOT/noprobe/fleet-status.sh" --no-runway > "$OUT" 2> "$ERR"); RC=$?
 ck "no probe: clean exit" "0" "$RC"
 ck_lacks "  no probe: silent" "Headroom" "$OUT"
-echo '{"ceiling_output_tokens": 100000000}' > "$CALIB"
+rl_snapshot 19
 
 echo "== 20. an object ledger entry (the real b2bb1003 ledger) is read as its .issue and warned about; malformed entries drop"
 # fixtures/fleet-metrics-holds/auto-state-b2bb1003.json is a trimmed copy of the real ledger whose `shipped` ends on
