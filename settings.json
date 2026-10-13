@@ -171,9 +171,7 @@
       "mcp__descope-docs__search-descope-docs",
       "mcp__ide__getDiagnostics",
       "mcp__mui",
-      "mcp__storybook-react__preview-stories",
-      "ClaudeInChromeDomain(console.cloud.google.com)",
-      "ClaudeInChromeDomain(accounts.google.com)"
+      "mcp__storybook-react__preview-stories"
     ],
     "deny": [],
     "ask": [
@@ -293,5 +291,6 @@
   "tui": "fullscreen",
   "theme": "dark",
   "agentPushNotifEnabled": true,
-  "skipAutoPermissionPrompt": true
+  "skipAutoPermissionPrompt": true,
+  "model": "opus"
 }
