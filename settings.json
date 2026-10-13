@@ -264,7 +264,8 @@
     "typescript-lsp@claude-plugins-official": true,
     "effort-phase@alienfast-claude": true,
     "spawn-policy@alienfast-claude": true,
-    "loop-boundary@alienfast-claude": true
+    "loop-boundary@alienfast-claude": true,
+    "rate-limits@alienfast-claude": true
   },
   "extraKnownMarketplaces": {
     "alienfast-claude": {
@@ -291,6 +292,5 @@
   "tui": "fullscreen",
   "theme": "dark",
   "agentPushNotifEnabled": true,
-  "skipAutoPermissionPrompt": true,
-  "model": "opus"
+  "skipAutoPermissionPrompt": true
 }

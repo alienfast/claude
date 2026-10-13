@@ -9,6 +9,6 @@
     { "name": "effort-probe", "source": "effort-probe", "description": "Measures whether a turn.step effort rewrite preserves the prompt cache", "category": "fleet", "defaultEnabled": false },
     { "name": "loop-boundary", "source": "loop-boundary", "description": "Compacts the main conversation to a near-clear at each /loop /auto iteration boundary, with a per-boundary ledger", "category": "fleet" },
     { "name": "loop-boundary-probe", "source": "loop-boundary-probe", "description": "Measures where a plugin compaction is accepted and what origin a /loop wakeup carries", "category": "fleet", "defaultEnabled": false },
-    { "name": "rate-limits", "source": "rate-limits", "description": "Writes the account's rate-limit windows to ~/.claude/local/rate-limits.json on every measurement, for the weekly readout at fleet launch", "category": "fleet" }
+    { "name": "rate-limits", "source": "rate-limits", "description": "Writes the account's rate-limit windows to ~/.claude/local/rate-limits.json on every measurement, for the weekly readout at fleet launch, plus a per-session history for the retro's peak 5-hour reading", "category": "fleet" }
   ]
 }

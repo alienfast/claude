@@ -8,6 +8,8 @@ let ledgerPath = ''
 let rows: string[] = []
 let loopPrompt: string | null = null
 let loopEnding = false
+let stepOutcome: string | null = null
+let rearmed = false
 let compacting: { outcome: string; tokensBefore: number | null } | null = null
 let nearClear = false
 let pendingAfter: number | null = null
@@ -51,6 +53,8 @@ export const register: Register = (on, options) => {
 
   on('turn.start', async ($, e, next) => {
     loopEnding = false
+    stepOutcome = null
+    rearmed = false
     return next(e)
   })
 
@@ -61,7 +65,11 @@ export const register: Register = (on, options) => {
     const result = yield* next(e)
     const wake = wakeupPromptOf(result.toolUses)
     if (wake.stop) loopEnding = true
-    else if (wake.prompt !== null) loopPrompt = wake.prompt
+    else if (wake.prompt !== null) {
+      loopPrompt = wake.prompt
+      rearmed = true
+    }
+    stepOutcome = outcomeLineOf(result.answer) ?? stepOutcome
     if (pendingAfter !== null && opts.ledger) {
       const after = requestTokensOf(result.usage)
       const row = rows[pendingAfter]
@@ -87,7 +95,10 @@ export const register: Register = (on, options) => {
       await record($, { event: 'pass', reason: e.reason, ...base }, opts.ledger)
       return result
     }
-    const outcome = outcomeLineOf(e.answer)
+    // The outcome line usually closes the turn, but /auto sometimes emits its tag mid-turn, re-arms, and ends on a prose summary:
+    // 10 of the 2026-10-12 fleet's 48 shipping turns did, and each next iteration started at ~470k instead of ~83k. A tag from an
+    // earlier step counts only in a turn that also re-armed the loop — the shape of an iteration that ended, not one in flight.
+    const outcome = outcomeLineOf(e.answer) ?? (rearmed ? stepOutcome : null)
     if (outcome === null) {
       await record($, { event: 'pass', reason: 'no-outcome', ...base }, opts.ledger)
       return result

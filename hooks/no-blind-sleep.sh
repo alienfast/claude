@@ -13,7 +13,7 @@
 # THE DISTINCTION THIS HOOK DRAWS is not "sleep is bad" — it is whether the wait can END EARLY:
 #   - `until [ -f tmp/rspec.done ]; do sleep 20; done`  -> ALLOWED. Polls a completion marker and
 #     exits the moment it lands. This is the sanctioned pattern for a detached full-suite rspec run
-#     (basefund CLAUDE.md, "Detach a full-suite run ... and poll for a completion marker").
+#     (basefund .claude/rules/api-rspec-reference.md, "Detach a full-suite run ... and poll for a completion marker").
 #   - `for i in $(seq 1 22); do sleep 25; done`         -> BLOCKED. No condition anywhere; it burns
 #     the full 9 minutes whether the thing it waits for finished in 10 seconds or never starts.
 #

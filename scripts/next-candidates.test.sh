@@ -126,6 +126,13 @@ cat > "$FIX/issues-page.json" <<'EOF'
  {"identifier":"TT-44","title":"backlog child under unreadable parent","estimate":null,"priority":0,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[]},"parent":{"identifier":"TT-45"}}
 ],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
 EOF
+# The live fetch carries createdAt (format snapshotted from BF 2026-10-13); Linear assigns ids in creation order, so it ascends
+# with the number here and the age tiebreak agrees with the listing order every expectation below was written against.
+stamp_created() { # stamp_created <page> — createdAt one hour apart, ascending with the id number
+  jq '.data.issues.nodes |= map((.identifier | split("-")[1] | tonumber) as $n
+    | . + {createdAt: (("2026-08-01T00:00:00Z" | fromdate) + $n * 3600 | todate | sub("Z$"; ".000Z"))})' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
+}
+stamp_created "$FIX/issues-page.json"
 
 # Deps page (linear-deps-graph.sh --team shape): TT-8 blocks TT-7, TT-10 blocks TT-9 and is `related`
 # to TT-28 (stored on TT-10's side only — the map must read it in both directions),
@@ -536,6 +543,25 @@ run "$OUTS" --limit 20 --no-stage-gate || { echo "FAIL: dead-sequence run exited
 ck "a dead runner holds nothing" "TT-17 TT-3 TT-2 TT-4 TT-5 TT-28 TT-7 TT-18 TT-20 TT-23 TT-26 TT-40 TT-1 TT-6 TT-22 TT-42 TT-44" "$(order_of "$OUTS")"
 ck_lacks "no note for a dead runner" "held by a running /fleet-sequence" "$OUTS"
 rm -f "$REPO/tmp/fleet-sequence-tt-5.json"
+
+# ---- age breaks a full tie, oldest first: the page arrives newest-first, as Linear returns it, and three unestimated Normal
+# ---- bugs tie on every other key — the 2026-10-12 fleet's shape, where the fetch order made the queue last-in-first-out.
+# ---- Priority (TT-63, newest but High) and estimate (TT-64, oldest but estimated) still outrank age.
+cat > "$FIX/issues-age.json" <<'EOF'
+{"data":{"issues":{"nodes":[
+ {"assignee":null,"createdAt":"2026-10-13T11:03:38.598Z","estimate":null,"identifier":"TT-63","labels":{"nodes":[{"name":"bug"}]},"parent":null,"priority":2,"state":{"name":"Backlog","type":"backlog"},"title":"newest, high"},
+ {"assignee":null,"createdAt":"2026-10-13T10:01:12.004Z","estimate":null,"identifier":"TT-62","labels":{"nodes":[{"name":"bug"}]},"parent":null,"priority":3,"state":{"name":"Backlog","type":"backlog"},"title":"fresh review child"},
+ {"assignee":null,"createdAt":"2026-09-02T16:20:45.311Z","estimate":null,"identifier":"TT-61","labels":{"nodes":[{"name":"bug"}]},"parent":null,"priority":3,"state":{"name":"Backlog","type":"backlog"},"title":"september"},
+ {"assignee":null,"createdAt":"2026-08-03T09:14:02.877Z","estimate":null,"identifier":"TT-60","labels":{"nodes":[{"name":"bug"}]},"parent":null,"priority":3,"state":{"name":"Backlog","type":"backlog"},"title":"august"},
+ {"assignee":null,"createdAt":"2026-07-20T08:00:00.000Z","estimate":3,"identifier":"TT-64","labels":{"nodes":[{"name":"bug"}]},"parent":null,"priority":3,"state":{"name":"Backlog","type":"backlog"},"title":"oldest, estimated"}
+],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
+EOF
+echo '{"data":{"issues":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}' > "$FIX/deps-age.json"
+cp "$FIX/issues-age.json" "$FIX/issues-page.json"; cp "$FIX/deps-age.json" "$FIX/deps-page.json"
+OUTA="$WORK/outa.md"
+run "$OUTA" --limit 20 || { echo "FAIL: age run exited $?"; cat "$OUTA.err"; exit 1; }
+ck "age breaks the tie, oldest first" "TT-63 TT-60 TT-61 TT-62 TT-64" "$(order_of "$OUTA")"
+cp "$FIX/issues-main.json" "$FIX/issues-page.json"; cp "$FIX/deps-main.json" "$FIX/deps-page.json"
 
 echo
 echo "$PASS passed / $FAIL failed"

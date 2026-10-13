@@ -37,7 +37,7 @@
 # label class > remaining priority > spread (a sibling under the same parent, or a `related`
 # partner, In Progress/In Review soft de-ranks the candidate — parallel /auto sessions collide
 # in nearby files; `related` is the file-level overlap signal and `blocks` the
-# prerequisite/same-method one, standards/issue-spec.md) > parent weight > estimate. A candidate
+# prerequisite/same-method one, standards/issue-spec.md) > parent weight > estimate > age, oldest first. A candidate
 # whose children carry all the work (1+ children, none workable) is de-ranked below
 # everything and annotated "Delegated" (BF-504 — epics kept `specified` by design
 # recur as top picks with nothing to implement).
@@ -321,7 +321,7 @@ fetch_team_issues() {
   # race (truncate/append/rm), corrupting each other's pages.
   local team="$1" out="$2" after='' page nodes has attempt pages_file
   pages_file="$out.pages"
-  local q='query($team:String!,$after:String){issues(filter:{team:{key:{eq:$team}}, state:{type:{nin:["completed","canceled"]}}}, first:250, after:$after){nodes{identifier title estimate priority state{name type} assignee{email} labels{nodes{name}} parent{identifier}} pageInfo{hasNextPage endCursor}}}'
+  local q='query($team:String!,$after:String){issues(filter:{team:{key:{eq:$team}}, state:{type:{nin:["completed","canceled"]}}}, first:250, after:$after){nodes{identifier title createdAt estimate priority state{name type} assignee{email} labels{nodes{name}} parent{identifier}} pageInfo{hasNextPage endCursor}}}'
   : > "$pages_file"
   while :; do
     # The 2×N-team parallel fan-out can trip Linear's rate limiting, which surfaces as an
@@ -347,7 +347,7 @@ fetch_team_issues() {
     { [ "$has" = "true" ] && [ -n "$after" ]; } || break
   done
   jq -s 'add' "$pages_file" | jq '[ .[]
-    | {identifier, title, state:(.state.name // "?"), state_type:(.state.type // "?"),
+    | {identifier, title, created_at:(.createdAt // ""), state:(.state.name // "?"), state_type:(.state.type // "?"),
        priority:(.priority // 0), estimate:(.estimate // 0), assignee:(.assignee.email // null),
        labels:((.labels.nodes // []) | map(.name)), parent:(.parent.identifier // null)} ]' > "$out"
   rm -f "$pages_file"
@@ -716,6 +716,7 @@ eligible_json=$(jq \
           priority_label: priority_label($i.priority),
           priority_rank: priority_rank($i.priority),
           estimate: ($i.estimate // 0),
+          created_at: ($i.created_at // ""),
           assignee: $i.assignee,
           is_me: (($me != "") and ($i.assignee == $me)),
           newly_unblocked: (($newly | index($id)) != null),
@@ -1086,7 +1087,10 @@ fi
 # pool: state_rank (Planned/Todo 0 drains fully before Backlog 1 — Urgent included) >
 # urgent_first > class_rank (security 0 > bug 1 > other 2 — defects ship before improvements,
 # but within a stage) > priority > spread_penalty (sibling in flight under the same parent) >
-# estimate.
+# estimate > age (oldest first). Age is an explicit key because almost no issue carries an estimate, so most of the pool ties
+# through every key above, and an implicit tie keeps the fetch's order — Linear's newest-first. On the 2026-10-12 fleet that made the
+# queue last-in-first-out: each review's fresh child was the newest certified bug the moment it was filed, so one P3 lineage ran
+# eight generations and took 15 of 48 ships while August's certified issues waited (keeper ruling 2026-10-13: oldest first).
 ranked_json=$(printf '%s' "$candidates_json" | jq --arg iskeeper "$is_keeper" '
   map(
     . + {
@@ -1109,7 +1113,7 @@ ranked_json=$(printf '%s' "$candidates_json" | jq --arg iskeeper "$is_keeper" '
     # real keeper filing in tier 4 with keeper_rank 1 — below the filings it was meant to outrank.
     | . + { keeper_rank: (if .tier == 0 and .is_keeper then 0 else 1 end) }
   )
-  | sort_by([.tier, .keeper_rank, .state_rank, .urgent_first, .class_rank, .priority_rank, .spread_penalty, .estimate])
+  | sort_by([.tier, .keeper_rank, .state_rank, .urgent_first, .class_rank, .priority_rank, .spread_penalty, .estimate, .created_at])
 ')
 
 # ---------- parent walk for top-K ----------
@@ -1239,7 +1243,7 @@ if [ "$parent_walk" -eq 1 ] && [ -n "$top_ids" ]; then
           }
       )
       | sort_by([.delegated_penalty, .tier, .keeper_rank, .state_rank, .urgent_first, .class_rank, .priority_rank, .spread_penalty,
-                 .parent_weight, .estimate])
+                 .parent_weight, .estimate, .created_at])
     ')
 fi
 

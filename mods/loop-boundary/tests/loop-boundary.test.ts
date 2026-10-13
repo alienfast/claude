@@ -16,7 +16,7 @@ async function drain(stream: AsyncGenerator<unknown, unknown, unknown>) {
   return step.value
 }
 
-function harness(on: TestOn, opts: { contextTokens?: number; percent?: number; stateExists?: boolean; dotGit?: string; tools?: Record<number, { name: string; input: unknown }[]> } = {}) {
+function harness(on: TestOn, opts: { contextTokens?: number; percent?: number; stateExists?: boolean; dotGit?: string; tools?: Record<number, { name: string; input: unknown }[]>; answers?: Record<number, string> } = {}) {
   const coreCompactions: string[] = []
   const logs: string[] = []
   const existsAsked: string[] = []
@@ -49,7 +49,7 @@ function harness(on: TestOn, opts: { contextTokens?: number; percent?: number; s
   on('turn.step', async function* ($, e) {
     yield { kind: 'text', index: 0, text: 'ok' }
     const toolUses = opts.tools?.[e.index] ?? []
-    return { turnId: e.turnId, index: e.index, answer: 'ok', toolUses, stopReason: toolUses.length ? 'tool_use' : 'end_turn', usage: USAGE }
+    return { turnId: e.turnId, index: e.index, answer: opts.answers?.[e.index] ?? 'ok', toolUses, stopReason: toolUses.length ? 'tool_use' : 'end_turn', usage: USAGE }
   })
   on('turn.complete', ($, e) => ({ text: e.answer }))
   const rows = () => written.trim().split('\n').filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>)
@@ -160,6 +160,50 @@ test('a fleet session that re-arms with its /loop command still compacts at the 
   expect(h.coreCompactions).toEqual([])
   expect(h.rows()).toHaveLength(1)
   expect(h.rows()[0]).toMatchObject({ event: 'boundary', accepted: true, nearClear: true, loopPrompt: '/auto backlog' })
+})
+
+// A real shipping turn (1cc04497, BF-1317, 2026-10-13): the tag in one step, the 60s re-arm in the next, and a prose summary as the
+// turn's answer. The summary is abridged; the tag and the wakeup are verbatim.
+const BF1317_TAG = 'SHIPPED-MERGE: BF-1317 — rosskevin/bf-1317-secureentityresolver-sync-contact-re-pro merged into monday, worktree removed, Ready For Release.'
+const BF1317_WAKEUP = { delaySeconds: 60, reason: 'BF-1317 shipped; backlog still has certified candidates, so the next pick runs on the minimum tick.', prompt: '/loop /auto backlog', noop: false }
+const BF1317_SUMMARY = "BF-1317 shipped: it's merged into `monday` locally and marked Ready For Release. Nothing was pushed; `/finish merge` never pushes, so origin lags until someone pushes `monday`.\n\nRun tally: 8 shipped, 1 skipped, 0 failed. The loop picks the next issue in about a minute."
+
+test('a turn that tags its outcome mid-turn, re-arms, and ends on prose still compacts at the boundary', async ($, on) => {
+  const h = harness(on, { answers: { 0: BF1317_TAG }, tools: { 1: [{ name: 'ScheduleWakeup', input: BF1317_WAKEUP }] } })
+  await $.session.start(SESSION)
+  await $.prompt.submit(typed('/loop /auto backlog'))
+  await $.turn.start({ turnId: 't1', text: '/loop /auto backlog' })
+  await drain($.turn.step({ ...STEP, turnId: 't1', index: 0 }))
+  await drain($.turn.step({ ...STEP, turnId: 't1', index: 1 }))
+  await $.turn.complete(done('t1', BF1317_SUMMARY))
+  expect(h.coreCompactions).toEqual([])
+  expect(h.rows()).toHaveLength(1)
+  expect(h.rows()[0]).toMatchObject({ event: 'boundary', accepted: true, outcome: BF1317_TAG, loopPrompt: '/auto backlog' })
+})
+
+test('a mid-turn tag in a turn that did not re-arm the loop is an iteration still in flight: no compaction', async ($, on) => {
+  const h = harness(on, { answers: { 0: BF1317_TAG } })
+  await $.session.start(SESSION)
+  await $.prompt.submit(typed('/loop /auto backlog'))
+  await $.turn.start({ turnId: 't1', text: '/loop /auto backlog' })
+  await drain($.turn.step({ ...STEP, turnId: 't1', index: 0 }))
+  await $.turn.complete(done('t1', BF1317_SUMMARY))
+  expect(h.coreCompactions).toEqual([])
+  expect(h.rows().map((r) => [r.event, r.reason])).toEqual([['pass', 'no-outcome']])
+})
+
+test('a mid-turn tag does not carry into the next turn', async ($, on) => {
+  const h = harness(on, { answers: { 0: BF1317_TAG }, tools: { 1: [{ name: 'ScheduleWakeup', input: BF1317_WAKEUP }] } })
+  await $.session.start(SESSION)
+  await $.prompt.submit(typed('/loop /auto backlog'))
+  await $.turn.start({ turnId: 't1', text: '/loop /auto backlog' })
+  await drain($.turn.step({ ...STEP, turnId: 't1', index: 0 }))
+  await $.turn.complete(done('t1', 'Delegated work is still in flight.'))
+  await $.turn.start({ turnId: 't2', text: '/auto backlog' })
+  await drain($.turn.step({ ...STEP, turnId: 't2', index: 1 }))
+  await $.turn.complete(done('t2', 'Re-armed the fallback heartbeat.'))
+  expect(h.coreCompactions).toEqual([])
+  expect(h.rows().map((r) => [r.event, r.reason])).toEqual([['pass', 'no-outcome'], ['pass', 'no-outcome']])
 })
 
 // The `.git` text is what `git worktree add` writes; the root is what a session resumed inside that worktree reports (the three
