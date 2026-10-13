@@ -1443,18 +1443,23 @@ def linear_issue_index(paths):
     return idx, read
 
 
-def record_history(checkout, headline, record):
-    """Append `headline` to tmp/fleet-metrics-history.jsonl and return the full history.
+def record_history(checkout, headline, record, allow_overlap=False):
+    """Record `headline` in tmp/fleet-metrics-history.jsonl; return (rows, overlaps) — the full history, and the
+    rows of a DIFFERENT session set that share a session with this one.
 
     The whole point of this script's fixed schema is that runs can be diffed — and until this ledger
     existed the diff step was manual, so it never happened: the 2026-08-14 cost-per-issue regression
     climbed monotonically across five fleets' saved reports with nothing comparing them. Rows are
     keyed by the sorted session set, so re-running a retro over the same fleet (different flags,
-    --json vs markdown) replaces its row instead of duplicating it. Only an IDENTICAL set replaces:
-    a re-run under a different window is a different key and APPENDS, so a mis-scoped window leaves
-    a permanent junk row -- scope with --sessions when the session count disagrees with the fleet's.
-    `record=False` (the --all sweep: an all-time pool is not a fleet, and one row of it would dwarf
-    the trend) still returns the stored history so the trend renders."""
+    --json vs markdown) replaces its row instead of duplicating it. Only an IDENTICAL set replaces, and it
+    replaces whatever else it overlaps — a row written under allow_overlap must not need the flag on every
+    re-run. A set sharing no session with any row APPENDS, so a mis-scoped first run still leaves a junk row,
+    and the corrected --sessions re-run is refused until that row is deleted by hand. A set sharing a session
+    with a row of a DIFFERENT set is not written (allow_overlap forces it): a top-up launch carries running
+    sessions into the next fleet's set, so their earlier hours and ships are already in the earlier fleet's row.
+    2026-10-11: two carried sessions (5 ships, recorded in a 48.8h/8-ship row) were re-counted inside a
+    96.6h/37-ship set. `record=False` (the --all sweep: an all-time pool is not a fleet, and one row of it
+    would dwarf the trend) still returns the stored history so the trend renders, and reports no overlap."""
     path = checkout / "tmp" / "fleet-metrics-history.jsonl"
     rows = []
     try:
@@ -1465,8 +1470,15 @@ def record_history(checkout, headline, record):
                 continue
     except OSError:
         pass
+    mine = headline["session_set"]
+    overlaps = []
+    if record and not any(r.get("session_set") == mine for r in rows):
+        keys = {k for k in mine.split(",") if k}
+        overlaps = [r for r in rows if keys & set((r.get("session_set") or "").split(","))]
+        if overlaps and not allow_overlap:
+            record = False
     if record:
-        rows = [r for r in rows if r.get("session_set") != headline["session_set"]]
+        rows = [r for r in rows if r.get("session_set") != mine]
         rows.append(headline)
     rows.sort(key=lambda r: r.get("fleet_start") or "")
     if record:
@@ -1474,7 +1486,7 @@ def record_history(checkout, headline, record):
             path.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in rows), encoding="utf-8")
         except OSError as e:
             print(f"WARN: could not write {path}: {e}", file=sys.stderr)
-    return rows
+    return rows, overlaps
 
 
 def parse_verdicts(checkout, cutoff, launch_epoch=None, until=None):
@@ -1628,6 +1640,10 @@ def main():
                     help="Persist a trend row even when --sessions excluded a ledger-less session "
                          "active in the same window. Reading a partial measurement is fine; this is "
                          "the opt-in to WRITE one into the cross-run ledger.")
+    ap.add_argument("--allow-overlap", action="store_true",
+                    help="Persist a trend row even when its session set shares a session with an "
+                         "existing row of a different set (a top-up carried that session out of an "
+                         "already-recorded fleet, so its earlier hours and ships are counted twice).")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--linear-issues", nargs="*", default=None,
                     help="Linear issue export(s) — a GraphQL response or bare node list with "
@@ -2278,7 +2294,23 @@ def main():
     # starved fleet (3 shipped in 36h) whose 553k peak sized the next run 3.5x under its realized burn.
     headline["peak_5h_output_tokens"] = peak_5h
     headline["output_tokens_per_session_hour_at_peak"] = peak_5h_rate
-    history = record_history(checkout, headline, record=not args.all and not partial_scope)
+    history, overlaps = record_history(checkout, headline, record=not args.all and not partial_scope,
+                                       allow_overlap=args.allow_overlap)
+    for r in overlaps:
+        shared = ",".join(sorted(set(headline["session_set"].split(","))
+                                 & set((r.get("session_set") or "").split(","))))
+        print(f"WARNING: this session set shares {shared} with the trend row for the fleet started "
+              f"{r.get('fleet_start')} ({r.get('session_set')}, {r.get('shipped')} shipped, "
+              f"{r.get('session_hours')} session-hours). "
+              + ("Trend row written anyway (--allow-overlap)." if args.allow_overlap else "No trend row written."),
+              file=sys.stderr)
+        if not args.allow_overlap:
+            print("         If that row is an earlier fleet a top-up carried these sessions out of, their earlier "
+                  "hours and ships are in it AND in every total above — report the post-relaunch leg instead "
+                  "(fleet-retro Step 1).", file=sys.stderr)
+            print("         If it is a mis-scoped or provisional row of this same fleet, delete it from "
+                  "tmp/fleet-metrics-history.jsonl and re-run. --allow-overlap persists this row anyway.",
+                  file=sys.stderr)
     burn_rate_all = round(sum(fleet_tokens.values()) / session_hours) if session_hours else None
     stall_groups = quota_stalls(sessions)
 

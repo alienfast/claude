@@ -118,9 +118,20 @@ report header's `sessions:` count against `fleet_sessions | length` in `tmp/flee
 marker that predates the set; a marker from before 2026-08-29 is absent altogether when the launch carried no
 duration — then count the `/loop` sessions yourself), and read the direction, because the two disagreements are
 opposite faults. **More than the fleet's** = non-fleet sessions admitted: re-scope with `--sessions <the /loop
-run keys>` and re-run, since a mis-scoped run also appends a junk row to `tmp/fleet-metrics-history.jsonl`.
+run keys>`, delete the junk row the mis-scoped run appended to `tmp/fleet-metrics-history.jsonl`, and re-run —
+the corrected set shares sessions with that row, so the analyzer refuses to write it while the junk row stands.
 **Fewer than the fleet's** = a fleet session missing from discovery, which is a finding in itself — chase it;
 `--sessions` would only hide it.
+
+**A session set can span a fleet already retro'd.** A top-up carries every session the registry still lists into
+the new set (the `retiring` ones included), and the analyzer measures a session from its first turn, so a session
+alive when the previous fleet's retro ran counts its earlier hours and ships twice. The analyzer then refuses the
+trend row with a WARNING naming the earlier row and the shared sessions. A partial-scope WARNING naming another of
+that earlier fleet's sessions is the same overlap (the launch cleared its ledger) — neither of its remedies helps:
+`--since`/`--hours` still measure the carried sessions, and `--allow-partial` only reaches the overlap refusal,
+while every total above already double-counts. Report the post-relaunch leg, re-deriving its hours, ships and
+cost from the transcripts. No flag clips a session's events by time: `--since`/`--hours`/`--until` keep or drop
+whole sessions, and are ignored under a session set.
 
 **Read the `Subagent usage rows` line under the token table before any output-token figure.** A subagent
 transcript streams one row per content block, all sharing the message id, and only the row stamped
@@ -161,9 +172,10 @@ Five gauges ride the same run and the retro reads all five, not just the tables:
   gauges means the threshold is too aggressive — raise it rather than reverting.
 - **Shipped-issue provenance** — joins the shipped set against the Step 3 Linear exports; the fresh
   share (created during or <=7 days before the run) is the treadmill gauge, read alongside R. It cannot tell a human seeding the backlog inside the window from the pipeline minting for itself, so on a team whose backlog is younger than the window it reads 100% by construction and says nothing about treadmill — the first BFP fleet (2026-09-05) read 96% with 19 of 24 ships seeded the day before launch, 4 filed during the run and 1 older. Treat it as a treadmill gauge only once the section's `older` count is material; until then the during-run count is the one bucket that still carries the signal, say so in the report, and discount the fresh% row it leaves in the trend ledger.
-- **Cross-run trend** — every windowed run appends its headline row to
-  `tmp/fleet-metrics-history.jsonl` (keyed by session set, so a re-run replaces its row only when it yields the
-  identical set — a differently-scoped re-run APPENDS) and the report's tail
+- **Cross-run trend** — every windowed run records its headline row in
+  `tmp/fleet-metrics-history.jsonl`, keyed by session set: an identical set replaces its row, a set sharing no
+  session with any row appends, and a set sharing a session with a different row is refused (`--allow-overlap`
+  forces it), since those sessions' hours and ships are already in that row — and the report's tail
   diffs the last six fleets. This is where drift lives: the $90 → $161 cost-per-issue climb across the
   2026-08-05..14 fleets sat in individually-saved reports that nothing compared until it was found by
   hand. Read $/issue through its two factors — ktok/issue (work per issue) x $/Mtok out (context

@@ -863,7 +863,7 @@ ck "--all keeps both" "2" "$(python3 -c "import json,sys; print(len(json.load(op
 # The 2026-08-14 finding this schema extension exists for: cost-per-issue climbed $90 -> $161 across
 # five fleets whose reports nothing diffed, with 91% of billable volume at >200k context and a
 # growing share of ships being issues the pipeline filed for itself. Three assertions pin the three
-# gauges: the history row (recorded, deduped by session set, appended per new set), the >=200k
+# gauges: the history row (recorded, deduped by session set, appended per disjoint set, refused per overlapping set), the >=200k
 # context share, and the shipped-issue provenance classes.
 CK11="$WORK/checkout11"
 mkdir -p "$CK11/tmp"
@@ -912,8 +912,10 @@ ck "history in json"        "1" "$(q11 "len(d['history'])")"
 ck "history cost/ship"      "0.36" "$(q11 "d['history'][0]['cost_per_shipped_usd']")"
 ck "history ge200k share"   "1.0"  "$(q11 "d['history'][0]['ctx_share_ge200k']")"
 
-# A second session joins the fleet: the set changes, so the next run APPENDS a row (two fleets, two
-# rows) instead of replacing the first — the trend is per-fleet, not last-writer-wins.
+# A second session joins the fleet: the set grows from one key to two and shares ee555555 with the row the
+# first run wrote — the shape a top-up leaves — so the run is REFUSED and the ledger keeps its one row (arm 26
+# has the full contract). A disjoint set appends, and the identical set still replaces its own row — the trend
+# is per-fleet, not last-writer-wins.
 cat > "$CK11/tmp/auto-state-ff666666.json" <<'EOF'
 {"status": "drained", "reason": "deadline", "shipped": [], "canceled": [], "skipped": [], "failed": []}
 EOF
@@ -921,8 +923,12 @@ cat > "$WORK/projects/$M11/ff666666-0000.jsonl" <<EOF
 {"type":"user","timestamp":"$(ts_ago 3600)","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
 {"type":"assistant","timestamp":"$(ts_ago 3000)","message":{"role":"assistant","id":"msg_T","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":50},"content":[{"type":"text","text":"AUTO-HALTED: deadline"}]}}
 EOF
-CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK11" --hours 24 > /dev/null 2>&1
-ck "history appends new set" "2" "$(wc -l < "$CK11/tmp/fleet-metrics-history.jsonl" | tr -d ' ')"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK11" --hours 24 > /dev/null 2>"$WORK/err11"
+ck "history refuses an overlapping set" "1" "$(wc -l < "$CK11/tmp/fleet-metrics-history.jsonl" | tr -d ' ')"
+ck_has "overlap names the shared key" "this session set shares ee555555 with the trend row" "$WORK/err11"
+ck_has "overlap writes nothing"       "No trend row written." "$WORK/err11"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK11" --sessions ff666666 > /dev/null 2>&1
+ck "history appends a disjoint set" "2" "$(wc -l < "$CK11/tmp/fleet-metrics-history.jsonl" | tr -d ' ')"
 
 # ---- exact-set and --until scoping: overlapping fleets in one window ----
 # The 2026-08-18 retro's gap: three fleets overlapped the window, no invocation could isolate the
@@ -2118,6 +2124,74 @@ q25() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" 
 ck "outcome witness: the session is ledger-less"   "True" "$(q25 "d['sessions'][0]['ledger_missing']")"
 ck "outcome witness: the queued ship is observed"  "['TT-400', 'TT-401']" "$(q25 "d['sessions'][0]['observed_shipped']")"
 ck "outcome witness: split by witness"             "{'tags': [], 'calls': ['TT-400'], 'outcomes': ['TT-400', 'TT-401']}" "$(q25 "d['sessions'][0]['observed_by']")"
+
+# ---- 26. the trend ledger refuses a session set that shares a session with a row of a different set ----
+# A top-up carries every session the registry still lists into the new marker's fleet_sessions, and a session is
+# measured from its first turn, so a session an earlier retro already recorded counts its earlier hours and ships
+# twice. 2026-10-11: 8c16860d and b2bb1003 sat in the 2026-10-09T22:40:20Z row (8 shipped, 48.8 session-hours) AND
+# in the relaunched five-session set, whose 96.6h/37-ship totals re-counted their hours and 5 of their ships;
+# record_history replaced only an identical set and appended any other. The seed is that real row, verbatim.
+CK26="$WORK/ck26"; mkdir -p "$CK26/tmp"
+git -C "$CK26" init -q 2>/dev/null
+git -C "$CK26" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "init"
+M26="$(git -C "$CK26" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
+mkdir -p "$WORK/projects/$M26"
+H26="$CK26/tmp/fleet-metrics-history.jsonl"
+cat > "$H26" <<'EOF'
+{"avg_cycles":2.22,"cost_per_shipped_usd":87.83,"crit_high_per_review":1.56,"ctx_share_ge150k":0.97,"ctx_share_ge200k":0.915,"est_cost_usd":702.66,"filed_per_shipped":0.88,"findings_per_review":11.2,"fleet_start":"2026-10-09T22:40:20Z","forfeited_session_hours":null,"fresh_shipped_share":0.875,"idle_tail_session_hours":null,"idle_tail_share":null,"non_judgment_token_share":0.117,"output_tokens_per_session_hour_at_peak":86550,"output_tokens_per_shipped":191106,"peak_5h_output_tokens":1298244,"plan_origin_share":0.257,"pool_exhausted_h":null,"recorded_at":"2026-10-10T14:57:09Z","rewritten_request_share":0.145,"session_hours":48.8,"session_set":"8c16860d,b2bb1003,cbc11f9e","sessions":3,"shipped":8,"subagent_final_row_share":0.063,"throttle_session_hours":0.0,"throttle_share":0.0,"usd_per_mtok_output":459.6}
+EOF
+n=0
+for k in 8c16860d b2bb1003 ab260001 dd260001; do
+  n=$((n+1))
+  cat > "$CK26/tmp/auto-state-$k.json" <<EOF
+{"mode": "loop", "status": "drained", "reason": "deadline", "shipped": ["TT-26$n"], "canceled": [], "skipped": [], "failed": []}
+EOF
+  cat > "$WORK/projects/$M26/$k-0000.jsonl" <<EOF
+{"type":"user","timestamp":"$(ts_ago 7200)","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"$(ts_ago 3600)","message":{"role":"assistant","id":"msg_26$n","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-26$n done"}]}}
+EOF
+done
+J26="$WORK/out26.json"; E26="$WORK/err26"
+run26() { CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK26" "$@" --json > "$J26" 2>"$E26"; }
+rows26() { wc -l < "$H26" | tr -d ' '; }
+q26() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J26"; }
+run26 --sessions 8c16860d,b2bb1003,ab260001
+ck "overlap: refused, the ledger keeps its one row"   "1" "$(rows26)"
+ck "overlap: the returned history is the stored row"  "['8c16860d,b2bb1003,cbc11f9e']" "$(q26 "[r['session_set'] for r in d['history']]")"
+ck_has "overlap: WARNING names the shared keys and the earlier fleet" "WARNING: this session set shares 8c16860d,b2bb1003 with the trend row for the fleet started 2026-10-09T22:40:20Z (8c16860d,b2bb1003,cbc11f9e, 8 shipped, 48.8 session-hours). No trend row written." "$E26"
+ck_has "overlap: the top-up remedy"                   "report the post-relaunch leg instead (fleet-retro Step 1)" "$E26"
+ck_has "overlap: the junk-row remedy"                 "delete it from tmp/fleet-metrics-history.jsonl and re-run. --allow-overlap persists this row anyway." "$E26"
+# A ledger-less /auto session inside the span trips the partial-scope gate first (the 2026-10-11 shape: a third session
+# of the earlier fleet died before the relaunch). Its own remedy, --allow-partial, reaches the overlap gate and still
+# writes nothing.
+cat > "$WORK/projects/$M26/cc260001-0000.jsonl" <<EOF
+{"type":"user","timestamp":"$(ts_ago 6000)","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"$(ts_ago 5000)","message":{"role":"assistant","id":"msg_26x","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":50},"content":[{"type":"text","text":"AUTO-HALTED: deadline"}]}}
+EOF
+python3 -c "import os,sys,time; t=time.time()-5000; os.utime(sys.argv[1], (t, t))" "$WORK/projects/$M26/cc260001-0000.jsonl"
+run26 --sessions 8c16860d,b2bb1003,ab260001
+ck_has "overlap: the partial-scope gate fires first"   "excluded 1 ledger-less /auto session(s) active inside this fleet's own span: cc260001" "$E26"
+ck_lacks "overlap: not reached behind the partial refusal" "this session set shares" "$E26"
+ck "overlap: partial refusal, still one row"           "1" "$(rows26)"
+run26 --sessions 8c16860d,b2bb1003,ab260001 --allow-partial
+ck_has "overlap: --allow-partial reaches the overlap gate" "this session set shares 8c16860d,b2bb1003 with" "$E26"
+ck "overlap: --allow-partial alone writes nothing"     "1" "$(rows26)"
+rm -f "$WORK/projects/$M26/cc260001-0000.jsonl"
+run26 --sessions 8c16860d,b2bb1003,ab260001 --allow-overlap
+ck "overlap: --allow-overlap appends"                  "2" "$(rows26)"
+ck_has "overlap: --allow-overlap says so"              "with the trend row for the fleet started 2026-10-09T22:40:20Z (8c16860d,b2bb1003,cbc11f9e, 8 shipped, 48.8 session-hours). Trend row written anyway (--allow-overlap)." "$E26"
+ck_lacks "overlap: no remedies on a row written"       "No trend row written" "$E26"
+ck "overlap: the forced row carries the full set"      "['8c16860d,ab260001,b2bb1003', '8c16860d,b2bb1003,cbc11f9e']" "$(q26 "sorted(r['session_set'] for r in d['history'])")"
+run26 --sessions dd260001
+ck "overlap: a disjoint set appends"                   "3" "$(rows26)"
+ck_lacks "overlap: a disjoint set warns of nothing"    "this session set shares" "$E26"
+run26 --sessions 8c16860d,b2bb1003,ab260001
+ck "overlap: the identical set still replaces"         "3" "$(rows26)"
+ck "overlap: one row per set after the replace"        "1" "$(python3 -c "
+import json,sys
+rows=[json.loads(l) for l in open(sys.argv[1])]
+print(len([r for r in rows if r['session_set']=='8c16860d,ab260001,b2bb1003']))" "$H26")"
+ck_lacks "overlap: a replace needs no flag and warns of nothing" "this session set shares" "$E26"
 
 echo
 echo "$PASS passed / $FAIL failed / $SKIP skipped"
