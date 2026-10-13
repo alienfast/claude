@@ -71,13 +71,25 @@ done
 # No timed fleet in play — nothing to gate.
 [[ -z "$DEADLINE_FILE" ]] && exit 0
 
-DEADLINE_EPOCH=$(jq -r '.deadline_epoch // empty' "$DEADLINE_FILE" 2>/dev/null)
-[[ -z "${DEADLINE_EPOCH:-}" ]] && exit 0
-[[ "$DEADLINE_EPOCH" =~ ^[0-9]+$ ]] || exit 0
-
 NOW=$(date +%s)
-# Still inside the budget: this is exactly the pick the fleet was launched to make.
-(( NOW < DEADLINE_EPOCH )) && exit 0
+DEADLINE_EPOCH=$(jq -r '.deadline_epoch // empty' "$DEADLINE_FILE" 2>/dev/null)
+PAST_DEADLINE=0
+if [[ "$DEADLINE_EPOCH" =~ ^[0-9]+$ ]] && (( NOW >= DEADLINE_EPOCH )); then PAST_DEADLINE=1; fi
+
+# A session the launch marked `retiring` (carried out of a wound-down marker by a relaunch) treats the deadline as passed whatever
+# deadline_epoch says — the relaunch moved it for everyone. Its run key is the first 8 characters of the session id (the ledger
+# key); a key that cannot be determined fails OPEN.
+RETIRING=0
+RETIRING_KEYS=$(jq -r '(.retiring // [])[]' "$DEADLINE_FILE" 2>/dev/null || true)
+if [[ -n "$RETIRING_KEYS" ]]; then
+  SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty' 2>/dev/null)
+  [[ -z "${SESSION_ID:-}" && -n "${TRANSCRIPT:-}" ]] && SESSION_ID=$(basename "$TRANSCRIPT" .jsonl)
+  RUN_KEY=${SESSION_ID:0:8}
+  if [[ "$RUN_KEY" =~ ^[0-9a-f]{8}$ ]] && grep -qxF -- "$RUN_KEY" <<<"$RETIRING_KEYS"; then RETIRING=1; fi
+fi
+
+# Still inside the budget and not retiring (or no budget at all): this is exactly the pick the fleet was launched to make.
+(( PAST_DEADLINE == 0 && RETIRING == 0 )) && exit 0
 
 # --- 3. Is this an autonomous /loop /auto session? ---------------------------------------------
 # The discriminator that keeps /next, /auto-prep, /fleet-status and /fleet-retro unblocked.
@@ -133,19 +145,29 @@ sys.exit(1 if found else 0)
 # 1 == found an /auto loop delivery. Anything else (0, or a crashed analyzer) allows.
 [[ "$IS_AUTO_LOOP" != "1" ]] && exit 0
 
-OVERRUN=$(( (NOW - DEADLINE_EPOCH) / 60 ))
-HUMAN=$(date -r "$DEADLINE_EPOCH" '+%Y-%m-%d %H:%M %Z' 2>/dev/null || echo "epoch $DEADLINE_EPOCH")
+if (( PAST_DEADLINE )); then
+  OVERRUN=$(( (NOW - DEADLINE_EPOCH) / 60 ))
+  HUMAN=$(date -r "$DEADLINE_EPOCH" '+%Y-%m-%d %H:%M %Z' 2>/dev/null || echo "epoch $DEADLINE_EPOCH")
+  HEADLINE="the fleet deadline passed ${OVERRUN} minute(s) ago"
+  DEADLINE_LINE="Deadline: $HUMAN   ($DEADLINE_FILE)"
+  RETIRING_NOTE=""
+else
+  HEADLINE="this session ($RUN_KEY) is retiring"
+  DEADLINE_LINE="Retiring: $RUN_KEY is in the retiring list of $DEADLINE_FILE"
+  RETIRING_NOTE="A relaunch carried this session out of a wound-down fleet; the relaunch's later deadline is not its budget.
+"
+fi
 
 cat >&2 <<EOF
-🛑 BLOCKED: the fleet deadline passed ${OVERRUN} minute(s) ago — no new pick.
+🛑 BLOCKED: ${HEADLINE} — no new pick.
 
-Deadline: $HUMAN   ($DEADLINE_FILE)
+$DEADLINE_LINE
 Command:  $COMMAND
 
 The deadline gates PICKING, not finishing: an issue picked before it runs to completion past it by
 design. But this session is under \`/loop /auto\`, the budget is spent, and ranking candidates is
 the first step of taking new work.
-
+${RETIRING_NOTE}
 On the 2026-08-18 fleet this exact step ran 62 minutes past the deadline and cost 3h20m of
 unbudgeted burn on a machine the operator had asked back. Two sibling sessions read the deadline
 file and drained correctly; this gate is what makes that outcome not depend on remembering to.
@@ -159,10 +181,12 @@ Push first, if the project grants it — the wind-down half of /auto Step 2's la
 Drain instead — /auto Step 4:
   1. Record the outcome in tmp/auto-state-<runKey>.json:
        status "drained", reason "fleet deadline <time> passed; no further pick eligible"
+       (retiring: reason "retired by a relaunch over a wound-down fleet; no further pick eligible")
   2. End the loop: ScheduleWakeup(stop: true)
   3. Report what shipped this run.
 
 To run again, the operator clears the budget — delete tmp/fleet-deadline.json, or re-run
-/fleet-launch with a new one. Do not work around this by picking an issue by hand.
+/fleet-launch with a new one (a retiring session also needs its tmp/auto-state-<runKey>.json deleted
+and a fresh /loop /auto). Do not work around this by picking an issue by hand.
 EOF
 exit 2

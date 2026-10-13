@@ -206,6 +206,57 @@ printf 'not json\n' > "$CHECKOUT/tmp/fleet-deadline.json"
 t ALLOW "18 unparseable deadline file fails OPEN" \
   '~/.claude/scripts/next-candidates.sh --label specified' "$LOOP_AUTO" "$CHECKOUT"
 
+# --- retiring sessions (fleet-launch.sh marks sessions carried out of a wound-down marker) -------
+# The marker is the key set of the live basefund tmp/fleet-deadline.json (2026-10-11), plus `retiring`; the hook input carries
+# session_id, which is the ledger key's full form (b2bb1003 is the session whose leg-1 token outlived its fleet's deadline).
+RETIRING_SID="b2bb1003-5683-4b0d-8b3d-b1201abbdc38"
+SIBLING_SID="1cc250ad-ee0f-493c-b8d0-47b3acf10a52"
+write_live_marker() { # <deadline-epoch | none> <retiring-json-array>
+  jq -n --arg d "$1" --argjson r "$2" '{count: 3, launch_epoch: 1791601120,
+      fleet_sessions: ["1492b0e1","1cc250ad","3b566c2a","8c16860d","b2bb1003"]}
+    + (if $d == "none" then {} else {deadline_epoch: ($d | tonumber), deadline: "2026-10-11 06:09 CDT"} end)
+    + (if ($r | length) > 0 then {retiring: $r} else {} end)' > "$CHECKOUT/tmp/fleet-deadline.json"
+}
+ts() { # want desc session-id transcript [message-needle]
+  local want="$1" desc="$2" sid="$3" tr="$4" needle="${5:-}" out rc got
+  out=$(jq -n --arg c '~/.claude/scripts/next-candidates.sh --label specified' --arg t "$tr" --arg w "$CHECKOUT" --arg s "$sid" \
+        '{tool_input:{command:$c}, transcript_path:$t, cwd:$w} + (if $s == "" then {} else {session_id:$s} end)' | ./auto-deadline-gate.sh 2>&1)
+  rc=$?
+  got=$([[ $rc -eq 2 ]] && echo BLOCK || echo ALLOW)
+  if [[ "$got" == "$want" ]] && { [[ -z "$needle" ]] || grep -qF -- "$needle" <<<"$out"; }; then
+    PASS=$((PASS + 1)); printf '  ok   %-6s %s\n' "$got" "$desc"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL want=%s got=%s  %s\n       %s\n' "$want" "$got" "$desc" "$(head -1 <<<"$out")"
+  fi
+}
+
+echo "  must BLOCK (retiring session, whatever the deadline says):"
+write_live_marker "$FUTURE" '["b2bb1003"]'
+ts BLOCK "19 retiring key with the deadline still ahead" "$RETIRING_SID" "$LOOP_AUTO" "is retiring"
+write_live_marker none '["b2bb1003"]'
+ts BLOCK "20 retiring key under a marker with no deadline at all" "$RETIRING_SID" "$LOOP_AUTO" "retiring list"
+write_live_marker "$FUTURE" '["8c16860d","b2bb1003"]'
+ts BLOCK "21 retiring key among several" "$RETIRING_SID" "$LOOP_AUTO"
+cp "$LOOP_AUTO" "$TMPROOT/transcripts/$RETIRING_SID.jsonl"
+ts BLOCK "22 no session_id: the key comes from the transcript's file name" "" "$TMPROOT/transcripts/$RETIRING_SID.jsonl"
+write_live_marker "$PAST" '["b2bb1003"]'
+ts BLOCK "23 retiring AND past deadline reports the deadline" "$RETIRING_SID" "$LOOP_AUTO" "deadline passed"
+
+echo "  must ALLOW (not retiring, or the key cannot be determined):"
+write_live_marker "$FUTURE" '["b2bb1003"]'
+ts ALLOW "24 a sibling not in the retiring list keeps picking" "$SIBLING_SID" "$LOOP_AUTO"
+ts ALLOW "25 retiring key but the session is a /fleet-retro, not a /loop /auto" "$RETIRING_SID" "$RETRO"
+ts ALLOW "26 retiring key but a targeted /auto — the operator named the issue" "$RETIRING_SID" "$TARGETED"
+ts ALLOW "27 no session_id and a transcript name that is not a session id fails OPEN" "" "$LOOP_AUTO"
+ts ALLOW "28 a session_id that is not hex fails OPEN" "not-a-session-id" "$LOOP_AUTO"
+ts ALLOW "29 a session_id shorter than the key fails OPEN" "b2bb1" "$LOOP_AUTO"
+write_live_marker "$FUTURE" '["loop-aut"]'
+ts ALLOW "29b a key that is not a hex run key fails OPEN even when the marker names it" "" "$LOOP_AUTO"
+write_live_marker "$FUTURE" '[]'
+ts ALLOW "30 a marker with no retiring list gates nobody before the deadline" "$RETIRING_SID" "$LOOP_AUTO"
+printf '{"retiring":"b2bb1003","deadline_epoch":%s}\n' "$FUTURE" > "$CHECKOUT/tmp/fleet-deadline.json"
+ts ALLOW "31 a malformed retiring field (not an array) fails OPEN" "$RETIRING_SID" "$LOOP_AUTO"
+
 echo
 echo "passed: $PASS   failed: $FAIL"
 [[ "$FAIL" -eq 0 ]]

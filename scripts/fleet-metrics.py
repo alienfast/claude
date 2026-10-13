@@ -16,7 +16,8 @@ determine the safety of …` — is its own `classifier_unavailable`; before the
 either phrase counted, denials, unavailability and prose alike, so older `cls` cells read high.
 `observed_shipped` gained a second witness 2026-10-05 — the `mark-ready-for-release.sh <ID>` call
 the merge path makes, beside the `SHIPPED-*: <ID>` tag — so older rows' obs counts read low: on the
-2026-10-04/05 fleet the tag caught 8 of 27 ships and the call all 27. The `throttle` gauge — session-
+2026-10-04/05 fleet the tag caught 8 of 27 ships and the call all 27. A third, 2026-10-12: /auto's
+`AUTO-CONTINUE: <ID> shipped (…)` line, the only witness a queued merge leaves (`observed_by.outcomes`). The `throttle` gauge — session-
 hours parked by fleet-headroom.sh's THROTTLE between picks, with the ceiling source each probe named —
 was added the same day; rows before it carry no `throttle_*` fields. `filed_per_shipped`, the churn
 table's `filed` column and `review_churn[].filed` stopped counting the dedup recipe's `<ID> (existing
@@ -75,6 +76,7 @@ import os
 import re
 import subprocess
 import sys
+from bisect import bisect_right
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -125,6 +127,11 @@ HEADROOM_PROBE = re.compile(r"^(THROTTLE|PICK-OK)\s+trailing-5h=(\d+)\s+ceiling=
 HEADROOM_PROBE_JSON = re.compile(r"\"trailing_5h_output\":\s*(\d+).*?\"ceiling\":\s*(\d+).*?\"pick_ok\":\s*(true|false)"
                                  r".*?\"ceiling_source\":\s*\"(\w+)\"", re.S)
 SHIPPED_TAG = re.compile(r"\b(SHIPPED-MERGE|SHIPPED-PR|RELEASED|DEFERRED-MERGE):\s*([A-Z]+-\d+)")
+# /auto Step 4's iteration line, `AUTO-CONTINUE: <ID> shipped (<inherited tag>). …` — the only witness a queued ship is sure to leave:
+# the drainer, not the session, makes its mark-ready call, and the bare tag drifts. On the 2026-10-11 basefund fleet BF-1484, BF-1542
+# and BF-1599 left nothing else. Line-anchored for TERMINAL_TAG's reason.
+AUTO_CONTINUE_SHIP = re.compile(
+    r"^[ \t]*AUTO-CONTINUE:\s*([A-Z]+-\d+) shipped \((?:SHIPPED-MERGE|SHIPPED-PR|RELEASED|DEFERRED-MERGE)\)", re.M)
 # Canceled is its own ledger, never a shipped variant: recording cancellations in shipped[] is what
 # overstated the 2026-08-02 fleet's tally 29 vs 25 (skills/auto Step 4 now keeps a canceled[] list).
 CANCELED_TAG = re.compile(r"\bCANCELED:\s*([A-Z]+-\d+)")
@@ -132,6 +139,15 @@ CANCELED_TAG = re.compile(r"\bCANCELED:\s*([A-Z]+-\d+)")
 # model's own reasoning about what it should emit. An unanchored match counts those discussions as
 # emissions and reports a silently-dead loop as having ended cleanly.
 TERMINAL_TAG = re.compile(r"^\s*(NO-CANDIDATES|AUTO-HALTED):", re.M)
+# The two Step 2 holds end an iteration on `AUTO-CONTINUE: no pick — _<KIND>: …_` (skills/auto/SKILL.md, iteration tags), and a
+# hold writes no ledger status, so this line is the only trace of one. Line-anchored for the reason TERMINAL_TAG is; the kind
+# rides after the dash on the same line (an epic-scoped run prefixes `epic <ID>: `).
+HOLD_TICK = re.compile(r"^[ \t]*AUTO-CONTINUE: no pick\b[^\n]*?(PLANNED-HOLD|BLOCKED-HOLD)", re.M)
+# Every other way an iteration ends: a pick or ship (`AUTO-CONTINUE: <ID> …`, or the bare tag line — a session can end on its
+# closing prose with no AUTO-CONTINUE line, as 1cc250ad did after BF-2131), a halt, a drain. These close a hold interval.
+OUTCOME_LINE = re.compile(
+    r"^[ \t]*(?:AUTO-CONTINUE|AUTO-HALTED|NO-CANDIDATES|SHIPPED-MERGE|SHIPPED-PR|RELEASED|DEFERRED-MERGE|CANCELED"
+    r"|SKIPPED-BLOCKED|BLOCKED-ON-REVIEW|BLOCKED-ON-RECOVERY|ABANDONED):", re.M)
 # WHICH allowance actually cut a run off, read from the harness message rather than inferred from the
 # stall's shape. There are three distinct limits and they carry different sizing levers, so guessing
 # routes the whole retro at the wrong one: `weekly` caps total session-hours (lever: duration), while
@@ -499,6 +515,8 @@ def scan_transcript(path, agg, agent_type="main", description=""):
             body = text_of(content)
             if LOOP_CMD.search(body) and LOOP_AUTO_ARGS.search(body):
                 agg["loop_firings"] += 1
+                if t and agent_type == "main":
+                    agg["loop_starts"].append(t)
             if r.get("origin", {}).get("kind") == "human":
                 agg["human_prompts"] += 1
 
@@ -547,12 +565,23 @@ def scan_transcript(path, agg, agent_type="main", description=""):
                     # 2026-09-16 BFP fleet's 21 ships carried no tag in any transcript.
                     if t and (issue not in agg["ship_times"] or t < agg["ship_times"][issue]):
                         agg["ship_times"][issue] = t
+                for issue in (AUTO_CONTINUE_SHIP.findall(body) if emitted else ()):
+                    agg["ship_outcomes"].add(issue)
+                    if t and (issue not in agg["ship_times"] or t < agg["ship_times"][issue]):
+                        agg["ship_times"][issue] = t
                 for issue in CANCELED_TAG.findall(body):
                     agg["cancel_tags"].add(issue)
                     if t:
                         agg["cancel_times"].append(t)
                 if TERMINAL_TAG.search(body):
                     agg["terminal_tags"] += 1
+                # A message that carries a hold line is a hold tick whatever else its prose mentions.
+                if t and emitted and agent_type == "main" and not r.get("isSidechain"):
+                    holds = HOLD_TICK.findall(body)
+                    if holds:
+                        agg["hold_ticks"].append((t, holds[-1]))
+                    elif OUTCOME_LINE.search(body):
+                        agg["outcome_times"].append(t)
                 for kind in LIMIT_HIT.findall(body):
                     agg["limit_hits"][kind.lower()] += 1
                     if t and (agg["first_limit_hit"] is None or t < agg["first_limit_hit"][0]):
@@ -675,12 +704,90 @@ def scan_transcript(path, agg, agent_type="main", description=""):
 
 
 def observed_ships(agg):
-    """Ships the transcript testifies to, by either witness: the bare `SHIPPED-*: <ID>` line /finish Step 9
-    prescribes, or the `mark-ready-for-release.sh <ID>` call its merge path makes. The tag is prose and drifts
-    (2026-10-04/05: 8 of 27 ships ended on it; the call matched all 27 and every ledger exactly), so the call
-    is the primary witness and the tag the fallback — a standard-flow release (state set inline, no script call)
-    and a queued merge (the drainer makes the call, not the session) still tag."""
-    return agg["ship_tags"] | agg["ship_calls"]
+    """Ships the transcript testifies to, by any of three witnesses: the bare `SHIPPED-*: <ID>` line /finish Step 9
+    prescribes, the `mark-ready-for-release.sh <ID>` call its merge path makes, or /auto's `AUTO-CONTINUE: <ID> shipped (…)`
+    iteration line. The tag is prose and drifts (2026-10-04/05: 8 of 27 ships ended on it; the call matched all 27 and every
+    ledger exactly), so the call is the primary witness — but a queued merge makes no call in the session (the drainer does),
+    and on 2026-10-11 none of the three queued ships carried the bare tag either, so the outcome line is what covers them."""
+    return agg["ship_tags"] | agg["ship_calls"] | agg["ship_outcomes"]
+
+
+LEDGER_LISTS = ("shipped", "canceled", "skipped", "failed")
+
+
+def normalize_ledger(state):
+    """(state, normalized, dropped): the ledger with its four id lists reduced to bare id strings.
+
+    skills/auto/SKILL.md documents `shipped`/`canceled`/`skipped`/`failed` as bare issue ids, but a session wrote its last ship
+    as `{"issue": "BF-2531", "tag": "SHIPPED-MERGE", "at": …}` (b2bb1003, 2026-10-11) and every reader that put the entries in a
+    set died with `TypeError: cannot use 'dict' as a set element`. An object entry becomes its `.issue`; an entry that is neither
+    a string nor carries a string `.issue` is dropped. Both are counted so the Flags list can say the ledger was off-schema."""
+    if not isinstance(state, dict):
+        return state, 0, 0
+    out, normalized, dropped = dict(state), 0, 0
+    for key in LEDGER_LISTS:
+        entries = state.get(key)
+        if not isinstance(entries, list):
+            continue
+        ids = []
+        for e in entries:
+            if isinstance(e, str):
+                ids.append(e)
+            elif isinstance(e, dict) and isinstance(e.get("issue"), str) and e["issue"]:
+                ids.append(e["issue"])
+                normalized += 1
+            else:
+                dropped += 1
+        out[key] = ids
+    return out, normalized, dropped
+
+
+def hold_gauge(agg, deadline):
+    """Hours a session sat in PLANNED-HOLD / BLOCKED-HOLD, from the `AUTO-CONTINUE: no pick` ticks it emitted.
+
+    A hold writes no ledger status, so neither the Pool exhausted gauge (keyed on the fleet's last ship) nor the drained-early
+    flag (keyed on `drained`) can see one: two sessions held 10.1h and 10.9h of a 66-session-hour leg while a `backlog` sibling
+    landed nine issues, and no gauge fired. An interval opens at the iteration that emitted the first tick of a run of ticks
+    and closes where the next iteration begins after the run's last tick, once any other iteration-ending outcome line
+    follows; an interval nothing closes runs to the session's last activity. Every interval is clipped at the fleet deadline,
+    past which a quiet session is wound down rather than holding. Returns hours, tick count, ticks per kind, and the intervals."""
+    ticks = sorted(agg["hold_ticks"])
+    events = sorted([(t, 0, None) for t in agg["outcome_times"]] + [(t, 1, kind) for t, kind in ticks])
+    # The firing, not `turn_openers`: mods/loop-boundary injects a user record right after every iteration ends, which would close
+    # an interval seconds after its last tick instead of where the next iteration begins.
+    openers = sorted(agg["loop_starts"])
+    spans = []   # [start, end, [(tick time, kind)]]
+    cur, prev_outcome = None, None
+    for t, is_tick, kind in events:
+        if is_tick:
+            if cur is None:
+                i = bisect_right(openers, t)
+                start = openers[i - 1] if i and (prev_outcome is None or openers[i - 1] > prev_outcome) else t
+                cur = [start, None, []]
+            cur[2].append((t, kind))
+        else:
+            prev_outcome = t
+            if cur is not None:
+                j = bisect_right(openers, cur[2][-1][0])
+                cur[1] = openers[j] if j < len(openers) and openers[j] <= t else t
+                spans.append(cur)
+                cur = None
+    if cur is not None:
+        cur[1] = max(agg["last"] or cur[2][-1][0], cur[2][-1][0])
+        spans.append(cur)
+    intervals, kinds, n_ticks, seconds = [], Counter(), 0, 0.0
+    for start, end, span_ticks in spans:
+        if deadline is not None:
+            end = min(end, deadline)
+        if end <= start:
+            continue
+        intervals.append((start, end))
+        seconds += (end - start).total_seconds()
+        for tick_t, kind in span_ticks:
+            if tick_t <= end:
+                n_ticks += 1
+                kinds[kind] += 1
+    return {"hours": seconds / 3600, "ticks": n_ticks, "kinds": dict(kinds), "intervals": intervals}
 
 
 def new_agg():
@@ -689,7 +796,7 @@ def new_agg():
         "loop_firings": 0, "human_prompts": 0, "terminal_tags": 0, "dangling": 0,
         "dispatch": Counter(), "classifier_blocks": [], "classifier_unavailable": [], "gaps": [], "activity_times": [],
         "sleep_blind_s": 0.0, "sleep_blind_n": 0, "sleep_marker_s": 0.0, "sleep_marker_n": 0,
-        "ship_tags": set(), "cancel_tags": set(), "subagents": 0,
+        "ship_tags": set(), "ship_outcomes": set(), "cancel_tags": set(), "subagents": 0,
         # Issues named by a main-loop `mark-ready-for-release.sh <ID>` call, and every fleet-headroom.sh
         # answer as (time, THROTTLE|PICK-OK, trailing, ceiling, source) — main loop only for both.
         "ship_calls": set(), "headroom_probes": [],
@@ -701,6 +808,9 @@ def new_agg():
         # final `noop: true` wakeup with no dispatch after the last landing is a HOLD, which is how
         # the pool-exhausted gauge admits a session that died before it could write `drained`.
         "last_wakeup": None, "last_agent_dispatch": None,
+        # Main-loop `AUTO-CONTINUE: no pick` hold ticks as (time, PLANNED-HOLD|BLOCKED-HOLD), the time of every other
+        # iteration-ending outcome line, and each `/loop /auto` firing — the inputs to hold_gauge.
+        "hold_ticks": [], "outcome_times": [], "loop_starts": [],
         # name -> subagent_type from this session's own Agent tool_use inputs, and how many
         # dispatches carried a name at all.
         "named_types": {}, "named_dispatches": 0,
@@ -1611,6 +1721,7 @@ def main():
         states.append((p, st, mtime))
 
     def measure(run_key, state, mtime, ledger_missing=False):
+        state, ledger_normalized, ledger_dropped = normalize_ledger(state)
         agg = new_agg()
         transcripts = []
         for d in dirs:
@@ -1629,6 +1740,7 @@ def main():
                 scan_transcript(tpath, agg)
         return {"run_key": run_key, "state": state, "state_mtime": mtime,
                 "ledger_missing": ledger_missing,
+                "ledger_offschema": {"normalized": ledger_normalized, "dropped": ledger_dropped},
                 "transcripts": len(transcripts), "agg": agg,
                 "effort_lanes": effort_lanes(checkout, run_key),
                 "spawn_policy": spawn_policy_summary(checkout, run_key),
@@ -1905,6 +2017,28 @@ def main():
     for v in throttle.values():
         throttle_sources.update(v["ceiling_sources"])
 
+    # Mid-run holds: PLANNED-HOLD / BLOCKED-HOLD hours per session (hold_gauge). Reported BESIDE idle% like the throttle gauge,
+    # never folded into it: idle% keys on the fleet's last ship and a hold writes no ledger status, so a session held for ten
+    # hours while a sibling kept shipping was invisible to it. The part of a hold past a session's last productive moment is in
+    # both numbers, and `in_idle_tail_h` is how much.
+    holds = {}
+    for s in sessions:
+        g = hold_gauge(s["agg"], fleet_deadline_dt)
+        in_tail = 0.0
+        if fleet_deadline_dt is not None and (s["run_key"] in idle_tails or s["run_key"] in held_tails):
+            tail_lo, _ = last_productive_of(s)
+            for lo, hi in g["intervals"]:
+                a_, b_ = max(lo, tail_lo), min(hi, fleet_deadline_dt)
+                if b_ > a_:
+                    in_tail += (b_ - a_).total_seconds() / 3600
+        g["in_idle_tail_h"] = in_tail
+        holds[s["run_key"]] = g
+    hold_total_h = sum(g["hours"] for g in holds.values())
+    hold_ticks_total = sum(g["ticks"] for g in holds.values())
+    hold_in_tail_h = sum(g["in_idle_tail_h"] for g in holds.values())
+    hold_sessions = [k for k, g in holds.items() if g["ticks"]]
+    sessions_by_key = {s["run_key"]: s for s in sessions}
+
     # Early drain: ONE session drained while its siblings kept picking — the pool was gated, not
     # empty (a `blocks` chain behind in-flight work, an empty fetch, a label flap, work certified
     # after the drain), and that session's remaining hours were forfeited. Measured 2026-09-05: a
@@ -2077,6 +2211,8 @@ def main():
         "idle_tail_share": None,  # filled below once session_hours exists
         "throttle_session_hours": throttle_parked_h,
         "throttle_share": None,  # filled below once session_hours exists
+        "hold_session_hours": round(hold_total_h, 1),
+        "hold_share": None,  # filled below once session_hours exists
         "rewritten_request_share": fleet_lanes["rewritten_request_share"] if fleet_lanes else None,
         "non_judgment_token_share": fleet_lanes["non_judgment_token_share"] if fleet_lanes else None,
     }
@@ -2092,6 +2228,7 @@ def main():
     headline["idle_tail_share"] = round(idle_tail_session_hours / session_hours, 3) \
         if idle_tail_session_hours is not None and session_hours else None
     headline["throttle_share"] = round(throttle_parked_h / session_hours, 3) if session_hours else None
+    headline["hold_share"] = round(hold_total_h / session_hours, 3) if session_hours else None
     # --sessions carries NO time bound, so every ledger-less /auto session the project has ever
     # held counts as "excluded" — 18 of them on the 2026-08-25 checkout, all from earlier fleets and
     # every one a correct exclusion. Only an exclusion OVERLAPPING the measured fleet's own span can
@@ -2178,7 +2315,8 @@ def main():
                 "run_key": s["run_key"],
                 "recorded_shipped": s["state"].get("shipped") or [],
                 "observed_shipped": sorted(observed_ships(s["agg"])),
-                "observed_by": {"tags": sorted(s["agg"]["ship_tags"]), "calls": sorted(s["agg"]["ship_calls"])},
+                "observed_by": {"tags": sorted(s["agg"]["ship_tags"]), "calls": sorted(s["agg"]["ship_calls"]),
+                                "outcomes": sorted(s["agg"]["ship_outcomes"])},
                 "recorded_canceled": s["state"].get("canceled") or [],
                 "observed_canceled": sorted(s["agg"]["cancel_tags"]),
                 "status": s["state"].get("status"), "reason": s["state"].get("reason"),
@@ -2204,6 +2342,13 @@ def main():
                 else round(held_tails[s["run_key"]][0], 1) if s["run_key"] in held_tails else None,
                 "forfeited_h": round(forfeited[s["run_key"]], 1) if s["run_key"] in forfeited else None,
                 "throttle": throttle.get(s["run_key"]),
+                "held": {
+                    "hours": round(holds[s["run_key"]]["hours"], 2), "ticks": holds[s["run_key"]]["ticks"],
+                    "kinds": holds[s["run_key"]]["kinds"],
+                    "in_idle_tail_h": round(holds[s["run_key"]]["in_idle_tail_h"], 2),
+                    "intervals": [{"start": f"{lo:%Y-%m-%dT%H:%M:%SZ}", "end": f"{hi:%Y-%m-%dT%H:%M:%SZ}"}
+                                  for lo, hi in holds[s["run_key"]]["intervals"]]},
+                "ledger_offschema": s["ledger_offschema"],
                 "rewakes": {k: v for k, v in rewakes[s["run_key"]].items()
                             if k != "spurious_lines"} if s["run_key"] in rewakes else None,
                 "output_tokens": {f"{t}/{m}": n for (t, m), n in s["agg"]["tokens"].most_common()},
@@ -2274,6 +2419,12 @@ def main():
                 # Hours of the idle tails above that a THROTTLE had parked: a throttle, not an empty pool.
                 "throttled_within_tail_session_hours": throttle_in_tail_h,
             },
+            "holds": {
+                "session_hours": round(hold_total_h, 1), "share": headline["hold_share"],
+                "ticks": hold_ticks_total, "sessions_holding": len(hold_sessions),
+                # Hours of the holds above that also sit inside the idle tails (a hold past the session's last ship).
+                "within_idle_tail_session_hours": round(hold_in_tail_h, 1),
+            },
             "throttle": {
                 "parked_session_hours": throttle_parked_h,
                 "share": headline["throttle_share"],
@@ -2340,8 +2491,8 @@ def main():
                           else f"started {e['started']}") + ")" for e in excluded_stale) + "\n")
 
     print("## Per session\n")
-    print("| run | span | ctx>=200k | shipped (rec/obs) | canceled (rec/obs) | wakeups | dispatch bg/sync/ign | blind sleep | marker | cls denied/unavail | dangling | throttled |")
-    print("|---|---|---|---|---|---|---|---|---|---|---|---|")
+    print("| run | span | ctx>=200k | shipped (rec/obs) | canceled (rec/obs) | wakeups | dispatch bg/sync/ign | blind sleep | marker | cls denied/unavail | dangling | throttled | held |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     tot = Counter()
     for s in sessions:
         a = s["agg"]
@@ -2359,7 +2510,9 @@ def main():
               f"{a['wakeups']} ({a['wakeup_stops']} stop) | "
               f"{a['dispatch']['background']}/{a['dispatch']['sync']}/{a['dispatch']['ignored']} | {blind_pct} | "
               f"{a['sleep_marker_s'] / 3600:.1f}h | {len(a['classifier_blocks'])}/{len(a['classifier_unavailable'])} | {a['dangling']} | "
-              f"{throttle[s['run_key']]['parked_h']:.1f}h ({throttle[s['run_key']]['throttled']}/{throttle[s['run_key']]['probes']}) |")
+              f"{throttle[s['run_key']]['parked_h']:.1f}h ({throttle[s['run_key']]['throttled']}/{throttle[s['run_key']]['probes']}) | "
+              + (f"{holds[s['run_key']]['hours']:.1f}h ({holds[s['run_key']]['ticks']})" if holds[s["run_key"]]["ticks"] else "-")
+              + " |")
         tot["span"] += span
         tot["blind"] += a["sleep_blind_s"]
         tot["marker"] += a["sleep_marker_s"]
@@ -2378,7 +2531,10 @@ def main():
           f"{sum(fleet_tokens.values()):,} output tokens · headroom-parked {throttle_parked_h:.1f}h"
           + (f" ({100 * headline['throttle_share']:.0f}% of fleet; {throttle_throttled}/{throttle_probes} probes THROTTLE; "
              f"ceiling {', '.join(f'{k} x{n}' for k, n in throttle_sources.most_common())})"
-             if throttle_probes else " (no headroom probes seen)") + "\n")
+             if throttle_probes else " (no headroom probes seen)")
+          + (f" · held {hold_total_h:.1f}h ({100 * headline['hold_share']:.0f}% of fleet; {hold_ticks_total} no-pick ticks in "
+             f"{len(hold_sessions)} of {len(sessions)} sessions)" if hold_sessions and headline["hold_share"] is not None else "")
+          + "\n")
     if rewake_tot is not None:
         print(f"rewakes {rewake_tot['stop']} stop ({rewake_tot['save']} save / "
               f"{rewake_tot['spurious']} spurious) + {rewake_tot['api']} api · "
@@ -2402,6 +2558,8 @@ def main():
               f"{tails})"
               + (f", of which {throttle_in_tail_h:.1f} session-hours were headroom-parked — a throttle, not an empty "
                  f"pool (Totals)" if throttle_in_tail_h else "")
+              + (f", of which {hold_in_tail_h:.1f} session-hours were also PLANNED-HOLD/BLOCKED-HOLD ticks (Totals, `held`)"
+                 if hold_in_tail_h else "")
               + f". An empty or gated pool is a prep finding, not a session fault — read it "
               f"beside the Remaining pool census (fleet-retro Step 3). Skips and failures after the "
               f"last ship carry no timestamp and are counted as idle.{held_note}\n")
@@ -2710,8 +2868,8 @@ def main():
         def pct(v):
             return f"{round(100 * v)}%" if v is not None else "-"
         print("| fleet start | n | hours | shipped | $/issue | ktok/issue | $/Mtok out | sub-final% | "
-              "cycles | find/rev | C+H/rev | plan% | ctx>=200k% | filed/ship | fresh% | idle% | thr% | rewr% |")
-        print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+              "cycles | find/rev | C+H/rev | plan% | ctx>=200k% | filed/ship | fresh% | idle% | thr% | hold% | rewr% |")
+        print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
         for r in history[-6:]:
             mark = " ←" if r.get("session_set") == headline["session_set"] and not args.all else ""
             fs = (r.get("fleet_start") or "?")[:16].replace("T", " ")
@@ -2724,7 +2882,7 @@ def main():
                   f"{cell(r.get('crit_high_per_review'))} | {pct(r.get('plan_origin_share'))} | "
                   f"{pct(r.get('ctx_share_ge200k'))} | {cell(r.get('filed_per_shipped'))} | "
                   f"{pct(r.get('fresh_shipped_share'))} | {pct(r.get('idle_tail_share'))} | "
-                  f"{pct(r.get('throttle_share'))} | {pct(r.get('rewritten_request_share'))} |")
+                  f"{pct(r.get('throttle_share'))} | {pct(r.get('hold_share'))} | {pct(r.get('rewritten_request_share'))} |")
         if len(history) > 6:
             print(f"\n({len(history) - 6} earlier row(s) in the ledger, not shown)")
         print("\nRead $/issue as its two factors: ktok/issue is work per shipped issue (churn or harder "
@@ -2739,7 +2897,10 @@ def main():
               "holding only to its last turn — as a share of the fleet's summed transcript span. thr% is the "
               "headroom-throttle gauge: session-hours parked by fleet-headroom.sh's THROTTLE between picks, as a "
               "share of the same span; it overlaps idle% wherever a park ran past the last ship, and the Pool "
-              "exhausted line says by how much. rewr% is the effort-phase gauge: the share of the main "
+              "exhausted line says by how much. hold% is the mid-run hold gauge: session-hours sessions spent in PLANNED-HOLD or "
+              "BLOCKED-HOLD (their `AUTO-CONTINUE: no pick` ticks), as a share of the same span; it counts a hold wherever it falls, "
+              "so it overlaps idle% on the part of a hold past a session's last ship and thr% never, and it is the only gauge that "
+              "sees a session held while a sibling kept shipping. rewr% is the effort-phase gauge: the share of the main "
               f"loop's ledgered requests sent at an effort other than the one the engine had set (the mechanical "
               f"and polling lanes); a `-` is a fleet with no effort-phase ledger.\n")
     elif not args.all:
@@ -2760,6 +2921,14 @@ def main():
                   f"a sibling's /auto Step 0 GC) or never written; the shipped/canceled/skipped/failed "
                   f"counts for this row come from transcript tags alone and undercount if the session "
                   f"was compacted.")
+        off = s["ledger_offschema"]
+        if off["normalized"] or off["dropped"]:
+            flagged = True
+            n_off = off["normalized"] + off["dropped"]
+            print(f"- **`{s['run_key']}` ledger carries {n_off} off-schema entr{'y' if n_off == 1 else 'ies'} (objects where "
+                  f"/auto writes bare ids)** — {off['normalized']} normalized to `.issue`"
+                  + (f", {off['dropped']} dropped (no string id)" if off["dropped"] else "")
+                  + "; every shipped/canceled count in this report reads the normalized ledger.")
         if a["loop_firings"] and a["wakeups"] == 0:
             flagged = True
             print(f"- **`{s['run_key']}` never armed a ScheduleWakeup** across {a['loop_firings']} "
@@ -2833,6 +3002,31 @@ def main():
                   f"the double-run also hit, a label flap, or issues certified mid-run after the drain. "
                   f"Read that session's last `/next` output and `linear-cli relations list` on the "
                   f"issues siblings shipped next. Forfeited ≈{ed['hours']} session-hours.")
+        # The mid-run hold: >=1h in PLANNED-HOLD / BLOCKED-HOLD while a sibling landed ships inside the hold intervals. A fleet
+        # launched with mixed `backlog` tokens produces it, and neither idle% nor the drained-early flag can see it.
+        hg = holds[s["run_key"]]
+        if hg["hours"] >= 1:
+            landed = {}
+            for o in sessions:
+                if o is s:
+                    continue
+                n_in = sum(1 for when in landings[o["run_key"]].values()
+                           if any(lo <= when <= hi for lo, hi in hg["intervals"]))
+                if n_in:
+                    landed[o["run_key"]] = n_in
+            if landed:
+                flagged = True
+                kinds = ", ".join(f"{k} x{n}" for k, n in sorted(hg["kinds"].items()))
+                who = ", ".join(f"`{k}` x{n}" + (" (carries `backlog`)" if sessions_by_key[k]["state"].get("backlog") else "")
+                                for k, n in sorted(landed.items()))
+                mixed = (" Its ledger lacks `backlog` while a sibling that landed ships carries it: a Planned/Todo column "
+                         "that is gated parks only the sessions launched without the token."
+                         if not st.get("backlog") and not s["ledger_missing"]
+                         and any(sessions_by_key[k]["state"].get("backlog") for k in landed) else "")
+                print(f"- **`{s['run_key']}` held {hg['hours']:.1f}h while siblings landed {sum(landed.values())} ship(s)** — "
+                      f"{hg['ticks']} no-pick tick(s) ({kinds}); landings inside the hold: {who}.{mixed}"
+                      + (" `BLOCKED-HOLD` waits on a sibling's in-flight issue by design, so read its hours against that."
+                         if "BLOCKED-HOLD" in hg["kinds"] else ""))
         if a["dangling"]:
             flagged = True
             print(f"- `{s['run_key']}` has {a['dangling']} tool call(s) with no result — an "

@@ -26,10 +26,10 @@
 #     fixture repo and never deletes it — reclaim_locks below unlinks only locks whose recorded key
 #     resolves inside THIS run's workspace, since parallel sessions hold live locks in the same shared
 #     ~/.claude/locks/.
-#   • No case may exit 3: that path self-enqueues to the merge queue under the REAL $HOME (registering
-#     the fixture repo in merge-queue-repos.txt). The fixtures keep the main checkout clean, off source,
-#     and not mid-operation, so 3 is unreachable; a regression that produces one fails its case's
-#     exit-code assertion loudly.
+#   • No case may exit 3 under the REAL $HOME: that path self-enqueues to the merge queue there (registering
+#     the fixture repo in merge-queue-repos.txt). Cases 1–10 keep the main checkout clean, off source, and
+#     not mid-operation, so 3 is unreachable and a regression that produces one fails its exit-code
+#     assertion loudly. Cases 11–14 put the checkout on source to reach it, under a fake HOME (run_fm_home).
 
 set -uo pipefail
 
@@ -304,6 +304,69 @@ ck_eq "a pending merge-queue marker is still cleared (the merge landed)" ABSENT 
 rm -f "$WT/AGENTS.md"
 git -C "$R" worktree remove "$WT" && git -C "$R" branch -D bf-t >/dev/null && git -C "$R" update-ref -d refs/finish-merge/bf-t-orig
 ck_eq "the printed remedy clears the leftover" GONE "$([ -d "$WT" ] && echo PRESENT || echo GONE)"
+
+# Cases 11–14 put the main checkout ON source, where the advance is `git merge --ff-only` over whatever the checkout holds. Any dirt
+# there used to defer the merge, and on 2026-10-11 one uncommitted comment in a fleet's main checkout queued every session's last ship.
+# Now git decides: an edit to a path the merge leaves alone rides along, one in its way defers. A deferral exits 3, which self-enqueues
+# under $HOME, so these cases run under a fake HOME linking every real script except merge-queue.sh — enqueue_transient returns
+# early when that file is absent.
+FAKE_HOME="$ROOT/home"
+mkdir -p "$FAKE_HOME/.claude/scripts"
+for f in "$DIR"/*; do
+  [ "$(basename "$f")" = merge-queue.sh ] || ln -s "$f" "$FAKE_HOME/.claude/scripts/$(basename "$f")"
+done
+run_fm_home() { OUT=$( (cd "$R" && HOME="$FAKE_HOME" "$FM" "$WT" source bf-t "$MSG") 2>&1 ); RC=$?; }
+
+echo "=== case 11: main checkout on source with an unstaged edit the merge does not touch — the merge lands and the edit survives ==="
+mk_repo c11
+wt_commit src.txt s2
+git -C "$R" checkout -q source
+printf 'g-dirty\n' > "$R/gen.txt"
+run_fm_home
+ck_eq "the merge lands: exit 0" 0 "$RC"
+ck_eq "source has the worktree's change" s2 "$(blob src.txt)"
+ck_eq "the checkout's tree was fast-forwarded" s2 "$(cat "$R/src.txt")"
+ck_eq "the unrelated edit is untouched" g-dirty "$(cat "$R/gen.txt")"
+ck_eq "and still uncommitted" " M gen.txt" "$(git -C "$R" status --porcelain)"
+
+echo "=== case 12: main checkout on source with a STAGED edit the merge does not touch — the merge lands and the index survives ==="
+mk_repo c12
+wt_commit src.txt s2
+git -C "$R" checkout -q source
+printf 'g-staged\n' > "$R/gen.txt"
+git -C "$R" add gen.txt
+run_fm_home
+ck_eq "the merge lands: exit 0" 0 "$RC"
+ck_eq "source has the worktree's change" s2 "$(blob src.txt)"
+ck_eq "the staged edit is still staged" "M  gen.txt" "$(git -C "$R" status --porcelain)"
+
+echo "=== case 13: main checkout on source with an edit to a file the merge changes — deferred, nothing moved, the path named ==="
+mk_repo c13
+wt_commit src.txt s2
+git -C "$R" checkout -q source
+src_before=$(git -C "$R" rev-parse source)
+printf 's-dirty\n' > "$R/src.txt"
+run_fm_home
+ck_eq "deferred: exit 3" 3 "$RC"
+ck "the deferral says the checkout is in the way" "is in this merge's way" "$OUT"
+ck "git's message names the path" "src.txt" "$OUT"
+ck_absent "not misreported as contention" "continuous contention" "$OUT"
+ck_eq "source did not move" "$src_before" "$(git -C "$R" rev-parse source)"
+ck_eq "the edit is untouched" s-dirty "$(cat "$R/src.txt")"
+ck_eq "the worktree is intact" PRESENT "$([ -d "$WT" ] && echo PRESENT || echo GONE)"
+
+echo "=== case 14: main checkout on source with an untracked file where the merge adds one — deferred with the path, not 50 contention loops ==="
+mk_repo c14
+wt_commit new.txt n1
+git -C "$R" checkout -q source
+src_before=$(git -C "$R" rev-parse source)
+printf 'n-untracked\n' > "$R/new.txt"
+run_fm_home
+ck_eq "deferred: exit 3" 3 "$RC"
+ck "git's message names the untracked path" "new.txt" "$OUT"
+ck_absent "not misreported as contention" "continuous contention" "$OUT"
+ck_eq "source did not move" "$src_before" "$(git -C "$R" rev-parse source)"
+ck_eq "the untracked file is untouched" n-untracked "$(cat "$R/new.txt")"
 
 echo ""
 echo "finish-merge.test.sh: $pass passed, $fail failed"

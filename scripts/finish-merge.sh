@@ -40,8 +40,9 @@
 #   4. worktree is not mid-merge/rebase/cherry-pick (a mid-merge of source is
 #      treated as an in-progress resolution → exit 2, not a hard failure)
 #   5. worktree has no uncommitted tracked changes
-#   6. main checkout (cwd) can advance source: not mid-operation, and — only when
-#      it is ON source — has a clean working tree. Transient blocks here exit 3
+#   6. main checkout (cwd) is not mid-operation. A dirty working tree is NOT a precondition: on
+#      source the advance is a fast-forward, which carries edits to paths it does not change and
+#      refuses atomically when one is in its way — that refusal defers. Transient blocks exit 3
 #      (queued for retry), not 1.
 #
 # Exit codes:
@@ -58,8 +59,8 @@
 #           on generated file(s) — regenerate them from the merged sources, commit,
 #           re-run (see assert_no_ours_discards below).
 #   3 — transient block: source cannot advance right now but will succeed later
-#       untouched (main checkout on source with uncommitted WIP, source checked out
-#       in another worktree, main mid-operation, or continuous contention). The
+#       untouched (main checkout on source with local changes to files the merge changes,
+#       source checked out in another worktree, main mid-operation, or continuous contention). The
 #       script self-enqueues to the local merge queue (scripts/merge-queue.sh) for
 #       automatic retry and leaves the worktree intact. NOT a failure.
 #   4 — corruption: the worktree no longer matches the identity /start stamped (a
@@ -378,10 +379,10 @@ if [ -n "$main_worktree" ] && [ "$main_worktree" != "$invoked_from" ]; then
   cd "$main_worktree"
 fi
 
-# Precondition 6: main checkout (cwd) is clean AND not mid-operation. The new
-# flow never leaves the main checkout mid-merge, so a mid-operation here is a
-# foreign/manual state the user must resolve. Use --absolute-git-dir (not
-# literal .git/) so this works for bare-repo and worktree-as-main setups.
+# Precondition 6: main checkout (cwd) is not mid-operation. The new flow never
+# leaves the main checkout mid-merge, so a mid-operation here is a foreign/manual
+# state the user must resolve. Use --absolute-git-dir (not literal .git/) so this
+# works for bare-repo and worktree-as-main setups.
 main_git_dir=$(git rev-parse --absolute-git-dir 2>/dev/null) || {
   echo "ERROR: main checkout: not a git repository (cwd: $PWD)" >&2
   exit 1
@@ -395,18 +396,12 @@ if [ -e "$main_git_dir/MERGE_HEAD" ] || [ -e "$main_git_dir/CHERRY_PICK_HEAD" ] 
   enqueue_transient "main checkout mid-merge/rebase/cherry-pick"
   exit 3
 fi
-# A dirty working tree only blocks when the main checkout is ON the source branch —
-# that's the sole advance path that touches the tree (git merge --ff-only). When it
-# is on another branch / detached, source advances ref-only via git update-ref,
-# which never reads or writes the working tree, so a dirty tree there (e.g. another
-# session's WIP on a different branch) is irrelevant and safe to ignore.
-if [ "$cur_branch" = "$source_branch" ] && { ! git diff --quiet || ! git diff --cached --quiet; }; then
-  echo "DEFERRED: main checkout is on source branch '$source_branch' with uncommitted changes." >&2
-  echo "Cannot fast-forward its working tree over uncommitted work, and multi-session safety forbids touching it." >&2
-  echo "Queued for automatic retry once that work is committed/stashed or the checkout moves off '$source_branch'. Worktree at $wt_dir is untouched." >&2
-  enqueue_transient "main checkout on source branch '$source_branch' with uncommitted changes"
-  exit 3
-fi
+# A dirty working tree is deliberately not checked here. Off source, the advance is a ref-only
+# update-ref that never touches the tree; on source it is `git merge --ff-only`, which keeps
+# uncommitted edits (staged or not) to paths the merge leaves alone and refuses atomically, moving
+# nothing, when an edit or untracked file sits on a path it changes — the finalize loop defers that.
+# Deferring on ANY dirt here held every merge behind one unrelated file: on 2026-10-11 a single
+# uncommitted comment left in the main checkout queued the last ship of each of a fleet's sessions.
 
 # Best-effort fetch; offline is OK. (Updates remote-tracking refs; the merge
 # itself reconciles against the LOCAL source branch.)
@@ -451,7 +446,7 @@ fi
 # only as a backstop against pathological continuous contention — a clean
 # re-merge exits 5 for the merged-tree gate and the re-invocation converges; it
 # does NOT hard-fail on transient races.
-# (cur_branch was captured in precondition 6, before the dirty-tree relaxation.)
+# (cur_branch was captured in precondition 6.)
 max_finalize_attempts=50
 attempt=0
 while : ; do
@@ -520,17 +515,20 @@ while : ; do
   if [ "$target" = "$src_old" ]; then
     :   # already-merged: nothing to advance.
   elif [ "$cur_branch" = "$source_branch" ]; then
-    # Main checkout is on source: fast-forward updates ref AND working tree
-    # atomically. A failed ff has two causes: source moved (clean no-op → loop),
-    # or the tree went dirty since precondition 6 (another session started editing
-    # source here, so ff refuses to overwrite). Distinguish them: a dirty tree is
-    # the on-source-dirty transient — defer with the accurate reason rather than
-    # spinning the contention loop 50× and reporting it as contention.
-    if ! git merge --ff-only "$target"; then
-      if ! git diff --quiet || ! git diff --cached --quiet; then
-        echo "DEFERRED: main checkout on source branch '$source_branch' became dirty mid-merge; cannot fast-forward over uncommitted work." >&2
-        echo "Queued for automatic retry once that work is committed/stashed or the checkout moves off '$source_branch'. Worktree at $wt_dir is untouched." >&2
-        enqueue_transient "main checkout on source branch '$source_branch' with uncommitted changes"
+    # Main checkout is on source: the fast-forward updates ref AND working tree atomically, carrying
+    # uncommitted edits to paths it does not change. A refused ff has two causes. Source moved under us
+    # (HEAD no longer an ancestor of target) → loop and re-merge. Otherwise the working tree is in the way —
+    # an edit to a path the merge changes, an untracked file where it adds one, a held index.lock — and git
+    # refused without touching anything, so defer with its own message, which names the paths. `git diff`
+    # cannot make this call: it reads an untracked file in the way as clean, which once looped 50× into a
+    # deferral misreported as contention.
+    if ! { ff_err=$(git merge --ff-only "$target" 2>&1 1>&3); } 3>&1; then
+      if git merge-base --is-ancestor HEAD "$target"; then
+        in_the_way=$(printf '%s\n' "$ff_err" | awk '/^\t/ { sub(/^\t+/, ""); printf "%s%s", sep, $0; sep = ", " }')
+        echo "DEFERRED: main checkout on source branch '$source_branch' is in this merge's way; git refused the fast-forward and changed nothing:" >&2
+        printf '%s\n' "$ff_err" | sed 's/^/  /' >&2
+        echo "Queued for automatic retry once those paths are committed or discarded. Worktree at $wt_dir is untouched." >&2
+        enqueue_transient "main checkout on source branch '$source_branch' has local changes this merge would overwrite: ${in_the_way:-$(printf '%s\n' "$ff_err" | head -1)}"
         exit 3
       fi
       continue

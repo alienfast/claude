@@ -809,14 +809,20 @@ CHAIN_DEFS='def is_terminal($x): ((($terminal | map(ascii_downcase)) | index((($
         elif (($seqheld | index($i.identifier)) != null) then ""
         elif ($el[$i.identifier] == null) then (if ($label != "") then "lacks label \($label)" else "filtered out" end)
         else "" end;
-      # Walk the unresolved blocker chain: a blocker in flight (started, not stalled) or fleet-eligible
-      # releases on its own; the first keeper-owned one names the reason. $seen guards cycles.
+      # Walk the unresolved blocker chain: a blocker in flight or fleet-eligible releases on its own; the first
+      # keeper-owned one names the reason. A started blocker is in flight unless it is stalled or labeled human or
+      # needs decision: those are a person working or deciding, which no fleet session ships (BF-2287 sat behind the
+      # started human BF-2009 and read as releasing for a whole night). $seen guards cycles.
       def chain_reason($ids; $seen):
         if ($ids | length) == 0 then ""
         else ($ids[0]) as $b | ($m[$b] // null) as $bi
           | (if (($seen | index($b)) != null) or is_terminal($b) then ""
              elif $bi == null then "blocked by \($b) (outside the fetched teams)"
-             elif ($bi.state_type == "started") then (if lbl($bi; "stalled") then "blocked by \($b) [stalled]" else "" end)
+             elif ($bi.state_type == "started") then
+               (if lbl($bi; "stalled") then "blocked by \($b) [stalled]"
+                elif lbl($bi; "human") then "blocked by \($b) [human]"
+                elif lbl($bi; "needs decision") then "blocked by \($b) [needs decision]"
+                else "" end)
              elif (($seqheld | index($b)) != null) then ""
              elif ($el[$b] != null) and (lbl($bi; "epic") | not) then chain_reason(($bm[$b] // []); $seen + [$b])
              else "blocked by \($b) [\(self_reason($bi) | if . == "" then ($bi.state // "?") else . end)]" end) as $r

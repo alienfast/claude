@@ -71,7 +71,8 @@
 # require the target branch's tip to have moved — a `shipped` whose merge the queue deferred is waited on
 # up to FLEET_SEQUENCE_MERGE_TIMEOUT. Any other outcome stops the sequence with the remaining issues
 # untouched — /auto already commented and labeled the issue. Re-running the same list resumes: issues the
-# marker recorded as shipped are skipped, the branch is kept, and a list whose every issue has shipped
+# marker recorded as landed are skipped (one recorded shipped whose deferred merge outlasted the wait is waited
+# on again first, so the next issue never forks without it), the branch is kept, and a list whose every issue has shipped
 # goes straight to the PR step — which is also how a run whose PR could not be opened is completed. A
 # resume also ADOPTS a session an earlier run dispatched that is still working (or shipped with its landing
 # unrecorded) — a runner can die under a harness restart its child survives — waiting on it, never
@@ -121,6 +122,8 @@ claude_args=()
 
 logln() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+# /auto attributes main-checkout dirt by an issue-ID segment in the branch name (skills/auto Step 1); fleet-launch.sh tests the same shape.
+carries_issue_id() { printf '%s' "$1" | grep -qiE '[a-z]{2,}-[0-9]+'; }
 
 update_marker() { # <jq args...> — rewrite the marker through a jq filter
   local out
@@ -303,13 +306,16 @@ remove_pr_worktree() { # the throwaway /pr-update worktree; a fixed path under t
   git -C "$main_checkout" worktree prune >/dev/null 2>&1 || true
 }
 
-wait_for_landing() { # <ISSUE-ID> <tip before dispatch> → 0 once the target branch's tip has moved, 1 on timeout
-  local id="$1" before="$2" branch waited=0 step
+wait_for_landing() { # <ISSUE-ID> <tip before dispatch> → 0 once the target branch's tip has moved and the merge queue no
+  # longer holds the issue, 1 on timeout. A moved tip alone is not this issue's landing once anything else can move it — a
+  # resume runs after the human has often committed to the branch — and the drainer removes the queue marker only when it lands.
+  local id="$1" before="$2" branch waited=0 step queued
   branch=$(target_branch); step=$(( poll > 0 ? poll : 1 ))
-  while [ "$(git rev-parse --verify --quiet "refs/heads/$branch" 2>/dev/null)" = "$before" ]; do
+  queued="$main_checkout/.claude/merge-queue/$(lower "$id").json"
+  while [ "$(git rev-parse --verify --quiet "refs/heads/$branch" 2>/dev/null)" = "$before" ] || [ -f "$queued" ]; do
     [ "$waited" -ge "$merge_timeout" ] && return 1
     if [ "$waited" -eq 0 ]; then
-      if [ -f "$main_checkout/.claude/merge-queue/$(lower "$id").json" ]; then
+      if [ -f "$queued" ]; then
         logln "$id: ledger says shipped and its merge is queued (.claude/merge-queue) — waiting up to ${merge_timeout}s for the drainer"
       else
         logln "$id: ledger says shipped but '$branch' has not moved — waiting up to ${merge_timeout}s for the merge to land"
@@ -318,6 +324,17 @@ wait_for_landing() { # <ISSUE-ID> <tip before dispatch> → 0 once the target br
     sleep "$poll"; waited=$((waited + step))
   done
   return 0
+}
+
+record_landing() { # <progress label> <ISSUE-ID> <tip before dispatch> — after wait_for_landing; reads the run loop's target and mode
+  local tag="$1" id="$2" before="$3" after count
+  after=$(git rev-parse --verify --quiet "refs/heads/$target")
+  update_marker --arg id "$id" --arg a "$after" '.issues[$id].landed_sha = $a'
+  count=$(git rev-list --count "$before..$after" 2>/dev/null || echo "?")
+  logln "$tag $id landed on $target at ${after:0:12} ($count commit(s))"
+  git log --format=%s "$before..$after" 2>/dev/null | grep -qi -- "$id" \
+    || logln "WARN: none of the commits $target gained mention $id — check the session's log before trusting the ship"
+  [ "$mode" = "merge" ] || push_branch "$target"
 }
 
 push_branch() { # <branch> — best-effort after each ship; the PR step pushes again and fails loudly
@@ -489,7 +506,7 @@ cmd_run() { # [<slug>] — the launch passes it to the detached runner; a foregr
   [ -s "$marker" ] || { echo "ERROR: no marker at ${marker:-tmp/fleet-sequence-<slug>.json} — the runner only runs under a launch" >&2; exit 1; }
   cd "$main_checkout"
   trap on_exit_run EXIT
-  local base mode target ids_csv id sid out outcome remaining now started before after count
+  local base mode target ids_csv id sid out outcome remaining now started before dirty current
   local queue=()
   base=$(jq -r '.base' "$marker"); mode=$(jq -r '.mode' "$marker"); target=$(target_branch)
   while IFS= read -r id; do queue+=("$id"); done < <(jq -r '.queue[]' "$marker")
@@ -502,7 +519,17 @@ cmd_run() { # [<slug>] — the launch passes it to the detached runner; a foregr
   for id in "${queue[@]}"; do
     i=$((i+1))
     if [ "$(jq -r --arg id "$id" '.issues[$id].outcome // ""' "$marker")" = "shipped" ]; then
-      logln "[$i/${#queue[@]}] $id already shipped (landed $(jq -r --arg id "$id" '.issues[$id].landed_sha // "unrecorded" | .[0:12]' "$marker")) — skipping"
+      if [ -n "$(jq -r --arg id "$id" '.issues[$id].landed_sha // ""' "$marker")" ]; then
+        logln "[$i/${#queue[@]}] $id already shipped (landed $(jq -r --arg id "$id" '.issues[$id].landed_sha | .[0:12]' "$marker")) — skipping"
+        continue
+      fi
+      # Shipped but never landed: an earlier run timed out on its deferred merge. Skipping it would fork the next issue
+      # from a tip without it, so wait for the landing here exactly as the run that dispatched it would have.
+      before=$(jq -r --arg id "$id" '.issues[$id].tip_before // ""' "$marker")
+      logln "[$i/${#queue[@]}] $id shipped but its landing was never recorded — waiting for it before the next issue forks"
+      wait_for_landing "$id" "$before" \
+        || fail_run "$id: shipped but still not landed on '$target' within ${merge_timeout}s — its merge is queued (/merge-queue) or never merged; land it, then re-run the same list"
+      record_landing "[$i/${#queue[@]}]" "$id" "$before"
       continue
     fi
     if [ "$(jq -r '.stop_requested' "$marker")" = "true" ]; then
@@ -511,8 +538,12 @@ cmd_run() { # [<slug>] — the launch passes it to the detached runner; a foregr
       update_marker --arg r "stopped before $id; not started: $remaining — re-run the same list to continue" '.status = "stopped" | .reason = $r | .current = null'
       exit 0
     fi
-    if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
-      fail_run "main checkout is dirty before $id — /auto would halt on it; resolve and re-run the same list"
+    dirty=$(git status --porcelain 2>/dev/null | paste -sd, - | sed 's/,/, /g')
+    if [ -n "$dirty" ]; then
+      current=$(git branch --show-current 2>/dev/null || true)
+      carries_issue_id "$current" \
+        && fail_run "main checkout is dirty on '$current' before $id — the branch name carries an issue ID, so $id's /auto would refuse that dirt or finish it as its own work; commit or stash it, then re-run the same list"
+      logln "[$i/${#queue[@]}] NOTE: main checkout is dirty before $id ($dirty) — $id's /auto picks past it; a merge that changes one of those paths defers to the queue"
     fi
 
     # The launch carries a non-shipped entry only for a session it found still working (or shipped with its
@@ -563,13 +594,7 @@ cmd_run() { # [<slug>] — the launch passes it to the detached runner; a foregr
     # (finish-merge.sh exit 3) lands later through the queue's drainer, so the wait is bounded, not skipped.
     wait_for_landing "$id" "$before" \
       || fail_run "$id: ledger says shipped but '$target' never moved within ${merge_timeout}s — a deferred merge (/merge-queue) or a ship that did not merge; land it, then re-run the same list"
-    after=$(git rev-parse --verify --quiet "refs/heads/$target")
-    update_marker --arg id "$id" --arg a "$after" '.issues[$id].landed_sha = $a'
-    count=$(git rev-list --count "$before..$after" 2>/dev/null || echo "?")
-    logln "[$i/${#queue[@]}] $id landed on $target at ${after:0:12} ($count commit(s))"
-    git log --format=%s "$before..$after" 2>/dev/null | grep -qi -- "$id" \
-      || logln "WARN: none of the commits $target gained mention $id — check the session's log before trusting the ship"
-    [ "$mode" = "merge" ] || push_branch "$target"
+    record_landing "[$i/${#queue[@]}]" "$id" "$before"
   done
   update_marker '.current = null'
   [ "$mode" = "merge" ] || open_sequence_pr
@@ -719,12 +744,20 @@ cmd_launch() {
     esac
   done
 
+  # Dirt is fatal only where /auto would attribute it: a targeted child refuses dirt it ties to another issue, and finishes
+  # dirt it ties to its own target as its own work. Anything else it picks past, and finish-merge.sh fast-forwards around.
   dirty=$(git -C "$main_checkout" status --porcelain 2>/dev/null || true)
   if [ -n "$dirty" ]; then
-    echo "ERROR: main checkout is dirty — every session's /auto would halt at its Step 1 preflight." >&2
+    if carries_issue_id "$current"; then
+      echo "ERROR: main checkout is dirty on '$current', whose name carries an issue ID — each child's /auto would refuse that" >&2
+      echo "       dirt, or finish it as its own work when the ID is its target." >&2
+      printf '%s\n' "$dirty" | sed 's/^/       /' >&2
+      echo "       Commit or stash the above, then re-run. Nothing was dispatched." >&2
+      exit 1
+    fi
+    echo "WARN: main checkout is dirty on '${current:-(detached)}' — a merge that changes any of these paths defers to the" >&2
+    echo "      merge queue until they are committed or discarded, and this runner waits on it; every other merge lands normally:" >&2
     printf '%s\n' "$dirty" | sed 's/^/       /' >&2
-    echo "       Commit or stash the above, then re-run. Nothing was dispatched." >&2
-    exit 1
   fi
   [ -n "$current" ] || { echo "ERROR: HEAD is detached — check out the branch the sequence should ship onto, then re-run" >&2; exit 1; }
 
@@ -840,7 +873,7 @@ cmd_launch() {
   else
     echo "Each issue runs in its own background session, forking from and merging into $branch by ref; a per-issue start.<id>.wt-source-branch key steers it, set just before its dispatch."
   fi
-  echo "The main checkout is never moved, and other worktree sessions (another sequence, a targeted /auto, /start wt) may run alongside — keep the main checkout clean, since a dirty tree halts /auto's preflight."
+  echo "The main checkout is never moved, and other worktree sessions (another sequence, a targeted /auto, /start wt) may run alongside — commit what you edit there: a merge that changes a path left uncommitted on the branch it lands on defers to the queue, and the runner waits for it."
   echo "Watch with: fleet-sequence.sh status ${normalized[0]}  |  claude agents"
 }
 

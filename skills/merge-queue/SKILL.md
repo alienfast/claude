@@ -1,6 +1,6 @@
 ---
 name: merge-queue
-description: Inspect and drain the local deferred-merge queue. Shows worktree merges that /finish deferred (transient block — e.g. the main checkout was on the source branch with WIP) and that a local launchd drainer retries until they land. Use when the user says 'merge queue', 'what merges are pending', 'drain the merge queue', or invokes /merge-queue.
+description: Inspect and drain the local deferred-merge queue. Shows worktree merges that /finish deferred (transient block — e.g. the main checkout was on the source branch with uncommitted edits to files the merge changes) and that a local launchd drainer retries until they land. Use when the user says 'merge queue', 'what merges are pending', 'drain the merge queue', or invokes /merge-queue.
 ---
 
 # Merge Queue

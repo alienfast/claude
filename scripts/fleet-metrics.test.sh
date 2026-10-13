@@ -1730,7 +1730,7 @@ CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK21" --hours 24 --j
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK21" --hours 24 > "$MD21" 2>&1
 q21() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J21"; }
 ck "ship call: observed without a tag"      "['TT-200']" "$(q21 "d['sessions'][0]['observed_shipped']")"
-ck "ship call: witness split"               "{'tags': [], 'calls': ['TT-200']}" "$(q21 "d['sessions'][0]['observed_by']")"
+ck "ship call: witness split"               "{'tags': [], 'calls': ['TT-200'], 'outcomes': []}" "$(q21 "d['sessions'][0]['observed_by']")"
 ck "ship call: quoted mention is not a ship" "False" "$(q21 "'TT-299' in d['sessions'][0]['observed_shipped']")"
 ck_has "ship call: obs agrees with the ledger" "| 1/1 |" "$MD21"
 ck_lacks "ship call: no unrecorded-ship flag" "shipped without recording it" "$MD21"
@@ -1924,6 +1924,200 @@ ck_has "never-fired flag"           '**`loop-boundary` compacted nothing across 
 ck_has "never-fired names prefix"   '`prefix` x2' "$MDB"
 ck_lacks "main fixture unflagged"   "compacted nothing" "$MD"
 ck_lacks "no-ledger run unflagged"  "compacted nothing" "$MDW"
+
+# ---- 24. mid-run holds and an off-schema ledger, from the 2026-10-10/11 basefund fleet ----
+# fixtures/fleet-metrics-holds/ holds trimmed REAL records: session 1cc250ad's last ship (BF-2131), its first /loop firing after
+# it, four of its 55 PLANNED-HOLD ticks (one with the outcome line after a prose paragraph), the loop-boundary mod's injected user
+# record, and the deadline firing with its NO-CANDIDATES turn; three SHIPPED-MERGE turns of the `backlog` sibling b2bb1003, whose
+# real ledger ends `shipped` on an OBJECT entry (the shape that crashed the analyzer with `cannot use 'dict' as a set element`).
+# Both held sessions ran from ~01:01Z to the 11:09:08Z deadline with no gauge firing: idle% keys on the fleet's last ship, which
+# was b2bb1003's at 12:57Z. Variants below are derived from those same records with only text and timestamps replaced.
+FIXH="$(cd "$(dirname "$0")" && pwd)/fixtures/fleet-metrics-holds"
+CKH="$WORK/checkouth"
+mkdir -p "$CKH/tmp"
+git -C "$CKH" init -q 2>/dev/null
+git -C "$CKH" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "init"
+MH="$(git -C "$CKH" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
+mkdir -p "$WORK/projects/$MH"
+cp "$FIXH"/auto-state-*.json "$CKH/tmp/"
+echo '{"deadline_epoch": 1791716948, "deadline": "2026-10-11 06:09 CDT"}' > "$CKH/tmp/fleet-deadline.json"
+JH="$WORK/outh.json"; MDH="$WORK/outh.md"
+qh() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$JH"; }
+runh() {
+  CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CKH" --sessions 1cc250ad,b2bb1003 --json > "$JH" 2>"$WORK/errh.log"; RCH=$?
+  CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CKH" --sessions 1cc250ad,b2bb1003 > "$MDH" 2>&1
+}
+cp "$FIXH/1cc250ad-0000.jsonl" "$FIXH/b2bb1003-0000.jsonl" "$WORK/projects/$MH/"
+runh
+ck "holds: the analyzer completes on an object ledger entry" "0" "$RCH"
+ck "ledger: b2bb1003 reads normalized"       "['BF-2277', 'BF-1601', 'BF-2531']" "$(qh "[s for s in d['sessions'] if s['run_key']=='b2bb1003'][0]['recorded_shipped']")"
+ck "ledger: the object entry counts as a recorded ship" "True" "$(qh "'BF-2531' in [s for s in d['sessions'] if s['run_key']=='b2bb1003'][0]['observed_shipped']")"
+ck "ledger: off-schema count on the session"  "{'normalized': 1, 'dropped': 0}" "$(qh "[s for s in d['sessions'] if s['run_key']=='b2bb1003'][0]['ledger_offschema']")"
+ck "ledger: a schema-clean ledger carries none" "{'normalized': 0, 'dropped': 0}" "$(qh "[s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['ledger_offschema']")"
+ck_has "ledger: flag" '**`b2bb1003` ledger carries 1 off-schema entry (objects where /auto writes bare ids)** — 1 normalized to `.issue`; every shipped/canceled count in this report reads the normalized ledger.' "$MDH"
+ck_lacks "ledger: normalized id is not an unrecorded ship" "shipped without recording it" "$MDH"
+ck_lacks "ledger: clean ledger unflagged" '`1cc250ad` ledger carries' "$MDH"
+ck "holds: hours run to the DEADLINE, not the 11:13 firing or the 11:02 boundary record" "10.1 4" "$(qh "' '.join(str(x) for x in (lambda h: (h['hours'], h['ticks']))([s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['held']))")"
+ck "holds: interval opens at the first tick's /loop firing" "[{'start': '2026-10-11T01:03:00Z', 'end': '2026-10-11T11:09:08Z'}]" "$(qh "[s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['held']['intervals']")"
+ck "holds: kind counted"                      "{'PLANNED-HOLD': 4}" "$(qh "[s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['held']['kinds']")"
+ck "holds: the shipping sibling holds nothing" "0.0 0" "$(qh "' '.join(str(x) for x in (lambda h: (h['hours'], h['ticks']))([s for s in d['sessions'] if s['run_key']=='b2bb1003'][0]['held']))")"
+ck "holds: fleet roll-up"                     "10.1 4 1" "$(qh "' '.join(str(d['holds'][k]) for k in ('session_hours','ticks','sessions_holding'))")"
+ck "holds: history row carries hours and share" "10.1 0.229" "$(qh "' '.join(str(d['history'][-1][k]) for k in ('hold_session_hours','hold_share'))")"
+# idle% keeps its meaning: the held session's tail is the same 10.1h it always was, and the hold gauge is reported beside it.
+ck "holds: idle tail unchanged by the new gauge" "10.1" "$(qh "d['pool_exhausted']['idle_tail_session_hours']")"
+ck "holds: hold hours inside the idle tail"   "10.1" "$(qh "d['holds']['within_idle_tail_session_hours']")"
+ck_has "holds: per-session cell"              "| 10.1h (4) |" "$MDH"
+ck_has "holds: totals clause"                 "held 10.1h (23% of fleet; 4 no-pick ticks in 1 of 2 sessions)" "$MDH"
+ck_has "holds: trend column and cell"         "| thr% | hold% |" "$MDH"
+ck_has "holds: trend cell"                    "| 23% | 0% | 23% |" "$MDH"
+ck_has "holds: sibling ship inside the interval flags" '**`1cc250ad` held 10.1h while siblings landed 1 ship(s)** — 4 no-pick tick(s) (PLANNED-HOLD x4); landings inside the hold: `b2bb1003` x1 (carries `backlog`).' "$MDH"
+ck_has "holds: mixed-backlog launch named"    "Its ledger lacks \`backlog\` while a sibling that landed ships carries it" "$MDH"
+ck_lacks "holds: PLANNED-HOLD carries no BLOCKED-HOLD caveat" "waits on a sibling's in-flight issue by design" "$MDH"
+# The sibling's only in-window ship removed: BF-2277 lands before the hold and BF-2531 after the deadline, so no flag.
+grep -v 'BF-1601' "$FIXH/b2bb1003-0000.jsonl" > "$WORK/projects/$MH/b2bb1003-0000.jsonl"
+runh
+ck "holds: the hold itself is unchanged without the sibling ship" "10.1" "$(qh "[s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['held']['hours']")"
+ck_lacks "holds: ships outside the interval do not flag" "held 10.1h while siblings landed" "$MDH"
+cp "$FIXH/b2bb1003-0000.jsonl" "$WORK/projects/$MH/"
+# BLOCKED-HOLD: the same real ticks with the kind and the waiting clause swapped for the BLOCKED-HOLD contract's.
+sed -e 's/PLANNED-HOLD/BLOCKED-HOLD/g' -e 's/waiting for the Planned\/Todo column to drain\./waiting for a sibling to ship./g' \
+  "$FIXH/1cc250ad-0000.jsonl" > "$WORK/projects/$MH/1cc250ad-0000.jsonl"
+runh
+ck "holds: BLOCKED-HOLD counted"              "{'BLOCKED-HOLD': 4}" "$(qh "[s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['held']['kinds']")"
+ck_has "holds: BLOCKED-HOLD named in the flag, with its by-design caveat" "(BLOCKED-HOLD x4); landings inside the hold: \`b2bb1003\` x1 (carries \`backlog\`). Its ledger lacks \`backlog\`" "$MDH"
+ck_has "holds: BLOCKED-HOLD caveat"           "\`BLOCKED-HOLD\` waits on a sibling's in-flight issue by design" "$MDH"
+# A hold ended by a later pick: ticks to 01:25:54, then a real /loop firing and a real SHIPPED-MERGE turn re-timed to 04:00 and 04:40.
+python3 - "$FIXH/1cc250ad-0000.jsonl" "$WORK/projects/$MH/1cc250ad-0000.jsonl" <<'MK_PICK'
+import json, sys
+src, dest = sys.argv[1:3]
+rows = [json.loads(l) for l in open(src)]
+def at(r, stamp, mid=None):
+    r = json.loads(json.dumps(r))
+    r["timestamp"] = f"2026-10-11T{stamp}Z"
+    if mid:
+        r["message"]["id"] = mid
+    return r
+fire, loop, ship = rows[2], rows[3], rows[0]
+out = rows[:6] + [at(fire, "04:00:00.856"), at(loop, "04:00:00.903"), at(ship, "04:40:00.000", "msg_pick_after_hold")]
+open(dest, "w").write("".join(json.dumps(r) + "\n" for r in out))
+MK_PICK
+runh
+ck "holds: a later pick closes the interval at its firing" "2.95 2" "$(qh "' '.join(str(x) for x in (lambda h: (h['hours'], h['ticks']))([s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['held']))")"
+ck "holds: interval bounds"                   "[{'start': '2026-10-11T01:03:00Z', 'end': '2026-10-11T04:00:00Z'}]" "$(qh "[s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['held']['intervals']")"
+# A second hold run after a pick opens at its own first tick when no /loop firing sits between the pick's outcome and it, and a run
+# nothing closes ends at the session's last activity (a prose turn at 03:30 here, with no outcome line).
+python3 - "$FIXH/1cc250ad-0000.jsonl" "$WORK/projects/$MH" <<'MK_RUNS'
+import json, sys
+src, dest = sys.argv[1:3]
+rows = [json.loads(l) for l in open(src)]
+def at(r, stamp, mid=None):
+    r = json.loads(json.dumps(r))
+    r["timestamp"] = f"2026-10-11T{stamp}Z"
+    if mid:
+        r["message"]["id"] = mid
+    return r
+pick = [at(rows[2], "04:00:00.856"), at(rows[3], "04:00:00.903"), at(rows[0], "04:40:00.000", "msg_pick_after_hold")]
+second = pick + [at(rows[4], "05:00:00.000", "msg_second_run"), at(rows[2], "05:30:00.856"), at(rows[3], "05:30:00.903"), rows[-1]]
+open(f"{dest}/1cc250ad-0000.jsonl", "w").write("".join(json.dumps(r) + "\n" for r in rows[:6] + second))
+open(f"{dest}/open-0000.jsonl", "w").write("".join(json.dumps(r) + "\n" for r in rows[:6] + [at(rows[1], "03:30:00.000", "msg_prose")]))
+MK_RUNS
+mv "$WORK/projects/$MH/open-0000.jsonl" "$WORK/open-0000.jsonl"
+runh
+ck "holds: a second run opens at its first tick, not at the pre-pick firing" "3.45 3" "$(qh "' '.join(str(x) for x in (lambda h: (h['hours'], h['ticks']))([s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['held']))")"
+cp "$WORK/open-0000.jsonl" "$WORK/projects/$MH/1cc250ad-0000.jsonl"
+runh
+ck "holds: a run nothing closes ends at the session's last activity" "2.45 2" "$(qh "' '.join(str(x) for x in (lambda h: (h['hours'], h['ticks']))([s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['held']))")"
+# A deadline at 10:00Z (earlier than the last two ticks): ticks past it are neither hours nor counted.
+echo '{"deadline_epoch": 1791712800, "deadline": "2026-10-11 05:00 CDT"}' > "$CKH/tmp/fleet-deadline.json"
+cp "$FIXH/1cc250ad-0000.jsonl" "$WORK/projects/$MH/"
+runh
+ck "holds: the deadline clips the hours and the tick count" "8.95 2" "$(qh "' '.join(str(x) for x in (lambda h: (h['hours'], h['ticks']))([s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['held']))")"
+echo '{"deadline_epoch": 1791716948, "deadline": "2026-10-11 06:09 CDT"}' > "$CKH/tmp/fleet-deadline.json"
+# Every iteration-ending tag closes a hold the same way: the pick record's SHIPPED-MERGE prefix swapped for each of the others.
+for tag in AUTO-CONTINUE AUTO-HALTED NO-CANDIDATES SHIPPED-PR RELEASED DEFERRED-MERGE CANCELED SKIPPED-BLOCKED BLOCKED-ON-REVIEW BLOCKED-ON-RECOVERY ABANDONED; do
+  python3 - "$FIXH/1cc250ad-0000.jsonl" "$WORK/projects/$MH/1cc250ad-0000.jsonl" "$tag" <<'MK_TAGS'
+import json, sys
+src, dest, tag = sys.argv[1:4]
+rows = [json.loads(l) for l in open(src)]
+def at(r, stamp, mid=None):
+    r = json.loads(json.dumps(r))
+    r["timestamp"] = f"2026-10-11T{stamp}Z"
+    if mid:
+        r["message"]["id"] = mid
+    return r
+ship = at(rows[0], "04:40:00.000", "msg_pick_after_hold")
+ship["message"]["content"][0]["text"] = ship["message"]["content"][0]["text"].replace("SHIPPED-MERGE:", tag + ":", 1)
+out = rows[:6] + [at(rows[2], "04:00:00.856"), at(rows[3], "04:00:00.903"), ship]
+open(dest, "w").write("".join(json.dumps(r) + "\n" for r in out))
+MK_TAGS
+  CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CKH" --sessions 1cc250ad,b2bb1003 --json > "$JH" 2>/dev/null
+  ck "holds: $tag closes the interval" "2.95" "$(qh "[s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['held']['hours']")"
+done
+# A hold line quoted in a USER record (a pasted outcome, an injected prompt) is not a tick: a real tick re-typed as `user`.
+python3 - "$FIXH/1cc250ad-0000.jsonl" "$WORK/projects/$MH/1cc250ad-0000.jsonl" <<'MK_USER'
+import json, sys
+src, dest = sys.argv[1:3]
+rows = [json.loads(l) for l in open(src)]
+quoted = json.loads(json.dumps(rows[4]))
+quoted["type"], quoted["message"]["role"] = "user", "user"
+quoted["timestamp"] = "2026-10-11T02:00:00.000Z"
+rows.insert(5, quoted)
+open(dest, "w").write("".join(json.dumps(r) + "\n" for r in rows))
+MK_USER
+runh
+ck "holds: a tick quoted in a user record is not counted" "10.1 4" "$(qh "' '.join(str(x) for x in (lambda h: (h['hours'], h['ticks']))([s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['held']))")"
+# The Pool exhausted line prints the overlap with the hold gauge: with the sibling's 12:58 ship removed its idle tail is 8.1h, so the
+# line prints, and 1cc250ad's whole 10.1h hold sits inside its idle tail.
+cp "$FIXH/1cc250ad-0000.jsonl" "$WORK/projects/$MH/"
+grep -v 'BF-2531' "$FIXH/b2bb1003-0000.jsonl" > "$WORK/projects/$MH/b2bb1003-0000.jsonl"
+jq '.shipped |= map(select(type == "string"))' "$FIXH/auto-state-b2bb1003.json" > "$CKH/tmp/auto-state-b2bb1003.json"
+runh
+ck_has "holds: Pool exhausted names the overlap" "of which 10.1 session-hours were also PLANNED-HOLD/BLOCKED-HOLD ticks (Totals, \`held\`)" "$MDH"
+cp "$FIXH/b2bb1003-0000.jsonl" "$WORK/projects/$MH/"
+# Malformed entries (derived from the real ledger): dropped and counted, never a crash.
+python3 - "$FIXH/auto-state-b2bb1003.json" "$CKH/tmp/auto-state-b2bb1003.json" <<'MK_BAD'
+import json, sys
+src, dest = sys.argv[1:3]
+l = json.load(open(src))
+l["shipped"] += [{"tag": "SHIPPED-MERGE"}, 42, None]
+json.dump(l, open(dest, "w"))
+MK_BAD
+runh
+ck "ledger: malformed entries do not crash the analyzer" "0" "$RCH"
+ck "ledger: malformed entries dropped, the object normalized" "['BF-2277', 'BF-1601', 'BF-2531']" "$(qh "[s for s in d['sessions'] if s['run_key']=='b2bb1003'][0]['recorded_shipped']")"
+ck "ledger: dropped entries counted"          "{'normalized': 1, 'dropped': 3}" "$(qh "[s for s in d['sessions'] if s['run_key']=='b2bb1003'][0]['ledger_offschema']")"
+ck_has "ledger: flag counts both"             '**`b2bb1003` ledger carries 4 off-schema entries (objects where /auto writes bare ids)** — 1 normalized to `.issue`, 3 dropped (no string id);' "$MDH"
+
+# ---- 25. the third ship witness: /auto's AUTO-CONTINUE line, the only trace a queued merge leaves ----
+# The 2026-10-11 basefund fleet halted on a dirty main checkout after each session's last ship had deferred to the merge queue, and the
+# operator then deleted two ledgers as the halt text instructed. The queued ships made no mark-ready call (the drainer makes it) and no
+# session printed the bare `DEFERRED-MERGE: <ID>` tag, so BF-1542 and BF-1599 vanished from the report: 11 shipped against a real 13.
+# TT-401's row is that fleet's BF-1599 text block, trimmed. Controls: a mid-line mention, the line quoted in a user record, and two
+# non-ship outcomes on the same line shape.
+CK25="$WORK/ck25"; mkdir -p "$CK25/tmp"
+git -C "$CK25" init -q 2>/dev/null
+git -C "$CK25" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "init"
+M25="$(git -C "$CK25" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
+mkdir -p "$WORK/projects/$M25"
+cat > "$WORK/projects/$M25/def25000-0000.jsonl" <<'EOF'
+{"type":"user","timestamp":"2026-10-11T18:37:30.450Z","isSidechain":false,"message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto backlog</command-args>"}}
+{"type":"assistant","timestamp":"2026-10-11T19:50:00.000Z","isSidechain":false,"message":{"role":"assistant","id":"msg_25a","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":50},"content":[{"type":"tool_use","id":"toolu_25a","name":"Bash","input":{"command":"~/.claude/scripts/mark-ready-for-release.sh TT-400; echo \"EXIT=$?\"","description":"Move TT-400 to Ready For Release"}}]}}
+{"type":"user","timestamp":"2026-10-11T19:50:03.000Z","isSidechain":false,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_25a","is_error":false,"content":"EXIT=0"}]}}
+{"type":"assistant","timestamp":"2026-10-11T19:51:00.000Z","isSidechain":false,"message":{"role":"assistant","id":"msg_25b","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":60},"content":[{"type":"text","text":"TT-400 merged into `monday`.\n\nAUTO-CONTINUE: TT-400 shipped (SHIPPED-MERGE). 1/0/0/0 this run; next /loop iteration proceeds."}]}}
+{"type":"assistant","timestamp":"2026-10-11T20:30:00.000Z","isSidechain":false,"message":{"role":"assistant","id":"msg_25c","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":60},"content":[{"type":"text","text":"Skipping it.\n\nAUTO-CONTINUE: TT-497 skipped (SKIPPED-BLOCKED). 1/0/1/0 this run; next /loop iteration proceeds."}]}}
+{"type":"assistant","timestamp":"2026-10-11T21:00:00.000Z","isSidechain":false,"message":{"role":"assistant","id":"msg_25d","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":60},"content":[{"type":"text","text":"AUTO-CONTINUE: TT-496 paused mid-issue (Claude API 529); retrying in ~15m."}]}}
+{"type":"assistant","timestamp":"2026-10-11T22:59:51.585Z","isSidechain":false,"message":{"role":"assistant","id":"msg_25e","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":80},"content":[{"type":"text","text":"TT-401 is committed and passed review, but its merge into `monday` is queued and hasn't landed. Your main checkout is on `monday` with uncommitted changes, so the merge can't advance it yet.\n\nThis run has shipped 2 issues with no failures. The loop picks the next issue in about a minute.\n\nAUTO-CONTINUE: TT-401 shipped (DEFERRED-MERGE). 2/0/1/0 this run; next /loop iteration proceeds."}]}}
+{"type":"assistant","timestamp":"2026-10-11T23:01:00.000Z","isSidechain":false,"message":{"role":"assistant","id":"msg_25f","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":40},"content":[{"type":"text","text":"Step 4 would print AUTO-CONTINUE: TT-498 shipped (DEFERRED-MERGE) for a queued ship."}]}}
+{"type":"user","timestamp":"2026-10-11T23:01:30.000Z","isSidechain":false,"message":{"role":"user","content":[{"type":"text","text":"Earlier outcome, pasted:\nAUTO-CONTINUE: TT-499 shipped (SHIPPED-MERGE). 9/0/0/0 this run; next /loop iteration proceeds."}]}}
+{"type":"assistant","timestamp":"2026-10-11T23:02:03.058Z","isSidechain":false,"message":{"role":"assistant","id":"msg_25g","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":40},"content":[{"type":"text","text":"AUTO-HALTED: dirty working tree on monday not attributable to an in-progress Linear issue"}]}}
+EOF
+J25="$WORK/out25.json"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK25" --all --json > "$J25" 2>/dev/null
+ck "outcome witness: run succeeds"                 "0" "$?"
+q25() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J25"; }
+ck "outcome witness: the session is ledger-less"   "True" "$(q25 "d['sessions'][0]['ledger_missing']")"
+ck "outcome witness: the queued ship is observed"  "['TT-400', 'TT-401']" "$(q25 "d['sessions'][0]['observed_shipped']")"
+ck "outcome witness: split by witness"             "{'tags': [], 'calls': ['TT-400'], 'outcomes': ['TT-400', 'TT-401']}" "$(q25 "d['sessions'][0]['observed_by']")"
 
 echo
 echo "$PASS passed / $FAIL failed / $SKIP skipped"

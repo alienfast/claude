@@ -97,23 +97,18 @@ run() { ( cd "$REPO" && HOME="$WORK/home" "$SCRIPT" "$@" ) >"$WORK/out" 2>&1; ec
 ck "clean tree exits 0"      "0" "$(run 1)"
 ck "clean tree dispatched"   "1" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
 
-# ---- case 2: dirty + branch with no issue ID → refuse, dispatch nothing ----
+# ---- case 2: dirty + branch with no issue ID → warn with the paths, still launch ----
+# /auto picks past dirt it cannot attribute and finish-merge.sh fast-forwards around it; only a merge changing these paths
+# defers. Until 2026-10-12 this refused the launch, because /auto then halted on the dirt.
 printf 'x\n' > "$REPO/rules.md"
 git -C "$REPO" add rules.md
 : > "$WORK/dispatches"
-ck "unattributable exits 1"  "1" "$(run 1)"
-ck "nothing dispatched"      "0" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
-ck_has "names the halt"      "would halt at" "$WORK/out"
-ck_has "names the branch"    "branch: nextjs-descope-user" "$WORK/out"
+ck "unattributable exits 0"  "0" "$(run 1)"
+ck "unattributable dispatched" "1" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
+ck_has "names the branch"    "dirty on 'nextjs-descope-user'" "$WORK/out"
+ck_has "says what defers"    "defers" "$WORK/out"
 ck_has "lists the file"      "rules.md" "$WORK/out"
-ck_has "says nothing ran"    "Nothing was dispatched." "$WORK/out"
-
-# A refused launch must not disturb a RUNNING fleet's deadline: the check sits before the
-# unconditional `rm -f $marker`, or refusing one launch silently un-deadlines the live fleet.
-printf '{"deadline_epoch":9999999999,"deadline":"later","count":3}\n' > "$REPO/tmp/fleet-deadline.json"
-ck "refusal exits 1 again"   "1" "$(run 2 5h)"
-ck "live marker survives"    "9999999999" "$(jq -r '.deadline_epoch' "$REPO/tmp/fleet-deadline.json")"
-rm -f "$REPO/tmp/fleet-deadline.json"
+ck_lacks "does not refuse"   "Nothing was dispatched." "$WORK/out"
 
 # ---- case 3: dirty + branch WITH an issue ID → warn, still launch ----
 # /auto can attribute this to an in-progress issue and finish it, so refusing would block the
@@ -125,14 +120,14 @@ ck "attributable dispatched" "1" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
 ck_has "warns about dirt"    "carries an issue ID" "$WORK/out"
 ck_lacks "does not refuse"   "Nothing was dispatched." "$WORK/out"
 
-# ---- case 4: untracked-only dirt counts too ----
-# git status --porcelain reports ?? rows; /auto's preflight treats them as dirt just the same.
+# ---- case 4: untracked-only dirt is named too ----
+# git status --porcelain reports ?? rows, and an untracked file where a merge adds one defers that merge just the same.
 git -C "$REPO" checkout -q nextjs-descope-user
 git -C "$REPO" reset -q --hard
 printf 'y\n' > "$REPO/stray.txt"
 : > "$WORK/dispatches"
-ck "untracked refuses"       "1" "$(run 1)"
-ck "untracked no dispatch"   "0" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
+ck "untracked launches"      "0" "$(run 1)"
+ck "untracked dispatched"    "1" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
 ck_has "lists untracked"     "stray.txt" "$WORK/out"
 
 # ---- case 5: `stop` is never gated ----
@@ -154,7 +149,7 @@ ck "stop with no marker exits 0"      "0" "$(run stop)"
 ck "stop with no marker writes one"   "true" "$(jq -r '.stopped == true and (.deadline_epoch > 0)' "$REPO/tmp/fleet-deadline.json")"
 
 # ---- case 6: the marker is written on EVERY launch and records the session set ----
-# A fleet is a session set, not a time window (header). ab000001/ab000002 went to cases 1 and 3.
+# A fleet is a session set, not a time window (header). ab000001–ab000004 went to cases 1–4, one launch each.
 git -C "$REPO" checkout -q nextjs-descope-user
 git -C "$REPO" reset -q --hard
 rm -f "$REPO/stray.txt" "$REPO/tmp/fleet-deadline.json" "$REPO"/tmp/auto-state-*.json
@@ -163,10 +158,10 @@ echo '[]' > "$WORK/agents.json"
 ck "undated launch exits 0"       "0" "$(run 2)"
 ck "undated launch writes marker" "yes" "$([ -s "$REPO/tmp/fleet-deadline.json" ] && echo yes || echo no)"
 ck "marker carries no deadline"   "" "$(jq -r '.deadline_epoch // empty' "$REPO/tmp/fleet-deadline.json")"
-ck "session set recorded"         "ab000003 ab000004" "$(jq -r '.fleet_sessions | join(" ")' "$REPO/tmp/fleet-deadline.json")"
+ck "session set recorded"         "ab000005 ab000006" "$(jq -r '.fleet_sessions | join(" ")' "$REPO/tmp/fleet-deadline.json")"
 ck "count recorded"               "2" "$(jq -r '.count' "$REPO/tmp/fleet-deadline.json")"
-ck_has "each id surfaced"         "session ab000003 recorded" "$WORK/out"
-ck_has "set surfaced at the end"  "Fleet session set: ab000003 ab000004" "$WORK/out"
+ck_has "each id surfaced"         "session ab000005 recorded" "$WORK/out"
+ck_has "set surfaced at the end"  "Fleet session set: ab000005 ab000006" "$WORK/out"
 # The ceiling every pick will park against is named at launch; HOME is empty here, so the probe answers
 # with its default and the launch warns that the calibration file is missing.
 ck_has "ceiling in effect printed"   "Headroom ceiling: ceiling=" "$WORK/out"
@@ -176,7 +171,7 @@ ck_has "default ceiling warned"       "WARN: the headroom probe is on its built-
 : > "$WORK/dispatches"
 ck "dated launch exits 0"         "0" "$(run 1 5h)"
 ck "deadline present"             "true" "$(jq -r '.deadline_epoch > 0' "$REPO/tmp/fleet-deadline.json")"
-ck "prior set not inherited"      "ab000005" "$(jq -r '.fleet_sessions | join(" ")' "$REPO/tmp/fleet-deadline.json")"
+ck "prior set not inherited"      "ab000007" "$(jq -r '.fleet_sessions | join(" ")' "$REPO/tmp/fleet-deadline.json")"
 
 # ---- case 8: a top-up carries the members the registry still runs, anchors only on loop ledgers ----
 # Prior launch: ab000001 (registry: working) and ab000002 (registry: done — listed is not alive).
@@ -197,7 +192,7 @@ cat > "$WORK/agents.json" <<'EOF'
 EOF
 : > "$WORK/dispatches"
 ck "top-up exits 0"                      "0" "$(run 1)"
-ck "live member carried, new appended"   "ab000001 ab000006" "$(jq -r '.fleet_sessions | join(" ")' "$REPO/tmp/fleet-deadline.json")"
+ck "live member carried, new appended"   "ab000001 ab000008" "$(jq -r '.fleet_sessions | join(" ")' "$REPO/tmp/fleet-deadline.json")"
 ck "launch_epoch anchored on the loop ledger" "$loop_mtime" "$(jq -r '.launch_epoch' "$REPO/tmp/fleet-deadline.json")"
 ck "single-run ledger kept"              "yes" "$([ -f "$REPO/tmp/auto-state-cafe0001.json" ] && echo yes || echo no)"
 ck "loop ledger kept"                    "yes" "$([ -f "$REPO/tmp/auto-state-ab000001.json" ] && echo yes || echo no)"
@@ -427,6 +422,95 @@ ck "plain launch records no backlog"      "" "$(jq -r '.backlog // empty' "$REPO
 ck_lacks "plain prompt carries no backlog" "backlog" "$WORK/dispatches"
 ck "override without backlog exits 0"     "0" "$(FLEET_PROMPT='/loop /auto EP' run 1 backlog)"
 ck_has "override without backlog warned"  "does not carry backlog" "$WORK/out"
+
+# ---- retiring sessions: a relaunch over a wound-down marker must not hand its stragglers the new deadline ----
+# 2026-10-10: two leg-1 sessions finishing their last issues were carried into a 19h marker, ran beside the three new sessions
+# (5 against the cap of 3), and one kept picking Backlog under its own leg-1 token. Fixtures are snapshots of live feeds: the
+# registry rows are the real working-session shape (status busy, pid) from fixtures/auto-stall-watch-agents-2026-10-10.json
+# (the live registry now lists those sessions only as the stopped rows `claude stop` leaves behind); the ledgers keep the real
+# key set of tmp/auto-state-b2bb1003.json (`backlog: true`) and tmp/auto-state-3b566c2a.json (no backlog key), the marker the key
+# set of the live tmp/fleet-deadline.json.
+FX="$(cd "$(dirname "$SCRIPT")" && pwd)/fixtures/auto-stall-watch-agents-2026-10-10.json"
+live_rows() { jq -c '[.[] | select(.id as $i | $ARGS.positional | index($i))]' --args "$@" < "$FX" > "$WORK/agents.json"; }
+ledger_bl='{"pid":20493,"pidStart":"Fri Oct 9 14:47:04 2026","mode":"loop","backlog":true,"status":"active","reason":"","shipped":["XX-1"],"canceled":[],"skipped":[],"failed":[],"consecutiveFailures":0,"reviewBlocks":0}'
+ledger_pl='{"pid":20493,"pidStart":"Fri Oct 9 14:47:04 2026","mode":"loop","status":"active","reason":"","shipped":["XX-2"],"canceled":[],"skipped":[],"failed":[],"consecutiveFailures":0,"reviewBlocks":0}'
+old_marker() { # <deadline_epoch | none> [jq filter applied on top]
+  jq -n --arg d "$1" '{count: 3, launch_epoch: 1791601120, fleet_sessions: ["1492b0e1","1cc250ad","3b566c2a","8c16860d","b2bb1003"]}
+    + (if $d == "none" then {} else {deadline_epoch: ($d | tonumber), deadline: "2026-10-11 06:09 CDT"} end)' \
+    | jq "${2:-.}" > "$REPO/tmp/fleet-deadline.json"
+}
+retire_setup() { # ledger-for-b2bb1003 ledger-for-8c16860d
+  rm -f "$REPO"/tmp/auto-state-*.json "$REPO/tmp/fleet-recommendation.json" "$REPO/tmp/fleet-deadline.json"
+  printf '%s\n' "$1" > "$REPO/tmp/auto-state-b2bb1003.json"
+  printf '%s\n' "$2" > "$REPO/tmp/auto-state-8c16860d.json"
+  live_rows b2bb1003 8c16860d
+  : > "$WORK/dispatches"
+}
+rkeys() { jq -r '(.retiring // []) | sort | join(" ")' "$REPO/tmp/fleet-deadline.json"; }
+past=$(( $(date +%s) - 3600 )); ahead=$(( $(date +%s) + 3600 ))
+
+# case 18: a passed deadline retires every carried session; they stay in fleet_sessions, and none of the active-session
+# warnings fire for them (0 non-retiring carried + 3 new is at the cap, not over it).
+retire_setup "$ledger_bl" "$ledger_bl"; old_marker "$past"
+ck "passed deadline: launch exits 0"          "0" "$(run 3 19h)"
+ck "passed deadline: both carried retire"     "8c16860d b2bb1003" "$(rkeys)"
+ck "passed deadline: still in fleet_sessions" "8c16860d b2bb1003" "$(jq -r '.fleet_sessions | map(select(startswith("8c") or startswith("b2"))) | sort | join(" ")' "$REPO/tmp/fleet-deadline.json")"
+ck "passed deadline: new sessions recorded"   "3" "$(jq -r '[.fleet_sessions[] | select(startswith("ab"))] | length' "$REPO/tmp/fleet-deadline.json")"
+ck "passed deadline: new deadline in force"   "true" "$(jq -r '.deadline_epoch > now' "$REPO/tmp/fleet-deadline.json")"
+ck_has "retiring named"                       "Retiring session(s): 8c16860d b2bb1003 — carried from a marker that was winding down; each finishes its in-flight issue, then stops picking" "$WORK/out"
+ck_lacks "retiring: no concurrency line"      "Concurrency:" "$WORK/out"
+ck_lacks "retiring: no cap warning"           "over the measured cap" "$WORK/out"
+ck_lacks "retiring: no backlog warning"       "carried session" "$WORK/out"
+
+# case 18a: `stopped: true` retires on its own, even with the deadline still ahead.
+retire_setup "$ledger_pl" "$ledger_pl"; old_marker "$ahead" '. + {stopped: true}'
+ck "stopped marker: launch exits 0"           "0" "$(run 3 19h)"
+ck "stopped marker: both carried retire"      "8c16860d b2bb1003" "$(rkeys)"
+
+# case 18b: a deadline still ahead, or none at all, is a genuine mid-fleet top-up — nobody retires, everyone runs to the new deadline.
+retire_setup "$ledger_pl" "$ledger_pl"; old_marker "$ahead"
+ck "future deadline: launch exits 0"          "0" "$(run 1 19h)"
+ck "future deadline: nobody retires"          "" "$(rkeys)"
+ck "future deadline: no retiring field"       "false" "$(jq 'has("retiring")' "$REPO/tmp/fleet-deadline.json")"
+ck "future deadline: carried kept"            "8c16860d b2bb1003" "$(jq -r '.fleet_sessions | map(select(startswith("8c") or startswith("b2"))) | sort | join(" ")' "$REPO/tmp/fleet-deadline.json")"
+ck_lacks "future deadline: nothing retiring"  "Retiring session(s)" "$WORK/out"
+retire_setup "$ledger_pl" "$ledger_pl"; old_marker none
+ck "no deadline: launch exits 0"              "0" "$(run 1 19h)"
+ck "no deadline: nobody retires"              "" "$(rkeys)"
+
+# case 18c: a session an earlier relaunch retired stays retired through the next top-up, whatever the marker's deadline now says.
+retire_setup "$ledger_pl" "$ledger_pl"; old_marker "$ahead" '. + {retiring: ["b2bb1003"]}'
+ck "prior retiring: launch exits 0"           "0" "$(run 1 19h)"
+ck "prior retiring: only the listed stays"    "b2bb1003" "$(rkeys)"
+
+# case 19: the cap — 2 carried + 3 new warns, 1 carried + 2 new is exactly at it, 0 carried + 3 new is silent.
+retire_setup "$ledger_pl" "$ledger_pl"; old_marker "$ahead"
+ck "cap: 2+3 launch exits 0"                  "0" "$(run 3 19h)"
+ck_has "cap: total printed"                   "Concurrency: 2 carried session(s) + 3 new = 5 running against the cap of 3" "$WORK/out"
+ck_has "cap: 2+3 warned"                      "WARN: 5 non-retiring sessions will run, over the measured cap of 3" "$WORK/out"
+ck_has "cap: warning names the carried"       "stop the carried session(s) (8c16860d b2bb1003)" "$WORK/out"
+retire_setup "$ledger_pl" "$ledger_pl"; old_marker "$ahead"; live_rows b2bb1003
+ck "cap: 1+2 launch exits 0"                  "0" "$(run 2 19h)"
+ck_has "cap: 1+2 printed"                     "Concurrency: 1 carried session(s) + 2 new = 3" "$WORK/out"
+ck_lacks "cap: 1+2 is at the cap, silent"     "over the measured cap" "$WORK/out"
+retire_setup "$ledger_pl" "$ledger_pl"; echo '[]' > "$WORK/agents.json"
+ck "cap: 0+3 launch exits 0"                  "0" "$(run 3 19h)"
+ck_lacks "cap: 0+3 silent"                    "over the measured cap" "$WORK/out"
+
+# case 20: a carried session's backlog mode against this launch's — both mismatches warn, a match is silent.
+retire_setup "$ledger_bl" "$ledger_pl"; old_marker "$ahead"
+ck "backlog: plain launch exits 0"            "0" "$(run 1 19h)"
+ck_has "backlog: forward mismatch warned"     "WARN: carried session b2bb1003 runs with backlog: true (its own token from an earlier launch) and keeps picking Backlog under it — this launch spends on Backlog anyway; stop that session if no Backlog spend is wanted" "$WORK/out"
+ck_lacks "backlog: plain session silent"      "carried session 8c16860d" "$WORK/out"
+retire_setup "$ledger_bl" "$ledger_pl"; old_marker "$ahead"
+ck "backlog: backlog launch exits 0"          "0" "$(run 1 19h backlog)"
+ck_has "backlog: reverse mismatch warned"     "WARN: carried session 8c16860d has no backlog token and will hold on the Planned column while this launch's sessions take Backlog" "$WORK/out"
+ck_lacks "backlog: matching session silent"   "carried session b2bb1003" "$WORK/out"
+retire_setup "$ledger_bl" "$ledger_pl"; old_marker "$past"
+ck "backlog: retiring launch exits 0"         "0" "$(run 1 19h)"
+ck_lacks "backlog: a retiring session is not warned about" "carried session" "$WORK/out"
+rm -f "$REPO"/tmp/auto-state-*.json "$REPO/tmp/fleet-deadline.json"
+echo '[]' > "$WORK/agents.json"
 
 # ---- tooling freshness: a stale ~/.claude refuses before anything is written or dispatched ----
 # The prior-run ledger is the write the refusal must precede: the registry is empty, so a launch that got past the

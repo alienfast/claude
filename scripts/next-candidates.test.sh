@@ -369,6 +369,33 @@ ck "fallback with empty backlog lists nothing" "" "$(order_of "$OUT9c")"
 ck_has  "fallback with empty backlog still waits" "_Nothing pickable right now in team TT — the Planned/Todo column is not drained, so Backlog is withheld (PLANNED-HOLD below)." "$OUT9c"
 ck_lacks "fallback with empty backlog is not drained" "No workable issues" "$OUT9c"
 ck_has  "fallback with empty backlog says so" "0 Backlog candidate(s) wait behind the gate; backlog fallback is on but Backlog has nothing pickable either — wait._" "$OUT9c"
+
+# A started blocker labeled human or needs decision is a person at work, not a sibling in flight: the issue behind it
+# needs the keeper. The real shape is BF-2287 behind BF-2009 (In Progress, dependencies+specified+human), which every
+# hold note of the 2026-10-10 fleet called "will release on its own" for ten hours.
+cat > "$FIX/issues-personheld.json" <<'EOF'
+{"data":{"issues":{"nodes":[
+ {"identifier":"TT-60","title":"planned behind human work","estimate":null,"priority":2,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[{"name":"specified"}]},"parent":null},
+ {"identifier":"TT-61","title":"human work in progress","estimate":null,"priority":1,"state":{"name":"In Progress","type":"started"},"assignee":null,"labels":{"nodes":[{"name":"dependencies"},{"name":"specified"},{"name":"human"}]},"parent":null},
+ {"identifier":"TT-62","title":"planned behind a decision","estimate":null,"priority":2,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[{"name":"specified"}]},"parent":null},
+ {"identifier":"TT-63","title":"decision in progress","estimate":null,"priority":2,"state":{"name":"In Progress","type":"started"},"assignee":null,"labels":{"nodes":[{"name":"specified"},{"name":"needs decision"}]},"parent":null},
+ {"identifier":"TT-1","title":"urgent backlog","estimate":null,"priority":1,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[{"name":"specified"}]},"parent":null}
+],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
+EOF
+cat > "$FIX/deps-personheld.json" <<'EOF'
+{"data":{"issues":{"nodes":[
+ {"identifier":"TT-61","title":"human work in progress","state":{"name":"In Progress","type":"started"},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-60"}}]}},
+ {"identifier":"TT-63","title":"decision in progress","state":{"name":"In Progress","type":"started"},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-62"}}]}}
+],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
+EOF
+cp "$FIX/issues-personheld.json" "$FIX/issues-page.json"; cp "$FIX/deps-personheld.json" "$FIX/deps-page.json"
+OUT9d="$WORK/out9d.md"
+run "$OUT9d" --limit 20 --label specified || { echo "FAIL: person-held run exited $?"; cat "$OUT9d.err"; exit 1; }
+ck "person-held column lists nothing" "" "$(order_of "$OUT9d")"
+ck_has  "person-held issues need the keeper" "(2 issue(s) hold the gate: 0 pickable now; 2 need the keeper — " "$OUT9d"
+ck_has  "human blocker named" "TT-60 [blocked by TT-61 [human]]" "$OUT9d"
+ck_has  "needs-decision blocker named" "TT-62 [blocked by TT-63 [needs decision]]" "$OUT9d"
+ck_lacks "person-held issues never release on their own" "will release on their own" "$OUT9d"
 cp "$FIX/issues-main.json" "$FIX/issues-page.json"; cp "$FIX/deps-main.json" "$FIX/deps-page.json"
 
 # ---- BLOCKED-HOLD: the Planned column is drained and every certified Backlog issue is chained behind a
@@ -430,6 +457,16 @@ run "$OUT13" --limit 20 --label specified || { echo "FAIL: keeper-blocked run ex
 ck_has  "keeper-only blocked pool is drained" "_No workable issues with label 'specified' in team TT._" "$OUT13"
 ck_lacks "no hold when nothing releases" "BLOCKED-HOLD" "$OUT13"
 ck_has  "keeper-only note" "_1 issue(s) hidden behind unresolved blockers — 1 need the keeper (TT-32 [blocked by TT-33 [lacks label specified]]). Pass --include-blocked to list them._" "$OUT13"
+
+# The same holds behind a started blocker a person is working: no BLOCKED-HOLD wait, the pool is drained.
+jq '.data.issues.nodes |= map(select(.identifier | IN("TT-60", "TT-61")) | if .identifier == "TT-60" then .state = {"name":"Backlog","type":"backlog"} else . end)' \
+  "$FIX/issues-personheld.json" > "$FIX/issues-page.json"
+jq '.data.issues.nodes |= map(select(.identifier == "TT-61"))' "$FIX/deps-personheld.json" > "$FIX/deps-page.json"
+OUT13b="$WORK/out13b.md"
+run "$OUT13b" --limit 20 --label specified || { echo "FAIL: human-blocked run exited $?"; cat "$OUT13b.err"; exit 1; }
+ck_has  "human-blocked pool is drained" "_No workable issues with label 'specified' in team TT._" "$OUT13b"
+ck_lacks "no hold behind human work" "BLOCKED-HOLD" "$OUT13b"
+ck_has  "human-blocked note" "_1 issue(s) hidden behind unresolved blockers — 1 need the keeper (TT-60 [blocked by TT-61 [human]]). Pass --include-blocked to list them._" "$OUT13b"
 cp "$FIX/issues-main.json" "$FIX/issues-page.json"; cp "$FIX/deps-main.json" "$FIX/deps-page.json"
 
 # ---- --root: the ranking scoped to an epic's graph. TT-27's graph is itself, its children TT-26

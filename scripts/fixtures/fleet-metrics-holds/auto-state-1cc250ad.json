@@ -1,0 +1,22 @@
+{
+  "pid": 20493,
+  "pidStart": "Fri Oct 9 14:47:04 2026",
+  "mode": "loop",
+  "status": "drained",
+  "reason": "fleet deadline reached (2026-10-11 06:09 CDT) \u2014 8/0/0/0 this run; push: DISABLED: AUTO_PUSH_MAIN is not set \u2014 origin lags until a human pushes. Delete tmp/fleet-deadline.json (or re-run /fleet-launch) and delete tmp/auto-state-1cc250ad.json to run again.",
+  "shipped": [
+    "BF-2519",
+    "BF-2523",
+    "BF-2505",
+    "BF-1105",
+    "BF-2509",
+    "BF-2507",
+    "BF-938",
+    "BF-2131"
+  ],
+  "canceled": [],
+  "skipped": [],
+  "failed": [],
+  "consecutiveFailures": 0,
+  "reviewBlocks": 0
+}

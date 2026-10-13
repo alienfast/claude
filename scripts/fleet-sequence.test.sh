@@ -210,11 +210,16 @@ ck "refusals dispatched nothing" "0" "$(dispatches)"
 ck "refusals left main"         "main" "$(git -C "$REPO" branch --show-current)"
 ck "refusals created no branch" "" "$(git -C "$REPO" branch --list 'seq/*')"
 
+# Dirt is refused only on a branch whose name carries an issue ID, where each child's /auto would attribute it.
+git -C "$REPO" checkout -q -b rosskevin/bf-9-in-place
 printf 'x\n' > "$REPO/stray.txt"
-ck "dirty exits 1"              "1" "$(run BF-1 BF-2)"
+ck "dirty on an issue-ID branch exits 1" "1" "$(run BF-1 BF-2)"
+ck_has "names the attribution"  "whose name carries an issue ID" "$WORK/out"
 ck_has "lists the file"         "stray.txt" "$WORK/out"
 ck_has "says nothing ran"       "Nothing was dispatched." "$WORK/out"
+ck "dirty refusal dispatched nothing" "0" "$(dispatches)"
 rm -f "$REPO/stray.txt"
+git -C "$REPO" checkout -q main; git -C "$REPO" branch -q -D rosskevin/bf-9-in-place
 
 git -C "$REPO" checkout -q --detach
 ck "detached exits 1"           "1" "$(run BF-1 BF-2)"
@@ -416,6 +421,41 @@ ck "queued exits 1"             "1" "$(run BF-1 BF-2)"
 ck_has "names the queue"        "its merge is queued (.claude/merge-queue)" "$WORK/out"
 ck "status exits 0 when queued" "0" "$(run status)"
 ck_has "status shows queued landing" "| BF-1 | ab000001 | done | shipped | queued |" "$WORK/out"
+
+# ---- a resume waits for a shipped issue whose deferred merge never landed, instead of forking past it ----
+# The run above recorded BF-1 shipped with no landed_sha and left its queue marker. Skipping it on a re-run forked BF-2 from
+# a tip without BF-1. A tip that moved for another reason (here, an unrelated commit on the branch) is not the landing either.
+: > "$WORK/dispatches"; : > "$WORK/forks"
+ck "resume before the landing exits 1" "1" "$(run BF-1 BF-2)"
+ck_has "says it waits"          "BF-1 shipped but its landing was never recorded" "$WORK/out"
+ck_has "names the queue"        "still not landed on 'seq/bf-1'" "$WORK/out"
+ck "nothing forked past BF-1"   "0" "$(dispatches)"
+other=$(git -C "$REPO" commit-tree "seq/bf-1^{tree}" -p seq/bf-1 -m "unrelated commit on the branch")
+git -C "$REPO" update-ref refs/heads/seq/bf-1 "$other"
+ck "a moved tip with the merge still queued exits 1" "1" "$(run BF-1 BF-2)"
+ck "still nothing forked past BF-1" "0" "$(dispatches)"
+# The drainer lands it: the branch gains BF-1's merge and the queue marker goes.
+landed=$(git -C "$REPO" commit-tree "seq/bf-1^{tree}" -p seq/bf-1 -m "Merge BF-1")
+git -C "$REPO" update-ref refs/heads/seq/bf-1 "$landed"
+rm -f "$REPO/.claude/merge-queue/bf-1.json"
+ck "resume after the landing exits 0" "0" "$(run BF-1 BF-2)"
+ck "BF-1's landing recorded"    "$landed" "$(marker '.issues["BF-1"].landed_sha')"
+ck_has "BF-1 landed logged"     "BF-1 landed on seq/bf-1" "$WORK/out"
+ck "BF-2 forked past BF-1"      "BF-2 head=main src=seq/bf-1 ahead=2" "$(sed -n 1p "$WORK/forks")"
+ck "resume finished"            "done" "$(marker .status)"
+
+# ---- a dirty main checkout on a branch with no issue ID is named, and the sequence runs ----
+# Each child's /auto picks past dirt it cannot attribute and finish-merge.sh fast-forwards around it (until 2026-10-12
+# this refused the launch and failed the run before each issue, because /auto then halted on it).
+reset
+printf 'x\n' > "$REPO/stray.txt"
+ck "dirty no-ID launch exits 0" "0" "$(run BF-1 BF-2)"
+ck_has "warns at launch"        "WARN: main checkout is dirty on 'main'" "$WORK/out"
+ck_has "notes it before each issue" "NOTE: main checkout is dirty before BF-2 (?? stray.txt)" "$WORK/out"
+ck "both issues dispatched"     "2" "$(dispatches)"
+ck "dirty run finished"         "done" "$(marker .status)"
+ck "the stray file is untouched" "x" "$(cat "$REPO/stray.txt")"
+rm -f "$REPO/stray.txt"
 
 # ---- a landing whose commits never name the issue ships with a WARN, and the sequence continues ----
 reset

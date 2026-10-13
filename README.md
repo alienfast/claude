@@ -127,7 +127,7 @@ Reach for these as needed — between loop steps or on their own:
 Point it at a seeded, certified (via `/prd` or `/spec`) backlog and walk away. It works the queue one issue at a time and **ends itself** — no runaway loop:
 
 - **`NO-CANDIDATES`** — the backlog has no more certified, workable issues. Certify more via `/spec` (or seed via `/prd`), delete the run's `tmp/auto-state-<runKey>.json`, and re-invoke.
-- **`AUTO-HALTED`** — the circuit breaker tripped (two consecutive failures, likely systemic) or an environment halt (e.g. a dirty tree it can't attribute). Each failing issue gets a Linear comment explaining why before the loop stops.
+- **`AUTO-HALTED`** — the circuit breaker tripped (two consecutive failures, likely systemic) or an environment halt (e.g. a dirty tree left by an issue that already failed to finish — dirt it can't attribute does not halt it). Each failing issue gets a Linear comment explaining why before the loop stops.
 
 `/loop /auto` never clears or compacts the session — the harness's automatic summarization keeps context in check as it grows (`/compact` and `/clear` are user commands the loop must never invoke). Because summarization can drop detail, the run's actual memory lives in `tmp/auto-state-<runKey>.json` (shipped / skipped / failed lists + the failure counter, keyed by the session's own id), not the conversation — so the run survives summarization across iterations, and the terminal halt stays sticky even under a fixed-interval `/loop 15m /auto`. A human starts a fresh run by deleting that file — or simply by starting a new session, whose fresh PID names a fresh file.
 

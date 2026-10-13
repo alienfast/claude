@@ -57,6 +57,16 @@ case "${1:-}" in
   *) echo "usage: fleet-status.sh [--no-runway]" >&2; exit 1 ;;
 esac
 
+# The four ledger lists are bare issue ids (skills/auto/SKILL.md Step 4), but a session once appended its last ship as
+# {"issue":"BF-2531","tag":"SHIPPED-MERGE","at":…} and `join(", ")` over that mix errors, which the swallowed substitution turned
+# into a silently missing session row. ids(k) reads a list with an object entry as its .issue and drops what has no string id;
+# LEDGER_OFFSCHEMA_JQ prints "<normalized> <dropped>" so the table can say it happened.
+LEDGER_IDS_JQ='def good: type == "object" and (.issue | type) == "string" and .issue != "";
+  def ids(k): ((.[k] | if type == "array" then . else [] end) | map(if type == "string" then . elif good then .issue else empty end));'
+LEDGER_OFFSCHEMA_JQ='def good: type == "object" and (.issue | type) == "string" and .issue != "";
+  [(.shipped, .canceled, .skipped, .failed) | arrays[] | select(type != "string")]
+  | "\(map(select(good)) | length) \(map(select(good | not)) | length)"'
+
 for cmd in git jq; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "ERROR: '$cmd' not found on PATH" >&2; exit 1; }
 done
@@ -333,6 +343,7 @@ for k in $fleet_set; do
 done
 
 died_active=""
+ledger_warns=""
 all_shipped=""
 fc_entries=""
 if [ -z "$shown_files" ] && [ -z "$ledgerless_keys" ]; then
@@ -349,9 +360,15 @@ else
     pid=$(jq -r '.pid // empty' "$f")
     pid_start=$(jq -r '.pidStart // empty' "$f")
     status=$(jq -r '.status // "?"' "$f")
-    shipped=$(jq -r '(.shipped // []) | join(", ")' "$f")
-    canceled=$(jq -r '(.canceled // []) | join(", ")' "$f")
-    failed=$(jq -r '(.failed // []) | join(", ")' "$f")
+    shipped=$(jq -r "$LEDGER_IDS_JQ"' ids("shipped") | join(", ")' "$f")
+    canceled=$(jq -r "$LEDGER_IDS_JQ"' ids("canceled") | join(", ")' "$f")
+    failed=$(jq -r "$LEDGER_IDS_JQ"' ids("failed") | join(", ")' "$f")
+    read -r off_norm off_drop <<< "$(jq -r "$LEDGER_OFFSCHEMA_JQ" "$f")"
+    if [ "$(( ${off_norm:-0} + ${off_drop:-0} ))" -gt 0 ]; then
+      off_n=$(( off_norm + off_drop ))
+      ledger_warns="$ledger_warns"$(printf 'WARN: session %s ledger carries %d off-schema entr%s (objects where /auto writes bare ids) — %d normalized to .issue%s' \
+        "$key" "$off_n" "$([ "$off_n" -eq 1 ] && echo y || echo ies)" "$off_norm" "$([ "$off_drop" -gt 0 ] && echo ", $off_drop dropped (no string id)")")$'\n'
+    fi
     blocks=$(jq -r '.reviewBlocks // 0' "$f")
     all_shipped="$all_shipped $(printf '%s' "$shipped" | tr -d ',')"
     for id in $(printf '%s' "$failed" | tr -d ','); do fc_entries="$fc_entries$id failed $key"$'\n'; done
@@ -379,6 +396,7 @@ else
     printf '| %s | %s | %s | %s | %s | %s | %s |\n' "$k" "$live" "**no ledger**" "?" "?" "?" "?"
   done
   printf '\n'
+  [ -n "$ledger_warns" ] && printf '%s\n' "$ledger_warns"
 fi
 [ -n "$ledgerless_keys" ] && printf '_%d fleet session(s) have written no `auto-state` ledger (recorded at launch, or owning a worktree here). Their shipped work is NOT counted in the cross-check below, which is built from ledgers only — /fleet-retro recovers them from transcripts. Interactive sessions holding a worktree are deliberately not listed._\n\n' "$(printf '%s' "$ledgerless_keys" | wc -w | tr -d ' ')"
 [ "$hidden" -gt 0 ] && printf '_%d prior-run ledger(s) hidden (written before the current launch, or not in its recorded session set); /fleet-retro reads them until the next launch clears the dead ones._\n\n' "$hidden"

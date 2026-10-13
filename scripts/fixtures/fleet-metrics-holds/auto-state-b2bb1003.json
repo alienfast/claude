@@ -1,0 +1,24 @@
+{
+  "pid": 20493,
+  "pidStart": "Fri Oct 9 14:47:04 2026",
+  "mode": "loop",
+  "backlog": true,
+  "status": "drained",
+  "reason": "fleet deadline reached (deadline_epoch 1791716948); auto-push disabled for this project, saturday left for a human push",
+  "shipped": [
+    "BF-2277",
+    "BF-1601",
+    {
+      "issue": "BF-2531",
+      "tag": "SHIPPED-MERGE",
+      "at": "2026-10-11T12:58:20Z"
+    }
+  ],
+  "canceled": [],
+  "skipped": [],
+  "failed": [],
+  "consecutiveFailures": 0,
+  "reviewBlocks": 0,
+  "currentIssue": null,
+  "lastIssue": "BF-2531"
+}

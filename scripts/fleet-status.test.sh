@@ -422,6 +422,30 @@ ck "no probe: clean exit" "0" "$RC"
 ck_lacks "  no probe: silent" "Headroom" "$OUT"
 echo '{"ceiling_output_tokens": 100000000}' > "$CALIB"
 
+echo "== 20. an object ledger entry (the real b2bb1003 ledger) is read as its .issue and warned about; malformed entries drop"
+# fixtures/fleet-metrics-holds/auto-state-b2bb1003.json is a trimmed copy of the real ledger whose `shipped` ends on
+# {"issue":"BF-2531","tag":"SHIPPED-MERGE","at":…}. `join(", ")` over that mix errors (the unfixed script aborted with exit 5 here),
+# and the session's row is gone either way. mal00001 is the same ledger plus three shipped entries with no string id and an object
+# entry each in canceled and failed; 1cc250ad is schema-clean.
+FIXH="$(cd "$(dirname "$0")" && pwd)/fixtures/fleet-metrics-holds"
+rm -f "$REPO"/tmp/auto-state-*.json
+write_marker $((NOW - 500)) $((NOW + 7230))
+jq '.fleet_sessions = ["b2bb1003","mal00001","1cc250ad"]' "$REPO/tmp/fleet-deadline.json" > "$ROOT/m.tmp" && mv "$ROOT/m.tmp" "$REPO/tmp/fleet-deadline.json"
+cp "$FIXH/auto-state-b2bb1003.json" "$FIXH/auto-state-1cc250ad.json" "$REPO/tmp/"
+jq '.shipped += [{"tag": "SHIPPED-MERGE"}, 42, null]
+    | .canceled += [{"issue": "XX-80", "tag": "CANCELED"}] | .failed += [{"issue": "XX-81", "tag": "BLOCKED-ON-REVIEW"}]' "$FIXH/auto-state-b2bb1003.json" > "$REPO/tmp/auto-state-mal00001.json"
+run_fs --no-runway
+ck "clean exit" "0" "$RC"
+ck_has "  the object entry's session keeps its row, read as bare ids" "| b2bb1003 | " "$OUT"
+ck_has "  shipped column carries .issue" "| BF-2277, BF-1601, BF-2531 | — | — | 0 |" "$OUT"
+ck_has "  warns once for the object entry" "WARN: session b2bb1003 ledger carries 1 off-schema entry (objects where /auto writes bare ids) — 1 normalized to .issue" "$OUT"
+ck_lacks "  one object is not a drop" "b2bb1003 ledger carries 1 off-schema entry (objects where /auto writes bare ids) — 1 normalized to .issue," "$OUT"
+ck_has "  malformed entries dropped and counted" "WARN: session mal00001 ledger carries 6 off-schema entries (objects where /auto writes bare ids) — 3 normalized to .issue, 3 dropped (no string id)" "$OUT"
+ck_has "  canceled and failed lists read .issue too" "| BF-2277, BF-1601, BF-2531 | XX-80 | XX-81 | 0 |" "$OUT"
+ck_has "  the malformed ledger's row survives" "| mal00001 | " "$OUT"
+ck_lacks "  schema-clean ledger not warned" "WARN: session 1cc250ad" "$OUT"
+ck_has "  the normalized id reaches the git cross-check" "- BF-2531 — ⚠️ recorded shipped but no commit found" "$OUT"
+
 echo ""
 echo "$PASS passed / $FAIL failed"
 [ "$FAIL" -eq 0 ]

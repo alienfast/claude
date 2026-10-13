@@ -221,7 +221,9 @@ if [ -z "$count" ]; then
   fi
 fi
 { [ "$count" -ge 1 ] && [ "$count" -le 12 ]; } 2>/dev/null || { echo "ERROR: count must be 1-12 (got '$count')" >&2; exit 1; }
-[ "$count" -gt 3 ] && echo "WARN: >3 sessions reliably exhausts a 5h burst window at any duration (n=4 measured cut off 4.9h into a 12h deadline; auto-prep caps its recommendation at 3) — an explicit count is your override" >&2
+# The measured concurrency cap (skills/fleet-launch/SKILL.md "5h burst -> concurrency").
+concurrency_cap=3
+[ "$count" -gt "$concurrency_cap" ] && echo "WARN: >$concurrency_cap sessions reliably exhausts a 5h burst window at any duration (n=4 measured cut off 4.9h into a 12h deadline; auto-prep caps its recommendation at 3) — an explicit count is your override" >&2
 
 # ---- epic scope: token, else the recommendation's; validated before anything is written ----
 scope=""
@@ -299,12 +301,9 @@ if [ ${#dur_tokens[@]} -gt 0 ]; then
   deadline_human=$(date -r "$deadline_epoch" '+%Y-%m-%d %H:%M %Z' 2>/dev/null || date -d "@$deadline_epoch" '+%Y-%m-%d %H:%M %Z')
 fi
 
-# Preflight: /auto Step 1 halts on a dirty main checkout it cannot attribute to an in-progress
-# issue, and every session re-discovers that independently — so one uncommitted file kills the
-# whole fleet, N times over, in under two minutes each. Observed 2026-08-04: a 6-line
-# .claude/rules/bash.md edit on a branch with no issue ID halted all three sessions of a launch
-# (19:44/19:47/19:50), and only a human committing it at 19:56 saved the run. Check once, here,
-# before anything is dispatched or the deadline marker is touched.
+# Preflight: a dirty main checkout no longer stops the fleet — /auto Step 1 picks past dirt it cannot attribute, and
+# finish-merge.sh fast-forwards around it — but any merge that changes one of those paths defers to the queue until they are
+# committed or discarded. Name them once, here, so the operator can clear them before the fleet reaches them.
 dirty=$(git -C "$main_checkout" status --porcelain 2>/dev/null || true)
 if [ -n "$dirty" ]; then
   branch=$(git -C "$main_checkout" branch --show-current 2>/dev/null || true)
@@ -312,12 +311,10 @@ if [ -n "$dirty" ]; then
     echo "WARN: main checkout is dirty on '$branch', which carries an issue ID — each session's /auto will" >&2
     echo "      try to attribute and finish that work before picking. Launching anyway." >&2
   else
-    echo "ERROR: main checkout is dirty and the branch carries no issue ID — every session would halt at" >&2
-    echo "       /auto's Step 1 preflight (AUTO-HALTED: dirty working tree ... not attributable)." >&2
-    echo "       branch: ${branch:-(detached)}" >&2
+    echo "WARN: main checkout is dirty on '${branch:-(detached)}' — a merge that changes any of these paths defers" >&2
+    echo "      to the merge queue until they are committed or discarded; every other merge lands normally:" >&2
     printf '%s\n' "$dirty" | sed 's/^/       /' >&2
-    echo "       Commit or stash the above, then re-run. Nothing was dispatched." >&2
-    exit 1
+    echo "      Launching anyway." >&2
   fi
 fi
 
@@ -371,7 +368,8 @@ done
 # single-run ledger (`mode: single` — a targeted or one-shot /auto, skills/auto/SKILL.md
 # Step 4) does neither: it is not a fleet member, and anchoring on one is exactly how a
 # time-window scope came to admit 26 sessions.
-launch_epoch=$(date +%s)
+launch_now=$(date +%s)
+launch_epoch=$launch_now
 cleared=""
 carried=""
 for sf in "$main_checkout"/tmp/auto-state-*.json; do
@@ -400,6 +398,50 @@ if [ -n "$agents_json" ] && [ -s "$marker" ]; then
   done
 fi
 
+# Sessions carried out of a marker that was already winding down are RETIRING: they stay in fleet_sessions (the observers still
+# scope by it) and are also listed in `retiring`, which auto-deadline-gate.sh treats as a passed deadline whatever the new
+# deadline_epoch says. Without it a relaunch over a wound-down fleet hands every straggler the new deadline: 2026-10-10, two leg-1
+# sessions finishing their last issues were carried into a 19h marker, ran beside the three new sessions (5 against the cap of 3), and
+# one kept picking Backlog under its own leg-1 token for 20 more hours. A marker whose deadline is still ahead (a genuine mid-fleet
+# top-up), or that has none, retires nobody; sessions an earlier relaunch already retired stay retired.
+retiring=""
+if [ -n "$carried" ] && [ -s "$marker" ]; then
+  old_deadline=$(jq -r '.deadline_epoch // empty' "$marker" 2>/dev/null || true)
+  old_stopped=$(jq -r '.stopped // false' "$marker" 2>/dev/null || true)
+  old_retiring=$(jq -r '(.retiring // [])[]' "$marker" 2>/dev/null || true)
+  winding_down=0
+  { [[ "$old_deadline" =~ ^[0-9]+$ ]] && [ "$old_deadline" -le "$launch_now" ]; } && winding_down=1
+  [ "$old_stopped" = "true" ] && winding_down=1
+  for k in $carried; do
+    if [ "$winding_down" = 1 ] || printf '%s\n' "$old_retiring" | grep -qxF -- "$k"; then
+      retiring="$retiring $k"
+    fi
+  done
+fi
+active_carried=""
+n_active=0
+for k in $carried; do
+  case " $retiring " in *" $k "*) ;; *) active_carried="$active_carried $k"; n_active=$(( n_active + 1 )) ;; esac
+done
+if [ -n "$retiring" ]; then
+  echo "Retiring session(s):$retiring — carried from a marker that was winding down; each finishes its in-flight issue, then stops picking (recorded in the marker's retiring list)"
+fi
+if [ -n "$active_carried" ]; then
+  echo "Concurrency: $n_active carried session(s) + $count new = $(( n_active + count )) running against the cap of $concurrency_cap"
+  [ $(( n_active + count )) -gt "$concurrency_cap" ] \
+    && echo "WARN: $(( n_active + count )) non-retiring sessions will run, over the measured cap of $concurrency_cap (more reliably exhausts a 5h burst window) — stop the carried session(s) (${active_carried# }) or relaunch with a smaller count" >&2
+  for k in $active_carried; do
+    sf="$main_checkout/tmp/auto-state-$k.json"
+    [ -f "$sf" ] || continue
+    ledger_backlog=$(jq -r '.backlog // false' "$sf" 2>/dev/null || echo false)
+    if [ "$ledger_backlog" = "true" ] && [ "$backlog_token" != 1 ]; then
+      echo "WARN: carried session $k runs with backlog: true (its own token from an earlier launch) and keeps picking Backlog under it — this launch spends on Backlog anyway; stop that session if no Backlog spend is wanted" >&2
+    elif [ "$ledger_backlog" != "true" ] && [ "$backlog_token" = 1 ]; then
+      echo "WARN: carried session $k has no backlog token and will hold on the Planned column while this launch's sessions take Backlog" >&2
+    fi
+  done
+fi
+
 # Integration-branch posture: nothing to mutate. The marker below carries `branch`, and each session's /auto
 # points the per-issue start.<id>.wt-source-branch key at it before every dispatch (auto-fork-key.sh), so the
 # main checkout stays where its human left it — a detach here (the posture until 2026-09-23) took the checkout
@@ -413,8 +455,9 @@ fi
 # one per dispatch below. Deadline fields only when this launch carries a duration; scope fields
 # only when it is scoped.
 carried_json=$(printf '%s\n' $carried | jq -R . | jq -s 'map(select(length > 0))')
-jq -n --argjson count "$count" --argjson launch "$launch_epoch" --argjson carried "$carried_json" \
-  '{count: $count, launch_epoch: $launch, fleet_sessions: $carried}' > "$marker"
+retiring_json=$(printf '%s\n' $retiring | jq -R . | jq -s 'map(select(length > 0))')
+jq -n --argjson count "$count" --argjson launch "$launch_epoch" --argjson carried "$carried_json" --argjson retiring "$retiring_json" \
+  '{count: $count, launch_epoch: $launch, fleet_sessions: $carried} + (if ($retiring | length) > 0 then {retiring: $retiring} else {} end)' > "$marker"
 if [ -n "$scope" ]; then
   tmpm=$(jq --arg s "$scope" --argjson m "$scope_members" --arg b "$scope_branch" --arg base "$scope_base" \
     '. + {scope: $s, members: $m} + (if $b != "" then {branch: $b, base: $base} else {} end)' "$marker")

@@ -201,11 +201,24 @@ Five gauges ride the same run and the retro reads all five, not just the tables:
   39 probes said THROTTLE against the default, 6.2 session-hours (16%) parked with 146 issues pickable,
   the file having vanished from its old home under the harness-owned `~/.claude/telemetry/` six days
   earlier — and the only trace was 2.5h riding idle% as an empty pool.
+- **Mid-run holds** — session-hours a session spent in `PLANNED-HOLD` / `BLOCKED-HOLD`, read from its
+  `AUTO-CONTINUE: no pick` ticks (a hold writes no ledger status): the `held` column per session (`hours
+  (ticks)`), a clause on the **Totals** line, `hold%` in the trend, and `holds` plus each session's `held`
+  in the JSON. Beside idle%, never folded into it: idle% keys on the fleet's last ship, so a session held
+  for hours while a sibling kept shipping was invisible to it; the part of a hold past a session's last ship
+  sits in both, and the Pool exhausted line prints the overlap. Measured 2026-10-10/11: two sessions
+  launched without `backlog` held 10.1h and 10.9h while the `backlog` sibling landed nine issues, and no
+  gauge or flag fired.
 
-The per-session `obs` count reads two witnesses since 2026-10-05: the bare `SHIPPED-*: <ID>` line and the
-`mark-ready-for-release.sh <ID>` call the merge path makes (`observed_by` in the JSON splits them). The call
-is the reliable one — on that run the tag caught 8 of 27 ships and the call all 27 — so a session whose
-`obs` lags its ledger on an older report is a tag-drift artifact, not an unrecorded ship.
+The per-session `obs` count reads three witnesses: the bare `SHIPPED-*: <ID>` line, the
+`mark-ready-for-release.sh <ID>` call the merge path makes (since 2026-10-05), and /auto's
+`AUTO-CONTINUE: <ID> shipped (<tag>)` iteration line (since 2026-10-12); `observed_by` in the JSON splits them
+as `tags`, `calls` and `outcomes`. The call is the reliable witness for a merge that lands in the session — on
+2026-10-04/05 the tag caught 8 of 27 ships and the call all 27 — but a merge deferred to the queue gets its call
+from the drainer (`merge-queue.sh`), later and outside any session, so the outcome line is its only trace: on
+2026-10-11 it alone witnessed the three queued ships, and with two ledgers deleted the report read 11 shipped
+against a real 13 until it was counted. A session whose `obs` lags its ledger on a report from before
+2026-10-12 is a witness gap (tag drift, or a queued ship), not an unrecorded ship.
 
 The review-churn table reads `tmp/quality-review-verdict-*.md`: cycles, findings by severity, the
 SEVERITY/origin split (`plan`/`impl`/`spec`/`test`/`latent` — verdicts written before 2026-08-04
@@ -354,6 +367,8 @@ The script finds *shapes*; it does not explain them. Each flag is a lead:
 | latent-heavy origin mix | pre-existing defects the change merely surfaced — NOT a signal about this fleet's plan, code or specs, and not a lever at all. Expect it to decay across runs as the pool drains; a share that stays flat or rises means the reviewer is finding genuinely new latent surface, which is worth its own investigation | Step 3's Linear census: are these being filed, and is the filed-per-shipped rate falling run over run? |
 | high filed-per-shipped rate | each shipped issue spawns near or above one new issue — at that rate the backlog cannot drain | Step 3's Linear census: severity + certification mix of what was filed |
 | drained early, siblings kept picking | the ranking reported an empty pool for a transient reason — every remaining candidate chained behind a sibling's in-flight issue (now `BLOCKED-HOLD` in `next-candidates.sh`, which /auto must honor as a wait, not a drain), an empty fetch the double-run also hit, a label flap, or work certified after the drain — and the session latched sticky `drained`. If it recurs after the BLOCKED-HOLD fix, that prose gate lost, exactly as the deadline gate did before `auto-deadline-gate.sh` | that session's last `/next` output in its transcript; `linear-cli relations list` on the issues its siblings shipped next; the flag's K and H give the cost |
+| held N.Nh while siblings landed K ship(s) | A mixed launch: sessions without the `backlog` token park in `PLANNED-HOLD` on a gated Planned/Todo column while `backlog` siblings ship from Backlog (the flag says so when the ledgers differ). `BLOCKED-HOLD` is a by-design wait on a sibling's in-flight issue, so a landing inside it is the wait ending — read its hours, not the count | the held session's ledger for `backlog` and `/fleet-launch`'s recorded tokens; the tick lines' own counts ("0 pickable now; N need the keeper") |
+| ledger carries N off-schema entries | /auto Step 4 (or a hand edit) wrote objects where the ledger takes bare ids. The analyzer reads `.issue` and drops entries without a string id, and `fleet-status.sh` warns the same, so the counts hold — but the writer drifted | that session's last ledger write in its transcript; `skills/auto/SKILL.md` Step 4 |
 | rewakes classified spurious | `hooks/auto-rewake.sh` woke a session that was alive and told it to run an iteration — invisible in every other column, because the injected turn looks like ordinary loop activity and arrives as `task-notification`, not `human`. Two shapes are known and both were fixed 2026-09-20, so on a log newer than that a flag is a regression or a third shape. The transcript MOVED while the hook slept: a worktree enter or exit re-keys the session's project directory, and the instance read the emptied path as silence (73 of that run's 74; now logged `stood-down … reason=transcript-unreadable`). The ZERO WAIT: an arm already past due + grace when its turn ended was checked before the overdue wakeup's record could exist (1 of 74; the wait is now never shorter than the grace) | the flagged line in `~/.claude/logs/auto-rewake.log`, then the transcript between its `armed_at` and its timestamp: which opener landed there. A turn that ran while the hook slept means its stand-down read failed — check whether the session's cwd changed in the window. A `scheduled_task_fire` inside the line's own second, under a `wait kind=stop wait_s=0` line, is the zero-wait race |
 | Throttled against the probe's DEFAULT ceiling | `fleet-headroom.sh` answered `ceiling=1500000(default)` on a THROTTLE, so `~/.claude/local/five-hour-ceiling.json` was missing or unreadable at pick time and sessions parked on 1.5M instead of the keeper's 100M (which throttles on nothing). Every parked hour is capacity lost to config, not to the pool or the session. Measured 2026-10-04/05: the file had vanished from `~/.claude/telemetry/` on 2026-09-29 (a 2.1.284→2.1.285 harness self-upgrade landed in the same hour; the harness owns that directory), and every fleet after it ran throttled with nothing saying so | `~/.claude/scripts/fleet-headroom.sh --ceiling-only` now, and the `Headroom ceiling:` line `/fleet-launch` prints at dispatch; restore the file (the probe's header records the directive and the unit), then confirm the probe answers `(calibration)` before the next launch |
 | `loop-boundary` compacted nothing | The mod is loaded (fleet-launch.sh checks only that it is enabled) but its match conditions never fired, so the sessions ran with no compaction between iterations and any fall in the context gauge is not the mod's doing (2026-10-10: main-loop sessions peaked near 970k with 76% of prompt volume at >=500k). Read the dominant pass reason. `prefix`: the loop prompt never matched `loop_prefixes` (default `/auto`); on 2026-10-10 the re-armed `/loop /auto …` was not stripped. `no-outcome`: the answer carried no outcome line, so /auto's outcome-tag format changed under `outcomeLineOf`. `below-floor`: `min_context_percent` is set above the fleet's context. A non-`answer` turn end such as `error` (on 2026-10-10, likely the rate-limit-refused rewake turns) and `loop-ended` are expected noise, never the cause alone. Attempted-but-rejected boundaries carry `skipped`/`error` on their rows | `tmp/loop-boundary-<sessionId>.jsonl` in the main checkout AND every worktree (pass `reason` counts and the `loopPrompt` values beside them), then `mods/loop-boundary/hooks/boundary.ts` (`matchesPrefix`, `loopPromptOf`, `wakeupPromptOf`, `outcomeLineOf`) and the mod's `userConfig` |
@@ -371,8 +386,9 @@ a permission prompt.
 
 Independent of the transcripts, establish what the run really produced:
 
-- **Shipped** — every issue in `shipped[]` plus every ship the transcript witnesses (a `SHIPPED-*` tag or a
-  `mark-ready-for-release.sh <ID>` call — the call is the reliable witness, Step 1). Confirm each is in a
+- **Shipped** — every issue in `shipped[]` plus every ship the transcript witnesses (a `SHIPPED-*` tag, a
+  `mark-ready-for-release.sh <ID>` call, or an `AUTO-CONTINUE: <ID> shipped (…)` line — the call is the
+  reliable witness for an in-session merge and the outcome line for a queued one, Step 1). Confirm each is in a
   release-ready state and has a commit. The script's merge reconciliation flags the gaps.
 - **Filed** — issues *created* during the window. This is the half a retro forgets.
 
