@@ -503,9 +503,13 @@ ck "scoped listing (TT-29 inherits the Planned stage from its epic, TT-20 stays 
 
 OUTR4="$WORK/outr4.md"
 run "$OUTR4" --limit 20 --root TT-27 --label specified || { echo "FAIL: root label run exited $?"; cat "$OUTR4.err"; exit 1; }
-ck "scoped hold lists nothing" "" "$(order_of "$OUTR4")"
-ck_has  "scoped hold headline names the scope" "_Nothing pickable right now with label 'specified' in epic TT-27 (team TT) — the Planned/Todo column is not drained, so Backlog is withheld (PLANNED-HOLD below). Wait for a release or act on the held issues; do not pick Backlog._" "$OUTR4"
-ck_has  "scoped hold keeps the scope line" "_Scope: epic TT-27" "$OUTR4"
+# Nothing certified, nothing in flight, nothing withheld: the keeper's to certify, so the scoped run is drained for the
+# fleet rather than held (keeper ruling 2026-10-14; the fuller case is below, after the refusals).
+ck "scoped drain lists nothing" "" "$(order_of "$OUTR4")"
+ck_has  "scoped drain headline names the scope" "_No workable issues with label 'specified' in epic TT-27 (team TT) — only keeper-gated members remain and nothing is in flight (EPIC-DRAINED below)._" "$OUTR4"
+ck_has  "scoped drain note names the epic" "_EPIC-DRAINED: epic TT-27 has nothing left the fleet can ship — 1 member(s) need the keeper (TT-27 [epic — certify per child; it closes itself when they release]) and nothing is in flight. The run ends here; decide, certify or close them and relaunch._" "$OUTR4"
+ck_lacks "scoped drain has no hold note" "PLANNED-HOLD" "$OUTR4"
+ck_has  "scoped drain keeps the scope line" "_Scope: epic TT-27" "$OUTR4"
 
 # The graph's teams replace workspace discovery when nothing else is pinned.
 OUTR5="$WORK/outr5.md"
@@ -526,6 +530,46 @@ ck "missing root exits 1" "1" "$rc"
 ck_has  "missing root names the miss" "issue 'TT-99' not found" "$OUTR7.err"
 run "$OUTR7" --limit 20 --root foo; rc=$?
 ck "malformed root exits 1" "1" "$rc"
+
+# ---- --root with only keeper-gated members left (keeper ruling 2026-10-14): epic TT-70 holds Planned until its last child
+# ---- releases, its child TT-71 is human work, TT-73 shipped. While TT-72 is in flight the hold stands and names it — a landing
+# ---- can file certified children; once it lands the scoped run is drained for the fleet: the drained headline plus an
+# ---- EPIC-DRAINED note, never the hold that ticked 11.7 session-hours to the deadline on 2026-10-13. The same remainder
+# ---- team-wide (no --root) still holds — a team fleet waits on the keeper.
+cp "$FIX/issues-page.json" "$WORK/issues-page.keep"
+cat > "$FIX/issues-page.json" <<'EOF'
+{"data":{"issues":{"nodes":[
+ {"identifier":"TT-70","title":"keeper-only epic","estimate":null,"priority":0,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[{"name":"epic"}]},"parent":null},
+ {"identifier":"TT-71","title":"human child","estimate":null,"priority":3,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[{"name":"human"}]},"parent":{"identifier":"TT-70"}},
+ {"identifier":"TT-72","title":"in-flight child","estimate":null,"priority":3,"state":{"name":"In Progress","type":"started"},"assignee":{"email":"t@t.test"},"labels":{"nodes":[]},"parent":{"identifier":"TT-70"}}
+],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
+EOF
+stamp_created "$FIX/issues-page.json"
+gnode TT-70 Planned unstarted '[{"name":"epic"}]' null '[{"identifier":"TT-71"},{"identifier":"TT-72"},{"identifier":"TT-73"}]' '[]' '[]'
+gnode TT-71 Planned unstarted '[{"name":"human"}]' TT-70 '[]' '[]' '[]'
+gnode TT-72 "In Progress" started '[]' TT-70 '[]' '[]' '[]'
+gnode TT-73 "Ready for Release" completed '[]' TT-70 '[]' '[]' '[]'
+OUTE="$WORK/oute.md"
+run "$OUTE" --limit 20 --root TT-70 || { echo "FAIL: epic in-flight run exited $?"; cat "$OUTE.err"; exit 1; }
+ck "epic in flight: nothing ranked" "" "$(order_of "$OUTE")"
+ck_has  "epic in flight: the hold stands" "_Nothing pickable right now in epic TT-70 (team TT) — the Planned/Todo column is not drained, so Backlog is withheld (PLANNED-HOLD below)." "$OUTE"
+ck_has  "epic in flight: the hold names what the drain waits on" "(2 issue(s) hold the gate: 0 pickable now; 2 need the keeper — TT-70 [epic — certify per child; it closes itself when they release], TT-71 [human]). 0 Backlog candidate(s) wait behind the gate; it opens when the column drains — pass --no-stage-gate to list them. 1 in flight — TT-72; the run ends once every in-flight member lands and nothing else opens._" "$OUTE"
+ck_lacks "epic in flight: not drained" "EPIC-DRAINED" "$OUTE"
+# TT-72 lands: the real pool fetch omits completed-type issues, and the graph walk drops the terminal child from the members.
+gnode TT-72 "Ready for Release" completed '[]' TT-70 '[]' '[]' '[]'
+jq 'del(.data.issues.nodes[] | select(.identifier == "TT-72"))' "$FIX/issues-page.json" > "$FIX/issues-page.tmp" && mv "$FIX/issues-page.tmp" "$FIX/issues-page.json"
+OUTE2="$WORK/oute2.md"
+run "$OUTE2" --limit 20 --root TT-70 || { echo "FAIL: epic drained run exited $?"; cat "$OUTE2.err"; exit 1; }
+ck "epic drained: nothing ranked" "" "$(order_of "$OUTE2")"
+ck_has  "epic drained: the headline is the drained text" "_No workable issues in epic TT-70 (team TT) — only keeper-gated members remain and nothing is in flight (EPIC-DRAINED below)._" "$OUTE2"
+ck_has  "epic drained: the note names the remainder" "_EPIC-DRAINED: epic TT-70 has nothing left the fleet can ship — 2 member(s) need the keeper (TT-70 [epic — certify per child; it closes itself when they release], TT-71 [human]) and nothing is in flight. The run ends here; decide, certify or close them and relaunch._" "$OUTE2"
+ck_lacks "epic drained: no hold note" "PLANNED-HOLD" "$OUTE2"
+ck_has  "epic drained: the scope line stays" "_Scope: epic TT-70 — 2 non-terminal member(s) across TT" "$OUTE2"
+OUTE3="$WORK/oute3.md"
+run "$OUTE3" --limit 20 || { echo "FAIL: team-wide keeper-only run exited $?"; cat "$OUTE3.err"; exit 1; }
+ck_has  "team-wide keeper-only remainder: still a hold" "_PLANNED-HOLD: Backlog withheld — the Planned/Todo column is not drained (2 issue(s) hold the gate: 0 pickable now; 2 need the keeper — " "$OUTE3"
+ck_lacks "team-wide keeper-only remainder: never drained" "EPIC-DRAINED" "$OUTE3"
+mv "$WORK/issues-page.keep" "$FIX/issues-page.json"
 
 # ---- sequence-held: a running /fleet-sequence's queue is hidden from every ranking (its runner dispatches
 # ---- each in turn — a fleet picker taking one would ship it twice), the note names the sequence, and the

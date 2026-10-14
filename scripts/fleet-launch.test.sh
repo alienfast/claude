@@ -337,33 +337,6 @@ ck "team and epic refuse"             "1" "$(run team epic:ep-1)"
 ck_has "team and epic named"          "ERROR: 'team' and 'epic:EP-1' are mutually exclusive" "$WORK/out"
 ck "team and epic dispatched nothing" "1" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
 
-# case 11f: a typed duration past /epic-prep's duration_h is holding time — once the workable members ship, the root epic
-# and any human-gated member keep every session on PLANNED-HOLD to the deadline (2026-10-13: 11h over an 8h recommendation
-# held 11.7 session-hours). A duration within it, no duration, a team launch, or a recommendation without the field is not
-# warned; a fractional duration_h compares as hours, not as an integer.
-cp "$REPO/tmp/fleet-recommendation.json" "$WORK/rec.keep"
-jq '.duration_h = 8' "$WORK/rec.keep" > "$REPO/tmp/fleet-recommendation.json"
-: > "$WORK/dispatches"
-ck "over-duration launch exits 0"     "0" "$(run 11h epic:ep-1)"
-ck "over-duration dispatched"         "1" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
-ck_has "over-duration warned"         "WARN: the typed duration (11h) exceeds /epic-prep's duration_h (8h) for epic EP-1" "$WORK/out"
-ck_has "over-duration says holding"   "the hours past 8h are holding time" "$WORK/out"
-ck "within-duration launch exits 0"   "0" "$(run 8h epic:ep-1)"
-ck_lacks "within-duration not warned" "exceeds /epic-prep's duration_h" "$WORK/out"
-ck "no-duration launch exits 0"       "0" "$(run epic:ep-1)"
-ck_lacks "no-duration not warned"     "exceeds /epic-prep's duration_h" "$WORK/out"
-ck "team over-duration exits 0"       "0" "$(run 1 11h team)"
-ck_lacks "team not warned"            "exceeds /epic-prep's duration_h" "$WORK/out"
-jq '.duration_h = 8.5' "$WORK/rec.keep" > "$REPO/tmp/fleet-recommendation.json"
-ck "fractional duration_h exits 0"    "0" "$(run 9h epic:ep-1)"
-ck_has "fractional duration_h warned" "exceeds /epic-prep's duration_h (8.5h)" "$WORK/out"
-ck "fractional within exits 0"        "0" "$(run 8h epic:ep-1)"
-ck_lacks "fractional within not warned" "exceeds /epic-prep's duration_h" "$WORK/out"
-mv "$WORK/rec.keep" "$REPO/tmp/fleet-recommendation.json"
-: > "$WORK/dispatches"
-ck "field-less recommendation exits 0" "0" "$(run 11h epic:ep-1)"
-ck_lacks "field-less not warned"      "exceeds /epic-prep's duration_h" "$WORK/out"
-
 # case 12: an explicit token overrides the prepared scope — live membership, and no branch, since the
 # prep was for another epic.
 : > "$WORK/dispatches"

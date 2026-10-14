@@ -886,8 +886,38 @@ if [ "$gate_on" -eq 1 ]; then
     fi
   fi
 fi
+# An epic-scoped run ends once only keeper-gated members remain (keeper ruling 2026-10-14): the root epic holds the column until
+# its last child releases and /epic-prep promotes human-gated members beside it, so the team-style hold could only tick to the
+# deadline (2026-10-13: 11.7 session-hours across three sessions after the last ship). In flight is a started member that is not
+# In Review, stalled, human or needs decision — chain_reason's reading of a started blocker; a landing can file certified
+# children, so the drain waits for it. Withheld Backlog members keep the hold: the keeper can release those by acting.
+epic_drained=0
+epic_drained_line=""
+if [ -n "$root" ] && [ "$gate_closed" -eq 1 ]; then
+  inflight_json=$(jq -c --argjson terminal "$TERMINAL_STATES" '
+    [ .[] | select(.state_type == "started")
+      | ((.state // "") | ascii_downcase) as $st
+      | select((($terminal | map(ascii_downcase)) | index($st)) == null)
+      | select(any((.labels // [])[]; (ascii_downcase | IN("stalled", "human", "needs decision"))) | not)
+      | .identifier ] | sort' "$list_file")
+  verdict=$(printf '%s' "$held_json" | jq -r --argjson w "$withheld" --argjson inflight "$inflight_json" --arg root "$root" '
+    ([.[] | select(.kind == "pickable")] | length) as $p
+    | [.[] | select(.kind == "releasing")] as $r
+    | [.[] | select(.kind == "keeper") | "\(.id) [\(.reason)]"] as $k
+    | if ($p > 0) or (($r | length) > 0) or (($k | length) == 0) or ($w > 0) then "hold"
+      elif ($inflight | length) > 0 then
+        "pending \($inflight | length) in flight — \($inflight | join(", ")); the run ends once every in-flight member lands and nothing else opens."
+      else
+        "drained _EPIC-DRAINED: epic \($root) has nothing left the fleet can ship — \($k | length) member(s) need the keeper (\($k | join(", "))) and nothing is in flight. The run ends here; decide, certify or close them and relaunch._"
+      end')
+  case "$verdict" in
+    drained\ *) epic_drained=1; epic_drained_line="${verdict#drained }" ;;
+    pending\ *) hold_line="${hold_line%_} ${verdict#pending }_" ;;
+  esac
+fi
 hold_note() {
-  [ "$gate_closed" -eq 1 ] && printf '\n%s\n' "$hold_line"
+  [ "$epic_drained" -eq 1 ] && printf '\n%s\n' "$epic_drained_line"
+  [ "$gate_closed" -eq 1 ] && [ "$epic_drained" -eq 0 ] && printf '\n%s\n' "$hold_line"
   [ "$fallback_open" -eq 1 ] && printf '\n%s\n' "$fallback_line"
   return 0
 }
@@ -1047,7 +1077,10 @@ if [ "$candidate_count" -eq 0 ]; then
   [ -n "$exclude_label" ] && filter_desc="$filter_desc lacking label '$exclude_label'"
   printf '## Suggested next\n\n'
   scope_note
-  if [ "$gate_closed" -eq 1 ]; then
+  if [ "$epic_drained" -eq 1 ]; then
+    # The drained text on purpose: /auto takes its no-candidates path (double-run, then NO-CANDIDATES) instead of holding.
+    printf '_No workable issues%s in %s — only keeper-gated members remain and nothing is in flight (EPIC-DRAINED below)._\n' "$filter_desc" "$where_desc"
+  elif [ "$gate_closed" -eq 1 ]; then
     # Deliberately not the drained text: /auto keys on this headline to wait instead of latching drained.
     printf '_Nothing pickable right now%s in %s — the Planned/Todo column is not drained, so Backlog is withheld (PLANNED-HOLD below). Wait for a release or act on the held issues; do not pick Backlog._\n' "$filter_desc" "$where_desc"
   elif [ "$blocked_hold" -eq 1 ]; then

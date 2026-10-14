@@ -3156,7 +3156,8 @@ def main():
                   f"and shipped {ed['sibling_ships']} more issue(s)** (reason '{st.get('reason') or ''}') "
                   f"— the pool was gated, not empty: a `blocks` chain behind in-flight work (now "
                   f"`BLOCKED-HOLD` in next-candidates.sh, a prose gate /auto must obey), an empty fetch "
-                  f"the double-run also hit, a label flap, or issues certified mid-run after the drain. "
+                  f"the double-run also hit, a label flap, issues certified mid-run after the drain, or an epic scope "
+                  f"drained to its keeper-gated remainder (`EPIC-DRAINED`) that the keeper then reopened. "
                   f"Read that session's last `/next` output and `linear-cli relations list` on the "
                   f"issues siblings shipped next. Forfeited ≈{ed['hours']} session-hours.")
         # The mid-run hold: >=1h in PLANNED-HOLD / BLOCKED-HOLD while a sibling landed ships inside the hold intervals. A fleet
