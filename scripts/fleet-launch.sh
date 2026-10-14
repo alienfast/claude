@@ -299,6 +299,14 @@ if [ ${#dur_tokens[@]} -gt 0 ]; then
   fi
   deadline_epoch=$(( $(date +%s) + secs ))
   deadline_human=$(date -r "$deadline_epoch" '+%Y-%m-%d %H:%M %Z' 2>/dev/null || date -d "@$deadline_epoch" '+%Y-%m-%d %H:%M %Z')
+  # Past /epic-prep's duration_h an epic fleet holds rather than drains: the root epic and any human-gated member sit in Planned
+  # until the keeper acts, so every session ticks PLANNED-HOLD to the deadline (2026-10-13: 11h over an 8h recommendation held 11.7 session-hours).
+  if [ -n "$scope" ] && [ "$rec_scope" = "$scope" ]; then
+    rec_dur_h=$(jq -r 'if (.duration_h | type) == "number" then .duration_h else empty end' "$rec" 2>/dev/null || true)
+    if [ -n "$rec_dur_h" ] && [ "$secs" -gt "$(awk -v h="$rec_dur_h" 'BEGIN { printf "%d", h * 3600 }')" ]; then
+      echo "WARN: the typed duration (${dur_tokens[*]}) exceeds /epic-prep's duration_h (${rec_dur_h}h) for epic $scope — once the workable members ship, the epic and any human-gated member hold every session on PLANNED-HOLD to the deadline, so the hours past ${rec_dur_h}h are holding time unless every open member ships" >&2
+    fi
+  fi
 fi
 
 # Preflight: a dirty main checkout no longer stops the fleet — /auto Step 1 picks past dirt it cannot attribute, and
