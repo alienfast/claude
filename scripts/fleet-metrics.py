@@ -1331,8 +1331,9 @@ def boundary_compactions(checkout, run_key):
 
 
 def rate_limit_peaks(run_key):
-    """The highest reading of each window in a session's mods/rate-limits history, with when it was taken; None without one."""
-    peaks, n = {}, 0
+    """The highest reading of each window in a session's mods/rate-limits history, with when it was taken, plus every five_hour
+    reading with the start of the 5h block it fell in (its resetsAt less five hours); None without one."""
+    peaks, five_hour, n = {}, [], 0
     for p in sorted(RATE_LIMITS_DIR.glob(f"{run_key}*.jsonl")):
         try:
             lines = p.read_text(encoding="utf-8").splitlines()
@@ -1350,20 +1351,45 @@ def rate_limit_peaks(run_key):
                     continue
                 if kind not in peaks or pct > peaks[kind]["percent"]:
                     peaks[kind] = {"percent": pct, "at": row.get("measured_at")}
-    return {"readings": n, "peaks": peaks} if n else None
+                if kind == "five_hour":
+                    reset = ts(w.get("resetsAt"))
+                    five_hour.append({"percent": pct, "at": row.get("measured_at"),
+                                      "block_start": reset - timedelta(hours=5) if reset else None})
+    return {"readings": n, "peaks": peaks, "five_hour": five_hour} if n else None
 
 
-def fleet_rate_limit_peaks(sessions):
-    """Each window's highest reading across the sessions, with the session that saw it; None when no session kept a history."""
+def fleet_rate_limit_peaks(sessions, fleet_first):
+    """Each window's highest reading across the sessions, with the session that saw it; None when no session kept a history.
+
+    The five_hour peak counts only blocks that began at or after the fleet's first activity. The meter's 5h blocks are fixed, so
+    a block already running at launch carries whatever was spent in it before: on 2026-10-13 a 90% reading taken at launch, in a
+    block that reset 28 minutes later, read as the fleet's own and sized the window at one session, where the fleet's first whole
+    block peaked at 72% with three. A higher reading from such a block is kept apart as `five_hour_inherited`."""
     have = [(s["run_key"], s["rate_limit_peaks"]) for s in sessions if s.get("rate_limit_peaks")]
     if not have:
         return None
     peaks = {}
     for key, rp in have:
         for kind, pk in rp["peaks"].items():
-            if kind not in peaks or pk["percent"] > peaks[kind]["percent"]:
+            if kind != "five_hour" and (kind not in peaks or pk["percent"] > peaks[kind]["percent"]):
                 peaks[kind] = {**pk, "run_key": key}
-    return {"sessions_with_history": len(have), "readings": sum(rp["readings"] for _, rp in have), "peaks": peaks}
+    owned = inherited = None
+    for key, rp in have:
+        for r in rp.get("five_hour") or []:
+            own = bool(fleet_first and r["block_start"] and r["block_start"] >= fleet_first)
+            best = owned if own else inherited
+            if best is None or r["percent"] > best["percent"]:
+                rec = {"percent": r["percent"], "at": r["at"], "run_key": key}
+                if own:
+                    owned = rec
+                else:
+                    inherited = rec
+    if owned:
+        peaks["five_hour"] = owned
+    if inherited and owned and inherited["percent"] <= owned["percent"]:
+        inherited = None
+    return {"sessions_with_history": len(have), "readings": sum(rp["readings"] for _, rp in have), "peaks": peaks,
+            "five_hour_inherited": inherited}
 
 
 def headroom_verdict(sessions, fleet_rl):
@@ -2256,7 +2282,7 @@ def main():
     fleet_lanes = fleet_effort_lanes(sessions)
     fleet_spawn = fleet_spawn_policy(sessions)
     fleet_boundary = fleet_boundary_compactions(sessions, len(all_shipped))
-    fleet_rl = fleet_rate_limit_peaks(sessions)
+    fleet_rl = fleet_rate_limit_peaks(sessions, fleet_first)
     fleet_headroom = headroom_verdict(sessions, fleet_rl)
     headline = {
         "recorded_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -2880,11 +2906,19 @@ def main():
         def reading(kind):
             pk = fleet_rl["peaks"].get(kind)
             return f"**{pk['percent']}% used** at {pk.get('at') or '?'} (`{pk['run_key']}`)" if pk else "no reading"
+        inh = fleet_rl.get("five_hour_inherited")
+        lead = "A higher" if fleet_rl["peaks"].get("five_hour") else "The highest reading,"
+        inherited_note = (f" {lead} {inh['percent']}% at {inh.get('at') or '?'} (`{inh['run_key']}`) fell in a 5h block already "
+                          f"running when the fleet started, so it carries usage from before the launch and is left out of the "
+                          f"peak and the verdict." if inh else "")
         print(f"**Window readings** — {fleet_rl['sessions_with_history']} of {len(sessions)} session(s) kept a mods/rate-limits "
-              f"history ({fleet_rl['readings']} readings): peak five_hour {reading('five_hour')}; peak seven_day "
-              f"{reading('seven_day')}. These are the account's own meter, so they answer what the token peaks above cannot — "
-              f"how close the 5h window came to its limit. Sessions on one account share its windows, so the fleet's peak is "
-              f"the highest any of them saw.\n")
+              f"history ({fleet_rl['readings']} readings): peak five_hour {reading('five_hour')} in a 5h block the fleet ran "
+              f"from its start; peak seven_day {reading('seven_day')}.{inherited_note} These are the account's own meter, so "
+              f"they answer what the token peaks above cannot — how close the 5h window came to its limit. Sessions on one "
+              f"account share its windows, so the fleet's peak is the highest any of them saw.\n")
+        if not fleet_headroom and inh and not fleet_rl["peaks"].get("five_hour"):
+            print("**Headroom verdict** — none: no 5h block began inside the fleet's span, so every reading carries usage from "
+                  "before the launch and cannot say how many sessions the window fits.\n")
         if fleet_headroom:
             hv = fleet_headroom
             more = hv["more_sessions"]
@@ -3023,8 +3057,9 @@ def main():
               "sees a session held while a sibling kept shipping. rewr% is the effort-phase gauge: the share of the main "
               f"loop's ledgered requests sent at an effort other than the one the engine had set (the mechanical "
               f"and polling lanes); a `-` is a fleet with no effort-phase ledger. 5h% is the highest five_hour reading any "
-              f"session's mods/rate-limits history recorded — the account's own meter, so read it beside n for headroom (the "
-              f"Headroom verdict line does that arithmetic); a `-` is a fleet with no history.\n")
+              f"session's mods/rate-limits history recorded in a 5h block that began inside the fleet's span — a block already "
+              f"running at launch carries earlier usage — the account's own meter, so read it beside n for headroom (the "
+              f"Headroom verdict line does that arithmetic); a `-` is a fleet with no history or no such block.\n")
     elif not args.all:
         print("- first recorded fleet — the trend accrues one row per windowed run in "
               "`tmp/fleet-metrics-history.jsonl`\n")

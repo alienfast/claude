@@ -172,13 +172,15 @@ cat > "$CHECKOUT/.claude/worktrees/tt-1/tmp/loop-boundary-abc12345-0000.jsonl" <
 EOF
 
 # mods/rate-limits' per-session history, in the shape its historyLine writes: the fleet's peak is each window's highest
-# reading, with the session that saw it. Every run in this suite reads this dir, never the machine's own.
+# reading, with the session that saw it. Every run in this suite reads this dir, never the machine's own. The 41/57 block
+# begins at 10:00:00, the fleet's first record, so it is the fleet's own; the 88 sits in a block already running at launch.
 export RATE_LIMITS_DIR="$WORK/rate-limits"
 mkdir -p "$RATE_LIMITS_DIR"
 cat > "$RATE_LIMITS_DIR/abc12345-0000.jsonl" <<'EOF'
-{"measured_at":"2026-08-04T10:05:00.000Z","windows":[{"kind":"five_hour","percentUsed":41,"resetsAt":"2026-08-04T14:00:00.000Z"},{"kind":"seven_day","percentUsed":12,"resetsAt":"2026-08-08T22:00:00.000Z"}]}
-{"measured_at":"2026-08-04T11:40:00.000Z","windows":[{"kind":"five_hour","percentUsed":57,"resetsAt":"2026-08-04T14:00:00.000Z"},{"kind":"seven_day","percentUsed":13,"resetsAt":"2026-08-08T22:00:00.000Z"}]}
-{"measured_at":"2026-08-04T14:10:00.000Z","windows":[{"kind":"five_hour","percentUsed":4,"resetsAt":"2026-08-04T19:00:00.000Z"},{"kind":"seven_day","percentUsed":14,"resetsAt":"2026-08-08T22:00:00.000Z"}]}
+{"measured_at":"2026-08-04T09:59:58.000Z","windows":[{"kind":"five_hour","percentUsed":88,"resetsAt":"2026-08-04T10:00:00.000Z"},{"kind":"seven_day","percentUsed":11,"resetsAt":"2026-08-08T22:00:00.000Z"}]}
+{"measured_at":"2026-08-04T10:05:00.000Z","windows":[{"kind":"five_hour","percentUsed":41,"resetsAt":"2026-08-04T15:00:00.000Z"},{"kind":"seven_day","percentUsed":12,"resetsAt":"2026-08-08T22:00:00.000Z"}]}
+{"measured_at":"2026-08-04T11:40:00.000Z","windows":[{"kind":"five_hour","percentUsed":57,"resetsAt":"2026-08-04T15:00:00.000Z"},{"kind":"seven_day","percentUsed":13,"resetsAt":"2026-08-08T22:00:00.000Z"}]}
+{"measured_at":"2026-08-04T15:10:00.000Z","windows":[{"kind":"five_hour","percentUsed":4,"resetsAt":"2026-08-04T20:00:00.000Z"},{"kind":"seven_day","percentUsed":14,"resetsAt":"2026-08-08T22:00:00.000Z"}]}
 EOF
 
 # ---- run ----
@@ -207,8 +209,11 @@ ck "observed ship tag"  "['TT-1']" "$(q "d['sessions'][0]['observed_shipped']")"
 # window readings: the peak five_hour is 57 (not the last reading's 4, after the reset), seven_day the latest 14
 ck "5h reading peak"     "57 2026-08-04T11:40:00.000Z abc12345" "$(q "' '.join(str(d['windows']['readings']['peaks']['five_hour'][k]) for k in ('percent','at','run_key'))")"
 ck "7d reading peak"     "14"       "$(q "d['windows']['readings']['peaks']['seven_day']['percent']")"
-ck "readings counted"    "3 1"      "$(q "f\"{d['windows']['readings']['readings']} {d['windows']['readings']['sessions_with_history']}\"")"
-ck_has "readings line"   "peak five_hour **57% used** at 2026-08-04T11:40:00.000Z (\`abc12345\`)" "$MD"
+ck "readings counted"    "4 1"      "$(q "f\"{d['windows']['readings']['readings']} {d['windows']['readings']['sessions_with_history']}\"")"
+ck_has "readings line"   "peak five_hour **57% used** at 2026-08-04T11:40:00.000Z (\`abc12345\`) in a 5h block the fleet ran from its start" "$MD"
+# the 88 is the highest reading, but its block began at 05:00 and so carries five hours spent before the fleet: kept apart, never the peak
+ck "5h inherited reading" "88 2026-08-04T09:59:58.000Z abc12345" "$(q "' '.join(str(d['windows']['readings']['five_hour_inherited'][k]) for k in ('percent','at','run_key'))")"
+ck_has "inherited note"  "A higher 88% at 2026-08-04T09:59:58.000Z (\`abc12345\`) fell in a 5h block already running when the fleet started" "$MD"
 # the verdict: both fixture sessions were active at the 11:40 peak, so 57% splits to 28.5 each and the window fits three such
 ck "headroom verdict"    "2 28.5 3 1" "$(q "' '.join(str(d['windows']['headroom'][k]) for k in ('sessions_active','pct_per_session','fits_sessions','more_sessions'))")"
 ck_has "headroom verdict line" "**Headroom verdict** — at the peak reading (57% at 2026-08-04T11:40:00.000Z) 2 session(s) were active, ~28.5% of the 5h window each, so the window fits ~3 concurrent session(s) at this workload: **1 more session would have fit**." "$MD"
@@ -2240,6 +2245,54 @@ import json,sys
 rows=[json.loads(l) for l in open(sys.argv[1])]
 print(len([r for r in rows if r['session_set']=='8c16860d,ab260001,b2bb1003']))" "$H26")"
 ck_lacks "overlap: a replace needs no flag and warns of nothing" "this session set shares" "$E26"
+
+# ---- 27. the 5h peak and the headroom verdict read only blocks the fleet ran from their start ----
+# The 2026-10-13 basefund epic fleet launched at 22:52:20Z into a 5h block that had begun at 18:20 and stood at 90%; it reset at
+# 23:20. The verdict took that 90% as the fleet's peak, found one session active at it, and reported "fits ~1 session, exactly at
+# capacity", while the fleet's first whole block (23:20-04:20, all three sessions working throughout) peaked at 72%: ~24% each, room
+# for a fourth. The reading rows are that fleet's own, verbatim. The second scope is a short fleet that never outlived the block
+# it launched into: it has no reading of its own, so no verdict.
+CK27="$WORK/ck27"; mkdir -p "$CK27/tmp"
+git -C "$CK27" init -q 2>/dev/null
+git -C "$CK27" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "init"
+M27="$(git -C "$CK27" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
+mkdir -p "$WORK/projects/$M27"
+for spec in "af270001 2026-10-13T22:52:20.000Z 2026-10-14T04:48:00.000Z" "a6270002 2026-10-13T22:55:22.000Z 2026-10-14T04:50:00.000Z" \
+            "e6270003 2026-10-13T22:58:24.000Z 2026-10-14T04:52:00.000Z" "b7270004 2026-10-13T22:52:20.000Z 2026-10-13T23:10:00.000Z"; do
+  set -- $spec
+  cat > "$CK27/tmp/auto-state-$1.json" <<EOF
+{"mode": "loop", "scope": "TT-2700", "status": "drained", "reason": "deadline", "shipped": [], "canceled": [], "skipped": [], "failed": []}
+EOF
+  cat > "$WORK/projects/$M27/$1-0000.jsonl" <<EOF
+{"type":"user","timestamp":"$2","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto epic:TT-2700</command-args>"}}
+{"type":"assistant","timestamp":"$3","message":{"role":"assistant","id":"msg_$1","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"working"}]}}
+EOF
+done
+cat > "$RATE_LIMITS_DIR/af270001-d2d8-4039-a5d8-d617711099d0.jsonl" <<'EOF'
+{"measured_at":"2026-10-13T22:52:21.501Z","windows":[{"kind":"five_hour","percentUsed":90,"resetsAt":"2026-10-13T23:20:00.000Z"},{"kind":"seven_day","percentUsed":24,"resetsAt":"2026-10-15T05:00:00.000Z"}]}
+{"measured_at":"2026-10-13T22:52:31.974Z","windows":[{"kind":"five_hour","percentUsed":90,"resetsAt":"2026-10-13T23:20:00.000Z"},{"kind":"seven_day","percentUsed":24,"resetsAt":"2026-10-15T05:00:00.000Z"}]}
+{"measured_at":"2026-10-13T23:22:05.262Z","windows":[{"kind":"five_hour","percentUsed":0,"resetsAt":"2026-10-14T04:20:00.000Z"},{"kind":"seven_day","percentUsed":24,"resetsAt":"2026-10-15T05:00:00.000Z"}]}
+{"measured_at":"2026-10-14T04:15:05.136Z","windows":[{"kind":"five_hour","percentUsed":72,"resetsAt":"2026-10-14T04:20:00.000Z"},{"kind":"seven_day","percentUsed":43,"resetsAt":"2026-10-15T05:00:00.000Z"}]}
+EOF
+cat > "$RATE_LIMITS_DIR/b7270004-0000.jsonl" <<'EOF'
+{"measured_at":"2026-10-13T22:52:21.501Z","windows":[{"kind":"five_hour","percentUsed":90,"resetsAt":"2026-10-13T23:20:00.000Z"},{"kind":"seven_day","percentUsed":24,"resetsAt":"2026-10-15T05:00:00.000Z"}]}
+EOF
+J27="$WORK/out27.json"; MD27="$WORK/out27.md"
+run27() { CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK27" --sessions "$1" --json > "$J27" 2>/dev/null
+          CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK27" --sessions "$1" > "$MD27" 2>&1; }
+q27() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J27"; }
+run27 af270001,a6270002,e6270003
+ck "owned block: the peak is the fleet's own 72"        "72 2026-10-14T04:15:05.136Z" "$(q27 "' '.join(str(d['windows']['readings']['peaks']['five_hour'][k]) for k in ('percent','at'))")"
+ck "owned block: the launch-time 90 is inherited"       "90 2026-10-13T22:52:21.501Z" "$(q27 "' '.join(str(d['windows']['readings']['five_hour_inherited'][k]) for k in ('percent','at'))")"
+ck "owned block: verdict at the 72"                     "3 24.0 4 1" "$(q27 "' '.join(str(d['windows']['headroom'][k]) for k in ('sessions_active','pct_per_session','fits_sessions','more_sessions'))")"
+ck "owned block: the trend's 5h% is the 72"             "72" "$(q27 "[r for r in d['history'] if r['session_set']=='a6270002,af270001,e6270003'][0]['peak_five_hour_pct']")"
+ck_has "owned block: verdict line"                      "at the peak reading (72% at 2026-10-14T04:15:05.136Z) 3 session(s) were active, ~24.0% of the 5h window each, so the window fits ~4 concurrent session(s) at this workload: **1 more session would have fit**" "$MD27"
+run27 b7270004
+ck "inherited only: no five_hour peak"                  "None" "$(q27 "d['windows']['readings']['peaks'].get('five_hour')")"
+ck "inherited only: no verdict"                         "None" "$(q27 "d['windows']['headroom']")"
+ck "inherited only: the trend's 5h% is empty"           "None" "$(q27 "[r for r in d['history'] if r['session_set']=='b7270004'][0]['peak_five_hour_pct']")"
+ck_has "inherited only: the readings line names it"     "The highest reading, 90% at 2026-10-13T22:52:21.501Z (\`b7270004\`) fell in a 5h block already running when the fleet started" "$MD27"
+ck_has "inherited only: says why there is no verdict"   "**Headroom verdict** — none: no 5h block began inside the fleet's span" "$MD27"
 
 echo
 echo "$PASS passed / $FAIL failed / $SKIP skipped"

@@ -338,6 +338,14 @@ with the count, and a reading moves only when the window moves a whole point. It
 before the mod was enabled on the machine: the 2026-10-12 retro could only estimate headroom (one more session, possibly
 two) from a single snapshot taken two days earlier, and could not say which unit the 5h meter counts.
 
+**Only a 5h block the fleet ran from its start counts.** The meter's blocks are fixed (`resetsAt` steps in whole 5h
+blocks), so a block already running at launch carries what was spent in it before, and the peak, `5h%` and the verdict
+leave it out; a higher reading from one is named on the readings line as inherited. Measured 2026-10-13: the epic fleet
+launched into a block at 90% that reset 28 minutes later, and the first verdict read "fits ~1 session, exactly at
+capacity" off that reading, where the fleet's own first block peaked at 72% with three sessions working (~24% each, room
+for a fourth that would graze the headroom gate's reserve). A fleet that never outlives the block it launched into gets
+no verdict, and the line says so.
+
 **A session that wound down deliberately is not a stalled one, however long it then sits quiet.** The
 detector already excludes a silence beginning at a `ScheduleWakeup(stop: true)` with no limit message,
 because an ended loop has no wakeup pending and going quiet is its contract. Do not undo that by hand

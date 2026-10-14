@@ -120,8 +120,14 @@ target (`./src` single-package; `./apps/*/src ./packages/*/src …` monorepo):
 
 ### Gotchas
 
-- Add `.madgerc` with `{ "detectiveOptions": { "ts": { "skipTypeImports": true } } }` — madge flags
-  type-only import cycles by default; this makes `check-circular` report only real **runtime** cycles.
+- Add `.madgerc` with `{ "detectiveOptions": { "ts": { "skipTypeImports": true }, "tsx": { "skipTypeImports": true } } }` —
+  madge flags type-only import cycles by default; this makes `check-circular` report only real **runtime** cycles. The `tsx`
+  entry is not optional: `.tsx` files use their own detective, so with `ts` alone their type-only imports still count as edges.
+- **TypeScript 7 breaks `--ts-config <path>`.** madge reads a tsconfig *path* through `ts.sys.readFile`, which TS 7 no longer
+  exports, so `check-circular` dies with `TypeError: Cannot read properties of undefined (reading 'readFile')`. Dropping the flag
+  is safe only when the target has no `compilerOptions.paths`: otherwise every aliased import is silently skipped and madge still
+  prints "No circular dependency found!". With `paths`, pass them as a `tsConfig` **object** through madge's JS API (which never
+  calls `ts.sys`) and fail on unresolved imports — basefund-control-panel's `scripts/check-circular.mjs` is a worked example.
 - Do not add a separate `build:ide` tsc script — point `.vscode/tasks.json` at the `check-types` script instead.
 - `BUNDLER` is a root-level signal; in a monorepo each publishable package decides tsdown vs not on its own.
 
