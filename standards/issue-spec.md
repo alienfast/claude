@@ -105,7 +105,10 @@ Every issue an agent files — a `/quality-review` deferred item, a `/finish` pr
 
 ```markdown
 ## Problem
-<1-3 sentences: what is wrong or missing today, who is affected, why it matters now>
+<the story, sized to the stake: a named actor, what they did and saw, what it cost them in their units, then the mechanism — § The Problem is a story>
+
+## Evidence
+<optional: the measurements, commands and code locations the story does not need to carry — adjacent to the story, never the lead>
 
 ## Desired Outcome
 <observable behavior/result after the work — user- or system-visible, never implementation>
@@ -139,9 +142,17 @@ The checkboxes are load-bearing: `/start` Step 6 treats description checkboxes a
 
 **One line is never a target of opportunity: the release path for a write that claims a key unique across every tenant or organization.** One row per key — a domain, a handle, a slug — means a mistaken or hostile claim holds the key against its true owner, and the reviewer's decisions do not release it when a reject persists as a decided row that still occupies the key: confirm binds the wrong party, reject strands the key for everyone. A spec that lets a caller claim such a key therefore certifies as **Must Have** at least one path that vacates the key without deciding it, reachable by the reviewer or the true owner — a hostile claimant will not withdraw, so the claimant's own withdraw is a genuine Nice to Have only when that reviewer-side path already exists (or when reject itself vacates the key; a spec that does not say what reject does to the key has not settled the tier). Measured 2026-09-28 (BF-2166): the Problem itself recorded "a domain has exactly one row across all organizations, so a wrong claim blocks the real owner", and "an org admin can withdraw a proposal they made while it is still pending" still certified as Nice to Have; the plan left it out per this tier's semantics, review found a High (a proposal planted on another organization's domain, no path removing the row), and the release path shipped as review-driven fix batches — a withdraw mutation open to superusers for any pending proposal and to admins for their own, plus its card and queue UI — about 100 minutes of a plan-to-completion window under four hours.
 
+## The Problem is a story
+
+The Problem is read by a human deciding whether the issue is right and by an agent deciding what to build, and both read a story faster than an inventory of mechanisms (keeper ruling 2026-10-15). Write it in time order: a named actor, what they did and saw, what it cost them in their own units, then the mechanism that made it so — the shape [problem-solving.md § Ask as a story](problem-solving.md#ask-as-a-story) prescribes for a question, applied to the issue body. The story is also the reproduction: `/start` verifies the stated defect still exists, and "a coordinator ticks one payment of two and its participants are told the transaction closed" is a step to run, where "the two close paths choose the notice by different rules" is not.
+
+Size it to the stake, never to the effort of writing it: one sentence for a two-line fix, a paragraph for a fleet-shaped decision. Every measured fact stays — the story orders the evidence and never thins it — but a count, a file and line, or a command the story does not need to carry goes under `## Evidence`, directly below, so the reader can check the story without reading through it. Measured 2026-10-15 on four BF issues of different sizes: three already held every fact and needed only this reordering; the fourth, a decision issue, opened with a prior issue's decision text and six file paths, and nobody who runs the demo it was about appeared anywhere in it.
+
+A decision-shaped issue (`needs decision`) carries the same Problem and then `## Options`: lettered, each named by the outcome the reader would see and what it costs, the recommendation first with its reason in the reader's vocabulary (§ Ask as a story, step 4); a bare "something else" is not an option. Its Desired Outcome is the decision itself, and its Success Criteria follow once the decision is recorded (§ A decision belongs in the description, never in a comment).
+
 ## Quality bar — certify only if ALL hold
 
-- [ ] Problem names who is affected and why it matters now
+- [ ] Problem is a story — a named actor, what they saw, the stake in their units, then the mechanism — retellable without the code, with the measurements it does not carry under `## Evidence` (§ The Problem is a story)
 - [ ] Desired outcome is observable — verifiable without reading code
 - [ ] Every success criterion is testable and implementation-agnostic
 - [ ] Boundaries name at least one explicit exclusion — satisfiable by a deliverable exclusion; a mechanism-exclusion carries `(decided: <who/why>)` (§ Out of Scope bounds the deliverable, never the evidence)
@@ -194,6 +205,8 @@ A criterion embedding a literal regex, glob, SQL predicate, or field index — `
 The quality bar forbids this twice already — "no verification-command blocks" and "testable and implementation-agnostic" — and both get read past, because a pattern over data feels like the *most* testable thing a criterion could say. State the criterion as the **property** the data must have ("no `versions` row still carries a live sign-up token") and leave the pattern to execution time, where it is derived against the code that produces the values. A criterion only one specific pattern can satisfy is one the filer answered on the implementer's behalf, from outside the code.
 
 ## Producers
+
+Every producer below writes its Problem in the shape of § The Problem is a story, its own body template included — the story is the standard's, not the producer's.
 
 - `/prd` — net-new epics + sub-issues (clarifying questions up front; single-issue runs certify on create, batches certify after collision edges are wired)
 - `/spec` — grooms existing/Triage issues into shape (research → interview → signoff → certify)

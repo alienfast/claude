@@ -86,8 +86,10 @@ Before dispositioning, search Linear for each candidate's short-id — the filin
 
   ```markdown
   ## Problem
-  <what is failing, for whom> Sentry: [<SHORT-ID>](<permalink>) — N users / M events since <window start>.
-  <stack frame + file:line in this repo; the measured root cause, or the narrower claim actually confirmed>
+  <the story: who was doing what when it failed, what they saw, what it cost them — N users / M events since <window start> — then the measured root cause, or the narrower claim actually confirmed (standards/issue-spec.md § The Problem is a story)>
+
+  ## Evidence
+  Sentry: [<SHORT-ID>](<permalink>) — N users / M events since <window start>. <stack frame + file:line in this repo>
 
   ## Desired Outcome
   <user-visible behavior once fixed>

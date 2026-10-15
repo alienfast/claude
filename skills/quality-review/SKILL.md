@@ -571,9 +571,10 @@ mkdir -p tmp
 # 1. Write description to a unique tmp file. The group's membership is the render rule's
 #    membership definition above — every member is severity-carrying, so every body uses
 #    the compact certifiable shape from standards/issue-spec.md — ## Problem (the finding
-#    with its concrete scenario/evidence), ## Desired Outcome, ## Success Criteria
-#    (checkboxes) — which is what licenses the `specified` label below under that
-#    standard's trusted-pipeline carve-out.
+#    as a story: who hits it, what they see, what it costs them, then the mechanism;
+#    measurements and file:line under ## Evidence — that standard's § The Problem is a
+#    story), ## Desired Outcome, ## Success Criteria (checkboxes) — which is what licenses
+#    the `specified` label below under that standard's trusted-pipeline carve-out.
 #    A ## Boundaries section is optional in this shape; when included and the root
 #    cause is undiagnosed, exclude deliverables (separate-ticket work), never
 #    mechanisms. Write `(decided: <who/why>)` only when relaying a human's recorded

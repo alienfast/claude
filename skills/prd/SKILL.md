@@ -62,7 +62,7 @@ Use this skill when:
 
 ## Spec Shape
 
-The canonical template and quality bar live in [standards/issue-spec.md](../../standards/issue-spec.md): `Problem` → `Desired Outcome` → `Requirements` (Must/Nice checkboxes) → `Success Criteria` (testable checkboxes) → `Boundaries` (In/Out of Scope).
+The canonical template and quality bar live in [standards/issue-spec.md](../../standards/issue-spec.md): `Problem` → `Desired Outcome` → `Requirements` (Must/Nice checkboxes) → `Success Criteria` (testable checkboxes) → `Boundaries` (In/Out of Scope). The Problem is a story — a named actor, what they saw, the stake in their units, then the mechanism, sized to the stake, with the measurements it does not carry under `## Evidence` (that standard's § The Problem is a story); an epic's Problem leads with the named people its counts summarize.
 
 Specs are problem + outcomes + success criteria only — **no implementation planning** (`/start` Step 6 designs the how, in plan mode, at execution time) and **no verification-command blocks** (project quality gates own that). Checkboxes are load-bearing: `/start` treats them as requirements and `/finish` checks them off.
 

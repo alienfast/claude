@@ -103,7 +103,7 @@ An indecisive spec certified anyway does not ship — it burns an `/auto` slot a
 
 ### Step 4: Draft the spec
 
-Write `tmp/spec-<id-lowercase>.md` in the canonical template shape ([standards/issue-spec.md](../../standards/issue-spec.md)). Append the original human text verbatim as a trailing `## Original request` blockquote (from the raw description captured in Step 2). Omit that section only when the original description is empty or already spec-shaped (e.g. re-grooming a `/prd`-created body — edit in place instead of quoting). Self-check against the quality bar before presenting.
+Write `tmp/spec-<id-lowercase>.md` in the canonical template shape ([standards/issue-spec.md](../../standards/issue-spec.md)). Its Problem is the story the interview surfaced — the named actor, what they saw, the stake in their units, then the mechanism — with the measurements it does not carry under `## Evidence` (that standard's § The Problem is a story). Append the original human text verbatim as a trailing `## Original request` blockquote (from the raw description captured in Step 2). Omit that section only when the original description is empty or already spec-shaped (e.g. re-grooming a `/prd`-created body — edit in place instead of quoting). Self-check against the quality bar before presenting.
 
 ### Step 5: Signoff — implicit when the draft only codifies the interview
 
