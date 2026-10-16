@@ -28,6 +28,11 @@ for cmd in linear-cli jq; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "ERROR: '$cmd' not found on PATH" >&2; exit 1; }
 done
 
+# linear-cli puts its error envelope on stderr with stdout empty, so a failed fetch is named from this file —
+# a `2>/dev/null` here read a RATELIMITED answer as "failed to fetch", and the callers waited two seconds and retried.
+errf=$(mktemp)
+trap 'rm -f "$errf"' EXIT
+
 mode="issue"
 target=""
 case "${1:-}" in
@@ -58,11 +63,11 @@ if [ "$mode" = "team" ]; then
     # `|| true` on each capture: under set -e a failing linear-cli would exit on the assignment itself, before the
     # guard below can name the failure — measured 2026-08-28 as exit 1 with empty stderr, indistinguishable from a broken run.
     if [ -z "$after" ]; then
-      out=$(linear-cli api query -q -o json -v team="$target" "$page_q" 2>/dev/null) || true
+      out=$(linear-cli api query -q -o json -v team="$target" "$page_q" 2>"$errf") || true
     else
-      out=$(linear-cli api query -q -o json -v team="$target" -v after="$after" "$page_q" 2>/dev/null) || true
+      out=$(linear-cli api query -q -o json -v team="$target" -v after="$after" "$page_q" 2>"$errf") || true
     fi
-    [ -n "$out" ] || { echo "ERROR: failed to fetch dependency graph for team '$target'" >&2; exit 1; }
+    [ -n "$out" ] || { echo "ERROR: failed to fetch dependency graph for team '$target': $(head -c 600 "$errf" | tr '\n' ' ')" >&2; exit 1; }
     if [ "$(printf '%s' "$out" | jq 'has("errors")')" = "true" ]; then
       echo "ERROR: API errors for team '$target': $(printf '%s' "$out" | jq -c '.errors')" >&2; exit 1
     fi
@@ -84,8 +89,8 @@ if [ "$mode" = "team" ]; then
 else
   # Local graph: the issue plus its direct neighbors in both relation directions.
   q='query($id:String!){issue(id:$id){identifier title state{name type} relations{nodes{type relatedIssue{identifier title state{name type}}}} inverseRelations{nodes{type issue{identifier title state{name type}}}}}}'
-  out=$(linear-cli api query -q -o json -v id="$target" "$q" 2>/dev/null) || {
-    echo "ERROR: failed to fetch dependency graph for '$target'" >&2; exit 1; }
+  out=$(linear-cli api query -q -o json -v id="$target" "$q" 2>"$errf") || {
+    echo "ERROR: failed to fetch dependency graph for '$target': $(head -c 600 "$errf" | tr '\n' ' ')" >&2; exit 1; }
   if [ "$(printf '%s' "$out" | jq 'has("errors")')" = "true" ]; then
     echo "ERROR: API errors for '$target': $(printf '%s' "$out" | jq -c '.errors')" >&2; exit 1
   fi

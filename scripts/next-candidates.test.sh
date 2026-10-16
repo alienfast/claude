@@ -174,19 +174,29 @@ gnode TT-5  Planned unstarted '[]' null '[]' '[]' '[]'
 # linear-cli shim: `api query` dispatches on the query text (its last argument) — the graph walk's
 # single-issue query is the one carrying `issue(id:`, and it is matched FIRST because it also carries
 # `relatedIssue` like the deps page (since 2026-10-16 the team deps page carries `inverseRelations`
-# too, so that token no longer discriminates); the terminal-ancestor fetch's `query ancestor` reads
-# the same node files; the parent walk's `issues get` no-ops (empty output is a tolerated skip).
+# too, so that token no longer discriminates); the terminal-ancestor fetch's batched `number:{in:…}`
+# query assembles a page from the same node files (a number with no file is simply absent, as the API
+# would omit it); the parent walk's `issues get` no-ops (empty output is a tolerated skip). A
+# `ratelimit-all` / `ratelimit-ancestors` marker in $FIX makes the shim answer the live RATELIMITED
+# envelope on stderr with empty stdout — the shape linear-cli produces (measured 2026-10-16).
 cat > "$WORK/bin/linear-cli" <<EOF
 #!/bin/bash
 FIX="$FIX"
 if [ "\${1:-}" != "api" ]; then exit 0; fi
 q="\${@: -1}"
+RL='{"code":4,"details":{"errors":[{"extensions":{"code":"RATELIMITED","statusCode":429,"type":"ratelimited"},"message":"Rate limit exceeded. Only 2500 requests are allowed per 1 hour."}]},"error":true,"message":"HTTP 400 Bad Request","retry_after":null}'
+if [ -f "\$FIX/ratelimit-all" ]; then printf '%s\n' "\$RL" >&2; exit 4; fi
+if [ -f "\$FIX/ratelimit-ancestors" ]; then case "\$q" in *"number:{in:"*) printf '%s\n' "\$RL" >&2; exit 4 ;; esac; fi
 case "\$q" in
   *viewer\{email\}*) printf '%s' '{"data":{"viewer":{"email":"t@t.test"}}}' ;;
-  *"query ancestor"*)
-    id=""; for a in "\$@"; do case "\$a" in id=*) id="\${a#id=}" ;; esac; done
-    if [ -f "\$FIX/node-\$id.json" ]; then cat "\$FIX/node-\$id.json"
-    else printf '%s' '{"code":2,"details":[{"message":"Entity not found: Issue"}],"error":true}'; exit 2; fi ;;
+  *"number:{in:"*)
+    team=\$(printf '%s' "\$q" | sed -E 's/.*key:\{eq:"([A-Z0-9]+)".*/\1/')
+    files=()
+    for n in \$(printf '%s' "\$q" | sed -E 's/.*number:\{in:\[([0-9,]+)\].*/\1/' | tr ',' ' '); do
+      [ -f "\$FIX/node-\$team-\$n.json" ] && files+=("\$FIX/node-\$team-\$n.json")
+    done
+    if [ "\${#files[@]}" -gt 0 ]; then jq -s '{data:{issues:{nodes: map(.data.issue)}}}' "\${files[@]}"
+    else printf '%s' '{"data":{"issues":{"nodes":[]}}}'; fi ;;
   *"issue(id:"*)
     id=""; for a in "\$@"; do case "\$a" in id=*) id="\${a#id=}" ;; esac; done
     if [ -f "\$FIX/node-\$id.json" ]; then cat "\$FIX/node-\$id.json"
@@ -652,6 +662,21 @@ ck "the label listing shows the held issue" "TT-70" "$(order_of "$OUTD")"
 ck_lacks "the label listing is gate-exempt" "PLANNED-HOLD" "$OUTD"
 unset LINEAR_DEPLOYED_STATES
 cp "$FIX/issues-main.json" "$FIX/issues-page.json"; cp "$FIX/deps-main.json" "$FIX/deps-page.json"
+
+# ---- Linear rate limit (2026-10-16): linear-cli answers RATELIMITED on stderr with empty stdout, which the old
+# ---- `2>/dev/null` fetches read as an empty page (three 2s retries, then "auth? network? rate limit?") or as an
+# ---- unreadable ancestor that silently ended its chain. Both now exit 4 naming RATELIMITED, so /auto waits the
+# ---- window out instead of re-ranking into it.
+OUTR="$WORK/outr.md"
+touch "$FIX/ratelimit-all"
+if run "$OUTR" --limit 5 --label specified; then rc=0; else rc=$?; fi
+ck     "rate-limited team fetch exits 4" "4" "$rc"
+ck_has "rate-limited team fetch names RATELIMITED" "Linear rate limit (RATELIMITED)" "$OUTR.err"
+rm -f "$FIX/ratelimit-all"; touch "$FIX/ratelimit-ancestors"
+if run "$OUTR" --limit 5 --label specified; then rc=0; else rc=$?; fi
+ck     "rate-limited ancestor batch exits 4 instead of ending chains silently" "4" "$rc"
+ck_has "rate-limited ancestor batch names RATELIMITED" "Linear rate limit (RATELIMITED)" "$OUTR.err"
+rm -f "$FIX/ratelimit-ancestors"
 
 echo
 echo "$PASS passed / $FAIL failed"

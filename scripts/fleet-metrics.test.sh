@@ -123,8 +123,12 @@ cat > "$TDIR/abc12345-0000.jsonl" <<'EOF'
 {"type":"api-request-blob","hash":"blob1","sessionId":"abc12345-0000","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_5","name":"ScheduleWakeup","input":{"delaySeconds":1200,"reason":"idle"}},{"type":"tool_use","id":"toolu_8","name":"Bash","input":{"command":"echo replayed"}}]}}
 EOF
 
-# Subagent transcript + meta sidecar: tokens must land under developer/claude-sonnet-5.
+# Subagent transcript + meta sidecar: tokens must land under developer/claude-sonnet-5. It also carries the Linear
+# RATELIMITED envelope (toolu_9) and a result merely quoting /auto's "rate limit (429)" prose (toolu_10): the count
+# folds into the parent session, and a subagent's tool_use chars leave the main-loop thinking share alone.
 cat > "$SUBDIR/agent-t1.jsonl" <<'EOF'
+{"type":"assistant","timestamp":"2026-08-04T10:03:02Z","agentId":"t1","isSidechain":true,"message":{"role":"assistant","id":"msg_S2","model":"claude-sonnet-5","content":[{"type":"tool_use","id":"toolu_9","name":"Bash","input":{"command":"linear-cli issues get TT-9 -o json"}},{"type":"tool_use","id":"toolu_10","name":"Bash","input":{"command":"sed -n 45,50p ~/.claude/skills/auto/SKILL.md"}}]}}
+{"type":"user","timestamp":"2026-08-04T10:03:03Z","agentId":"t1","isSidechain":true,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_9","content":"{\"code\":4,\"details\":{\"errors\":[{\"extensions\":{\"code\":\"RATELIMITED\",\"statusCode\":429},\"message\":\"Rate limit exceeded. Only 2500 requests are allowed per 1 hour.\"}]},\"error\":true,\"message\":\"HTTP 400 Bad Request\"}"},{"type":"tool_result","tool_use_id":"toolu_10","content":"A Claude API error — overload (529), rate limit (429), or transient 5xx — is infrastructure, not an issue failure"}]}}
 {"type":"assistant","timestamp":"2026-08-04T10:03:00Z","agentId":"t1","isSidechain":true,"message":{"role":"assistant","id":"msg_S","model":"claude-sonnet-5","usage":{"input_tokens":5,"output_tokens":700},"content":[{"type":"text","text":"fixed"}]}}
 EOF
 cat > "$SUBDIR/agent-t1.meta.json" <<'EOF'
@@ -199,6 +203,9 @@ ck "wakeups"            "1"        "$(q "d['sessions'][0]['wakeups']")"
 # The api-request-blob row replays toolu_5 and adds a resultless toolu_8: neither is a call this session made,
 # so the wakeup count above stays 1 and the only dangling call is toolu_7 (live shape re-snapshotted 2026-10-16).
 ck "dangling ignores blob replays" "1" "$(q "d['sessions'][0]['dangling_tool_calls']")"
+# Linear's RATELIMITED envelope (subagent toolu_9) counts once on the parent session; the result quoting /auto's
+# "rate limit (429)" prose (toolu_10) does not.
+ck "linear ratelimited"  "1"        "$(q "d['sessions'][0]['linear_ratelimited']")"
 # Ground-truth census: mode comes from the tool RESULT (async-launch line vs inline report), never
 # from the typed value — toolu_1 (async result) and dangling toolu_7 (typed-intent fallback) are the
 # 2 background; toolu_2's inline report is the 1 sync DESPITE also typing false; toolu_6 typed false
@@ -337,6 +344,7 @@ ck "ctx buckets"        "{'lt50k': 25, '50_150k': 102010}" "$(q "d['sessions'][0
 ck "ctx ge200k share"   "0.0"      "$(q "d['sessions'][0]['ctx_share_ge200k']")"
 ck "fleet ctx ge150k"   "0.0"      "$(q "d['context_distribution']['share_ge150k']")"
 ck_has "ctx column"          "| run | span | ctx>=200k |" "$MD"
+ck_has "linear rl column"    "| dangling | linear rl | throttled |" "$MD"
 ck_has "ctx totals line"     "**Context distribution**" "$MD"
 
 # provenance without a Linear export: every ship classes unknown, and the md names the files to write.

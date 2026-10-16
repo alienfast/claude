@@ -154,7 +154,8 @@
 # gate, where PLANNED-HOLD is the one hold the caller waits on.
 #
 # Exit codes: 0 success (incl. "no workable issues"), 1 arg error,
-# 2 Linear/network failure, 3 missing dependency.
+# 2 Linear/network failure, 3 missing dependency, 4 Linear rate limit (RATELIMITED — the account's
+# per-user request window is spent; nothing here is wrong, wait for it and rerun).
 #
 # Read-only — no Linear writes, no git mutations.
 
@@ -241,6 +242,21 @@ done
 
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
+
+# linear-cli writes its error envelope to STDERR with stdout empty, so every fetch below captures stderr to
+# a file and asks it this; a `2>/dev/null` is exactly where a rate-limited answer used to vanish into an
+# "empty page" or an "unreadable ancestor". Linear's window is per USER (2,500 requests/hour on an API
+# key — linear.app/developers/rate-limiting), shared by every session and script on the machine.
+ratelimited_in() { grep -q -e '"RATELIMITED"' -e 'Rate limit exceeded' "$1" 2>/dev/null; }
+ratelimit_abort() {
+  echo "ERROR: Linear rate limit (RATELIMITED) — the account's per-user request window is spent (2,500/hour on an API key, shared by every session on this machine). Nothing here is wrong: wait for the window and rerun." >&2
+  exit 4
+}
+warn_ratelimited_walk() {
+  [ -e "$tmpdir/ratelimited-walk" ] && return 0
+  touch "$tmpdir/ratelimited-walk"
+  echo "WARNING: Linear rate limit (RATELIMITED) hit during the parent walk — the parent chains below may be incomplete; the account's per-user request window is spent." >&2
+}
 
 # ---------- epic scope ----------
 
@@ -339,15 +355,19 @@ fetch_team_issues() {
     # empty/error response on an otherwise-healthy team — retry each page before failing.
     page=''
     for attempt in 1 2 3; do
+      # `|| true`: under set -e a non-zero linear-cli exit would end this background job on the assignment
+      # itself, so the retries below only ever ran for a zero-exit empty answer.
       if [ -z "$after" ]; then
-        page=$(linear-cli api query -q -o json -v team="$team" "$q" 2>/dev/null)
+        page=$(linear-cli api query -q -o json -v team="$team" "$q" 2>"$out.err") || true
       else
-        page=$(linear-cli api query -q -o json -v team="$team" -v after="$after" "$q" 2>/dev/null)
+        page=$(linear-cli api query -q -o json -v team="$team" -v after="$after" "$q" 2>"$out.err") || true
       fi
       if [ -n "$page" ] && [ "$(printf '%s' "$page" | jq 'has("errors")')" != "true" ]; then
         break
       fi
       page=''
+      # A rate-limited window refills over an hour, not two seconds: stop retrying and let the caller name it.
+      if ratelimited_in "$out.err"; then touch "$tmpdir/ratelimited"; rm -f "$pages_file"; return 1; fi
       [ "$attempt" -lt 3 ] && sleep 2
     done
     [ -n "$page" ] || return 1
@@ -390,6 +410,7 @@ for i in "${!teams[@]}"; do
     team_ok=0
     echo "WARNING: linear-deps-graph.sh (team $t) failed:" >&2
     cat "$tmpdir/deps.err.$t" >&2
+    if ratelimited_in "$tmpdir/deps.err.$t"; then touch "$tmpdir/ratelimited"; fi
   fi
   if [ "$team_ok" = 1 ]; then
     ok_teams+=("$t")
@@ -398,8 +419,9 @@ for i in "${!teams[@]}"; do
   fi
 done
 if [ "${#failed_teams[@]}" -gt 0 ]; then
+  [ -e "$tmpdir/ratelimited" ] && ratelimit_abort
   if [ "$teams_explicit" = 1 ] || [ "${#ok_teams[@]}" -eq 0 ]; then
-    echo "ERROR: team fetch failed for: ${failed_teams[*]} (auth? network? rate limit?)" >&2
+    echo "ERROR: team fetch failed for: ${failed_teams[*]} (auth? network?)" >&2
     exit 2
   fi
   echo "WARNING: results exclude team(s): ${failed_teams[*]} — partial workspace ranking" >&2
@@ -435,14 +457,16 @@ fi
 # Release, Done) has no path in the lineage walk to the Planned epic above it and never inherits the
 # stage — measured 2026-09-19 on BFP: nine certified candidates under shipped parents of a Planned
 # epic sat behind PLANNED-HOLD for a 12-hour fleet that idled 69% of its capacity, while their one
-# direct-child sibling ranked. Climb from every Backlog issue whose parent the pool lacks — one API
-# call per missing ancestor, a level at a time in parallel — until each chain reaches the pool or
-# ends; the records feed $parent_of in the ranking program and nothing else. Depth-capped like
-# lineage(). An unreadable ancestor simply ends its chain, which answers as the walk did before
-# this step existed.
+# direct-child sibling ranked. Climb from every Backlog issue whose parent the pool lacks — a level at
+# a time, one filtered query per team per 250 ancestors (`number:{in:[…]}`) — until each chain reaches
+# the pool or ends; the records feed $parent_of in the ranking program and nothing else. Depth-capped
+# like lineage(). The batch matters more than it looks: as one call per ancestor this step cost 360 of a
+# run's 376 Linear requests on BF, repeated before every pick by every session, and five sessions spent
+# the account's 2,500/hour window on it (measured 2026-10-16). An ancestor the API does not return
+# simply ends its chain, which answers as the walk did before this step existed — except RATELIMITED,
+# which is fatal: a chain the limiter cut would hold or lift the wrong issues with nothing saying so.
 ancestors_file="$tmpdir/ancestors.json"
 printf '[]' > "$ancestors_file"
-anc_q='query ancestor($id:String!){issue(id:$id){identifier state{name type} parent{identifier}}}'
 anc_dir="$tmpdir/anc"
 mkdir -p "$anc_dir"
 jq -r '.[].identifier' "$list_file" > "$anc_dir/seen"
@@ -451,24 +475,45 @@ jq -r '[ .[] | select((.state_type == "backlog") or ((.state // "") | ascii_down
 anc_depth=0
 while [ -s "$anc_dir/want" ] && [ "$anc_depth" -lt 10 ]; do
   : > "$anc_dir/next"
-  anc_pids=()
+  : > "$anc_dir/batch"
+  : > "$anc_dir/recs"
   while IFS= read -r aid; do
     [ -n "$aid" ] || continue
     grep -qxF -- "$aid" "$anc_dir/seen" && continue
     printf '%s\n' "$aid" >> "$anc_dir/seen"
-    (linear-cli api query -q -o json -v id="$aid" "$anc_q" > "$anc_dir/$aid.json" 2>/dev/null || true) &
-    anc_pids+=($!)
+    printf '%s\n' "$aid" >> "$anc_dir/batch"
   done < "$anc_dir/want"
-  if [ "${#anc_pids[@]}" -gt 0 ]; then for p in "${anc_pids[@]}"; do wait "$p" || true; done; fi
-  for f in "$anc_dir"/*.json; do
-    [ -e "$f" ] || continue
-    rec=$(jq -c '.data.issue // empty | select(.identifier != null)
-      | {identifier, state:(.state.name // "?"), state_type:(.state.type // "?"), parent:(.parent.identifier // null)}' "$f" 2>/dev/null) || rec=''
-    rm -f "$f"
-    [ -n "$rec" ] || continue
-    printf '%s' "$rec" | jq -c --slurpfile a "$ancestors_file" '$a[0] + [.]' > "$ancestors_file.tmp" && mv "$ancestors_file.tmp" "$ancestors_file"
-    printf '%s' "$rec" | jq -r '.parent // empty' >> "$anc_dir/next"
+  anc_pids=()
+  anc_n=0
+  # <KEY>-<number> identifiers only: the key and the numbers are interpolated into the query text, so both
+  # are validated here, and anything else cannot be asked for by number and ends its chain.
+  for anc_team in $(sed -nE 's/^([A-Z][A-Z0-9]*)-[0-9]+$/\1/p' "$anc_dir/batch" | sort -u); do
+    grep -E "^${anc_team}-[0-9]+$" "$anc_dir/batch" | sed -E 's/^.*-//' > "$anc_dir/nums"
+    split -l 250 "$anc_dir/nums" "$anc_dir/chunk."
+    for chunk in "$anc_dir"/chunk.*; do
+      [ -s "$chunk" ] || continue
+      anc_n=$((anc_n + 1))
+      anc_q="query{issues(filter:{team:{key:{eq:\"$anc_team\"}}, number:{in:[$(paste -sd, "$chunk")]}}, first:250){nodes{identifier state{name type} parent{identifier}}}}"
+      (linear-cli api query -q -o json "$anc_q" > "$anc_dir/page.$anc_n.json" 2> "$anc_dir/page.$anc_n.err" || true) &
+      anc_pids+=($!)
+      rm -f "$chunk"
+    done
   done
+  if [ "${#anc_pids[@]}" -gt 0 ]; then for p in "${anc_pids[@]}"; do wait "$p" || true; done; fi
+  for f in "$anc_dir"/page.*.json; do
+    [ -e "$f" ] || continue
+    if ratelimited_in "${f%.json}.err"; then ratelimit_abort; fi
+    if [ ! -s "$f" ] && [ -s "${f%.json}.err" ]; then
+      echo "WARNING: terminal-ancestor batch failed — stage inheritance through shipped parents may be incomplete: $(head -c 300 "${f%.json}.err" | tr '\n' ' ')" >&2
+    fi
+    jq -c '(.data.issues.nodes // [])[] | select(.identifier != null)
+      | {identifier, state:(.state.name // "?"), state_type:(.state.type // "?"), parent:(.parent.identifier // null)}' "$f" >> "$anc_dir/recs" 2>/dev/null || true
+    rm -f "$f" "${f%.json}.err"
+  done
+  if [ -s "$anc_dir/recs" ]; then
+    jq -s --slurpfile a "$ancestors_file" '$a[0] + .' "$anc_dir/recs" > "$ancestors_file.tmp" && mv "$ancestors_file.tmp" "$ancestors_file"
+    jq -r '.parent // empty' "$anc_dir/recs" >> "$anc_dir/next"
+  fi
   sort -u "$anc_dir/next" > "$anc_dir/want"
   anc_depth=$((anc_depth + 1))
 done
@@ -1224,10 +1269,11 @@ if [ "$parent_walk" -eq 1 ] && [ -n "$top_ids" ]; then
   pids=()
   while IFS= read -r id; do
     [ -z "$id" ] && continue
-    (linear-cli issues get "$id" -o json >"$fetch_dir/$id.json" 2>/dev/null || true) &
+    (linear-cli issues get "$id" -o json >"$fetch_dir/$id.json" 2>"$fetch_dir/$id.err" || true) &
     pids+=($!)
   done <<< "$top_ids"
   for pid in "${pids[@]}"; do wait "$pid" || true; done
+  if cat "$fetch_dir"/*.err 2>/dev/null | grep -q -e '"RATELIMITED"' -e 'Rate limit exceeded'; then warn_ratelimited_walk; fi
 
   # Step 2: extract parent chains (climb via repeated linear-cli issues get on each
   # ancestor). Cache hits skip the fetch. Bounded by max_depth=10.
@@ -1266,7 +1312,8 @@ if [ "$parent_walk" -eq 1 ] && [ -n "$top_ids" ]; then
         cur_json="$cached"
       else
         if [ ! -s "$fetch_dir/$cur.json" ]; then
-          (linear-cli issues get "$cur" -o json >"$fetch_dir/$cur.json" 2>/dev/null || true)
+          (linear-cli issues get "$cur" -o json >"$fetch_dir/$cur.json" 2>"$fetch_dir/$cur.err" || true)
+          if ratelimited_in "$fetch_dir/$cur.err"; then warn_ratelimited_walk; fi
         fi
         if [ ! -s "$fetch_dir/$cur.json" ]; then break; fi
         # Normalize state to a string (linear-cli issues get returns {name, ...}).

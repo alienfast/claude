@@ -97,6 +97,7 @@ The script's tier reasons (e.g. "newly unblocked", "sibling under completed pare
 - Exit 1 — arg error (bad flag value, malformed team key), or an `epic:` scope that refused: the issue does not exist or lacks the `epic` label. Surface stderr verbatim and stop — an epic scope never degrades to the unscoped pool.
 - Exit 2 — Linear/network failure, including workspace team discovery failing when no team was pinned. Surface the error message verbatim and stop.
 - Exit 3 — missing dependency (`linear-cli`, `jq`). Tell the user to install it.
+- Exit 4 — Linear rate limit (`RATELIMITED`): the account's per-user request window is spent — 2,500/hour on an API key, shared by every session and script on the machine. Nothing to fix: surface the message and stop. Under `/auto` this is the transient-API rule (wait ~15 minutes), never an immediate re-run, which only spends the window faster.
 - If `linear-cli auth status` shows logged out, prompt: `linear-cli auth oauth`.
 
 ## Notes on the Algorithm

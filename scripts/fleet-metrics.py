@@ -26,7 +26,8 @@ predates the window inflated the rate — that fleet read 15 filings, 0.79 per s
 census of 14, 0.74 — so older rows read high wherever a review appended instead of filing. Review
 churn and `avg_cycles` / `findings_per_review` / `crit_high_per_review` / `plan_origin_share` were
 narrowed the same day to verdicts for issues the session set worked; older rows can include an
-interactive review persisted inside the window.)
+interactive review persisted inside the window. `linear_ratelimited` and the table's `linear rl` column — Linear's own
+RATELIMITED answers in tool results — were added 2026-10-16; older rows carry no such field.)
 
 WHAT IT READS
   <checkout>/tmp/auto-state-<runKey>.json   run bookkeeping written by /auto Step 4
@@ -119,6 +120,11 @@ EXECUTOR = re.compile(r"\b(?:ba|z|k)?sh\s+-[A-Za-z]*c\b|\beval\b|\bxargs\b")
 # denial does. A wait of minutes behind one has so far always been the host asleep, not the service.
 CLASSIFIER = re.compile(r"\A(?:<tool_use_error>)?\s*(?:Permission for this action was denied by the Claude Code auto mode classifier|Blocked by classifier)")
 CLASSIFIER_UNAVAILABLE = re.compile(r"\A(?:<tool_use_error>)?[^\n]*?cannot determine the safety of")
+# Linear's own rate-limit answer as linear-cli relays it: the JSON envelope's `"code":"RATELIMITED"` (-o json, on
+# stderr) or table mode's `Rate limit exceeded. Only N requests are allowed per 1 hour`. Quoted prose about rate
+# limits — skill text, a CI config, Ruby's RateLimitException — matches neither, which a 2026-10-16 census needed:
+# 233 results mentioned "rate limit" across three days of basefund transcripts and one of them was Linear.
+LINEAR_RATELIMITED = re.compile(r'"RATELIMITED"|Rate limit exceeded\. Only \d+ requests are allowed')
 # The merge path's Ready-For-Release call, at a command position (start, or after ; & | ( ) — a quoted mention
 # inside a grep or a comment body does not count. The path prefix is optional and whatever the session typed.
 SHIP_CALL = re.compile(r"(?:^|[;&|(])\s*(?:[\w~./-]*/)?mark-ready-for-release\.sh\s+([A-Z]+-\d+)", re.M)
@@ -672,6 +678,8 @@ def scan_transcript(path, agg, agent_type="main", description=""):
                         agg["classifier_unavailable"].append((label, (t - t0).total_seconds() if t and t0 else None))
                     else:
                         agg["classifier_blocks"].append(label)
+                if LINEAR_RATELIMITED.search(body):
+                    agg["linear_ratelimited"] += 1
                 if name == "Bash" and t and agent_type == "main" and not r.get("isSidechain") \
                         and "fleet-headroom" in str(inp.get("command", "")):
                     for kind, src in HEADROOM_PROBE.findall(body) + HEADROOM_PROBE_LEGACY.findall(body):
@@ -802,7 +810,7 @@ def hold_gauge(agg, deadline):
 def new_agg():
     return {
         "first": None, "last": None, "tool_calls": 0, "wakeups": 0, "wakeup_stops": 0,
-        "loop_firings": 0, "human_prompts": 0, "terminal_tags": 0, "dangling": 0,
+        "loop_firings": 0, "human_prompts": 0, "terminal_tags": 0, "dangling": 0, "linear_ratelimited": 0,
         "dispatch": Counter(), "classifier_blocks": [], "classifier_unavailable": [], "gaps": [], "activity_times": [],
         "sleep_blind_s": 0.0, "sleep_blind_n": 0, "sleep_marker_s": 0.0, "sleep_marker_n": 0,
         "ship_tags": set(), "ship_outcomes": set(), "cancel_tags": set(), "subagents": 0,
@@ -2459,6 +2467,7 @@ def main():
                 "classifier_blocks": len(s["agg"]["classifier_blocks"]),
                 "classifier_unavailable": len(s["agg"]["classifier_unavailable"]),
                 "dangling_tool_calls": s["agg"]["dangling"],
+                "linear_ratelimited": s["agg"]["linear_ratelimited"],
                 "subagent_transcripts": s["agg"]["subagents"],
                 "named_dispatches": s["agg"]["named_dispatches"],
                 "drained_early_h": (early_drain.get(s["run_key"]) or {}).get("hours"),
@@ -2618,8 +2627,8 @@ def main():
                           else f"started {e['started']}") + ")" for e in excluded_stale) + "\n")
 
     print("## Per session\n")
-    print("| run | span | ctx>=200k | shipped (rec/obs) | canceled (rec/obs) | wakeups | dispatch bg/sync/ign | blind sleep | marker | cls denied/unavail | dangling | throttled | held |")
-    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    print("| run | span | ctx>=200k | shipped (rec/obs) | canceled (rec/obs) | wakeups | dispatch bg/sync/ign | blind sleep | marker | cls denied/unavail | dangling | linear rl | throttled | held |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     tot = Counter()
     for s in sessions:
         a = s["agg"]
@@ -2636,7 +2645,7 @@ def main():
         print(f"| `{s['run_key']}`{flag} | {span:.1f}h | {ctx_cell} | {rec}/{obs} | {crec}/{cobs} | "
               f"{a['wakeups']} ({a['wakeup_stops']} stop) | "
               f"{a['dispatch']['background']}/{a['dispatch']['sync']}/{a['dispatch']['ignored']} | {blind_pct} | "
-              f"{a['sleep_marker_s'] / 3600:.1f}h | {len(a['classifier_blocks'])}/{len(a['classifier_unavailable'])} | {a['dangling']} | "
+              f"{a['sleep_marker_s'] / 3600:.1f}h | {len(a['classifier_blocks'])}/{len(a['classifier_unavailable'])} | {a['dangling']} | {a['linear_ratelimited']} | "
               f"{throttle[s['run_key']]['parked_h']:.1f}h ({throttle[s['run_key']]['throttled']}/{throttle[s['run_key']]['probes']}) | "
               + (f"{holds[s['run_key']]['hours']:.1f}h ({holds[s['run_key']]['ticks']})" if holds[s["run_key"]]["ticks"] else "-")
               + " |")
@@ -2645,6 +2654,7 @@ def main():
         tot["marker"] += a["sleep_marker_s"]
         tot["cls"] += len(a["classifier_blocks"])
         tot["cls_unavail"] += len(a["classifier_unavailable"])
+        tot["lrl"] += a["linear_ratelimited"]
         tot["bg"] += a["dispatch"]["background"]
         tot["sync"] += a["dispatch"]["sync"]
         tot["ign"] += a["dispatch"]["ignored"]
@@ -2655,6 +2665,7 @@ def main():
           f"{blind_share} · marker polls "
           f"{tot['marker'] / 3600:.1f}h · dispatch {tot['bg']} background / {tot['sync']} sync{ign_note} · "
           f"{named} named dispatches · {tot['cls']} classifier denials / {tot['cls_unavail']} unavailable · "
+          f"{tot['lrl']} Linear RATELIMITED · "
           f"{sum(fleet_tokens.values()):,} output tokens · headroom-parked {throttle_parked_h:.1f}h"
           + (f" ({100 * headline['throttle_share']:.0f}% of fleet; {throttle_throttled}/{throttle_probes} probes THROTTLE; "
              f"source {', '.join(f'{k} x{n}' for k, n in throttle_sources.most_common())})"
@@ -3195,6 +3206,11 @@ def main():
             flagged = True
             print(f"- `{s['run_key']}` has {a['dangling']} tool call(s) with no result — an "
                   f"unanswered prompt or a killed turn.")
+        if a["linear_ratelimited"]:
+            flagged = True
+            print(f"- `{s['run_key']}` got {a['linear_ratelimited']} Linear RATELIMITED answer(s) — the account's per-user "
+                  f"request window ran out (2,500/hour on an API key, shared by every session on the machine). Count the "
+                  f"ranker runs in that hour across sessions, and check whether a pick re-ranked right after the error.")
         if a["classifier_blocks"]:
             flagged = True
             print(f"- `{s['run_key']}` hit {len(a['classifier_blocks'])} classifier block(s):")
