@@ -248,6 +248,26 @@ A tool whose only consumer is a Claude session belongs in `<project>/.claude/ski
 - All logic in `~/.claude/scripts/fleet-sequence.sh` (PR opening shared with the epic fleet in `scripts/integration-pr.sh`); `SKILL.md` dispatches and narrates
 - One marker and log per sequence, keyed by the lowercased first ID of the list that created it: `tmp/fleet-sequence-<slug>.json`, `tmp/fleet-sequence-<slug>.log`; each child session is named `fleet-sequence <ID>` in `claude agents`, the closing one `fleet-sequence pr-update`
 
+### epic-pr
+
+**Description**: Open the one PR for an epic's integration branch once a scoped fleet or a sequence has landed its members. Resolves the epic from the argument, the checked-out `epic/*` branch, the fleet marker or the prep recommendation, the branch and base from what `/epic-prep` and `/fleet-launch` recorded, and the roster from the live graph split by what is on the branch; pushes the branch, opens the PR with a roster body, then runs `/pr-update` on it by number.
+
+**When Invoked**:
+
+- User says "epic pr", "open the epic PR", "the fleet is done, open the PR", or "PR for BF-123"
+- The post-fleet step `/epic-prep` and `/fleet-launch` name — the replacement for typing `integration-pr.sh <branch> <base> <member IDs...>` by hand
+
+**Key Features**:
+
+- Asks only what it cannot resolve: the epic when no branch, marker or recommendation names one (or several `epic/*` branches exist), and the base when nothing recorded it and the checkout sits on the integration branch
+- The roster is every graph member except the root, nested epics and Canceled/Duplicate members, ordered by when each landed on the branch; members with no commit on the branch are reported as not landed and left out, so a partial PR after a deadline is explicit
+- Invoking it is the grant to push that one branch and open its PR; it never merges, never moves the checkout, and never writes to Linear
+
+**Structure**:
+
+- Resolution in `~/.claude/scripts/epic-pr.sh` (dry-run first, then the real run hands off to `scripts/integration-pr.sh`); `SKILL.md` dispatches, asks and narrates
+- Regression suite `~/.claude/scripts/epic-pr.test.sh` (run by hand: `bash ~/.claude/scripts/epic-pr.test.sh`)
+
 ### fleet-forecast
 
 **Description**: Estimate — explicitly not a plan — of what a fleet of parallel `/loop /auto` sessions would ship over a time horizon: simulates the certified backlog draining across N sessions as blockers resolve and unblock their dependents. Read-only; nothing is launched or written.
