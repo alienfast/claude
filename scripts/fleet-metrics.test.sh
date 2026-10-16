@@ -120,6 +120,7 @@ cat > "$TDIR/abc12345-0000.jsonl" <<'EOF'
 {"type":"user","timestamp":"2026-08-04T10:08:00Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_4","content":"ok"}]}}
 {"type":"assistant","timestamp":"2026-08-04T10:09:00Z","message":{"role":"assistant","id":"msg_C","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":250},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-1 done"},{"type":"tool_use","id":"toolu_5","name":"ScheduleWakeup","input":{"delaySeconds":1200,"reason":"idle"}}]}}
 {"type":"user","timestamp":"2026-08-04T10:09:01Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_5","content":"armed"}]}}
+{"type":"api-request-blob","hash":"blob1","sessionId":"abc12345-0000","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_5","name":"ScheduleWakeup","input":{"delaySeconds":1200,"reason":"idle"}},{"type":"tool_use","id":"toolu_8","name":"Bash","input":{"command":"echo replayed"}}]}}
 EOF
 
 # Subagent transcript + meta sidecar: tokens must land under developer/claude-sonnet-5.
@@ -195,6 +196,9 @@ q() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$
 ck "two sessions"       "2"        "$(q "len(d['sessions'])")"
 ck "loop firing"        "1"        "$(q "d['sessions'][0]['loop_firings']")"
 ck "wakeups"            "1"        "$(q "d['sessions'][0]['wakeups']")"
+# The api-request-blob row replays toolu_5 and adds a resultless toolu_8: neither is a call this session made,
+# so the wakeup count above stays 1 and the only dangling call is toolu_7 (live shape re-snapshotted 2026-10-16).
+ck "dangling ignores blob replays" "1" "$(q "d['sessions'][0]['dangling_tool_calls']")"
 # Ground-truth census: mode comes from the tool RESULT (async-launch line vs inline report), never
 # from the typed value — toolu_1 (async result) and dangling toolu_7 (typed-intent fallback) are the
 # 2 background; toolu_2's inline report is the 1 sync DESPITE also typing false; toolu_6 typed false

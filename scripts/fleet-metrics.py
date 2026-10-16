@@ -441,6 +441,12 @@ def scan_transcript(path, agg, agent_type="main", description=""):
     d_model, d_out, d_first_user = None, 0, None
     activity = ActivityTimes(agg["activity_times"])
     for r in rows:
+        # The harness now writes untimestamped `api-request-blob` rows that replay a request's messages,
+        # tool_use blocks included — copies with no result of their own and no usage. Counted, they read
+        # as live calls: on the 2026-10-15/16 fleet every session showed ~2,000 dangling calls (true count
+        # 0) and wakeups ran up to five high. Tokens were never affected.
+        if r.get("type") == "api-request-blob":
+            continue
         t = ts(r.get("timestamp"))
         if t:
             times.append(t)

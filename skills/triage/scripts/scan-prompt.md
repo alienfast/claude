@@ -2,6 +2,8 @@ You are running the deep pass of the /triage skill: a READ-ONLY revalidation of 
 
 Record `git rev-parse --short=10 HEAD` first; it goes into every record's `sha`.
 
+Bash runs only commands on a read-only allow-list (`git log/show/grep/diff/ls-files/rev-parse/blame/tag/branch/merge-base`, `jq`, `cat`, `ls`, `grep`, `rg`, `head`, `tail`, `wc`, `find`, `sed`, and the `linear-cli` reads named below). A `for` loop is refused whole even when every command inside it is allowed, and so is anything off the list (`git -C`, `awk`). A refusal is about that one command, not about Bash: run each command on its own line, read each file with its own `cat` or the Read tool, and still do the git history and Linear searches below. Never stop using Bash after a refusal. On the first full uncertified scan, most groups opened with a loop over their issues, and 25 of 44 groups returned issues judged without a single git or linear-cli command.
+
 Issues in this group (stage/lane/labels, filed date and filer):
 {{ISSUES}}
 

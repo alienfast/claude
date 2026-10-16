@@ -673,6 +673,15 @@ body_file=$(mktemp -u tmp/deferred-XXXXXX)   # -u = name only; Write creates it.
 #        a live security defect is both (e.g. "security,bug")
 #      - neither — coverage gaps, hardening, docs: real work, but it must not jump the
 #        queue disguised as a defect
+#    The parent's class is evidence the list above is not: when the issue resolved in Step 1
+#    carries `security` and the item's Problem is the same failure class — the same
+#    unauthenticated input reaching the same sink by another route — the item takes
+#    `security` too. Labels do not propagate through the create, and the child's own label
+#    is what sets its class_rank and its Planned-at-birth state in rule 2; a label added by
+#    hand later leaves the state where the create put it. Measured 2026-10-16: BF-2706, whose
+#    Problem names its `security` parent BF-2703 and grandparent BF-1811 as having closed the
+#    same class for two sibling routes, filed with `bug` alone into Backlog, and sits there
+#    with `security` added by the retro.
 #    ALSO append `simple` (standards/issue-spec.md § The `simple` label) when the item is
 #    Medium (priority 3 — a Critical/High finding's consequence is what the tier's risk test
 #    excludes), takes no `security` class label, is neither the needs-decision exception nor
