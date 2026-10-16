@@ -31,7 +31,7 @@ DEFAULT_MODEL="$HERE/../assets/model.json"
 
 # Labels the automation matches on by exact name (linear-for-stakeholders.md § Do not rename or delete; linear-workflow.md
 # for `epic`). Flagged `required` in the model so a check report separates load-bearing gaps from cosmetic ones.
-REQUIRED_LABELS=("specified" "needs decision" "human" "solo" "simple" "epic" "reflection" "stalled" "security" "bug" "keeper")
+REQUIRED_LABELS=("specified" "needs decision" "human" "solo" "deploy-gated" "simple" "epic" "reflection" "stalled" "security" "bug" "keeper")
 # States the skills write by literal name (Planned, Ready for Release) or key ranking on (the rest).
 REQUIRED_STATES=("Triage" "Backlog" "Planned" "In Progress" "Ready for Release" "Done" "Canceled" "Duplicate")
 # Shared display preferences carried per view. Only the portable keys: the id-bearing ones (issueGroupingLabelGroupId,

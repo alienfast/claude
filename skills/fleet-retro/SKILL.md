@@ -427,9 +427,11 @@ every ship (during-run / week-before / older) instead of reporting them unknown.
   issues shipped** for the window (the script's filed-per-shipped rate covers only review-pipeline
   filings; this census is the full number). **The pool is the workable backlog only — `Planned`,
   `Backlog`, `Triage`, plus in-flight — and `Ready for Release` counts as done in every metric
-  here.** Deployment cadence is a separate axis; RFR is an unstarted-*type* state in Linear, so a
-  naive state-type census sweeps shipped-awaiting-deploy work into "open" and overstates the pool
-  (the 2026-08-04 census misread it by 220 issues before this rule existed). Track R across retros — it is the convergence gauge:
+  here.** Deployment cadence is a separate axis, and the rule holds whatever Linear type the state
+  carries — a naive state-type census once swept shipped-awaiting-deploy work into "open" and overstated
+  the pool by 220 issues (2026-08-04); BF's RFR reads as type `completed` today (measured 2026-10-16),
+  which is why the deps fetch drops its nodes and `deploy-gated` dependents need `inverseRelations`
+  (`scripts/linear-deps-graph.sh`). Track R across retros — it is the convergence gauge:
   below 1 the backlog drains and the drain rate says when it empties; at or above 1 no amount of
   fleet capacity catches up, and the lever is filing policy or defect prevention, not more sessions.
   Read it with the severity mix of what was filed: an R near 1 made of Medium deferrals is the

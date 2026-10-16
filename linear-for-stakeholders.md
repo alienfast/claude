@@ -14,7 +14,7 @@ Linear is not a status report the agents write to — it is the **control plane*
 - **Ranking is mechanical**, computed fresh on every pick from labels, workflow state, priority, and issue relations. Prose in a description or a comment never affects *when* something is worked — only *what* gets built once it is picked.
 - **Your levers, strongest first:** `Urgent` priority → `Planned` vs `Backlog` → `security`/`bug` labels → `High` priority. Planned work is drained before Backlog work, so stage is the main thing deciding when something happens (see [the tiebreaks](#the-tiebreaks--this-is-the-real-ranking)).
 - **To see a human-readable board**, filter the label `specified` and invert the filter to *does not include*. The technical work the agents generate for themselves disappears and your product backlog is left.
-- **Do not rename or delete these labels:** `specified`, `needs decision`, `human`, `solo`, `simple`, `reflection`, `keeper`, `security`, `bug`, `stalled`. They are load-bearing — the automation matches on the exact names.
+- **Do not rename or delete these labels:** `specified`, `needs decision`, `human`, `solo`, `deploy-gated`, `simple`, `reflection`, `keeper`, `security`, `bug`, `stalled`. They are load-bearing — the automation matches on the exact names.
 
 ## What the agents actually read
 
@@ -22,7 +22,7 @@ An autonomous session ranks the whole workable backlog before every issue it pic
 
 | Signal | Where it lives | Effect |
 | ------ | -------------- | ------ |
-| Labels | Issue labels | Gate pickup (`specified`), hide from pickup (`needs decision`, `human`, `solo`), boost (`reflection`, `security`, `bug`) |
+| Labels | Issue labels | Gate pickup (`specified`), hide from pickup (`needs decision`, `human`, `solo`, `deploy-gated` until its release is live), boost (`reflection`, `security`, `bug`) |
 | Workflow state | Issue status | Planned and Backlog are both workable — but Planned is drained first. Triage and all terminal states are excluded |
 | Priority | Issue priority | `Urgent` jumps the queue outright; the rest order work within a stage |
 | Relations | Blocks / blocked by / parent | A blocked issue is hidden until its blocker reaches Ready for Release or Done |
@@ -101,6 +101,7 @@ Please don't inflate priorities. `Urgent` works precisely because it is rare; a 
 | `needs decision` | A human must decide something before this can ship. Keeps `specified` (the spec is gated, not wrong) and is hidden from every ranking. Always paired with a comment naming the decision |
 | `human` | Work only a person can do — outreach, account remediation, sign-offs, briefings. Stays on the board with full tracking but is permanently invisible to agents, in every mode; no pending decision will ever hand it back to one. Filter on it to see your team's own to-do list |
 | `solo` | Certified and shippable unattended, but not *concurrently* — a broad sweep that would collide with everything else in flight. Run alone, when no fleet is active |
+| `deploy-gated` | Shippable unattended, but only once the issue it waits on is *live in production*, not merely merged — the contract half of a migration, a cleanup that must not ride the release it cleans up after. Hidden until every blocker reaches the project's deployed state (`Done` here); then it is an ordinary pick and the label is inert |
 | `simple` | This change is low-risk enough for a lighter review — one scoped pass instead of full adversarial discovery. It changes nothing about *when* an issue is picked up, only how much review its code gets, and any real finding escalates it back to the full review automatically. Orthogonal to `solo`: that one is about when an issue may run, this one about how much review it needs |
 | `reflection` | A meta-issue about the toolkit's own rules or skills, filed from session friction. Ranked top tier because it prevents repeated friction and wasted tokens in every future session |
 | `keeper` | Only valid alongside `reflection`. Marks an improvement to the *shared, cross-project* configuration, which only its keeper can ship. Filed uncertified on purpose and hidden on every other machine — it waits for the keeper to pick up by hand |

@@ -24,7 +24,7 @@ Auth: `linear-cli auth oauth` (browser) or `LINEAR_API_KEY`; check with `linear-
 
    ```bash
    ~/.claude/scripts/linear-deps-graph.sh PL-13        # local graph (issue + neighbors)
-   ~/.claude/scripts/linear-deps-graph.sh --team PL    # whole-team graph (active issues)
+   ~/.claude/scripts/linear-deps-graph.sh --team PL    # whole-team graph (active issues + the partners their edges name, in any state)
    ```
 
    Per-issue relations also exist directly: `linear-cli relations list <ID>`.

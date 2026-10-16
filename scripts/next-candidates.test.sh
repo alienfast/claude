@@ -172,9 +172,10 @@ gnode TT-21 Planned unstarted '[]' null '[]' '[]' '[{"type":"blocks","issue":{"i
 gnode TT-5  Planned unstarted '[]' null '[]' '[]' '[]'
 
 # linear-cli shim: `api query` dispatches on the query text (its last argument) — the graph walk's
-# query is the only one carrying `inverseRelations`, and it is matched FIRST because it also carries
-# `relatedIssue` like the deps page; the terminal-ancestor fetch's `query ancestor` reads the same
-# node files; the parent walk's `issues get` no-ops (empty output is a tolerated skip in the walk).
+# single-issue query is the one carrying `issue(id:`, and it is matched FIRST because it also carries
+# `relatedIssue` like the deps page (since 2026-10-16 the team deps page carries `inverseRelations`
+# too, so that token no longer discriminates); the terminal-ancestor fetch's `query ancestor` reads
+# the same node files; the parent walk's `issues get` no-ops (empty output is a tolerated skip).
 cat > "$WORK/bin/linear-cli" <<EOF
 #!/bin/bash
 FIX="$FIX"
@@ -186,7 +187,7 @@ case "\$q" in
     id=""; for a in "\$@"; do case "\$a" in id=*) id="\${a#id=}" ;; esac; done
     if [ -f "\$FIX/node-\$id.json" ]; then cat "\$FIX/node-\$id.json"
     else printf '%s' '{"code":2,"details":[{"message":"Entity not found: Issue"}],"error":true}'; exit 2; fi ;;
-  *inverseRelations*)
+  *"issue(id:"*)
     id=""; for a in "\$@"; do case "\$a" in id=*) id="\${a#id=}" ;; esac; done
     if [ -f "\$FIX/node-\$id.json" ]; then cat "\$FIX/node-\$id.json"
     else printf '%s' '{"code":2,"details":[{"message":"Entity not found: Issue"}],"error":true}'; exit 2; fi ;;
@@ -605,6 +606,51 @@ cp "$FIX/issues-age.json" "$FIX/issues-page.json"; cp "$FIX/deps-age.json" "$FIX
 OUTA="$WORK/outa.md"
 run "$OUTA" --limit 20 || { echo "FAIL: age run exited $?"; cat "$OUTA.err"; exit 1; }
 ck "age breaks the tie, oldest first" "TT-63 TT-60 TT-61 TT-62 TT-64" "$(order_of "$OUTA")"
+
+# ---- deploy-gated (2026-10-16): a Planned issue waiting on a RELEASE hides until its blockers reach the project's
+# ---- $LINEAR_DEPLOYED_STATES, so the column reads as held for the keeper and --backlog-fallback opens; with the
+# ---- variable unset it fails closed naming the variable; once the blocker is deployed it is an ordinary pick.
+cat > "$FIX/issues-deploy.json" <<'EOF'
+{"data":{"issues":{"nodes":[
+ {"identifier":"TT-70","title":"after the release","estimate":null,"priority":2,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[{"name":"specified"},{"name":"deploy-gated"}]},"parent":null},
+ {"identifier":"TT-72","title":"backlog work","estimate":null,"priority":3,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[{"name":"specified"}]},"parent":null}
+],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
+EOF
+# The deps page carries the edge the LIVE way (re-snapshotted 2026-10-16): the blocker TT-71 is Ready for Release, a
+# `completed`-type state in BF, so the team fetch never returns its node — the edge reaches the graph only through
+# TT-70's own inverseRelations, with the blocker's state riding on it. Before the deps graph read those, an edge from a
+# shipped blocker vanished the moment the blocker completed, which is exactly the edge a deploy-gated issue waits on.
+cat > "$FIX/deps-deploy.json" <<'EOF'
+{"data":{"issues":{"nodes":[
+ {"identifier":"TT-70","title":"after the release","state":{"name":"Planned","type":"unstarted"},"relations":{"nodes":[]},"inverseRelations":{"nodes":[{"type":"blocks","issue":{"identifier":"TT-71","title":"merged, awaiting deploy","state":{"name":"Ready for Release","type":"completed"}}}]}}
+],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
+EOF
+cp "$FIX/issues-deploy.json" "$FIX/issues-page.json"; cp "$FIX/deps-deploy.json" "$FIX/deps-page.json"
+OUTD="$WORK/outd.md"
+# export/unset rather than an inline `VAR=x run …`: bash leaves a function call's temporary assignment in the
+# environment of later commands (measured here — the unset run below saw Done), so the inline form cannot test unset.
+export LINEAR_DEPLOYED_STATES="Done"
+run "$OUTD" --limit 20 --label specified --backlog-fallback || { echo "FAIL: deploy-gated run exited $?"; cat "$OUTD.err"; exit 1; }
+ck "deploy-gated issue is withheld; the fallback opens" "TT-72" "$(order_of "$OUTD")"
+ck_has  "deploy-gated hold names the release" "1 need the keeper — TT-70 [deploy-gated — waits on TT-71 reaching Done]" "$OUTD"
+ck_has  "deploy-gated hidden note" "1 issue(s) hidden as deploy-gated (\`deploy-gated\` label — waiting on a release to reach Done)" "$OUTD"
+unset LINEAR_DEPLOYED_STATES
+run "$OUTD" --limit 20 --label specified --backlog-fallback || { echo "FAIL: deploy-gated unset run exited $?"; cat "$OUTD.err"; exit 1; }
+ck "unset deployed states still withhold it" "TT-72" "$(order_of "$OUTD")"
+ck_has  "unset deployed states fail closed with the reason" "TT-70 [deploy-gated — LINEAR_DEPLOYED_STATES is unset for this project; clear the label by hand once its release is live]" "$OUTD"
+export LINEAR_DEPLOYED_STATES="Done"
+jq '.data.issues.nodes |= map(.inverseRelations.nodes = [])' "$FIX/deps-deploy.json" > "$FIX/deps-page.json"
+run "$OUTD" --limit 20 --label specified --backlog-fallback || { echo "FAIL: edgeless deploy-gated run exited $?"; cat "$OUTD.err"; exit 1; }
+ck_has  "no blocks edge fails closed" "TT-70 [deploy-gated — no blocks edge names the release; add one or clear the label]" "$OUTD"
+jq '.data.issues.nodes[0].inverseRelations.nodes[0].issue.state.name = "Done"' "$FIX/deps-deploy.json" > "$FIX/deps-page.json"
+run "$OUTD" --limit 20 --label specified --backlog-fallback || { echo "FAIL: deployed run exited $?"; cat "$OUTD.err"; exit 1; }
+ck "a deployed blocker makes it an ordinary Planned pick" "TT-70" "$(order_of "$OUTD")"
+ck_lacks "no deploy note once deployed" "hidden as deploy-gated" "$OUTD"
+cp "$FIX/deps-deploy.json" "$FIX/deps-page.json"
+run "$OUTD" --limit 20 --label deploy-gated || { echo "FAIL: deploy-gated listing exited $?"; cat "$OUTD.err"; exit 1; }
+ck "the label listing shows the held issue" "TT-70" "$(order_of "$OUTD")"
+ck_lacks "the label listing is gate-exempt" "PLANNED-HOLD" "$OUTD"
+unset LINEAR_DEPLOYED_STATES
 cp "$FIX/issues-main.json" "$FIX/issues-page.json"; cp "$FIX/deps-main.json" "$FIX/deps-page.json"
 
 echo

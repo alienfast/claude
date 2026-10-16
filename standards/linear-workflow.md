@@ -44,11 +44,13 @@ When evaluating whether an issue's blockers are resolved (for triage, dependency
 
 **Ready For Release** and **In Review** mean the work is finished from an implementation perspective. Downstream issues that depend on it can begin — they are unblocked. The remaining steps (review, PR merge, automated deployment) are operational concerns, not implementation dependencies. A review kick-back moves the issue out of In Review, which reinstates its blocks automatically.
 
+**The one exception is a dependency on the release itself, carried by the `deploy-gated` label** ([issue-spec.md](issue-spec.md) § The `deploy-gated` label). Ready For Release says the code is on the branch a fleet forks from, which is all a code prerequisite needs. An issue that may only ship once its blocker is *live in production* — the contract half of an expand/contract migration, a cleanup that must not ride the release it cleans up after, a measurement of what `main` does once a change reaches it — waits instead until every blocker reaches one of the project's **deployed states**, declared per project in `$LINEAR_DEPLOYED_STATES` (basefund exports `Done` from `.claude/settings.json`, because its CI sweeps Ready for Release to Done only after `deploy_production` succeeds). What Done means is a project fact, not a workspace one, so a project that declares nothing holds such issues for the keeper rather than guessing.
+
 **In Review must be matched by NAME, not state type.** Linear registers every team's In Review state as type `started`, and the API cannot change a state's type after creation (`WorkflowStateUpdateInput` carries only name/color/description/position — verified by introspection 2026-08-21), so a type-based terminal filter reads In Review as in-flight and silently holds its dependents out of every ranking.
 
 ## Implication for Skills
 
-Any skill that checks whether blockers are resolved (triage, next) should treat "Ready For Release" and "In Review" identically to "Done" when determining if an issue is workable.
+Any skill that checks whether blockers are resolved (triage, next) should treat "Ready For Release" and "In Review" identically to "Done" when determining if an issue is workable — except for a `deploy-gated` dependent, whose blockers resolve only at the project's declared deployed states.
 
 ## Assignment Is a Claim
 
@@ -89,12 +91,13 @@ Parent linkage does not make the parent an epic. The workspace `epic` label mark
 
 ## Every Agent Filing Takes the Filing Recipe
 
-Any issue an agent files on its own initiative — a deferred review item, a `/finish` promise, a record a project convention asks for ("file the flake you re-ran past"), an ad-hoc follow-up noticed on the way out — goes through `/quality-review` Step 6 sub-step 6's recipe, whether or not that skill is what prompted it. The recipe is the only place the four obligations live together, and a filing made outside it routinely drops all four at once:
+Any issue an agent files on its own initiative — a deferred review item, a `/finish` promise, a record a project convention asks for ("file the flake you re-ran past"), an ad-hoc follow-up noticed on the way out — goes through `/quality-review` Step 6 sub-step 6's recipe, whether or not that skill is what prompted it. The recipe is the only place the five obligations live together, and a filing made outside it routinely drops all five at once:
 
 - **Search before filing** — one distinctive token per call, and on a same-defect hit append the evidence instead of creating.
 - **`linear-create-child.sh`**, never a raw create, under the parent rule above.
 - **Class labels and a priority** at create.
 - **A routing label before the filing is done** — `specified` by default, `needs decision` or `human` when a person genuinely gates it. An issue with no routing label is read by nothing ([issue-spec.md](issue-spec.md) § An agent filing never lands unrouted).
+- **`deploy-gated` when the criteria wait on a release, not a merge** — a body that says "once X is live in production" or "once X's merge is on `origin/main`" has written a gate the ranker cannot read: a `blocks` edge from a Ready For Release blocker resolves (§ Terminal States), so the filing ranks first and every session holds on it *after* ranking (2026-10-15/16: two review filings, 4.1 session-hours — [issue-spec.md](issue-spec.md) § The `deploy-gated` label). Pass `deploy-gated` in the create's label arg with the class labels, and make sure a `blocks` edge runs from the issue whose deploy it waits on — for a review filing that is usually the parent, whose edge the recipe wires anyway.
 
 A one-line project convention that says *file it* names the trigger, never the procedure: it does not license a bare create, a `-` label slot, or a body whose own criteria leave a question open.
 

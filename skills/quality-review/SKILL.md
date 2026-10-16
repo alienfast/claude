@@ -692,6 +692,19 @@ body_file=$(mktemp -u tmp/deferred-XXXXXX)   # -u = name only; Write creates it.
 #    run). The mechanical bound is deliberately stricter than the label's own reviewability
 #    ceiling: an unattended producer labels conservatively and /auto-prep's interactive
 #    audit widens. Doubt → no label.
+#    ALSO append `deploy-gated` (standards/issue-spec.md § The `deploy-gated` label) when the
+#    body's own criteria wait on a RELEASE rather than a merge — "once <ID> is live in
+#    production", "once <ID>'s merge is on origin/main", the contract half of an expand/contract
+#    migration, a cleanup that must not ride the release it cleans up after. next-candidates.sh
+#    resolves a `blocks` edge at Ready For Release (the code is on the branch a fleet forks
+#    from), so without the label the item ranks FIRST the moment `specified` lands and every
+#    session holds on it after ranking; with it, the ranker withholds the item until every
+#    blocker reaches the project's $LINEAR_DEPLOYED_STATES. A gate label, not a routing one —
+#    `specified` still goes on last — and it goes IN the create like `needs decision`, so the
+#    gate exists before the item is pickable. The edge it reads is the parent→child `blocks`
+#    wired below when the parent is the release it waits on; otherwise wire `blocks` from that
+#    issue too. Measured 2026-10-15/16: BF-2698 and BF-2697 filed through this recipe with the
+#    sentence in prose and no label — #1 and #2 all night, five sessions holding, 4.1 session-hours.
 # 4. Priority arg — REQUIRED: map the finding's severity to the Linear priority field
 #    (Critical → 1, High → 2, Medium → 3). A severity rendered only in the title tag or
 #    body prose is invisible

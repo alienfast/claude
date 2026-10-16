@@ -10,7 +10,7 @@
 #
 # Usage:
 #   linear-deps-graph.sh <ISSUE-ID>      # local graph: the issue + its neighbors
-#   linear-deps-graph.sh --team <KEY>    # whole-team graph (active issues, capped 250)
+#   linear-deps-graph.sh --team <KEY>    # whole-team graph: every active issue, paginated, plus any partner an edge names (whatever its state)
 #
 # Edge direction: an edge {from, to, type:"blocks"} means `from` blocks `to`. So the
 # blockers of X are edges with to==X; the issues X blocks are edges with from==X —
@@ -43,11 +43,15 @@ if [ -z "$target" ]; then
 fi
 
 if [ "$mode" = "team" ]; then
-  # All active (non-terminal) issues for the team, each with the relations it is the
-  # source of. Iterating every issue captures every "blocks" edge from its source, so
-  # inverseRelations are unnecessary here. PAGINATE through every page — a silent cap
-  # would drop blocker edges and let /next recommend a still-blocked issue.
-  page_q='query($team:String!,$after:String){issues(filter:{team:{key:{eq:$team}}, state:{type:{nin:["completed","canceled"]}}}, first:250, after:$after){nodes{identifier title state{name type} relations{nodes{type relatedIssue{identifier}}}} pageInfo{hasNextPage endCursor}}}'
+  # Every active (non-terminal) issue for the team, with the relations it is the source of AND the
+  # inverse relations it is the target of, each partner carried with its state. The inverse side is
+  # load-bearing: a `blocks` edge is stored on the blocker, and once the blocker reaches a
+  # completed-type state (BF's Ready for Release is one) this filter drops its node and the edge with
+  # it — invisible while a completed blocker also counts as resolved, but a deploy-gated dependent
+  # waits on exactly that edge (next-candidates.sh; measured 2026-10-16 on BF-2698, whose two blocks
+  # edges read as none). PAGINATE through every page — a silent cap would drop blocker edges and let
+  # /next recommend a still-blocked issue.
+  page_q='query($team:String!,$after:String){issues(filter:{team:{key:{eq:$team}}, state:{type:{nin:["completed","canceled"]}}}, first:250, after:$after){nodes{identifier title state{name type} relations{nodes{type relatedIssue{identifier title state{name type}}}} inverseRelations{nodes{type issue{identifier title state{name type}}}}} pageInfo{hasNextPage endCursor}}}'
   all_nodes='[]'
   after=''
   while :; do
@@ -68,9 +72,14 @@ if [ "$mode" = "team" ]; then
     after=$(printf '%s' "$out" | jq -r '.data.issues.pageInfo.endCursor // empty')
     { [ "$has" = "true" ] && [ -n "$after" ]; } || break
   done
+  # Fetched nodes come first, so unique_by keeps an issue's own state over a partner-embedded copy; an
+  # edge visible from both ends (both nodes fetched) is one edge, which `unique` collapses.
   printf '%s' "$all_nodes" | jq '{
-    nodes: [.[] | {identifier, title, state}],
-    edges: [.[] as $i | ($i.relations.nodes // [])[] | select(.relatedIssue != null) | {from: $i.identifier, to: .relatedIssue.identifier, type: .type}]
+    nodes: ([.[] | {identifier, title, state}]
+      + [.[] | (.relations.nodes // [])[] | .relatedIssue | select(. != null) | {identifier, title, state}]
+      + [.[] | (.inverseRelations.nodes // [])[] | .issue | select(. != null) | {identifier, title, state}]) | unique_by(.identifier),
+    edges: ([.[] as $i | ($i.relations.nodes // [])[] | select(.relatedIssue != null) | {from: $i.identifier, to: .relatedIssue.identifier, type: .type}]
+      + [.[] as $i | ($i.inverseRelations.nodes // [])[] | select(.issue != null) | {from: .issue.identifier, to: $i.identifier, type: .type}]) | unique
   }'
 else
   # Local graph: the issue plus its direct neighbors in both relation directions.

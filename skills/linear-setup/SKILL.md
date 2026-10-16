@@ -7,7 +7,7 @@ description: Bring a Linear team's issue statuses, issue labels, and saved views
 
 The Linear board is the control plane the skills read from, and they match on **exact names**: `/spec`, `/start`, and
 `/auto` write the states `Planned` and `Ready for Release`; `next-candidates.sh` gates on `specified`, hides
-`needs decision` / `human` / `solo` / `keeper`, and boosts `security` / `bug`; the saved views are how a stakeholder sees
+`needs decision` / `human` / `solo` / `keeper` / `deploy-gated`, and boosts `security` / `bug`; the saved views are how a stakeholder sees
 the board without the fleet's own technical issues. A team missing any of it fails quietly. This skill makes a team match
 the model in one converging pass instead of a hand-edited checklist.
 

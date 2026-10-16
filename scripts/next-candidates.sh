@@ -115,6 +115,17 @@
 # itself is human-performed (standards/issue-spec.md), so unlike `solo` there is no
 # targeted-mode carve-out: /auto refuses a human-labeled target in any mode.
 #
+# `deploy-gated`-labeled issues wait on a RELEASE, not a merge, and are hidden until every `blocks`
+# blocker reaches one of the project's deployed states — $LINEAR_DEPLOYED_STATES, a comma list the
+# project exports (basefund: `Done` in .claude/settings.json, because its CI sweeps Ready for Release
+# to Done only after deploy_production). TERMINAL_STATES still resolves every other edge: Ready for
+# Release means the code is on the branch a fleet forks from, which is all a code prerequisite needs,
+# and holding chains until a human deploys would freeze every chain after its first link. Fail
+# closed: with the variable unset, or with no blocks edge naming the release, the issue is held for
+# the keeper and the hold note says which. Surfaced via --label deploy-gated. Measured 2026-10-15/16:
+# two such filings ranked #1 and #2 all night on Ready for Release blockers that read as resolved,
+# every session held on them AFTER ranking, and the Backlog fallback never opened — 4.1 session-hours.
+#
 # Issues a running /fleet-sequence holds — every queue member of a `running` marker under a live
 # runner pid in this checkout's tmp/fleet-sequence-<slug>.json (the main checkout's, from any
 # worktree) — are hidden from every ranking: the sequence dispatches each in turn, so a fleet
@@ -476,6 +487,11 @@ me_email=$(linear-cli api query -q -o json 'query{viewer{email}}' 2>/dev/null | 
 # It sits here by NAME because Linear registers the state as type `started` and a state's type
 # cannot be changed after creation (WorkflowStateUpdateInput carries no `type` field).
 TERMINAL_STATES='["Done","Canceled","Cancelled","Duplicate","Ready For Release","In Review"]'
+# Deployed states — the project's own definition of "live in production", read ONLY for `deploy-gated`
+# issues (header). Per project because what Ready for Release means differs: basefund's CI moves it to Done
+# after deploy_production, so Done is deployed there; elsewhere Done may mean merged. Empty when unset,
+# which holds every deploy-gated issue for the keeper.
+DEPLOYED_STATES=$(printf '%s\n' "${LINEAR_DEPLOYED_STATES:-}" | jq -Rc 'split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != ""))' 2>/dev/null || echo '[]')
 # Triage (Linear's `type: "triage"` state) is deliberately NOT workable: it's the unreviewed-inbox
 # bucket, so an issue there hasn't been accepted for work yet and must never be surfaced as "next".
 # (Parent epics can still be in Triage — the parent-weight scale below keeps handling that; this
@@ -599,6 +615,7 @@ seq_held_desc="${seq_held_desc#; }"
 eligible_json=$(jq \
   --argjson workable "$WORKABLE_STATES" \
   --argjson terminal "$TERMINAL_STATES" \
+  --argjson deployed "$DEPLOYED_STATES" \
   --slurpfile sm_doc "$state_map_file" \
   --slurpfile bm_doc "$blocker_map_file" \
   --slurpfile rbm_doc "$reverse_blocker_map_file" \
@@ -644,6 +661,12 @@ eligible_json=$(jq \
       elif p == 4 then 4
       else 5 end;
     def is_terminal($x): ((($terminal | map(ascii_downcase)) | index((($sm[$x] // "Unknown") | ascii_downcase))) != null);
+    def is_deployed($x): ((($deployed | map(ascii_downcase)) | index((($sm[$x] // "Unknown") | ascii_downcase))) != null);
+    # deploy-gated (header): held while the project declares no deployed states, while no blocks edge
+    # names the release, or while any blocker is short of a deployed state.
+    def deploy_held($i): (any(($i.labels // [])[]; ascii_downcase == "deploy-gated")
+      and ((($deployed | length) == 0) or ((($bm[$i.identifier] // []) | length) == 0)
+           or any(($bm[$i.identifier] // [])[]; is_deployed(.) | not)));
     def is_unstarted_id($x): (($stage[$x].t == "unstarted") or ((($stage[$x].s // "") | ascii_downcase) | IN("planned", "todo")));
     # Everything reachable DOWN the blocks graph from the frontier through non-terminal issues —
     # the work those issues gate. A terminal node neither counts nor propagates: a chain through
@@ -696,6 +719,10 @@ eligible_json=$(jq \
       # NOT to a solo listing — that one is a running order for targeted /auto, and a
       # human-labeled issue must never appear runnable there.
       | select((($label | ascii_downcase) | . == "human" or . == "needs decision") or (all(($i.labels // [])[]; ascii_downcase != "human")))
+      # deploy-gated gate: waits on a release, not a merge — hidden until every blocker is deployed
+      # (deploy_held above), listed by --label deploy-gated. Yields to a needs-decision listing too,
+      # since an issue can carry both.
+      | select((($label | ascii_downcase) | . == "deploy-gated" or . == "needs decision") or (deploy_held($i) | not))
       # epic gate: a delegated container — its children carry the work — so it is never a pick
       # (fleet-blockers.sh / fleet-forecast.py agree); the delegated de-rank below still covers
       # an unlabeled parent. Listed only by --label epic.
@@ -781,7 +808,8 @@ candidates_json=$(printf '%s' "$eligible_json" | jq --arg blocked "$include_bloc
 label_lc=$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')
 gate_on=0
 if [ "$stage_gate" -eq 1 ] && [ "$include_blocked" -eq 0 ] && [ "$include_triage" -eq 0 ] \
-   && [ "$label_lc" != "solo" ] && [ "$label_lc" != "needs decision" ] && [ "$label_lc" != "human" ]; then
+   && [ "$label_lc" != "solo" ] && [ "$label_lc" != "needs decision" ] && [ "$label_lc" != "human" ] \
+   && [ "$label_lc" != "deploy-gated" ]; then
   gate_on=1
 fi
 gate_closed=0
@@ -795,17 +823,27 @@ eligible_map_file="$tmpdir/eligible_map.json"
 printf '%s' "$eligible_json" | jq -c 'map({key: .id, value: .unresolved_count}) | from_entries' > "$eligible_map_file"
 # jq defs shared by both classifiers, spliced into their single-quoted programs — so no apostrophe may
 # appear in here. Names the caller binds first: $sm state map, $bm blocker map, $el eligible map, $m the
-# fetched list by identifier, $terminal, $me, $label, $iskeeper.
+# fetched list by identifier, $terminal, $deployed, $me, $label, $iskeeper.
 CHAIN_DEFS='def is_terminal($x): ((($terminal | map(ascii_downcase)) | index((($sm[$x] // "Unknown") | ascii_downcase))) != null);
+      def is_deployed($x): ((($deployed | map(ascii_downcase)) | index((($sm[$x] // "Unknown") | ascii_downcase))) != null);
       def claimed_other($i): ((($i.assignee // "") != "") and (($me == "") or ($i.assignee != $me)));
       def unstarted($i): (($i.state_type == "unstarted") or ((($i.state // "") | ascii_downcase) | IN("planned", "todo")));
       def lbl($i; $n): (any(($i.labels // [])[]; ascii_downcase == $n));
+      # deploy-gated (header): the release the issue waits on, as a keeper reason — empty once every blocker is deployed.
+      def deploy_reason($i):
+        if (lbl($i; "deploy-gated") | not) then ""
+        elif ($deployed | length) == 0 then "deploy-gated — LINEAR_DEPLOYED_STATES is unset for this project; clear the label by hand once its release is live"
+        elif (($bm[$i.identifier] // []) | length) == 0 then "deploy-gated — no blocks edge names the release; add one or clear the label"
+        else (($bm[$i.identifier] // []) | map(select(is_deployed(.) | not))) as $w
+          | if ($w | length) == 0 then "" else "deploy-gated — waits on \($w | join(", ")) reaching \($deployed | join("/"))" end
+        end;
       # Why a held issue is the keeper to move — empty when the fleet could pick it (now or once unblocked).
       def self_reason($i):
         if lbl($i; "epic") then "epic — certify per child; it closes itself when they release"
         elif lbl($i; "needs decision") then "needs decision"
         elif lbl($i; "human") then "human"
         elif lbl($i; "solo") then "solo"
+        elif (deploy_reason($i) != "") then deploy_reason($i)
         elif (($iskeeper != "true") and lbl($i; "keeper")) then "keeper-gated"
         elif (($seqheld | index($i.identifier)) != null) then ""
         elif ($el[$i.identifier] == null) then (if ($label != "") then "lacks label \($label)" else "filtered out" end)
@@ -835,6 +873,7 @@ if [ "$gate_on" -eq 1 ]; then
   printf '%s' "$candidates_json" | jq -c 'map(.id)' > "$pickable_file"
   held_json=$(jq -c \
     --argjson terminal "$TERMINAL_STATES" \
+    --argjson deployed "$DEPLOYED_STATES" \
     --slurpfile sm_doc "$state_map_file" \
     --slurpfile bm_doc "$blocker_map_file" \
     --slurpfile el_doc "$eligible_map_file" \
@@ -975,6 +1014,23 @@ solo_note() {
   return 0
 }
 
+# Same visibility contract for the deploy gate (header): counted by the same test eligible_json hides on, so
+# a deploy-gated issue whose blockers are all deployed — an ordinary pick — is not counted as hidden.
+deploy_hidden=0
+if [ "$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')" != "deploy-gated" ]; then
+  deploy_hidden=$(jq --argjson deployed "$DEPLOYED_STATES" --slurpfile sm_doc "$state_map_file" --slurpfile bm_doc "$blocker_map_file" '
+    ($sm_doc[0]) as $sm | ($bm_doc[0]) as $bm
+    | def is_deployed($x): ((($deployed | map(ascii_downcase)) | index((($sm[$x] // "Unknown") | ascii_downcase))) != null);
+      [ .[] | select(any((.labels // [])[]; ascii_downcase == "deploy-gated"))
+            | select((($deployed | length) == 0) or ((($bm[.identifier] // []) | length) == 0)
+                     or any(($bm[.identifier] // [])[]; is_deployed(.) | not)) ] | length' "$list_file" 2>/dev/null || echo 0)
+fi
+deployed_desc=$(printf '%s' "$DEPLOYED_STATES" | jq -r 'if length == 0 then "a deployed state — LINEAR_DEPLOYED_STATES is unset for this project" else join("/") end' 2>/dev/null || echo "a deployed state")
+deploy_note() {
+  [ "$deploy_hidden" -gt 0 ] && printf '\n_%s issue(s) hidden as deploy-gated (`deploy-gated` label — waiting on a release to reach %s) — list with --label deploy-gated._\n' "$deploy_hidden" "$deployed_desc"
+  return 0
+}
+
 # Same visibility contract for sequence-held issues (header); counted from the fetched list so an epic scope
 # counts members only, and a shipped queue member is terminal and already absent from it.
 seq_hidden=$(jq --argjson h "$seq_held_json" '[.[] | select(.identifier as $i | ($h | index($i)) != null)] | length' "$list_file" 2>/dev/null || echo 0)
@@ -1035,6 +1091,7 @@ blocked_line=""
 if [ "$include_blocked" -eq 0 ] && [ "$gate_closed" -eq 0 ]; then
   blocked_json=$(jq -c \
     --argjson terminal "$TERMINAL_STATES" \
+    --argjson deployed "$DEPLOYED_STATES" \
     --slurpfile sm_doc "$state_map_file" \
     --slurpfile bm_doc "$blocker_map_file" \
     --slurpfile el_doc "$eligible_map_file" \
@@ -1095,6 +1152,7 @@ if [ "$candidate_count" -eq 0 ]; then
   nd_note
   claimed_note
   solo_note
+  deploy_note
   human_note
   epic_note
   seq_note
@@ -1351,6 +1409,7 @@ keeper_note
 nd_note
 claimed_note
 solo_note
+deploy_note
 human_note
 epic_note
 seq_note

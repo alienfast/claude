@@ -213,6 +213,14 @@
       "required": true
     },
     {
+      "name": "deploy-gated",
+      "color": "#6B7280",
+      "description": null,
+      "isGroup": false,
+      "parent": null,
+      "required": true
+    },
+    {
       "name": "specified",
       "color": "#10B981",
       "description": null,
