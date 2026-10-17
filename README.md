@@ -223,6 +223,7 @@ In workflow order — seed, certify, fleet, then the per-issue tiers and upkeep:
 | Skill | Description |
 |-------|-------------|
 | [update](skills/update/) | Bring the machine current — pull the latest project code and `~/.claude`, then run the update script (the project's `.claude/update.sh`, or `~/.claude/update.sh`) |
+| [cswap](skills/cswap/) | Multi-account rotation on a machine running several subscriptions — every account's usage in one table (`quota`), the engine's recent decisions (`log`), a dry run of its next move (`next`), and the setup script (`setup`); says so and stops where cswap is not installed (see [Multi-account rotation](#multi-account-rotation-optional)) |
 | [pr-update](skills/pr-update/) | Generate PR titles and descriptions from actual code changes |
 | [exec-summary](skills/exec-summary/) | Slack-ready executive summary of a change — problem first, then the fix — delivered as rich text on the clipboard |
 | [dependency-updater](skills/dependency-updater/) | Orchestrate dependency updates with research and validation |
@@ -284,6 +285,7 @@ Local `launchd` agents installed by `update.sh` (macOS only) that keep the workt
 | [merge-queue-drain](launchd/com.alienfast.merge-queue-drain.plist) | Every 15 min | Lands `/finish` merges that were deferred — e.g. main was busy with another session's WIP |
 | [worktree-reap](launchd/com.alienfast.worktree-reap.plist) | Hourly | Reclaims completed or abandoned `/start wt` worktrees |
 | [auto-stall-watch](launchd/com.alienfast.auto-stall-watch.plist) | Every 10 min | Surfaces a `/loop /auto` background session gone silent mid-iteration — the one silent-death shape no Stop hook can catch, since an API-killed turn fires none |
+| [cswap-auto](launchd/com.alienfast.cswap-auto.plist) | Continuous, opt-in | Keeps claude-swap's auto-switch engine running on a machine that rotates accounts. Installed by `scripts/cswap-setup.sh`, not `update.sh`; see [Multi-account rotation](#multi-account-rotation-optional) |
 
 ### Commands
 
@@ -390,6 +392,50 @@ Add a markdown file to `standards/`. It will be referenced by agents automatical
 Add a markdown file to `rules/` and register the glob pattern in `CLAUDE.md` under "Path-Specific Rules."
 
 Scope the `paths:` glob to where the rule's principle actually applies: use `**/*` (plus `**/.*` and `**/.*/**` to also cover dotfiles and dot-directories like `.github/`) when the rule is language-agnostic — e.g. comments — and reserve a curated extension list for genuinely language-specific rules. A curated list silently exempts every file type it omits, and the gap stays invisible until a violation slips through an unlisted type (this is how the comment rule once missed a Dockerfile).
+
+## Multi-account rotation (optional)
+
+For a machine that runs more than one Claude subscription. Nothing in this repo installs or requires it: a single-account user skips this section, and `update.sh` is unchanged for them.
+
+The switcher is [claude-swap](https://github.com/realiti4/claude-swap) (`cswap`), a third-party tool that swaps the Claude Code login in place, polls every account's 5-hour and 7-day windows, and moves the login before a limit is hit. It lives outside Claude Code because the switch has to: no mod hook can replace a credential, and `CLAUDE_CONFIG_DIR` is read at process start. What this repo adds is the policy, since cswap's defaults are wrong for us. Its default `best` strategy parks on the account with the most headroom, which is the quota with the longest to live, so weekly quota on the soon-to-reset accounts expires unused. [cswap-setup.sh](scripts/cswap-setup.sh) sets `consume-first` instead: drain the account whose weekly window resets soonest, move at 95% of the binding window, and return to it once its 5-hour window rolls over. The script's header explains why 95 and not higher, and which upstream issues would let the weekly line sit at 98.
+
+To try it, from a terminal rather than a Claude session (the account logins need a TTY):
+
+```sh
+~/.claude/scripts/cswap-setup.sh
+```
+
+It installs a pinned cswap through `uv`, enrolls the current login, then loops: answer `y`, complete a `claude auth login` for the next account, and it is added, until you answer `n`. Never `/logout` between accounts; cswap backs the live login up before the next one replaces it. It then applies the policy, prints one dry-run tick so you can see the engine's decision, and loads a `launchd` agent that keeps `cswap auto` running. Every step is idempotent; re-run it with `--threshold` or `--strategy` to change the policy, and the engine restarts on the new values.
+
+Day to day, in a session ([skill](skills/cswap/)):
+
+```text
+/cswap            # same as /cswap quota
+/cswap quota      # every account's 5-hour, weekly and Fable usage in one table, the age of each figure, and only the conditions that need action
+/cswap log        # whether the engine is running, its last switches, and why it is holding right now
+/cswap next       # the move it would make this minute, as a dry run
+/cswap setup      # the setup command to run in a terminal, or re-apply --threshold / --strategy without enrolling
+```
+
+The `rate-limits` mod pins the active account and its 5-hour and weekly use under the prompt on a rotating machine, so a switch
+landing on a running session is visible. From a terminal:
+
+```sh
+cswap list                            # every account's usage and reset times
+cswap switch 2                        # move by hand; the engine never undoes a manual move
+cswap auto --once --dry-run --json    # what the engine would do right now
+tail -f ~/.claude/logs/cswap-auto.log # one JSON event per poll, switch, quarantine or error
+```
+
+`update.sh` refreshes the agent only where the setup script installed it, and warns when the installed cswap has drifted from the pin. It never installs or upgrades cswap: the tool holds every enrolled account's refresh token, so version bumps are deliberate (`CSWAP_PIN` in the setup script).
+
+Known edges while this is a trial:
+
+- `/auto`'s fleet headroom gate still parks a session at 80% of the 5-hour window, below cswap's 95, so fleet sessions idle in that band until the gate learns to ask cswap whether another account has room.
+- The `rate-limits` mod records the active account's windows without naming the account; on a rotating machine, `fleet-launch`'s readout is whichever account the last session ran on.
+- cswap is a 0.2x release with an active issue list on its credential path. Its account backups live in the macOS Keychain; `cswap export` is plaintext by default.
+
+To remove: `launchctl bootout gui/$(id -u)/com.alienfast.cswap-auto`, then `uv tool uninstall claude-swap`. The Keychain backups stay until `cswap remove`.
 
 ## References
 

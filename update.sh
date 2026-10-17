@@ -491,8 +491,23 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
   install_launchd_agent "com.alienfast.auto-stall-watch" "checks for stalled /auto sessions every 10 min."
   echo "Installing tmp reaper (launchd)..."
   install_launchd_agent "com.alienfast.tmp-reap" "ages out tmp/ scratch daily."
+  # Opt-in per machine — scripts/cswap-setup.sh installs it where accounts rotate — so refresh it only where it already is.
+  if [ -f "$HOME/Library/LaunchAgents/com.alienfast.cswap-auto.plist" ]; then
+    echo "Refreshing cswap auto-switch engine (launchd)..."
+    install_launchd_agent "com.alienfast.cswap-auto" "keeps cswap auto running."
+  fi
 else
   echo "  skipped (macOS/launchd-only; this is $OSTYPE)."
+fi
+
+# cswap is pinned by scripts/cswap-setup.sh (it holds every account's refresh token, so upgrades are deliberate): say when
+# the install has drifted from the pin rather than upgrading it here.
+if command -v cswap >/dev/null 2>&1; then
+  cswap_pin=$(sed -n 's/^CSWAP_PIN="\([^"]*\)".*/\1/p' "$claude_repo/scripts/cswap-setup.sh")
+  cswap_have=$(cswap --version 2>/dev/null | awk '{print $2}' || true)
+  if [ -n "$cswap_pin" ] && [ "$cswap_have" != "$cswap_pin" ]; then
+    echo "  ⚠️  cswap ${cswap_have:-?} is installed but scripts/cswap-setup.sh pins $cswap_pin — re-run it to converge."
+  fi
 fi
 
 # One sweep now, on every platform: the launchd agent never fires on Windows or Linux, and even on macOS

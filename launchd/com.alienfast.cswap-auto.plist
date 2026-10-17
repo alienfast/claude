@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  TEMPLATE for the cswap auto-switch engine (launchd, macOS only). The __HOME__ tokens are placeholders:
+  launchd requires absolute paths and does NOT expand ~ or $HOME, so this is NOT loaded as-is.
+
+  OPT-IN: unlike the other agents in this directory, update.sh does not install this one. scripts/cswap-setup.sh
+  renders and loads it on a machine that rotates accounts, and update.sh only refreshes it where it is already
+  installed. To do it by hand:
+
+    sed "s|__HOME__|$HOME|g" ~/.claude/launchd/com.alienfast.cswap-auto.plist \
+      > ~/Library/LaunchAgents/com.alienfast.cswap-auto.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.alienfast.cswap-auto.plist
+
+  To remove:
+
+    launchctl bootout gui/$(id -u)/com.alienfast.cswap-auto
+    rm ~/Library/LaunchAgents/com.alienfast.cswap-auto.plist
+
+  SHAPE: a long-running process, not a tick. `cswap auto` is its own 60s polling loop, so RunAtLoad starts it at login
+  and KeepAlive relaunches it only after a crash (SuccessfulExit false: the wrapper exits 0 when cswap is missing, so a
+  broken install does not relaunch every ThrottleInterval). Its JSON events go to ~/.claude/logs/cswap-auto.log via the
+  wrapper; the paths below catch only the wrapper's own stderr.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.alienfast.cswap-auto</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__HOME__/.claude/scripts/cswap-auto-run.sh</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+
+  <key>ThrottleInterval</key>
+  <integer>60</integer>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/.claude/logs/cswap-auto.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/.claude/logs/cswap-auto.launchd.log</string>
+</dict>
+</plist>

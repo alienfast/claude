@@ -1,7 +1,8 @@
 # Mods
 
 Plugins of function hooks that run inside Claude Code (mods), one folder each. Every mod here is hooks-only, so it
-behaves the same in a terminal, the VS Code panel, and a `claude --bg` fleet session; none draws.
+behaves the same in a terminal, the VS Code panel, and a `claude --bg` fleet session; none draws a pane or a band
+(`rate-limits` pins one status line, and only on a machine that rotates accounts).
 
 | Mod | What it does | Issue |
 |---|---|---|
@@ -10,7 +11,7 @@ behaves the same in a terminal, the VS Code panel, and a `claude --bg` fleet ses
 | `effort-probe` | One-shot measurement that an effort rewrite is cache-safe on this build | BF-2501 |
 | `loop-boundary` | Near-clear compaction of the main conversation at each `/loop /auto` iteration boundary; per-boundary ledger | BF-2510 |
 | `loop-boundary-probe` | One-shot measurement of where a plugin compaction is accepted and what origin a `/loop` wakeup carries | BF-2510 |
-| `rate-limits` | The account's rate-limit windows (`five_hour`, `seven_day`) written to `~/.claude/local/rate-limits.json` on every measurement, plus a per-session history under `~/.claude/local/rate-limits/`; `fleet-launch.sh` prints the burst and weekly readings, `fleet-headroom.sh` parks a fleet session on its own history, and `fleet-metrics.py` reads the fleet's peak | BF-2525 |
+| `rate-limits` | The account's rate-limit windows (`five_hour`, `seven_day`) and the account they belong to, written to `~/.claude/local/rate-limits.json` on every measurement, plus a per-session history under `~/.claude/local/rate-limits/` that also records a login switched under the session; `fleet-launch.sh` prints the burst and weekly readings, `fleet-headroom.sh` parks a fleet session on its own history, and `fleet-metrics.py` reads the fleet's peak. On a machine that rotates accounts (cswap present) it pins the active account and its windows under the prompt | BF-2525 |
 
 ## Loading
 

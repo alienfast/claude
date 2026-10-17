@@ -1,13 +1,19 @@
 {
   "name": "rate-limits",
-  "version": "0.1.0",
-  "description": "Writes the account's rate-limit windows (five_hour, seven_day) to ~/.claude/local/rate-limits.json on every measurement, for the weekly readout fleet-launch.sh prints before dispatching, and keeps a per-session history of every window move for fleet-metrics.py's peak 5-hour reading",
+  "version": "0.2.0",
+  "description": "Writes the account's rate-limit windows (five_hour, seven_day) and the account they belong to into ~/.claude/local/rate-limits.json on every measurement, for the weekly readout fleet-launch.sh prints before dispatching; keeps a per-session history of every window move and every login switch for fleet-metrics.py's peak 5-hour reading; and on a machine that rotates accounts (cswap present) pins the active account and its windows under the prompt",
   "author": { "name": "alienfast" },
   "userConfig": {
     "enabled": {
       "type": "boolean",
       "title": "Enabled",
-      "description": "Write the reading on every measurement that carries one. Off writes nothing.",
+      "description": "Write the reading on every measurement that carries one. Off writes nothing and pins nothing.",
+      "default": true
+    },
+    "status": {
+      "type": "boolean",
+      "title": "Account status line on a rotating machine",
+      "description": "Pin the active account and its 5h/7d use under the prompt where cswap's backup directory exists. Off still records the account in the files.",
       "default": true
     }
   }
