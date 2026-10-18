@@ -2154,7 +2154,8 @@ def main():
 
     # Early drain: ONE session drained while its siblings kept picking — the pool was gated, not
     # empty (a `blocks` chain behind in-flight work, an empty fetch, a label flap, work certified
-    # after the drain), and that session's remaining hours were forfeited. Measured 2026-09-05: a
+    # after the drain). Against a deadline that session's remaining hours were forfeited; with none, H runs
+    # to the siblings' last activity and is their own remaining run, not lost capacity. Measured 2026-09-05: a
     # session drained 10.4h before the deadline (22% of the fleet) while two siblings shipped 12
     # more, and no flag fired. K counts each sibling's landings after the drain MINUS ONE: /auto
     # ships one issue per invocation, so every sibling has at most one in flight at T and lands it
@@ -2378,6 +2379,10 @@ def main():
     # working. Sizing then scales a proportion (peak x n/concurrency) rather than trusting a mean.
     peak_5h_concurrency, peak_5h_rate = 0, None
     peak_5h_cache_read, peak_5h_total = None, None
+    # The at-peak divisor credits every session overlapping the window with all 5h, so sessions shorter
+    # than the window pull the rate under the true burn (2026-10-17: 9.35 in-window session-hours against
+    # a divisor of 15 — 39,832 at-peak against ~63,900 in-window). Reported beside it, never in its place.
+    peak_5h_in_window_h, peak_5h_in_window_rate, peak_5h_partial = 0.0, None, 0
     if peak_5h_at:
         w0 = peak_5h_at.timestamp()
         w1 = w0 + 5 * 3600
@@ -2390,11 +2395,18 @@ def main():
             and s["agg"]["first"].timestamp() < w1 and s["agg"]["last"].timestamp() > w0)
         if peak_5h_concurrency:
             peak_5h_rate = round(peak_5h / (peak_5h_concurrency * 5))
+        overlaps_h = [max(0.0, (min(s["agg"]["last"].timestamp(), w1) - max(s["agg"]["first"].timestamp(), w0)) / 3600)
+                      for s in sessions if s["agg"]["first"] and s["agg"]["last"]]
+        peak_5h_in_window_h = sum(overlaps_h)
+        peak_5h_partial = sum(1 for h in overlaps_h if 0 < h < 5 - 1 / 3600)
+        if peak_5h_in_window_h > 0:
+            peak_5h_in_window_rate = round(peak_5h / peak_5h_in_window_h)
     # /auto-prep sizes from the burst peak, and a row per fleet is what lets it take the max over
     # recent unthrottled runs instead of inheriting the latest retro's — which on 2026-09-15 was a
     # starved fleet (3 shipped in 36h) whose 553k peak sized the next run 3.5x under its realized burn.
     headline["peak_5h_output_tokens"] = peak_5h
     headline["output_tokens_per_session_hour_at_peak"] = peak_5h_rate
+    headline["output_tokens_per_in_window_session_hour"] = peak_5h_in_window_rate
     history, overlaps = record_history(checkout, headline, record=not args.all and not partial_scope,
                                        allow_overlap=args.allow_overlap)
     for r in overlaps:
@@ -2472,6 +2484,7 @@ def main():
                 "named_dispatches": s["agg"]["named_dispatches"],
                 "drained_early_h": (early_drain.get(s["run_key"]) or {}).get("hours"),
                 "sibling_ships_after_drain": (early_drain.get(s["run_key"]) or {}).get("sibling_ships"),
+                "drain_horizon": (early_drain.get(s["run_key"]) or {}).get("horizon"),
                 "idle_tail_h": round(idle_tails[s["run_key"]][0], 1) if s["run_key"] in idle_tails
                 else round(held_tails[s["run_key"]][0], 1) if s["run_key"] in held_tails else None,
                 "forfeited_h": round(forfeited[s["run_key"]], 1) if s["run_key"] in forfeited else None,
@@ -2577,6 +2590,8 @@ def main():
                 "session_hours": round(session_hours, 2),
                 "peak_5h_concurrency": peak_5h_concurrency,
                 "output_tokens_per_session_hour_at_peak": peak_5h_rate,
+                "peak_5h_in_window_session_hours": round(peak_5h_in_window_h, 2),
+                "output_tokens_per_in_window_session_hour": peak_5h_in_window_rate,
                 "output_tokens_per_session_hour_all_sessions": burn_rate_all,
                 "quota_stall_groups": [{
                     # Distinct sessions, first-quiet order — one session contributes several MARKS to a
@@ -2877,7 +2892,10 @@ def main():
         # Mean exceeding the at-peak rate fingerprints a peak window that landed OUTSIDE the run under
         # review (overlap-counted concurrency inflates the divisor — e.g. an unscoped --since admitting
         # the morning-after interactive sessions). Heuristic, not proof: an idle-heavy fleet can trip it
-        # legitimately, so WARN and let the operator re-scope; never refuse or alter a figure.
+        # legitimately, so WARN and let the operator re-scope; never refuse or alter a figure. Under a
+        # session set no outsider can enter — the state loop filters on the requested keys and transcripts
+        # are globbed by run key — so there the same inversion means members ran only part of the window,
+        # and the banner names that with the in-window rate instead of re-scoping advice that does nothing.
         rate_inverted = (burn_rate_all is not None and peak_5h_rate is not None
                          and burn_rate_all > peak_5h_rate)
         # A fleet too short for a 5h window (a one-turn fixture, a run killed at its first pick) has no peak rate.
@@ -2888,7 +2906,26 @@ def main():
               + (".\n" if rate_inverted else
                  " — lower because it pools idle and interactive sessions with fleet "
                  "ones. **Size with the peak rate, not the mean.**\n"))
-        if rate_inverted:
+        if peak_5h_in_window_rate is not None:
+            print(f"Per in-window session-hour: **{peak_5h_in_window_rate:,}** "
+                  f"({peak_5h_in_window_h:.2f} session-hours of the {peak_5h_concurrency} sessions fell inside the "
+                  f"window, against the {peak_5h_concurrency * 5} the at-peak divisor assumes).\n")
+        if rate_inverted and req_keys is not None and peak_5h_in_window_rate is not None:
+            launch_note = ""
+            if isinstance(launch_epoch, (int, float)):
+                launch_dt = datetime.fromtimestamp(launch_epoch, timezone.utc)
+                launch_note = (f" The window starts {peak_5h_at:%Y-%m-%d %H:%M UTC}, "
+                               f"{(peak_5h_at.timestamp() - launch_epoch) / 3600:+.1f}h from the launch at "
+                               f"{launch_dt:%Y-%m-%d %H:%M UTC}; a member attached after the fleet is the one "
+                               f"out-of-run case a session set admits, since member transcripts are read without "
+                               f"an upper bound.")
+            print(f"> **The at-peak rate understates burn here — size on the in-window rate "
+                  f"({peak_5h_in_window_rate:,}), not on {peak_5h_rate:,}.** {peak_5h_partial} of "
+                  f"{peak_5h_concurrency} sessions ran only part of the 5h window ({peak_5h_in_window_h:.2f} "
+                  f"in-window session-hours against {peak_5h_concurrency}x5={peak_5h_concurrency * 5}), so the "
+                  f"all-sessions mean ({burn_rate_all:,}) exceeds the at-peak rate. This scope is a session set, "
+                  f"so no outside session is inflating the divisor.{launch_note}\n")
+        elif rate_inverted:
             print(f"> **The peak 5h window probably falls OUTSIDE the run under review — do not size "
                   f"on {peak_5h_rate:,}.** The all-sessions mean ({burn_rate_all:,}) EXCEEDS the "
                   f"at-peak rate, which the sizing guidance assumes cannot happen: "
@@ -3176,7 +3213,11 @@ def main():
                   f"the double-run also hit, a label flap, issues certified mid-run after the drain, or an epic scope "
                   f"drained to its keeper-gated remainder (`EPIC-DRAINED`) that the keeper then reopened. "
                   f"Read that session's last `/next` output and `linear-cli relations list` on the "
-                  f"issues siblings shipped next. Forfeited ≈{ed['hours']} session-hours.")
+                  f"issues siblings shipped next. "
+                  + (f"Forfeited ≈{ed['hours']} session-hours." if ed["horizon"] == "deadline" else
+                     f"No deadline: these {ed['hours']}h are the siblings' own remaining run, including the "
+                     f"{ed['sibling_ships']} issue(s) they picked after this drain — not forfeited capacity; the cost "
+                     f"is at most the wait on those picks (compare each one's Linear createdAt with the drain time)."))
         # The mid-run hold: >=1h in PLANNED-HOLD / BLOCKED-HOLD while a sibling landed ships inside the hold intervals. A fleet
         # launched with mixed `backlog` tokens produces it, and neither idle% nor the drained-early flag can see it.
         hg = holds[s["run_key"]]

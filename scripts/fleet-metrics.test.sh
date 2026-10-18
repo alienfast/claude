@@ -1498,6 +1498,7 @@ ck "early drain: sibling ships minus in-flight"  "1"    "$(q17 "[s for s in d['s
 ck "early drain: a deadline drain carries null"  "None" "$(q17 "[s for s in d['sessions'] if s['run_key']=='sb000001'][0]['drained_early_h']")"
 ck_has "early drain: flag line" "**\`dr000001\` drained 1.5h before the deadline while siblings picked and shipped 1 more issue(s)** (reason 'TT backlog drained of certified issues — 1/0/0/0 this run')" "$MD17"
 ck_has "early drain: forfeit named"              "Forfeited ≈1.5 session-hours" "$MD17"
+ck "early drain: horizon recorded as deadline"   "deadline" "$(q17 "[s for s in d['sessions'] if s['run_key']=='dr000001'][0]['drain_horizon']")"
 ck_lacks "early drain: 0.5h tail is not exhaustion" "**Pool exhausted**" "$MD17"
 # A deadline drain is never an early drain, whatever the siblings did after it.
 drained17 "fleet deadline reached (test)"
@@ -1508,6 +1509,9 @@ drained17 "TT backlog drained of certified issues — 1/0/0/0 this run"
 mv "$CK17/tmp/fleet-deadline.json" "$CK17/tmp/fleet-deadline.json.off"
 run17
 ck_has "early drain: sibling horizon without a marker" "drained 1.5h before its siblings' last activity while siblings picked and shipped 1 more issue(s)" "$MD17"
+ck "early drain: horizon recorded as siblings"   "siblings" "$(q17 "[s for s in d['sessions'] if s['run_key']=='dr000001'][0]['drain_horizon']")"
+ck_has "early drain: no deadline is the siblings' own run, not a forfeit" "No deadline: these 1.5h are the siblings' own remaining run, including the 1 issue(s) they picked after this drain — not forfeited capacity" "$MD17"
+ck_lacks "early drain: no deadline never says forfeited" "Forfeited ≈" "$MD17"
 mv "$CK17/tmp/fleet-deadline.json.off" "$CK17/tmp/fleet-deadline.json"
 # Drop TT-42: the sibling's single after-T landing is its in-flight issue, not a pick after the drain.
 grep -v 'TT-42' "$T17/sb000001-0000.jsonl" > "$T17/sb.tmp" && mv "$T17/sb.tmp" "$T17/sb000001-0000.jsonl"
@@ -2305,6 +2309,41 @@ ck "inherited only: no verdict"                         "None" "$(q27 "d['window
 ck "inherited only: the trend's 5h% is empty"           "None" "$(q27 "[r for r in d['history'] if r['session_set']=='b7270004'][0]['peak_five_hour_pct']")"
 ck_has "inherited only: the readings line names it"     "The highest reading, 90% at 2026-10-13T22:52:21.501Z (\`b7270004\`) fell in a 5h block already running when the fleet started" "$MD27"
 ck_has "inherited only: says why there is no verdict"   "**Headroom verdict** — none: no 5h block began inside the fleet's span" "$MD27"
+
+# ---- 28. peak rate under a session set: members shorter than the window are not outsiders ----
+# Measured 2026-10-17 on a 3-session fleet (5.1h, 2.1h, 2.3h): the at-peak divisor counted 15 session-hours
+# against 9.35 inside the window, the rate read 39,832 against an all-sessions mean of 63,837, and the
+# inversion banner blamed post-fleet interactive sessions — which a recorded session set cannot admit.
+CK28="$WORK/ck28"; mkdir -p "$CK28/tmp"
+git -C "$CK28" init -q 2>/dev/null
+git -C "$CK28" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "init"
+M28="$(git -C "$CK28" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
+T28="$WORK/projects/$M28"; mkdir -p "$T28"
+NOW28=$(python3 -c "import time; print(int(time.time()))")
+for k in aa280001 bb280002; do
+  echo '{"status":"drained","reason":"fleet deadline reached (test)","mode":"loop","shipped":[],"canceled":[],"skipped":[],"failed":[]}' > "$CK28/tmp/auto-state-$k.json"
+done
+# aa280001 spans the whole 5h window; bb280002 runs one hour of it. 4,000 output tokens land inside the window.
+cat > "$T28/aa280001-0000.jsonl" <<EOF
+{"type":"user","timestamp":"$(at_epoch $((NOW28 - 21600)))","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"$(at_epoch $((NOW28 - 21600)))","message":{"role":"assistant","id":"m_aa_1","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":1000},"content":[{"type":"text","text":"working"}]}}
+{"type":"assistant","timestamp":"$(at_epoch $((NOW28 - 3600)))","message":{"role":"assistant","id":"m_aa_2","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":1000},"content":[{"type":"text","text":"NO-CANDIDATES: fleet deadline reached"}]}}
+EOF
+cat > "$T28/bb280002-0000.jsonl" <<EOF
+{"type":"user","timestamp":"$(at_epoch $((NOW28 - 21600)))","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"$(at_epoch $((NOW28 - 21600)))","message":{"role":"assistant","id":"m_bb_1","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":1000},"content":[{"type":"text","text":"working"}]}}
+{"type":"assistant","timestamp":"$(at_epoch $((NOW28 - 18000)))","message":{"role":"assistant","id":"m_bb_2","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":1000},"content":[{"type":"text","text":"NO-CANDIDATES: fleet deadline reached"}]}}
+EOF
+J28="$WORK/out28.json"; MD28="$WORK/out28.md"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK28" --sessions aa280001,bb280002 --json > "$J28" 2>/dev/null
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK28" --sessions aa280001,bb280002 > "$MD28" 2>&1
+q28() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J28"; }
+ck "in-window rate: at-peak still divides by 2x5"       "400" "$(q28 "d['windows']['output_tokens_per_session_hour_at_peak']")"
+ck "in-window rate: divides by the 6.0 in-window hours" "6.0 667" "$(q28 "' '.join(str(d['windows'][k]) for k in ('peak_5h_in_window_session_hours','output_tokens_per_in_window_session_hour'))")"
+ck "in-window rate: the history row carries it"         "667" "$(q28 "d['history'][-1]['output_tokens_per_in_window_session_hour']")"
+ck_has "in-window rate: reported beside the at-peak line" "Per in-window session-hour: **667** (6.00 session-hours of the 2 sessions fell inside the window, against the 10 the at-peak divisor assumes)" "$MD28"
+ck_has "in-window rate: the set-scope banner names the short member" "**The at-peak rate understates burn here — size on the in-window rate (667), not on 400.** 1 of 2 sessions ran only part of the 5h window (6.00 in-window session-hours against 2x5=10)" "$MD28"
+ck_lacks "in-window rate: no outsider blame under a session set" "probably falls OUTSIDE the run" "$MD28"
 
 echo
 echo "$PASS passed / $FAIL failed / $SKIP skipped"
