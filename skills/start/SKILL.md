@@ -519,7 +519,8 @@ Steps:
    git branch -D <worktree-branch-name>
    ```
 
-4. Emit the tagged final line and stop. Do NOT run Step 9 or Step 10:
+4. **Release the ownership stamp** (worktree mode only): `~/.claude/scripts/wt-disown.sh .claude/worktrees/<issue-id-lowercased>`. The worktree stays on disk until someone runs the commands above, and an unreleased stamp keeps claiming it: while the session idles, and — once the session is deleted from `claude agents`, which removes its job dir — for as long as the shared daemon whose pid a fleet stamp carries keeps running. On 2026-10-17 a canceled `/auto BF-2698` run's stamp read `alive` that way and held a `/pr-merge-deferred` wait after the fleet had drained, until it was force-released by hand. Best-effort: on failure, warn, continue, and note in the tagged line that ownership was not released.
+5. Emit the tagged final line and stop. Do NOT run Step 9 or Step 10:
 
    ```text
    CANCELED: <ISSUE-ID> — <one-line reason>. Run git worktree remove .claude/worktrees/<issue-id-lowercased> && git branch -D <worktree-branch-name>.
