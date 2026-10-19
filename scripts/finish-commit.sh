@@ -1,38 +1,39 @@
 #!/bin/bash
-# finish-commit.sh — Commit pre-staged changes with a Linear-linked message,
-# then push.
+# finish-commit.sh — Commit pre-staged changes with a Linear-linked message.
+# Pushing is opt-in (--push); by default the commit stays local.
 #
-# Usage: finish-commit.sh <issue-id> <message-file> [--no-push]
+# Usage: finish-commit.sh <issue-id> <message-file> [--push]
 #
 # Contract: caller has already staged the files to commit (via `git add
 # <files>`). This script does NOT stage anything — that decision is the
 # caller's. It commits whatever is currently staged.
 #
 # Path selection by git state:
-#   - Staged changes exist → commit -F <message-file>, then push.
+#   - Staged changes exist → commit -F <message-file>, then push under --push.
 #   - Nothing staged but unstaged tracked changes exist → error (caller
 #     forgot to stage).
-#   - Already committed, ahead of upstream → push only.
-#   - No upstream (branch never pushed) → push with --set-upstream origin HEAD.
+#   - Already committed, ahead of upstream → push under --push, else a reminder.
+#   - No upstream (branch never pushed) → under --push, publish with
+#     --set-upstream origin HEAD; otherwise say how to.
 #   - In sync with upstream → no-op.
 #
 # Validates that the message contains the issue ID (Linear auto-linking
-# requires it). Push is gated by --no-push.
+# requires it).
 #
 # Exit codes:
 #   0 success
-#   1 validation error (bad ID, missing message file, ID not in message)
+#   1 validation error (bad ID, missing message file, ID not in message, unknown flag)
 #   2 git/push failure or unstaged-only state
 
 set -eo pipefail
 
 if [ "$#" -ge 1 ] && { [ "$1" = "-h" ] || [ "$1" = "--help" ]; }; then
-  sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'
   exit 0
 fi
 
 if [ $# -lt 2 ]; then
-  echo "Usage: $0 <issue-id> <message-file> [--no-push]" >&2
+  echo "Usage: $0 <issue-id> <message-file> [--push]" >&2
   exit 1
 fi
 
@@ -40,11 +41,11 @@ issue_id="$1"
 message_file="$2"
 shift 2
 
-no_push=0
+push=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --no-push) no_push=1; shift ;;
-    *) echo "ERROR: unknown arg '$1'" >&2; exit 1 ;;
+    --push) push=1; shift ;;
+    *) echo "ERROR: unknown arg '$1' (expected: --push; the default is no push)" >&2; exit 1 ;;
   esac
 done
 
@@ -83,8 +84,12 @@ if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
 fi
 
 do_push() {
-  if [ "$no_push" -eq 1 ]; then
-    echo "Skipping push as requested. Push manually when ready: \`git push\`"
+  if [ "$push" -eq 0 ]; then
+    if [ "$has_upstream" -eq 1 ]; then
+      echo "Not pushed (push is opt-in: \`/finish push\`). Push when ready: \`git push\`"
+    else
+      echo "Not pushed (push is opt-in: \`/finish push\`). Branch has no upstream; publish when ready: \`git push --set-upstream origin HEAD\`"
+    fi
     return 0
   fi
   if [ "$has_upstream" -eq 1 ]; then
@@ -125,12 +130,10 @@ if [ "$ahead" -gt 0 ]; then
 fi
 
 if [ "$has_upstream" -eq 0 ]; then
-  # No staged/unstaged changes, but the branch has no upstream — it was never
-  # pushed, so it is NOT on the remote (don't falsely report "nothing to do").
-  # Publish it so a PR / the remote has the branch. Only announce the publish
-  # when one will actually happen — under --no-push (e.g. a merge-flow resume)
-  # do_push skips, and announcing a publish we then decline is contradictory.
-  if [ "$no_push" -eq 0 ]; then
+  # Nothing to commit, but the branch has no upstream — it was never pushed, so it is NOT on the
+  # remote (don't falsely report "nothing to do"). Under --push publish it so a PR / the remote has
+  # the branch; otherwise do_push names the publish command.
+  if [ "$push" -eq 1 ]; then
     echo "Branch has no upstream; publishing it to origin."
   fi
   if ! do_push; then exit 2; fi

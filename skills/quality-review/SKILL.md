@@ -18,7 +18,7 @@ Run an adversarial review of the current implementation, then triage and fix fin
 
 Examples: `/quality-review`, `/quality-review PL-13`, `/quality-review auto PL-13`, `/quality-review simple PL-13`, `/quality-review src/foo.ts src/bar.ts`, `/quality-review PL-13 packages/api/`
 
-Reject any bare argument that is neither an issue-ID (`[A-Z]+-[0-9]+`), the `auto` or `simple` token, nor a path that exists on disk. In particular, the tokens `merge`, `pr`, `no push`, `don't push`, `skip push` are `/finish` arguments — if seen here, error with: `Argument 'X' is a /finish argument, not a /quality-review argument` rather than silently treating it as a file path that doesn't exist (which would just produce an empty scope and warn about nothing to review).
+Reject any bare argument that is neither an issue-ID (`[A-Z]+-[0-9]+`), the `auto` or `simple` token, nor a path that exists on disk. In particular, the tokens `merge`, `pr`, `push`, `no push`, `don't push`, `skip push` are `/finish` arguments — if seen here, error with: `Argument 'X' is a /finish argument, not a /quality-review argument` rather than silently treating it as a file path that doesn't exist (which would just produce an empty scope and warn about nothing to review).
 
 ## Invariant
 

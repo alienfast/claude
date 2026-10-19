@@ -361,7 +361,7 @@ to find — so this is cheap in exactly the case it looks redundant, and it is l
 matters, where a MAJOR migration rewrote source. A non-passing verdict stops the run: report it and leave the
 worktree, exactly as the Error Handling abandonment rule prescribes.
 
-**Then hand off to `/finish`**, which owns commit, push, PR creation, and the Linear transitions. Do not
+**Then hand off to `/finish`**, which owns commit, PR creation (with the push a PR needs), and the Linear transitions. Do not
 hand-roll `git commit` / `gh pr create`; that path skips the merge serialization and the identity
 verification `/finish` performs. **Always pass the `auto` token** — it resolves every prompt site in that
 skill to its conservative default (abort rather than override) instead of asking, which is what keeps this

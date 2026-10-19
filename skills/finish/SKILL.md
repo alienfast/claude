@@ -1,22 +1,22 @@
 ---
 name: finish
-description: Finish a Linear issue — check off requirements, add completion comment, commit/push, mark Ready For Release. Autonomous mode via the `auto` token (every prompt resolves to the conservative default — abort, never override; used by /auto). Use when the user says 'finish issue', 'done with this issue', 'complete PL-XX', or invokes /finish.
+description: Finish a Linear issue — check off requirements, add completion comment, commit (push only under the `push` token or in `pr` mode), mark Ready For Release. Autonomous mode via the `auto` token (every prompt resolves to the conservative default — abort, never override; used by /auto). Use when the user says 'finish issue', 'done with this issue', 'complete PL-XX', or invokes /finish.
 ---
 
 # Finish Issue
 
-Automates the post-completion workflow for a Linear issue using the `linear-cli` CLI. The mechanical steps (worktree-mode detection, issue-ID resolution, Linear posts, git commit/push) are delegated to scripts in `~/.claude/scripts/`; this skill is the orchestrator + LLM-judgment surface (reading the description, composing the completion comment).
+Automates the post-completion workflow for a Linear issue using the `linear-cli` CLI. The mechanical steps (worktree-mode detection, issue-ID resolution, Linear posts, git commit and the opt-in push) are delegated to scripts in `~/.claude/scripts/`; this skill is the orchestrator + LLM-judgment surface (reading the description, composing the completion comment).
 
 ## Arguments
 
 - Issue identifier (e.g., `PL-12`) — optional, auto-detected from branch/commit
-- `no push` / `don't push` / `skip push` — optional, skips the git push step (commit still happens)
+- `push` — optional, pushes the branch after the commit. **The default is no push**: the commit stays local and the closing message names the push. `pr` implies `push` (a PR needs the branch on origin); `merge` refuses it (the worktree branch is deleted on merge — Step 7). `no push` / `don't push` / `skip push` restate the default and change nothing.
 - `merge` — only meaningful inside a `/start wt` worktree. **Default when in a worktree.** Merge the worktree branch back into its recorded source branch, then remove the worktree.
 - `pr` — open a pull request for the current branch (works from **any** branch). Inside a `/start wt` worktree the base is the recorded source branch and the worktree is left in place; otherwise the base is the repo's GitHub default branch (in-place — no worktree touched). Optionally apply labels with `with label X` / `label X, Y`. The issue stays `In Progress` (the PR is open, not yet shipped).
 
 - `auto` — optional token (case-insensitive, position-agnostic). **Autonomous mode**: every user prompt in this skill resolves to its conservative default instead of asking — abort rather than override, proceed-without rather than create. Each prompt site below documents its auto default inline. Passed through by `/full auto` for the `/auto` loop; the `/auto` invocation is the commit/push grant (see standards/git.md).
 
-Examples: `/finish`, `/finish PL-12`, `/finish no push`, `/finish PL-12 no push`, `/finish merge`, `/finish auto PL-12 merge`, `/finish pr PL-12`, `/finish pr with label pr-deploy`
+Examples: `/finish`, `/finish PL-12`, `/finish push`, `/finish PL-12 push`, `/finish merge`, `/finish auto PL-12 merge`, `/finish pr PL-12`, `/finish pr with label pr-deploy`
 
 ## Invariant
 
@@ -48,20 +48,20 @@ Do not retry, do not re-prompt, do not run any subsequent step. **Skip this pref
 
 Normalize the user's args before calling the script:
 
-- Look for the `auto` token (case-insensitive, position-agnostic) — it selects autonomous mode for this skill's prompt sites and is NOT passed to the script (its arg contract is `merge|pr|--no-push` only).
+- Look for the `auto` token (case-insensitive, position-agnostic) — it selects autonomous mode for this skill's prompt sites and is NOT passed to the script (its arg contract is `merge|pr|--push` only).
 - Look for `merge` and `pr` tokens (case-insensitive, position-agnostic) — pass through whichever is present (if both, the script errors). **The token you were dispatched with is authoritative — never substitute the other flow.** Receiving `merge` and then running `finish-detect-mode.sh pr` is a real, repeated defect (measured 2026-08-20: an unattended issue shipped as a PR that way, the reasoning being that recent issues in the repo had shipped as PRs); if the token looks wrong for this repo, say so and STOP rather than switching.
-- Look for `no push` / `don't push` / `skip push` — translate to `--no-push` for the script.
-- Look for label requests (`with label X`, `label X, Y`, `--label X`) — collect them into a list and **carry it forward to Step 9** (pr mode only). Labels are NOT passed to the script — its arg contract is `merge|pr|--no-push` only. **If labels were requested but the resolved `ACTION` is not `pr`** (i.e., `merge` or the standard flow), labels have no PR to attach to — warn the user once (`Labels apply only to /finish pr; ignoring: <list>.`) rather than silently dropping them.
+- Look for the `push` token — translate to `--push` for the script. The `no push` / `don't push` / `skip push` variants restate the default: accept them and pass nothing.
+- Look for label requests (`with label X`, `label X, Y`, `--label X`) — collect them into a list and **carry it forward to Step 9** (pr mode only). Labels are NOT passed to the script — its arg contract is `merge|pr|--push` only. **If labels were requested but the resolved `ACTION` is not `pr`** (i.e., `merge` or the standard flow), labels have no PR to attach to — warn the user once (`Labels apply only to /finish pr; ignoring: <list>.`) rather than silently dropping them.
 
 ```bash
-~/.claude/scripts/finish-detect-mode.sh [merge|pr] [--no-push]
+~/.claude/scripts/finish-detect-mode.sh [merge|pr] [--push]
 ```
 
-The script probes worktree state, validates incompatible argument combinations, and emits these `KEY=value` lines on stdout: `ACTION`, `SOURCE_BRANCH`, `WORKTREE_BRANCH`, `WT_DIR`, `REPO_ROOT`, `NO_PUSH`, plus `CORRUPTION` and `IDENTITY_SOURCE` (and, only on exit 4, `CORRUPTION_REASON` / `CORRUPTION_OWNER_IS_ME` / `EXPECTED_BRANCH` / `EXPECTED_BASELINE` / `EXPECTED_SOURCE_BRANCH` — see exit 4 above and Step 0.5). **Read those values and carry them forward** — Step 9 substitutes them into bash commands as literal strings (each Bash tool call is a fresh shell).
+The script probes worktree state, validates incompatible argument combinations, and emits these `KEY=value` lines on stdout: `ACTION`, `SOURCE_BRANCH`, `WORKTREE_BRANCH`, `WT_DIR`, `REPO_ROOT`, `PUSH` (`1` under the `push` token or `pr`, else `0`), plus `CORRUPTION` and `IDENTITY_SOURCE` (and, only on exit 4, `CORRUPTION_REASON` / `CORRUPTION_OWNER_IS_ME` / `EXPECTED_BRANCH` / `EXPECTED_BASELINE` / `EXPECTED_SOURCE_BRANCH` — see exit 4 above and Step 0.5). **Read those values and carry them forward** — Step 9 substitutes them into bash commands as literal strings (each Bash tool call is a fresh shell).
 
 **Exit codes:**
 
-- 1 — incompatible args (e.g., `merge` + `pr`, or `pr` + `no push`). Surface the error and stop.
+- 1 — incompatible args (`merge` + `pr`, or `merge` + `push` — the implicit worktree `merge` included). Surface the error and stop.
 - 2 — `merge` requested outside a `/start wt` worktree. Surface and stop. (`pr` is **not** rejected here — it works from any branch; see below.)
 - 4 — **worktree identity mismatch.** The worktree no longer matches the identity `/start` stamped (branch swapped, HEAD reset off its stamped baseline, `start.source-branch` config wiped, or — `lineage-clobbered` / `lineage-unauditable` — committed work dropped by a same-lineage rewrite the ancestry check cannot see, or a drop window the preservation audit cannot certify; the clobbered case lists the dropped commits on stderr) while the immune identity sidecar still proves it's a `/start wt` worktree. Two causes look identical to the ancestry check: a parallel-session hijack (the PL-454/PL-460 failure mode) or this session's own un-restamped history rewrite (the BF-505 failure mode) — `CORRUPTION_OWNER_IS_ME=1` marks the latter as likely, but is never proof (a foreign reset while the owner is live reads the same). The script emits `CORRUPTION=1`, `CORRUPTION_REASON`, `CORRUPTION_OWNER_IS_ME`, `IDENTITY_SOURCE`, and `EXPECTED_BRANCH` / `EXPECTED_BASELINE` / `EXPECTED_SOURCE_BRANCH` alongside the usual context. **Do NOT run the normal flow** — merging an unverified tree is the exact risk the stamp exists to stop. Jump straight to **Step 0.5**, carrying those values forward.
 
@@ -122,7 +122,7 @@ The script tries `--input` → current branch → latest commit subject, in that
 
 > Issue `<ISSUE-ID>` appears to live in worktree `<path>`. Are you running `/finish` from the wrong cwd? Reply `yes` to proceed here anyway, or `abort` and `cd` into the worktree first.
 
-Continue only on explicit `yes`. **Auto mode:** never proceed here — stop with `BLOCKED-ON-REVIEW: <ISSUE-ID> — issue appears to live in worktree <path>; wrong cwd for an unattended /finish. No state change.` This catches the case where `/start wt` created a worktree, the user opened a fresh terminal in the main checkout, and ran `/finish PL-13` from there — which would otherwise push/commit on the wrong branch. Skip the check entirely when Step 0 detected a worktree (in which case `SOURCE_BRANCH` is set and we're already in the right place), when `ACTION` is `pr` (an explicit `/finish pr` is a deliberate choice to open a PR for the current branch — never a wrong-cwd accident), or when no issue ID was resolved (nothing to check against).
+Continue only on explicit `yes`. **Auto mode:** never proceed here — stop with `BLOCKED-ON-REVIEW: <ISSUE-ID> — issue appears to live in worktree <path>; wrong cwd for an unattended /finish. No state change.` This catches the case where `/start wt` created a worktree, the user opened a fresh terminal in the main checkout, and ran `/finish PL-13` from there — which would otherwise commit on the wrong branch. Skip the check entirely when Step 0 detected a worktree (in which case `SOURCE_BRANCH` is set and we're already in the right place), when `ACTION` is `pr` (an explicit `/finish pr` is a deliberate choice to open a PR for the current branch — never a wrong-cwd accident), or when no issue ID was resolved (nothing to check against).
 
 ### Step 1.5: Read Quality-Review Verdict + Sub-issues
 
@@ -230,7 +230,7 @@ If it **fails**: this is CRITICAL. Do not commit or push. Fix the failures first
 
 If it **passes**: proceed to commit.
 
-### Step 7: Git Commit & Push
+### Step 7: Git Commit (push is opt-in)
 
 1. Stage relevant files by name (`git add <files>`). Never `git add -A` / `git add .` (per CLAUDE.md). **Derive the list from a fresh `git status --short` run now, at commit time — never from a file list captured earlier in the session.** Review-fix cycles routinely touch files beyond the original implementation set; staging from a stale list ships a commit whose halves don't match (local `pnpm check` passes on the working tree while the committed tree fails CI's type check). After staging, confirm `git status --short` shows no remaining unstaged *tracked* modifications that belong to this issue.
 2. Write the commit message to `tmp/finish-commit-<issue-id-lowercased>.md` (e.g., `tmp/finish-commit-pl-13.md`). The issue ID **must** appear in the message (the script enforces it for Linear auto-linking). **Only `<ISSUE-ID>` may follow a Linear close keyword** — Linear scans commit messages as well as PR titles and bodies, so a body sentence like "follow-up to PL-14" is safe while "fixes PL-14" moves PL-14 on merge; see [`standards/git.md`](../../standards/git.md) § Linear auto-close keywords for the keyword set and the safe forms. This bites hardest unattended, where the commit body is the only prose an `/auto` run writes:
@@ -244,17 +244,14 @@ If it **passes**: proceed to commit.
 3. Run the commit script:
 
 ```bash
-~/.claude/scripts/finish-commit.sh PL-13 tmp/finish-commit-pl-13.md [--no-push]
+~/.claude/scripts/finish-commit.sh PL-13 tmp/finish-commit-pl-13.md [--push]
 ```
 
-**`--no-push` is required in TWO cases — easy to miss the second:**
+**Pass `--push` only when Step 0 emitted `PUSH=1`.** The default is no push (keeper ruling 2026-10-19): the commit stays local, and a human — or a later, separate grant — pushes it. `PUSH=1` means the user typed `push`, or `ACTION=pr`, where the script sets it because a PR needs the branch on origin. `ACTION=merge` never pushes, and Step 0 refuses `merge` + `push`: the temp branch is about to be merged into source and deleted locally, so pushing it would pollute origin with abandoned branches. The merge commit reaches origin only when the source branch is pushed, and this skill never pushes it (keeper ruling 2026-08-16): by default that push is a human's, so origin lags Linear until the keeper pushes. A project that sets `AUTO_PUSH_MAIN=lazy` in its committed `.claude/settings.json` (BFP — keeper ruling 2026-09-19) hands that push to `/auto`, which makes it through `~/.claude/scripts/auto-push-main.sh` at exactly two moments, a deploy-gated pick and its deadline wind-down, and still never per merge: every push is a CI build, and batching is the point.
 
-1. The user requested `no push` / `don't push` / `skip push` (Step 0 translates these to `NO_PUSH=1`).
-2. **`ACTION=merge`** — the temp branch is about to be merged into source and deleted locally; pushing it pollutes origin with abandoned branches. The merge commit reaches origin only when the source branch is pushed, and this skill never pushes it (keeper ruling 2026-08-16): by default that push is a human's, so origin lags Linear until the keeper pushes. A project that sets `AUTO_PUSH_MAIN=lazy` in its committed `.claude/settings.json` (BFP — keeper ruling 2026-09-19) hands that push to `/auto`, which makes it through `~/.claude/scripts/auto-push-main.sh` at exactly two moments, a deploy-gated pick and its deadline wind-down, and still never per merge: every push is a CI build, and batching is the point. Either way `ACTION=merge` passes `--no-push` here.
+The script handles all three states: pre-staged changes (commit, then push only under `--push`), already-committed-but-ahead (push under `--push`, otherwise a reminder naming the push), already-synced (no-op). If staging is missing for an unstaged-only state, it errors with exit 2 — go back and `git add` the files.
 
-If either condition holds, pass `--no-push`. The script does NOT enforce this rule (it has no awareness of `ACTION`), so the orchestrator MUST gate on `NO_PUSH=1 OR ACTION=merge`.
-
-The script handles all three states: pre-staged changes (commit + push), already-committed-but-ahead (push only), already-synced (no-op). If staging is missing for an unstaged-only state, it errors with exit 2 — go back and `git add` the files.
+**In the standard flow (`ACTION` empty) with `PUSH=0`, say so at the end.** The `RELEASED:` summary states that the commit is local and names the push (`git push` from `<WORKTREE_BRANCH>`), so nobody reads the tag as "on origin" — `Ready For Release` describes the commit, exactly as it does for an unpushed merge.
 
 ### Step 8: Mark Issue as Ready For Release
 
@@ -283,7 +280,7 @@ The per-branch instructions below indicate which terminator each branch uses; tr
 
 1. Invoke `/quality-review <ISSUE-ID>` via the Skill tool and let it run to completion.
 2. Resume at Step 1.5 — run `finish-read-verdict.sh` again and carry the fresh `VERDICT`/`VERDICT_STALE`/`SUB_ISSUES` forward. Do NOT repeat Steps 2–5: the description update and completion comment already posted.
-3. Re-run Steps 6–7 — the review's fix loop may have left uncommitted edits (`/quality-review` holds no commit grant), and `finish-commit.sh` no-ops when the tree is already synced. The same `--no-push` gate applies. Reading the verdict before committing the fix delta mirrors the normal Step 1.5 → Step 7 ordering, so the carried `VERDICT_STALE=0` stays honest.
+3. Re-run Steps 6–7 — the review's fix loop may have left uncommitted edits (`/quality-review` holds no commit grant), and `finish-commit.sh` no-ops when the tree is already synced. The same `--push` gate applies: pass it only when Step 0 emitted `PUSH=1`. Reading the verdict before committing the fix delta mirrors the normal Step 1.5 → Step 7 ordering, so the carried `VERDICT_STALE=0` stays honest.
 4. Post a short comment with the fresh verdict via `~/.claude/scripts/linear-post.sh` (reuse Step 4's Adversarial-review section shape) — the completion comment posted before this review ran, so its verdict line is stale, or omitted entirely on the `none-found` path.
 5. Re-enter this gate on the fresh values. A `re-run` reply has no terminator of its own — the resumed gate (or Step 9) ends the flow, and a still-non-passing fresh verdict simply prompts again.
 
@@ -448,7 +445,7 @@ The script brings the worktree branch up to source's tip **inside the worktree**
 
 **If `ACTION == "pr"`:**
 
-The branch was pushed in Step 7 (the `no push` + `pr` combination was rejected in Step 0). Open a PR for the current branch — this works whether or not we're in a worktree.
+The branch was pushed in Step 7 (`pr` implies push — Step 0 emits `PUSH=1` for it). Open a PR for the current branch — this works whether or not we're in a worktree.
 
 1. **Resolve the base branch:**
    - `SOURCE_BRANCH` is set (we're in a `/start wt` worktree) → base = `SOURCE_BRANCH`.
@@ -506,6 +503,6 @@ After the PR is created, run `~/.claude/scripts/mark-ready-for-release.sh <ISSUE
 ## Error Handling
 
 - If the issue is already Ready For Release or Done, warn the user and ask if they want to proceed (add comment only). Auto mode: do not re-finish a terminal issue — stop with `BLOCKED-ON-REVIEW: <ISSUE-ID> — already <state>; nothing to finish.`
-- If there are no uncommitted changes and code is already pushed, skip the git steps
+- If there are no uncommitted changes, Step 7 is a no-op — the script reports the branch's state against upstream — and the rest of the flow still runs
 - If `linear-cli` is not authenticated, prompt: `linear-cli auth oauth` (auto mode: do not prompt — stop with `BLOCKED-ON-REVIEW: <ISSUE-ID or "current branch"> — linear-cli unauthenticated. Nothing committed, no state change.`)
 - If the issue identifier can't be found, ask the user explicitly (auto mode: stop with `BLOCKED-ON-REVIEW: current branch — no issue ID resolvable. No state change.`)

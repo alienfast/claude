@@ -1,7 +1,7 @@
 #!/bin/bash
 # finish-detect-mode.sh — Detect /finish worktree mode and emit context vars.
 #
-# Usage: finish-detect-mode.sh [merge|pr] [--no-push]
+# Usage: finish-detect-mode.sh [merge|pr] [--push]
 #
 # Probes git for /start wt worktree state, validates incompatible argument
 # combinations, and emits KEY=value lines on stdout for the /finish skill to
@@ -13,14 +13,14 @@
 #   WORKTREE_BRANCH=<current branch>
 #   WT_DIR=<git toplevel>
 #   REPO_ROOT=<parent of .git common dir>
-#   NO_PUSH=<0|1>
+#   PUSH=<0|1>                        (1 under --push, or always under pr; the default is no push)
 #   CORRUPTION=<0|1>                  (1 only on exit 4)
 #   IDENTITY_SOURCE=<job-dir|repo-fallback|git-config|none>
 #   On exit 4 also: CORRUPTION_REASON, CORRUPTION_OWNER_IS_ME, EXPECTED_BRANCH, EXPECTED_BASELINE, EXPECTED_SOURCE_BRANCH
 #
 # Exit codes:
 #   0 success
-#   1 incompatible argument combination
+#   1 incompatible argument combination (merge + pr, merge + --push)
 #   2 merge requested outside a /start wt worktree
 #   4 corruption: the worktree no longer matches the identity /start stamped
 #     (branch swapped, HEAD reset off the baseline, source-branch config wiped
@@ -38,7 +38,7 @@ set -eo pipefail
 . "$(dirname "$0")/wt-path.sh"
 
 action=""
-no_push=0
+push=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -46,7 +46,7 @@ while [ $# -gt 0 ]; do
       sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
-    --no-push) no_push=1; shift ;;
+    --push) push=1; shift ;;
     *)
       lower=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
       case "$lower" in
@@ -63,18 +63,13 @@ while [ $# -gt 0 ]; do
           shift
           ;;
         *)
-          echo "ERROR: unknown arg '$1' (expected: merge | pr | --no-push)" >&2
+          echo "ERROR: unknown arg '$1' (expected: merge | pr | --push)" >&2
           exit 1
           ;;
       esac
       ;;
   esac
 done
-
-if [ "$action" = "pr" ] && [ "$no_push" -eq 1 ]; then
-  echo "ERROR: \`/finish pr\` requires pushing the branch. Remove 'no push' or use '/finish merge'." >&2
-  exit 1
-fi
 
 source_branch=$(git config --worktree --get start.source-branch 2>/dev/null || true)
 worktree_branch=$(git branch --show-current 2>/dev/null || true)
@@ -189,7 +184,7 @@ if [ "$corruption" = "1" ]; then
   printf 'WORKTREE_BRANCH=%s\n' "$worktree_branch"
   printf 'WT_DIR=%s\n' "$wt_dir"
   printf 'REPO_ROOT=%s\n' "$repo_root"
-  printf 'NO_PUSH=%s\n' "$no_push"
+  printf 'PUSH=%s\n' "$push"
   printf 'CORRUPTION=1\n'
   printf 'CORRUPTION_OWNER_IS_ME=%s\n' "$owner_is_me"
   printf 'CORRUPTION_REASON=%s\n' "$corruption_reason"
@@ -213,11 +208,21 @@ if [ -z "$action" ] && [ -n "$source_branch" ]; then
   action="merge"
 fi
 
+# Pushing is opt-in. pr implies it (a PR needs the branch on origin). merge never pushes: the worktree branch is
+# deleted on merge, and the merge commit reaches origin only when the source branch is pushed — a human's push, or
+# auto-push-main.sh where the project set AUTO_PUSH_MAIN=lazy — so a push request here is a contradiction, not a no-op.
+if [ "$action" = "pr" ]; then
+  push=1
+elif [ "$action" = "merge" ] && [ "$push" -eq 1 ]; then
+  echo "ERROR: \`/finish merge\` never pushes: the worktree branch is deleted on merge, and the merge commit reaches origin when the source branch is pushed. Remove 'push' or use '/finish pr'." >&2
+  exit 1
+fi
+
 printf 'ACTION=%s\n' "$action"
 printf 'SOURCE_BRANCH=%s\n' "$source_branch"
 printf 'WORKTREE_BRANCH=%s\n' "$worktree_branch"
 printf 'WT_DIR=%s\n' "$wt_dir"
 printf 'REPO_ROOT=%s\n' "$repo_root"
-printf 'NO_PUSH=%s\n' "$no_push"
+printf 'PUSH=%s\n' "$push"
 printf 'CORRUPTION=0\n'
 printf 'IDENTITY_SOURCE=%s\n' "$identity_source"

@@ -202,13 +202,23 @@ check sidechain.jsonl .pending true pending
   atext "READY-FOR-FINISH: PL-1 — done. Run /finish PL-1 pr"; } > "$TMP/args-pr.jsonl"
 check args-pr.jsonl .finishargs "PL-1 pr" finishargs
 
+{ ucmd /full "PL-1 push"
+  atext "READY-FOR-FINISH: PL-1 — done."; } > "$TMP/args-push.jsonl"
+check args-push.jsonl .finishargs "PL-1 push" finishargs
+
+# "no push" restates the default: no token is forwarded, and the " push " inside it must not read as the opt-in.
 { ucmd /full "PL-1 no push"
   atext "READY-FOR-FINISH: PL-1 — done."; } > "$TMP/args-nopush.jsonl"
-check args-nopush.jsonl .finishargs "PL-1 no push" finishargs
+check args-nopush.jsonl .finishargs "PL-1" finishargs
 
 { ucmd /full "PL-1 no-push"
   atext "READY-FOR-FINISH: PL-1 — done."; } > "$TMP/args-nopush-hyphen.jsonl"
-check args-nopush-hyphen.jsonl .finishargs "PL-1 no push" finishargs
+check args-nopush-hyphen.jsonl .finishargs "PL-1" finishargs
+
+# merge never pushes, so wt + push forwards no push token (mirrors /full Step 3; /full's fail-fast refuses it upstream).
+{ ucmd /full "wt PL-1 push"
+  atext "READY-FOR-FINISH: PL-1 — done."; } > "$TMP/args-wt-push.jsonl"
+check args-wt-push.jsonl .finishargs "PL-1 merge" finishargs
 
 # 14. A non-object content element must not throw and black out decide() (the jq `type == "object"` guard):
 #     /full -> a stray array-of-string content record -> READY must still fire, not silently no-op.

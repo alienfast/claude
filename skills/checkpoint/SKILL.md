@@ -195,7 +195,7 @@ Do not emit any trailing prose after the tagged line.
 | `pnpm check` | Non-blocking (report only) | Hard gate |
 | Issue state | No change (stays In Progress) | Moves to Ready For Release |
 | Checkboxes | Update completed ones | Update all completed ones |
-| Git push | Default on, `no push` flag | Default on, `no push` flag |
+| Git push | Default on, `no push` flag | Default off, `push` flag (`pr` implies it) |
 | Linear comment | Progress snapshot | Completion summary |
 | Scope | Quick save | Full completion workflow |
 

@@ -69,16 +69,18 @@ decide() {
         (if ($c | type) == "string" then $c
          else ([$c[]? | select((type == "object") and .type == "text") | .text] | join("\n")) end);
       # Reconstruct /finish args for $issue from the original /full invocation args — mirrors /full Step 3:
-      #   in-place -> "<id>"; wt -> "<id> merge"; wt+pr -> "<id> pr"; append " no push" when requested; prefix
-      #   "auto " when the /full ran autonomously (dropping it would swap the unattended /finish into interactive
-      #   mode mid-flight). Space-padded token tests avoid matching an issue-id prefix like "PR-123"/"AUTO-12".
+      #   in-place -> "<id>"; wt -> "<id> merge"; wt+pr -> "<id> pr"; append " push" only in-place without pr (pr
+      #   implies it, merge refuses it, and "no push" restates the default so it is dropped); prefix "auto " when the
+      #   /full ran autonomously (dropping it would swap the unattended /finish into interactive mode mid-flight).
+      #   Space-padded token tests avoid matching an issue-id prefix like "PR-123"/"AUTO-12"; " push " alone also
+      #   matches inside " no push ", hence the explicit negative-variant test.
       #   Shared by the READY branch and the upstream-verdict branch so the two can never drift apart.
       def finargs($issue; $args):
         (" " + ($args | ascii_downcase) + " ") as $fa
         | (if ($fa | test(" auto ")) then "auto " else "" end)
           + $issue
           + (if ($fa | test(" pr ")) then " pr" elif ($fa | test(" wt ")) then " merge" else "" end)
-          + (if (($fa | test("no[- ]?push|don.t push|skip push")) and (($fa | test(" pr ")) | not)) then " no push" else "" end);
+          + (if (($fa | test(" push ")) and (($fa | test("(no|don.t|skip)[- ]?push")) | not) and (($fa | test(" pr | wt ")) | not)) then " push" else "" end);
       # A resolved PASSING verdict line somewhere in $s. Line-split because jq `^` is whole-string-only. The tail
       # rejects a `|` on the line, so the unsubstituted schema (`Verdict: passed-clean | passed-after-fixes | …`)
       # never counts — the same guard quality-review-write-verdict.sh applies to the persisted file. One def for
@@ -274,7 +276,7 @@ decide() {
          | (if ($tagid | length) > 0 then $tagid else $fullid end) as $issue
 
          # /finish args reconstructed from the /full invocation via the shared finargs helper (the tag line alone
-         # is insufficient — it always reads "merge" in wt mode and never knows about auto/pr/no-push).
+         # is insufficient — it always reads "merge" in wt mode and never knows about auto/pr/push).
          | finargs($issue; ($openfull.args // "")) as $finishargs
 
          | { is_ready:     ($tagline | test("^READY-FOR-FINISH:")),

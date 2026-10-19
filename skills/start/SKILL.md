@@ -464,7 +464,7 @@ Update completed checkboxes (`- [ ]` → `- [x]`) and push the update:
 
 **Important**: Preserve the entire description — only change `- [ ]` to `- [x]` for completed items. Do not rewrite or reformat the description.
 
-**Do NOT change the issue state** during implementation. The issue stays "In Progress" throughout this entire skill. Moving to "Ready For Release" is handled exclusively by the `/finish` skill after commit and push. Even if all checkboxes are checked, do not transition the state.
+**Do NOT change the issue state** during implementation. The issue stays "In Progress" throughout this entire skill. Moving to "Ready For Release" is handled exclusively by the `/finish` skill after the commit. Even if all checkboxes are checked, do not transition the state.
 
 **The only exceptions** to this rule are Step 8.5's two state-transitioning terminal-exit paths (CANCELED / ABANDONED), which move the issue to `Canceled` or `Planned` respectively. Those are explicit terminal contracts — when one of the Step 8.5 triggers fires (work already shipped / no longer needed; user halting before completion), Step 8.5 supersedes this prohibition. Outside Step 8.5, the rule above holds with no further exceptions: no state changes during implementation. A future skill or subagent invoked from /start MUST NOT change the issue state on its own; if a third *state-transitioning* terminal-exit path becomes necessary, add it to Step 8.5 (not invented elsewhere) — a stop that leaves state unchanged needs no entry there.
 
