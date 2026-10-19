@@ -316,16 +316,23 @@ rm -f "$REPO/tmp/auto-state-sess-c.json"
 echo "== 16. an epic-scoped marker — scope line, and the member burn-down against the prep snapshot"
 # fleet-launch.sh epic:<ID> records scope, the prep-time members snapshot, and the integration branch.
 # The burn-down is a LIVE epic-graph.sh read: XX-1 shipped since prep, XX-3 in flight, XX-10 filed
-# mid-run (absent from the snapshot). The stub answers the graph walk by the `id=` variable.
+# mid-run (absent from the snapshot). XX-11 and XX-13 were filed mid-run too and the fleet already
+# resolved them (sess-a's ledger), so they are terminal and must still read as added; XX-0 is the
+# discriminating case — already Done at prep, so absent from the snapshot like them, but no ledger
+# resolved it, and it must NOT read as added. The stub answers the graph walk by the `id=` variable.
 gnode() { # gnode <ID> <state> <type> <labels-json> <children-json>
   printf '{"data":{"issue":{"identifier":"%s","title":"t","state":{"name":"%s","type":"%s"},"team":{"key":"XX"},"labels":{"nodes":%s},"parent":null,"children":{"nodes":%s},"relations":{"nodes":[]},"inverseRelations":{"nodes":[]}}}}\n' \
     "$1" "$2" "$3" "$4" "$5" > "$ROOT/node-$1.json"
 }
-gnode XX-100 Planned unstarted '[{"name":"epic"}]' '[{"identifier":"XX-1"},{"identifier":"XX-2"},{"identifier":"XX-3"},{"identifier":"XX-10"}]'
+gnode XX-100 Planned unstarted '[{"name":"epic"}]' '[{"identifier":"XX-1"},{"identifier":"XX-2"},{"identifier":"XX-3"},{"identifier":"XX-10"},{"identifier":"XX-11"},{"identifier":"XX-0"},{"identifier":"XX-13"}]'
 gnode XX-1 Done completed '[]' '[]'
 gnode XX-2 Planned unstarted '[{"name":"specified"}]' '[]'
 gnode XX-3 "In Progress" started '[{"name":"specified"}]' '[]'
 gnode XX-10 Backlog backlog '[]' '[]'
+gnode XX-11 Done completed '[]' '[]'
+gnode XX-0 Done completed '[]' '[]'
+gnode XX-13 Canceled canceled '[]' '[]'
+jq '.shipped += ["XX-11"] | .canceled += ["XX-13"]' "$REPO/tmp/auto-state-sess-a.json" > "$ROOT/l.tmp" && mv "$ROOT/l.tmp" "$REPO/tmp/auto-state-sess-a.json"
 cat > "$STUB/linear-cli" <<EOF
 #!/bin/bash
 case "\${1:-} \${2:-}" in
@@ -342,8 +349,10 @@ jq -n --argjson le "$((NOW - 500))" '{count: 1, launch_epoch: $le, fleet_session
 run_fs --no-runway
 ck "clean exit" "0" "$RC"
 ck_has "  scope line with the branch posture" '**Scope:** epic XX-100 — integration branch `epic/xx-e` (forked from `main`; ships as one PR onto it)' "$OUT"
-ck_has "  burn-down: shipped / remaining / in flight / added since prep" "**Members:** 1 shipped · 3 remaining (1 in flight: XX-3) · 1 added since prep: XX-10" "$OUT"
-ck_has "  shipped members named with state" "shipped: XX-1 [Done]" "$OUT"
+ck_has "  burn-down: shipped / remaining / in flight / added since prep" "**Members:** 4 shipped · 3 remaining (1 in flight: XX-3) · 3 added since prep: XX-10, XX-11 [Done], XX-13 [Canceled]" "$OUT"
+ck_has "  shipped members named with state" "shipped: XX-1 [Done], XX-11 [Done], XX-0 [Done], XX-13 [Canceled]" "$OUT"
+grep '^\*\*Members:\*\*' "$OUT" > "$ROOT/members.line"
+ck_lacks "  a member already terminal at prep is not added" "XX-0" "$ROOT/members.line"
 
 echo "== 17. a scoped marker without a snapshot, an unreadable epic, and no linear-cli"
 jq 'del(.members) | del(.branch) | del(.base)' "$REPO/tmp/fleet-deadline.json" > "$ROOT/m.tmp" && mv "$ROOT/m.tmp" "$REPO/tmp/fleet-deadline.json"
