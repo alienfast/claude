@@ -388,7 +388,7 @@ A tool whose only consumer is a Claude session belongs in `<project>/.claude/ski
 
 ### standardize-tooling
 
-**Description**: Converge a TypeScript project's dev tooling onto the house conventions — pnpm 11 (supply-chain cooldown, allow-builds, `@alienfast` registry), Biome (no ESLint/Prettier), markdownlint-cli2, madge, the standardized parallel `check` suite, tsdown for libraries, and OIDC token-less `auto` releases for published packages — then gate on `pnpm check`. Adaptive and idempotent: detects current state and applies only the gaps.
+**Description**: Converge a TypeScript project's dev tooling onto the house conventions — pnpm 12 (supply-chain cooldown, allow-builds, `@alienfast` registry), Biome (no ESLint/Prettier), markdownlint-cli2, madge, the standardized parallel `check` suite, tsdown for libraries, and OIDC token-less `auto` releases for published packages — then gate on `pnpm check`. Adaptive and idempotent: detects current state and applies only the gaps.
 
 **When Invoked**:
 

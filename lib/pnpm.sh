@@ -14,7 +14,7 @@
 # (ERR_PNPM_CANT_SELF_UPDATE_IN_COREPACK) and, on an npm-installed pnpm, exits 0 having written a second copy under
 # $PNPM_HOME that the npm one keeps shadowing on PATH — the mismatch survives with a success exit (measured).
 
-# The version `packageManager: "pnpm@11.21.0+sha512.…"` pins, bare. sed rather than `node -p`: Git Bash converts a POSIX
+# The version `packageManager: "pnpm@12.12.1+sha512.…"` pins, bare. sed rather than `node -p`: Git Bash converts a POSIX
 # path only when it is a whole argument, not inside a JS expression.
 pnpm_pin_from() {
   sed -n 's/.*"packageManager": *"pnpm@\([0-9][0-9.]*\).*/\1/p' "$1" 2>/dev/null | head -1

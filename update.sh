@@ -79,8 +79,8 @@ done
 echo "Installing lsp servers..."
 claude plugin install typescript-lsp
 
-# Ensure pnpm's global bin directory is on PATH — `pnpm add -g` refuses to run when it isn't. pnpm 11 keeps it at
-# $PNPM_HOME/bin, pnpm 10 at $PNPM_HOME itself (measured), and the standalone installer's rc snippet adds only the
+# Ensure pnpm's global bin directory is on PATH — `pnpm add -g` refuses to run when it isn't. pnpm 11 and 12 keep it at
+# $PNPM_HOME/bin (12.12.1 measured 2026-10-19), pnpm 10 at $PNPM_HOME itself (measured), and the standalone installer's rc snippet adds only the
 # latter, so add both. Augment PATH unconditionally (the parent shell always exports PNPM_HOME, so a `-z "$PNPM_HOME"`
 # guard would skip this every time).
 if [ -z "$PNPM_HOME" ]; then

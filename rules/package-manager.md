@@ -29,8 +29,8 @@ paths:
 
 ## Supply-chain defaults
 
-The house baseline, applied to new projects and to any project being converged: **pnpm 11**
-(`packageManager: pnpm@11.x`), a `minimumReleaseAge` cooldown in `pnpm-workspace.yaml` so a
+The house baseline, applied to new projects and to any project being converged: **pnpm 12**
+(`packageManager: pnpm@12.x`, the release `~/.claude/package.json` pins), a `minimumReleaseAge` cooldown in `pnpm-workspace.yaml` so a
 freshly-published version can't be installed the moment it lands, an `allowBuilds` allow-list so only vetted
 packages run install scripts, and `blockExoticSubdeps` in monorepos to reject non-registry (git/tarball)
 transitive deps. Don't reproduce the values from memory — [standardize-tooling](../skills/standardize-tooling/SKILL.md)

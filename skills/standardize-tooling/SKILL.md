@@ -1,7 +1,7 @@
 ---
 name: standardize-tooling
 description: >-
-  Converge a TypeScript project's dev tooling onto the house conventions — pnpm 11 (with the supply-chain
+  Converge a TypeScript project's dev tooling onto the house conventions — pnpm 12 (with the supply-chain
   release-age cooldown, allow-builds, and @alienfast registry wiring), Biome for lint/format (no ESLint, no
   Prettier), markdownlint-cli2, madge, the standardized parallel `check` script suite, tsdown (for libraries/CLIs),
   and — if published to npm — `auto` with OIDC token-less trusted publishing and current GitHub Actions — then gate
@@ -21,7 +21,7 @@ target plus a delta.
 
 A standardized project has all of:
 
-- **pnpm 11** — `packageManager: pnpm@11.x`, a `pnpm-workspace.yaml` with the 7-day supply-chain
+- **pnpm 12** — `packageManager: pnpm@12.x`, a `pnpm-workspace.yaml` with the 7-day supply-chain
   `minimumReleaseAge` cooldown, an `allowBuilds` allow-list, and — if it consumes `@alienfast/*` from GitHub
   Packages — the `registries` mapping with install-time token injection.
 - **Biome** for lint and format, with **no ESLint and no Prettier** (and no `lint-staged`).

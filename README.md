@@ -230,7 +230,7 @@ In workflow order — seed, certify, fleet, then the per-issue tiers and upkeep:
 | [deprecation-handler](skills/deprecation-handler/) | Migrate deprecated APIs with safe patterns |
 | [semver-advisor](skills/semver-advisor/) | Classify version changes as MAJOR/MINOR/PATCH |
 | [react-component-generator](skills/react-component-generator/) | Generate React components following project conventions |
-| [standardize-tooling](skills/standardize-tooling/) | Converge a TypeScript project onto house tooling — pnpm 11, Biome, tsdown, the standardized `check` suite; adaptive and idempotent |
+| [standardize-tooling](skills/standardize-tooling/) | Converge a TypeScript project onto house tooling — pnpm 12, Biome, tsdown, the standardized `check` suite; adaptive and idempotent |
 
 **External Skills (installed by `update.sh`):**
 

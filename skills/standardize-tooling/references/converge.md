@@ -7,7 +7,7 @@ the non-obvious gotchas. Publishing-only attributes (tsdown, `auto`, OIDC, Actio
 
 ## Read-live rule
 
-The house configs evolve (Biome 2.5.x, pnpm 11.x, markdownlint-cli2 0.22.x, TypeScript 6.x, …). **Read the
+The house configs evolve (Biome 2.5.x, pnpm 12.x, markdownlint-cli2 0.22.x, TypeScript 6.x, …). **Read the
 current file from the source checkout, copy it, then adapt** — never reproduce a config from memory or from
 this document. This doc tells you *which* file is canonical and *how* to adapt it; the bytes come from the
 live checkout. If a needed source checkout is absent, stop and tell the user rather than inventing config.
@@ -32,9 +32,9 @@ npm-published). `~/projects/gltfjsx` is the single-package + published + tsdown 
 | `.vscode/tasks.json` → `check-types` | `gltfjsx/.vscode/tasks.json` (single) or `basefund/.vscode/tasks.json` (mono matchers) |
 | tsdown, `auto`, OIDC workflow, `publishConfig` | see [publishing.md](publishing.md) |
 
-## pnpm 11 + workspace + supply-chain cooldown + allow-builds
+## pnpm 12 + workspace + supply-chain cooldown + allow-builds
 
-**Met when** `PACKAGE_MANAGER=pnpm`, `PACKAGE_MANAGER_PIN` is `pnpm@11.*`, `HAS_PNPM_WORKSPACE=true`, and
+**Met when** `PACKAGE_MANAGER=pnpm`, `PACKAGE_MANAGER_PIN` is `pnpm@12.*`, `HAS_PNPM_WORKSPACE=true`, and
 `HAS_COOLDOWN=true`.
 
 **Source** — `basefund/pnpm-workspace.yaml` (monorepo: `registries`, `publicHoistPattern`, `overrides`,
@@ -44,8 +44,10 @@ npm-published). `~/projects/gltfjsx` is the single-package + published + tsdown 
 ### Apply
 
 - Delete everything in `LEFTOVER_PM_FILES` (`yarn.lock`, `.yarnrc.yml`, `.yarn/`, `package-lock.json`, `.eslintcache`).
-- Set `packageManager: "pnpm@11.x"` in `package.json` to a real recent 11 release. pnpm 10 self-manages and
-  auto-fetches the pinned 11, so the migration runs even on a pnpm-10 machine.
+- Set `packageManager: "pnpm@12.x"` in `package.json` to a real 12 release older than the project's
+  `minimumReleaseAge`, keeping corepack's `+sha512.<hex>` suffix — the house pin is the one
+  `~/.claude/package.json` carries. Any pnpm ≥ 10 self-manages and auto-fetches the pinned 12, so the
+  migration runs on an older machine.
 - Create `pnpm-workspace.yaml` adapted from the source: `minimumReleaseAge: 10080` (7 days),
   `minimumReleaseAgeExclude: ['@alienfast/*']`, and an `allowBuilds:` name→boolean map (pnpm 11 replaced
   pnpm 10's `onlyBuiltDependencies` list). Seed `allowBuilds` with the obvious native builders the target
@@ -55,6 +57,15 @@ npm-published). `~/projects/gltfjsx` is the single-package + published + tsdown 
 ### Gotchas
 
 - `allowBuilds` is an allow-list, not a blanket — approve only what install reports, with intent.
+- **Moving an 11 project to 12** (measured on 12.12.1, 2026-10): `pnpm-lock.yaml` becomes two YAML documents —
+  pnpm's self-management document first, with its own `importers` and `snapshots`, the project lockfile last —
+  so anything that parses the lockfile must read the **last** document, or a scan from the first `snapshots:`
+  runs on into the project's `packages:`. Changing `packageManager` without regenerating the lockfile fails
+  every frozen install with `ERR_PNPM_FROZEN_LOCKFILE_WITH_OUTDATED_LOCKFILE`; a pin younger than
+  `minimumReleaseAge` fails every install with `ERR_PNPM_NO_MATURE_MATCHING_VERSION`; an unknown or misspelled
+  `pnpm-workspace.yaml` key fails the install with `ERR_PNPM_UNRECOGNIZED_WORKSPACE_SETTINGS`; and an existing
+  pnpm-11 `node_modules` is reused without a purge. `ncu -u` bumps the pin and strips the `+sha512` suffix —
+  restore it (`corepack use pnpm@<v>`), or a `corepack enable pnpm` image build loses its only integrity check.
 - Registry sub-branch: if `ALIENFAST_REGISTRY=github`, the target consumes `@alienfast/*` from GitHub
   Packages — mirror basefund's `registries: { '@alienfast': https://npm.pkg.github.com/ }` and inject the
   token at install time (Docker `pnpm_config_//…` env, CI `pnpm config set` from `$GITHUB_TOKEN`, dev user
