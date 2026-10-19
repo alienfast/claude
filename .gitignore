@@ -49,6 +49,8 @@ daemon-auth-*
 /scripts/__pycache__
 /skills/synced
 /skills/.trash
+/skills/hf-cli
 /local
+/settings.local.json
 /mods/*/.claude-plugin/types/
 /mods/*/tsconfig.json
