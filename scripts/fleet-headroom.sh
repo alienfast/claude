@@ -3,11 +3,16 @@
 # saturate the account's 5-hour window mid-issue?
 #
 # WHY: the 5h limit itself is cheap to hit (minutes of reset wait) — being killed MID-ISSUE by it is
-# what's expensive: a mid-turn kill leaves no ScheduleWakeup pending and fires no Stop hook, so the
-# session stays dead until a human attaches (2026-08-17 overnight fleet: 25.2 session-hours idle AFTER
-# the reset, and 2 keeper-hours draining the half-done issues in the morning). A session that only ever
-# meets the limit BETWEEN issues recovers itself: its parked wakeup fires after the reset. So /auto's
-# fleet mode consults this probe at pick time and parks instead of picking when the window is nearly full.
+# what's expensive. A mid-turn kill fires StopFailure instead of Stop, so no wakeup is armed; before
+# hooks/auto-rewake.sh that left the session dead until a human attached (2026-08-17 overnight fleet:
+# 25.2 session-hours idle AFTER the reset). auto-rewake.sh now retries such a kill every 900s for up to
+# six hours — a live weekly cutoff mid-turn was recovered that way on 2026-10-13, all three sessions
+# resumed; the 5h case rests on the hook's design, not yet a live measurement — so the gate no longer
+# prevents permanent death. What it still saves is the killed turn's rework (a kill can land mid
+# non-idempotent step; 2026-08-17 also cost 2 keeper-hours draining half-done issues) and a fleet-wide
+# stop until the reset. A session that only ever meets the limit BETWEEN issues loses neither: its parked
+# wakeup fires after the reset. So /auto's fleet mode consults this probe at pick time and parks instead
+# of picking when the window is nearly full.
 #
 # THE METER is the account's own. mods/rate-limits records the engine's `five_hour` reading (`percentUsed`,
 # `resetsAt`) per session under ~/.claude/local/rate-limits/<session-id>.jsonl, one line per move, and the
