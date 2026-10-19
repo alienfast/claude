@@ -418,7 +418,10 @@ Day to day, in a session ([skill](skills/cswap/)):
 ```
 
 The `rate-limits` mod pins the active account and its 5-hour and weekly use under the prompt on a rotating machine, so a switch
-landing on a running session is visible. From a terminal:
+landing on a running session is visible. `/auto`'s fleet headroom gate ([fleet-headroom.sh](scripts/fleet-headroom.sh)) asks cswap
+before it parks a session: while another enrolled account is under the threshold with a fresh figure, the pick goes ahead and the
+engine moves the login when the active account fills; the gate parks only when no account has room or the engine is idle, and its
+line says which. From a terminal:
 
 ```sh
 cswap list                            # every account's usage and reset times
@@ -431,7 +434,6 @@ tail -f ~/.claude/logs/cswap-auto.log # one JSON event per poll, switch, quarant
 
 Known edges while this is a trial:
 
-- `/auto`'s fleet headroom gate still parks a session at 80% of the 5-hour window, below cswap's 95, so fleet sessions idle in that band until the gate learns to ask cswap whether another account has room.
 - The `rate-limits` mod records the active account's windows without naming the account; on a rotating machine, `fleet-launch`'s readout is whichever account the last session ran on.
 - cswap is a 0.2x release with an active issue list on its credential path. Its account backups live in the macOS Keychain; `cswap export` is plaintext by default.
 
