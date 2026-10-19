@@ -145,7 +145,9 @@ fi
 # An epic-scoped launch (fleet-launch.sh epic:<ID>) records scope, the prep-time member snapshot,
 # and the integration branch. The burn-down is a LIVE epic-graph.sh read against that snapshot —
 # membership is recomputed at every pick, so members filed mid-run show up here as "added since
-# prep" rather than silently widening the fleet's work.
+# prep" rather than silently widening the fleet's work: while open, and once this fleet's own
+# sessions ship or cancel them (with their state). One resolved outside the fleet's ledgers — an
+# interactive pickup, a session that never wrote one — counts as shipped only.
 scope=""
 [ -s "$marker" ] && scope=$(jq -r '.scope // empty' "$marker" 2>/dev/null || true)
 if [ -n "$scope" ]; then
@@ -158,11 +160,26 @@ if [ -n "$scope" ]; then
     graph=$("$SCRIPT_DIR/epic-graph.sh" "$scope" 2>/dev/null) || graph=""
     if [ -n "$graph" ]; then
       snapshot=$(jq -c '.members // []' "$marker")
-      printf '%s' "$graph" | jq -r --arg root "$scope" --argjson snap "$snapshot" '
+      # A member filed mid-run that the fleet already shipped or canceled is terminal now, so it is in .terminal, not
+      # .members. The snapshot alone cannot place it: prep records non-terminal members only, so a member already Done
+      # at prep is absent from it too. What separates the two is this fleet's own ledgers — read here, because the
+      # Shipped cross-check's union is built later and from the displayed rows only.
+      fleet_resolved='[]'
+      ledgers=()
+      for k in $fleet_set; do
+        if [ -s "$main_checkout/tmp/auto-state-$k.json" ]; then ledgers+=("$main_checkout/tmp/auto-state-$k.json"); fi
+      done
+      if [ "${#ledgers[@]}" -gt 0 ]; then
+        fleet_resolved=$(jq -s -c '[.[] | (.shipped // [])[], (.canceled // [])[]] | unique' "${ledgers[@]}" 2>/dev/null) || fleet_resolved='[]'
+      fi
+      printf '%s' "$graph" | jq -r --arg root "$scope" --argjson snap "$snapshot" --argjson resolved "$fleet_resolved" '
         ([.members[] | select(.identifier != $root)]) as $rem
         | ([.terminal[] | select(.identifier != $root)]) as $done
         | ([$rem[] | select(.state_type == "started") | .identifier]) as $flight
-        | ([$rem[] | select(.identifier as $i | ($snap | index($i)) == null) | .identifier]) as $added
+        | ([$rem[] | select(.identifier as $i | ($snap | index($i)) == null) | .identifier]) as $added_open
+        | ([$done[] | select(.identifier as $i | ($snap | index($i)) == null and ($resolved | index($i)) != null)
+            | "\(.identifier) [\(.state)]"]) as $added_done
+        | ($added_open + $added_done) as $added
         | "**Members:** \($done | length) shipped · \($rem | length) remaining"
           + (if ($flight | length) > 0 then " (\($flight | length) in flight: \($flight | join(", ")))" else "" end)
           + (if ($snap | length) == 0 then " · no prep snapshot in the marker, so added-since-prep is unknown"

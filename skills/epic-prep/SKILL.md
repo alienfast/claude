@@ -12,7 +12,7 @@ An epic-scoped fleet works one epic's graph and nothing else: `/fleet-launch epi
 
 It is [`/auto-prep`](../auto-prep/SKILL.md) with the pool cut to the graph, plus five things a team prep never needs: certifying members in dependency order, deciding what sits just outside the graph, promoting the whole graph together, the integration branch, and a gate on where the already-resolved members' code actually landed. Read [skills/linear/SKILL.md](../linear/SKILL.md) first. **Interactive by design** — it interviews (`/spec`) and asks for approvals; never run it unattended.
 
-**Membership** (`scripts/epic-graph.sh`): the epic, its transitive descendants, and the transitive blockers of any member, non-terminal only, cross-team included. Dependents are not members — an outside issue a member blocks is enabled by the epic, not required by it — and neither are `related` partners; both are the **boundary**, reviewed in Step 4. Membership is live, recomputed at every pick, so a child filed mid-run joins the fleet's pool and `/fleet-status` reports it as added since prep.
+**Membership** (`scripts/epic-graph.sh`): the epic, its transitive descendants, and the transitive blockers of any member, non-terminal only, cross-team included. Dependents are not members — an outside issue a member blocks is enabled by the epic, not required by it — and neither are `related` partners; both are the **boundary**, reviewed in Step 4. Membership is live, recomputed at every pick, so a child filed mid-run joins the fleet's pool and `/fleet-status` reports it as added since prep — unless something outside the fleet's own sessions resolves it, in which case it counts as shipped only.
 
 ## Arguments
 
