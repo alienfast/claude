@@ -122,6 +122,32 @@ linked worktree, or a sibling leftover). `list` prints `STALE-BRANCH <branch> �
 dangling ref alone (`REAPED-MERGE-REF`). A branch-only leftover with unmerged content is left alone, and
 a branch any worktree has checked out is that worktree's verdict.
 
+## Husk directories
+
+A `STRAY` verdict is a directory under `<repo>/.claude/worktrees/<name>` that git no longer lists as a worktree: it
+has no `.git` entry, so `is_registered_worktree` rejects it. The common cause is a session whose ledger mods resolved
+their path to the worktree at session start and kept writing `tmp/effort-ledger-<session>.jsonl`,
+`tmp/loop-boundary-<session>.jsonl` and `tmp/spawn-policy-<session>.jsonl` after `/finish` removed the worktree; each
+write recreated the directory as a husk holding only those files. Since 2026-10-10 the three ledger mods resolve to
+the owning checkout, so a session started after that install leaves no husk; the two diagnostic probes still write
+session-cwd-relative and would, if enabled. The other cause is a partial removal (Windows locked files or long paths),
+which leaves real content behind.
+
+A husk is not inert. Every `[ -d <owner> ]` liveness test reads it as a live checkout: a project's stack-slot registry
+keeps the slot and its running docker stack, and this reaper's own dead-owner trigger saw nothing dead until it learned
+to require a `.git` entry. Measured 2026-10-19: two db+redis stacks whose worktrees were merged nine days earlier, each
+hourly pass printing their `STRAY` line to a log nobody reads.
+
+So each pass also reclaims a **ledger-only** husk: every entry under it is a regular file directly under `tmp/` whose
+name the `/reap-tmp` ledger and probe lanes classify, the newest is older than the grace, and no live Claude session
+has its cwd inside (a leftover host process does not hold it — the orphan sweep reaches it once the directory is
+gone). `list` prints `HUSK — <n> ledger file(s) …`; `reap` moves each file with `mv -n` into `<repo>/tmp/` — where the
+mods write today, where `fleet-metrics.py` reads them, and where `/reap-tmp`'s seven-day ledger lane ages them out —
+then removes `tmp/` and the husk with `rmdir`, printing `REAPED-HUSK`. `rmdir` is the safety: a file the move left
+behind (its name already present in `<repo>/tmp/`) or anything the rule missed makes it fail, and the directory stays
+`STRAY` with the hand remedy. Anything else in a husk — `auto-state-*.json` included, which `/auto` writes only to the
+main checkout — is reported, never deleted; the reaper never `rm -rf`s a path under `.claude/worktrees/`.
+
 ## Usage
 
 **Inspect (dry run — mutates nothing, takes no lock):**
@@ -132,8 +158,9 @@ a branch any worktree has checked out is that worktree's verdict.
 ```
 
 Each worktree prints one of: `REAP-ELIGIBLE`, `KEEP` (with the reason — pinned, unmanaged, in use, active, unpushed, or dirty),
-`SKIP` (detached / merge-queued), or `STRAY`, followed by a `STALE-BRANCH` or `STALE-MERGE-REF` line per merge
-leftover, one `STALE-IDENTITY` line when sidecars are due, and an `ORPHAN-PROC` line per leftover host process.
+`SKIP` (detached / merge-queued), `STRAY`, or `HUSK` (a ledger-only remnant; `REAPED-HUSK` once reclaimed), followed by a
+`STALE-BRANCH` or `STALE-MERGE-REF` line per merge leftover, one `STALE-IDENTITY` line when sidecars are due, and an
+`ORPHAN-PROC` line per leftover host process.
 A merged worktree whose directory is dirty prints `KEEP — … but the worktree is dirty` with the clear command,
 every pass, until someone judges the blocking files; the reaper never forces past them.
 

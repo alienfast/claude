@@ -424,6 +424,68 @@ rm -rf "$r/.claude/worktrees"
 out=$($SCRIPT reap "$r" 2>&1)
 ck "sweep runs when the whole worktrees dir is gone" 'REAPED-IDENTITY 1 sidecar(s)' "$out"
 
+echo "== husk directories: a ledger-only remnant is reclaimed into <repo>/tmp/, anything else stays STRAY =="
+
+# The 2026-10-19 shape: /finish removed the worktree, and a session started before the ledger mods resolved their
+# root to the owning checkout kept writing tmp/*.jsonl under the old path, recreating the directory with no .git.
+# build_husk <repo> <slug> <age:old|fresh> <name>... writes each named file under <repo>/.claude/worktrees/<slug>/tmp/.
+build_husk() {
+  local repo="$1" slug="$2" age="$3" d="$1/.claude/worktrees/$2/tmp" f; shift 3
+  mkdir -p "$d"
+  for f in "$@"; do printf '{"event":"step"}\n' > "$d/$f"; [ "$age" = old ] && touch -t 200001010000 "$d/$f"; done
+}
+
+r=$(build_case husk_repo BF-980 started 1 0 fresh)   # a live worktree beside the husks, never touched
+build_husk "$r" bf-981 old effort-ledger-x.jsonl loop-boundary-x.jsonl spawn-policy-x.jsonl
+out=$($SCRIPT list "$r" 2>&1)
+ck "list: a ledger-only husk past the grace is HUSK" 'BF-981 *HUSK — 3 ledger file(s) only' "$out"
+ck "list moves nothing" PRESENT "$([ -f "$r/.claude/worktrees/bf-981/tmp/effort-ledger-x.jsonl" ] && echo PRESENT || echo GONE)"
+out=$($SCRIPT reap "$r" 2>&1)
+ck "reap: the husk is reclaimed" 'BF-981 *REAPED-HUSK — 3 ledger file(s) moved' "$out"
+ck "reap: the ledgers land in the repo's tmp/" '^3$' \
+   "$(ls "$r/tmp/effort-ledger-x.jsonl" "$r/tmp/loop-boundary-x.jsonl" "$r/tmp/spawn-policy-x.jsonl" 2>/dev/null | wc -l | tr -d ' ')"
+ck "reap: the husk directory is gone" GONE "$([ -e "$r/.claude/worktrees/bf-981" ] && echo PRESENT || echo GONE)"
+ck "reap: the live worktree beside it is untouched" PRESENT "$([ -d "$r/.claude/worktrees/bf-980" ] && echo PRESENT || echo GONE)"
+
+# Anything the ledger lanes do not name makes it a STRAY, and nothing is moved out of a STRAY.
+build_husk "$r" bf-982 old effort-ledger-y.jsonl notes.txt
+out=$($SCRIPT reap "$r" 2>&1)
+ck "a husk holding an off-lane file is STRAY" 'BF-982 *STRAY — not a registered worktree' "$out"
+ck "the STRAY line names the ledger-mod cause" 'ledger mods kept writing' "$out"
+ck "nothing is moved out of a STRAY" PRESENT "$([ -f "$r/.claude/worktrees/bf-982/tmp/effort-ledger-y.jsonl" ] && echo PRESENT || echo GONE)"
+
+# auto-state is never a candidate: /auto writes it only to the main checkout, so one in a husk is an anomaly to read.
+build_husk "$r" bf-983 old auto-state-abc.json
+ck "a husk holding auto-state is STRAY" 'BF-983 *STRAY' "$($SCRIPT reap "$r" 2>&1)"
+
+# A nested path is never a ledger, whatever its name.
+mkdir -p "$r/.claude/worktrees/bf-987/tmp/sub"; : > "$r/.claude/worktrees/bf-987/tmp/sub/effort-ledger-n.jsonl"
+touch -t 200001010000 "$r/.claude/worktrees/bf-987/tmp/sub/effort-ledger-n.jsonl"
+ck "a husk with a nested ledger is STRAY" 'BF-987 *STRAY' "$($SCRIPT reap "$r" 2>&1)"
+
+# Within the grace a session may still be writing: deferred, nothing moved.
+build_husk "$r" bf-984 fresh effort-ledger-z.jsonl
+out=$($SCRIPT reap "$r" 2>&1)
+ck "a husk whose newest ledger is within the grace is deferred" 'BF-984 *HUSK — .*deferring' "$out"
+ck "a deferred husk keeps its ledger" PRESENT "$([ -f "$r/.claude/worktrees/bf-984/tmp/effort-ledger-z.jsonl" ] && echo PRESENT || echo GONE)"
+
+# A live Claude session parked inside outranks the rule, as guard C does for a worktree; it is never signaled.
+build_husk "$r" bf-985 old effort-ledger-w.jsonl
+sess_pid=$(spawn_sleeper "$r/.claude/worktrees/bf-985" "$CLAUDE_SLEEPER")
+out=$($SCRIPT reap "$r" 2>&1)
+ck "a husk with a live session inside is kept" "BF-985 *HUSK — .*live Claude session (pid $sess_pid)" "$out"
+ck "a kept husk's session is never signaled" ALIVE "$(proc_state "$sess_pid")"
+ck "a kept husk's directory stays" PRESENT "$([ -d "$r/.claude/worktrees/bf-985" ] && echo PRESENT || echo GONE)"
+
+# A name already present in <repo>/tmp/ is never overwritten: the file stays, the directory stays, the pass says so.
+build_husk "$r" bf-986 old effort-ledger-dup.jsonl effort-ledger-ok.jsonl
+mkdir -p "$r/tmp"; printf 'keep\n' > "$r/tmp/effort-ledger-dup.jsonl"
+out=$($SCRIPT reap "$r" 2>&1)
+ck "a colliding ledger leaves the husk partly reclaimed" 'BF-986 *STRAY — husk partly reclaimed: 1 ledger file(s) moved' "$out"
+ck "the repo's copy is not overwritten" '^keep$' "$(cat "$r/tmp/effort-ledger-dup.jsonl")"
+ck "the colliding ledger stays in the husk" PRESENT "$([ -f "$r/.claude/worktrees/bf-986/tmp/effort-ledger-dup.jsonl" ] && echo PRESENT || echo GONE)"
+ck "the non-colliding ledger beside it was moved" PRESENT "$([ -f "$r/tmp/effort-ledger-ok.jsonl" ] && echo PRESENT || echo GONE)"
+
 echo "== ancestry exclusion: the sweep never treats its own process tree as a victim =="
 
 # with-repo-lock.py execvp's in place, so only $$/$PPID are visible from the reaper's own shell — the
@@ -558,6 +620,17 @@ ck "stack sweep: a dead owner runs the full reap on a tool without --disk-only" 
 stack_slot_stub with-disk-only
 out=$(PATH="$stack_stub:$PATH" $SCRIPT reap "$r" 2>&1)
 ck "stack sweep: a dead owner runs the full reap, not the disk pass" 'STACK-SLOT args=\[reap\]' "$out"
+
+# A husk owner -- the directory exists with no .git entry, recreated by a session's ledger writes after the worktree
+# was removed -- is dead too: under a bare -d it read alive and kept two basefund slots and their stacks for nine days
+# (2026-10-19). The linked worktree beside it, whose .git is a FILE, is the control.
+mkdir -p "$ROOT/husk-owner/tmp"; : > "$ROOT/husk-owner/tmp/effort-ledger-h.jsonl"
+printf 'owner=%s\nmode=test\n' "$ROOT/husk-owner" > "$REG/3.slot"
+out=$(PATH="$stack_stub:$PATH" $SCRIPT reap "$r" 2>&1)
+ck "stack sweep: a husk owner (directory, no .git) runs the full reap" 'STACK-SLOT args=\[reap\]' "$out"
+printf 'owner=%s\nmode=test\n' "$r/.claude/worktrees/bf-941" > "$REG/3.slot"
+out=$(PATH="$stack_stub:$PATH" $SCRIPT reap "$r" 2>&1)
+ck "stack sweep: a linked-worktree owner (.git file) is alive, disk pass only" 'STACK-SLOT args=\[reap --disk-only\]' "$out"
 
 # An unreachable daemon must skip BOTH, the same way it always skipped the teardown: `reap` reads docker to
 # decide what is abandoned AND to read the VM's disk, so a daemon answering nothing makes every stack look

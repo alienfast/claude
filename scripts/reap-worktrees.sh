@@ -178,8 +178,9 @@ default_branch_for() {
 }
 
 # True iff <dir> is its OWN registered linked worktree. A linked worktree carries its own .git
-# gitdir-pointer FILE and its git dir is <main>/.git/worktrees/<name>; an orphaned remnant (a partial
-# Windows removal that deleted the pointer but couldn't unlink locked node_modules / long paths) has
+# gitdir-pointer FILE and its git dir is <main>/.git/worktrees/<name>; an orphaned remnant (a husk that a
+# session's ledger writes recreated after the worktree was removed — reclaim_husk — or a partial Windows
+# removal that deleted the pointer but couldn't unlink locked node_modules / long paths) has
 # no .git, so `git -C "$dir" rev-parse` silently resolves UP to the main checkout's .git — every git
 # query in evaluate_worktree would then read MAIN's state (notably a constantly-fresh index, which
 # recent_activity() misreads as "active"). We detect this via git's own structure (the absolute git
@@ -376,6 +377,89 @@ live_sessions_in() {
   printf '%s' "${pids# }"
 }
 
+# Ledger names a husk may hold: reap-tmp.sh's mod-ledger and mod-probe lanes, minus effort-probe-* (written to the
+# session cwd itself, never under tmp/) and never auto-state-*.json (/auto writes it only to the main checkout, so one
+# inside a husk is an anomaly for a human to read, not a file to move).
+husk_ledger_name() {
+  case "$1" in
+    effort-ledger-*.jsonl|loop-boundary-*.jsonl|spawn-policy-*.jsonl|loop-boundary-probe-*) return 0 ;;
+  esac
+  return 1
+}
+
+# Reclaim a ledger-only husk: a directory under .claude/worktrees/ that git no longer lists, holding nothing but
+# harness ledgers directly under tmp/. The ledger mods (effort-phase, loop-boundary, spawn-policy) resolve their path
+# once at session start, and until 2026-10-10 that path was the worktree on a session resumed inside one, so every
+# write after /finish removed the worktree recreated the directory. Three sat in basefund for nine days, each printing
+# STRAY on every hourly pass — and a husk is not inert: every `[ -d <owner> ]` liveness test reads it as a live
+# checkout, so the project's stack-slot registry kept two slots and their docker stacks, and the dead-owner gate
+# below saw nothing dead (2026-10-19).
+#
+# Candidate iff ALL hold: no .git entry; every entry under the directory is tmp/ itself or a regular file directly
+# under tmp/ whose name husk_ledger_name admits (a symlink or a nested path is never one); the newest file is older
+# than the grace, so a session still writing keeps it; and no live Claude session has its cwd inside (guard C — a
+# leftover host process does not hold it, and the orphan sweep reaches that process once the directory is gone).
+# reap moves each file with `mv -n` into <repo>/tmp/ — where the mods write today, fleet-metrics.py globs them, and
+# reap-tmp's mod-ledger lane ages them out — then rmdirs tmp/ and the husk. rmdir is the safety: a file the move
+# left behind (its name already present in <repo>/tmp/ — BSD mv -n exits 0 and keeps the source, so presence, not
+# exit status, is the check) or anything the rule missed makes it fail, and the directory stays with the STRAY hand
+# remedy. Nothing under .claude/worktrees/ is ever `rm -rf`ed here. The admin entry is not pruned: a husk's went
+# with its worktree, and `git worktree prune` would reach every other missing worktree too.
+# Exit 0 when the directory was a husk and a verdict line was printed, 1 when it is not one (the caller prints STRAY).
+reclaim_husk() {
+  local repo="$1" dir="$2" mode="$3" issue entry name mtime now grace newest=0 n=0 live age_h f moved=0 left=0
+  issue=$(basename "$dir" | tr '[:lower:]' '[:upper:]')
+  [ -e "$dir/.git" ] && return 1
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    [ -L "$entry" ] && return 1
+    if [ "$entry" = "$dir/tmp" ]; then [ -d "$entry" ] || return 1; continue; fi
+    name=${entry#"$dir/tmp/"}
+    { [ "$name" != "$entry" ] && [ -f "$entry" ]; } || return 1
+    case "$name" in */*) return 1 ;; esac
+    husk_ledger_name "$name" || return 1
+    mtime=$(stat -c %Y "$entry" 2>/dev/null || stat -f %m "$entry" 2>/dev/null || true)
+    case "$mtime" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$mtime" -gt "$newest" ] && newest=$mtime
+    n=$((n + 1))
+  done < <(find "$dir" -mindepth 1 2>/dev/null)
+  [ "$n" -gt 0 ] || return 1
+  now=$(date +%s); grace=$(( REAP_GRACE_MIN * 60 ))
+  if [ $(( now - newest )) -lt "$grace" ]; then
+    printf '  %-12s %s\n' "$issue" "HUSK — $n ledger file(s) only, no .git; the newest was written within ${REAP_GRACE_MIN}m, deferring (a session may still be writing)."
+    return 0
+  fi
+  live=$(live_sessions_in "$dir")
+  if [ -n "$live" ]; then
+    printf '  %-12s %s\n' "$issue" "HUSK — $n ledger file(s) only, no .git; KEEP — in use: a live Claude session (pid $live) has its cwd inside. Close or resume it by hand."
+    return 0
+  fi
+  age_h=$(( (now - newest) / 3600 ))
+  if [ "$mode" = list ]; then
+    printf '  %-12s %s\n' "$issue" "HUSK — $n ledger file(s) only, no .git, newest ${age_h}h old; reap moves them to $repo/tmp/ and removes the directory."
+    return 0
+  fi
+  mkdir -p "$repo/tmp" 2>/dev/null || { printf '  %-12s %s\n' "$issue" "HUSK — $n ledger file(s) only, but $repo/tmp/ cannot be created; left in place ($dir)."; return 0; }
+  for f in "$dir"/tmp/*; do
+    [ -e "$f" ] || continue
+    name=$(basename "$f")
+    # Re-checked at the move: a file that appeared since the scan is not a ledger until it is.
+    if [ -f "$f" ] && [ ! -L "$f" ] && husk_ledger_name "$name"; then mv -n "$f" "$repo/tmp/$name" 2>/dev/null || true; fi
+    if [ -e "$f" ]; then
+      left=$((left + 1))
+      err "WARN: husk $issue: $name left in $dir/tmp/ — already present in $repo/tmp/, or not a ledger"
+    else
+      moved=$((moved + 1))
+    fi
+  done
+  if [ "$left" -eq 0 ] && rmdir "${dir:?}/tmp" 2>/dev/null && rmdir "${dir:?}" 2>/dev/null; then
+    printf '  %-12s %s\n' "$issue" "REAPED-HUSK — $moved ledger file(s) moved to $repo/tmp/, directory removed."
+  else
+    printf '  %-12s %s\n' "$issue" "STRAY — husk partly reclaimed: $moved ledger file(s) moved to $repo/tmp/, $left left behind, directory kept ($dir). Inspect, then: rm -rf '$dir'"
+  fi
+  return 0
+}
+
 # Evaluate one worktree dir. mode=list prints the verdict only; mode=reap also removes when eligible.
 # Assumes (reap mode) the per-repo lock is held by the caller.
 evaluate_worktree() {
@@ -385,12 +469,14 @@ evaluate_worktree() {
   slug=$(basename "$dir")
   issue=$(printf '%s' "$slug" | tr '[:lower:]' '[:upper:]')
 
-  # Must be its OWN registered linked worktree. A stray dir (admin pruned, manual rm, or a partial
-  # Windows removal that left content but deleted the .git pointer) resolves rev-parse UP to the main
-  # checkout, so every git query below would silently read MAIN's state (a fresh index → false
-  # "active", HEAD → main, etc.). Surface it with cleanup guidance and never `rm -rf` an arbitrary path.
+  # Must be its OWN registered linked worktree. A stray dir (admin pruned, manual rm, a husk recreated by a
+  # session's ledger writes, or a partial Windows removal that left content but deleted the .git pointer)
+  # resolves rev-parse UP to the main checkout, so every git query below would silently read MAIN's state
+  # (a fresh index → false "active", HEAD → main, etc.). A ledger-only husk is reclaimed (reclaim_husk);
+  # anything else is surfaced with cleanup guidance, and this script never `rm -rf`s an arbitrary path.
   if ! is_registered_worktree "$dir"; then
-    printf '  %-12s %s\n' "$issue" "STRAY — orphaned worktree remnant, not a registered worktree ($dir). Likely a partial removal (Windows locked files/long paths). Inspect for unsaved work, then: rm -rf '$dir' && git -C '$repo' worktree prune"
+    reclaim_husk "$repo" "$dir" "$mode" && return 0
+    printf '  %-12s %s\n' "$issue" "STRAY — not a registered worktree ($dir): git no longer lists it. Either a session's ledger mods kept writing under it after the worktree was removed (a session started before 2026-10-10 resolved its ledger root to the worktree), or a partial removal (Windows locked files/long paths) left content behind. Inspect for unsaved work, then: rm -rf '$dir' && git -C '$repo' worktree prune"
     return 0
   fi
 
@@ -607,10 +693,14 @@ sweep_signal_victim() {
   fi
 }
 
-# True (exit 0) iff the stack-slot registry names at least one owner directory that no longer exists --
-# a genuine orphan to reclaim, as opposed to slots that are all still owned. Registry entries live at
+# True (exit 0) iff the stack-slot registry names at least one owner that is no longer a checkout -- a genuine
+# orphan to reclaim, as opposed to slots that are all still owned. Registry entries live at
 # $HOME/.basefund/stack-slots/<N>.slot with an `owner=<path>` line (tools/stack-slot's own layout); this
-# reads it directly rather than shelling out, since the check must stay cheap and side-effect-free.
+# reads it directly rather than shelling out, since the check must stay cheap and side-effect-free. A checkout
+# is a directory with a .git entry (a file in a linked worktree, a directory in the main checkout): a husk
+# (reclaim_husk) has the directory and no .git, and under a bare -d it read as a live owner for nine days while
+# its slot and docker stack stayed up (basefund, 2026-10-19). The project tool's own abandonment test makes the
+# final call; this gate only decides whether to invoke it.
 _stack_slot_has_dead_owner() {
   local reg_dir="$HOME/.basefund/stack-slots" f owner
   [ -d "$reg_dir" ] || return 1
@@ -618,7 +708,7 @@ _stack_slot_has_dead_owner() {
     [ -e "$f" ] || continue
     owner=$(sed -n 's/^owner=//p' "$f" 2>/dev/null | head -n1) || true
     [ -n "$owner" ] || continue
-    [ -d "$owner" ] || return 0
+    { [ -d "$owner" ] && [ -e "$owner/.git" ]; } || return 0
   done
   return 1
 }
