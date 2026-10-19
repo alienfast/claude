@@ -500,13 +500,26 @@ else
   echo "  skipped (macOS/launchd-only; this is $OSTYPE)."
 fi
 
-# cswap is pinned by scripts/cswap-setup.sh (it holds every account's refresh token, so upgrades are deliberate): say when
-# the install has drifted from the pin rather than upgrading it here.
-if command -v cswap >/dev/null 2>&1; then
-  cswap_pin=$(sed -n 's/^CSWAP_PIN="\([^"]*\)".*/\1/p' "$claude_repo/scripts/cswap-setup.sh")
-  cswap_have=$(cswap --version 2>/dev/null | awk '{print $2}' || true)
-  if [ -n "$cswap_pin" ] && [ "$cswap_have" != "$cswap_pin" ]; then
-    echo "  ⚠️  cswap ${cswap_have:-?} is installed but scripts/cswap-setup.sh pins $cswap_pin — re-run it to converge."
+# cswap is opt-in per machine (scripts/cswap-setup.sh), so it is upgraded only where it is already installed. `uv tool
+# upgrade` honours an exact pin left in the tool's receipt and does nothing; `install --upgrade` re-resolves to the latest
+# release, rewrites the receipt bare, and leaves a current install where it is (measured on uv 0.9.6). The engine is
+# restarted onto the new code only when the version moved — run this with no fleet in flight.
+if command -v cswap >/dev/null 2>&1 && command -v uv >/dev/null 2>&1; then
+  echo ""
+  echo "Upgrading claude-swap (cswap)..."
+  cswap_before=$(cswap --version 2>/dev/null | awk '{print $2}')
+  if uv tool install --upgrade claude-swap >/dev/null 2>&1; then
+    cswap_after=$(cswap --version 2>/dev/null | awk '{print $2}')
+    if [ "$cswap_before" = "$cswap_after" ]; then
+      echo "  cswap ${cswap_after:-?} is current."
+    else
+      echo "  cswap ${cswap_before:-?} upgraded to ${cswap_after:-?}."
+      if [[ "$OSTYPE" == "darwin"* ]] && launchctl kickstart -k "gui/$(id -u)/com.alienfast.cswap-auto" 2>/dev/null; then
+        echo "  auto-switch engine restarted on $cswap_after."
+      fi
+    fi
+  else
+    echo "  WARNING: 'uv tool install --upgrade claude-swap' failed; cswap ${cswap_before:-?} stays. Run it by hand to see why."
   fi
 fi
 

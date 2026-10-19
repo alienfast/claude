@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# cswap-setup.sh — opt this machine into multi-account rotation with claude-swap (cswap): install a pinned version,
-# enroll this machine's Claude logins, apply the rotation policy, and keep `cswap auto` running under launchd.
+# cswap-setup.sh — opt this machine into multi-account rotation with claude-swap (cswap): install it, enroll this
+# machine's Claude logins, apply the rotation policy, and keep `cswap auto` running under launchd.
 #
 # WHY A SCRIPT, NOT THE README: cswap's defaults are wrong for us. Its `best` strategy parks on the account with the
 # most headroom — the quota with the longest to live — so weekly quota on the soon-to-reset accounts expires unused.
@@ -9,17 +9,19 @@
 # about ten minutes of the reset). The threshold is 95 on the binding window (the higher of 5h/7d), not 98: the 5h
 # window climbs about a point a minute at p90 and 17 points in the worst minute, against a blind spot of ~90s (60s poll
 # plus the macOS Keychain pickup), and a session that has taken a 429 is not rescued by a swap underneath it
-# (realiti4/claude-swap#327, measured over 14,070 readings). Per-window thresholds — 5h 95 / 7d 98-99 — are upstream
-# #303/#327; raise the weekly line here when they land. Below the threshold consume-first also moves back onto a
-# sooner-resetting account that is merely under the line (no landing cap, #327) — the 95 bounds how spent such a
-# landing can be.
+# (realiti4/claude-swap#327, measured over 14,070 readings). A separate weekly line — autoswitch.weeklyThreshold, upstream
+# #474 — is on main but in no release as of 0.27.2; once a release carries it, set it here at 98-99 and give
+# fleet-headroom.sh per-window lines (it judges the binding window against the one threshold). Below the threshold
+# consume-first also moves back onto a sooner-resetting account that is merely under the line (no landing cap; caps and a
+# weekly-first strategy are still open under #327) — the 95 bounds how spent such a landing can be.
 #
 # OPT-IN PER MACHINE. Nothing in the shared config installs or requires cswap; a single-account user never runs this,
-# and the fleet scripts read their single-account meter exactly as before. The version is PINNED (CSWAP_PIN): cswap
-# holds every account's refresh token and its 0.2x line changes the credential path often; bump the pin deliberately,
-# and update.sh says when the installed version has drifted from it.
+# and the fleet scripts read their single-account meter exactly as before. cswap is installed unpinned: this script only
+# where it is missing, and update.sh upgrades it on a machine where it is already installed and restarts the engine onto
+# the new code, so run update.sh with no fleet in flight. Its 0.2x line changes the credential path often; if a release
+# breaks switching, `uv tool install --reinstall 'claude-swap==<last good>'` rolls it back until the next update.sh.
 #
-# Usage: cswap-setup.sh [--threshold N] [--strategy best|consume-first] [--version V] [--no-service] [--no-enroll]
+# Usage: cswap-setup.sh [--threshold N] [--strategy best|consume-first] [--no-service] [--no-enroll]
 #   Enrollment is interactive: the current login is enrolled, then each further account is a `claude auth login`
 #   followed by `cswap add` (never /logout first — cswap backs the live login up before the next replaces it). Without
 #   a TTY only the current login is enrolled and the remaining commands are printed. Re-run freely: every step is
@@ -29,16 +31,14 @@
 # Run ./cswap-setup.test.sh after ANY change.
 set -uo pipefail
 
-CSWAP_PIN="0.27.2"
 LABEL="com.alienfast.cswap-auto"
 THRESHOLD=95
 STRATEGY="consume-first"
-VERSION="$CSWAP_PIN"
 SERVICE=1
 ENROLL=1
 here=$(cd "$(dirname "$0")" && pwd)
 
-usage() { sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; }
 die() { echo "ERROR: $*" >&2; exit 1; }
 step() { echo; echo "== $*"; }
 
@@ -46,7 +46,6 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --threshold)  THRESHOLD="$2"; shift 2 ;;
     --strategy)   STRATEGY="$2"; shift 2 ;;
-    --version)    VERSION="$2"; shift 2 ;;
     --no-service) SERVICE=0; shift ;;
     --no-enroll)  ENROLL=0; shift ;;
     -h|--help)    usage; exit 0 ;;
@@ -75,17 +74,16 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 echo "  claude, jq, uv present"
 
-step "Installing claude-swap $VERSION"
+step "Installing claude-swap"
 bindir=$(uv tool dir --bin 2>/dev/null) || bindir="$HOME/.local/bin"
 case ":$PATH:" in *":$bindir:"*) ;; *) export PATH="$bindir:$PATH" ;; esac
 have=$(cswap --version 2>/dev/null | awk '{print $2}')
-if [ "$have" = "$VERSION" ]; then
-  echo "  cswap $have already installed"
+if [ -n "$have" ]; then
+  echo "  cswap $have already installed (update.sh keeps it current)"
 else
-  [ -n "$have" ] && echo "  cswap $have installed; converging on $VERSION"
-  uv tool install --reinstall "claude-swap==$VERSION" || die "uv tool install failed"
+  uv tool install claude-swap || die "uv tool install failed"
   have=$(cswap --version 2>/dev/null | awk '{print $2}')
-  [ "$have" = "$VERSION" ] || die "installed claude-swap $VERSION but 'cswap --version' answers '${have:-nothing}' — is $bindir on PATH?"
+  [ -n "$have" ] || die "installed claude-swap but 'cswap --version' answers nothing — is $bindir on PATH?"
   echo "  installed cswap $have"
 fi
 

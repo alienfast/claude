@@ -111,7 +111,7 @@ Enrollment needs a terminal: each further account is a browser login (`claude au
 a session has no TTY for that, so never run the script bare from here. Print the command and what it will do:
 
 ```text
-~/.claude/scripts/cswap-setup.sh      # in a terminal: installs the pinned cswap, enrolls accounts, applies the policy, loads the agent
+~/.claude/scripts/cswap-setup.sh      # in a terminal: installs cswap, enrolls accounts, applies the policy, loads the agent
 ```
 
 Re-applying the policy without enrollment is safe from a session, when the user asks for a different threshold or

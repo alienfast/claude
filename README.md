@@ -405,7 +405,7 @@ To try it, from a terminal rather than a Claude session (the account logins need
 ~/.claude/scripts/cswap-setup.sh
 ```
 
-It installs a pinned cswap through `uv`, enrolls the current login, then loops: answer `y`, complete a `claude auth login` for the next account, and it is added, until you answer `n`. Never `/logout` between accounts; cswap backs the live login up before the next one replaces it. It then applies the policy, prints one dry-run tick so you can see the engine's decision, and loads a `launchd` agent that keeps `cswap auto` running. Every step is idempotent; re-run it with `--threshold` or `--strategy` to change the policy, and the engine restarts on the new values.
+It installs cswap through `uv` where it is missing (the latest release; from then on `update.sh` upgrades it, only on a machine where it is installed), enrolls the current login, then loops: answer `y`, complete a `claude auth login` for the next account, and it is added, until you answer `n`. Never `/logout` between accounts; cswap backs the live login up before the next one replaces it. It then applies the policy, prints one dry-run tick so you can see the engine's decision, and loads a `launchd` agent that keeps `cswap auto` running. Every step is idempotent; re-run it with `--threshold` or `--strategy` to change the policy, and the engine restarts on the new values.
 
 Day to day, in a session ([skill](skills/cswap/)):
 
@@ -430,7 +430,7 @@ cswap auto --once --dry-run --json    # what the engine would do right now
 tail -f ~/.claude/logs/cswap-auto.log # one JSON event per poll, switch, quarantine or error
 ```
 
-`update.sh` refreshes the agent only where the setup script installed it, and warns when the installed cswap has drifted from the pin. It never installs or upgrades cswap: the tool holds every enrolled account's refresh token, so version bumps are deliberate (`CSWAP_PIN` in the setup script).
+`update.sh` refreshes the agent and upgrades cswap to the latest release only where the setup script installed it, restarting the engine onto the new code when the version moved, so run it with no fleet in flight; on any other machine it never installs cswap. The tool holds every enrolled account's refresh token and its 0.2x releases change the credential path often, so if a release breaks switching, `uv tool install --reinstall 'claude-swap==<last good>'` rolls it back until the next `update.sh`.
 
 Known edges while this is a trial:
 

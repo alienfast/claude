@@ -14,7 +14,7 @@ export HOME="$WORK/home"; mkdir -p "$HOME"
 BIN="$WORK/bin"; mkdir -p "$BIN"
 CALLS="$WORK/calls.log"
 echo Darwin > "$WORK/os"
-echo 0.27.2 > "$WORK/cswap.version"
+echo 0.27.2 > "$WORK/cswap.latest"
 printf '%s' '{"loggedIn":true,"authMethod":"claude.ai","email":"a@example.com"}' > "$WORK/auth.json"
 
 cat > "$BIN/uname" <<STUB_UNAME
@@ -26,14 +26,14 @@ cat > "$BIN/uv" <<STUB_UV
 echo "uv \$*" >> "$CALLS"
 case "\$1 \$2" in
   "tool dir") echo "$WORK/uvbin" ;;
-  "tool install") for a in "\$@"; do case "\$a" in claude-swap==*) echo "\${a#claude-swap==}" > "$WORK/cswap.version" ;; esac; done ;;
+  "tool install") cp "$WORK/cswap.latest" "$WORK/cswap.version" ;;
 esac
 STUB_UV
 cat > "$BIN/cswap" <<STUB_CSWAP
 #!/usr/bin/env bash
 echo "cswap \$*" >> "$CALLS"
 case "\$1" in
-  --version) echo "cswap \$(cat "$WORK/cswap.version")" ;;
+  --version) [ -s "$WORK/cswap.version" ] || exit 1; echo "cswap \$(cat "$WORK/cswap.version")" ;;
   list) echo "LIST" ;;
   auto) echo '{"event":"noSwitch","reason":"below-threshold"}'; exit 2 ;;
 esac
@@ -58,11 +58,12 @@ chmod +x "$BIN"/*
 export PATH="$BIN:$PATH"
 plist="$HOME/Library/LaunchAgents/com.alienfast.cswap-auto.plist"
 
-# 1. fresh machine, no TTY: install the pin, enroll the current login, apply the policy, load the agent
-echo 0.26.0 > "$WORK/cswap.version"; : > "$CALLS"
+# 1. fresh machine, no TTY: install the latest release, enroll the current login, apply the policy, load the agent
+rm -f "$WORK/cswap.version"; : > "$CALLS"
 rc=0; out=$("$here/cswap-setup.sh" </dev/null 2>&1) || rc=$?
 ck "fresh exits 0" 0 "$rc"
-ck "fresh installs the pin" 1 "$(count 'uv tool install --reinstall claude-swap==0.27.2')"
+ck "fresh installs the latest release" 1 "$(count 'uv tool install claude-swap')"
+ck "fresh lands the latest release" 0.27.2 "$(cat "$WORK/cswap.version")"
 ck "fresh enrolls the current login once" 1 "$(count 'cswap add')"
 ck "fresh sets consume-first" 1 "$(count 'cswap config set autoswitch.strategy consume-first')"
 ck "fresh sets threshold 95" 1 "$(count 'cswap config set autoswitch.threshold 95')"
@@ -73,11 +74,12 @@ ck "plist names the wrapper" 1 "$(grep -c "$HOME/.claude/scripts/cswap-auto-run.
 ck "fresh bootstraps the agent" 1 "$(count 'launchctl bootstrap')"
 ck "fresh says how to enroll the rest" 1 "$(has 'claude auth login && cswap add' "$out")"
 
-# 2. re-run on a converged machine: no reinstall, the loaded agent is restarted onto the policy
+# 2. re-run on a converged machine: no reinstall (update.sh owns upgrades), the loaded agent is restarted onto the policy
 : > "$CALLS"
 rc=0; out=$("$here/cswap-setup.sh" </dev/null 2>&1) || rc=$?
 ck "rerun exits 0" 0 "$rc"
 ck "rerun does not reinstall" 0 "$(count 'uv tool install')"
+ck "rerun names update.sh as the upgrade path" 1 "$(has 'update.sh keeps it current' "$out")"
 ck "rerun restarts the agent" 1 "$(count 'launchctl kickstart -k')"
 ck "rerun does not bootstrap again" 0 "$(count 'launchctl bootstrap')"
 
