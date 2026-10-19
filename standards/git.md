@@ -295,8 +295,10 @@ tidy up — destroying hours of work from both sessions. Every recovery attempt 
 Reflog does not track working tree files, dangling blobs rarely help for unstaged changes, and
 `git fsck --lost-found` cannot recover discarded working tree changes.
 
-The `git-permissions.sh` hook blocks these commands. It unblocks only on an explicit user
-instruction naming the command — the hook is the floor, not the reasoning.
+The `git-permissions.sh` hook blocks these commands, and it reads only the command string — nothing
+said in the conversation unblocks it (its block messages claimed otherwise until 2026-10-19). A
+destructive command the user genuinely wants is run by the user in their own terminal; the hook is the
+floor, not the reasoning.
 
 ## Verifying a git config value was registered
 

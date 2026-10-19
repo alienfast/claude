@@ -192,7 +192,7 @@ Allowed when a merge is in progress in a resolvable directory (no quoted or
 as unmerged — no directories, no quoted or \$VAR paths. Anything else is
 resolved by editing the file (the Edit tool).
 
-To proceed: Explicitly tell Claude \"yes, run this command\""
+Nothing said in this conversation unblocks it — the hook reads only the command string. If the user truly wants it, they run it themselves in a terminal; Claude offers a non-destructive alternative instead."
 }
 # A stash mutation is a hazard only with a second party on the shared stack: a linked worktree, or a running fleet.
 stash_verdict() {
@@ -241,7 +241,7 @@ Command: $segment
 The --force flag overrides safety checks and can cause data loss or
 destructive changes to your repository.
 
-To proceed: Explicitly tell Claude \"yes, use --force\""
+Nothing said in this conversation unblocks it — the hook reads only the command string. If the user truly wants it, they run it themselves in a terminal; Claude offers a non-destructive alternative instead."
   fi
 
   # Short-form -f (including bundled forms like -fd) on the subcommands where it is destructive.
@@ -255,7 +255,7 @@ Command: $segment
 -f is the same override as --force. It was previously NOT caught, so
 'git push -f' and 'git branch -f' ran unguarded.
 
-To proceed: Explicitly tell Claude \"yes, use -f\""
+Nothing said in this conversation unblocks it — the hook reads only the command string. If the user truly wants it, they run it themselves in a terminal; Claude offers a non-destructive alternative instead."
   fi
 
   # Force-push by refspec: `git push origin +main` is a force push with no flag at all.
@@ -267,7 +267,7 @@ Command: $segment
 
 A leading '+' on a refspec forces the update exactly as --force does.
 
-To proceed: Explicitly tell Claude \"yes, force-push this refspec\""
+Nothing said in this conversation unblocks it — the hook reads only the command string. If the user truly wants it, they run it themselves in a terminal; Claude offers a non-destructive alternative instead."
   fi
 
   # Destructive branch operations. `git branch` is otherwise allowlisted below.
@@ -280,7 +280,7 @@ Command: $segment
 -D force-deletes a branch and -M force-renames over an existing one. In a
 checkout shared by concurrent sessions this mutates state every session sees.
 
-To proceed: Explicitly tell Claude \"yes, run this git branch command\""
+Nothing said in this conversation unblocks it — the hook reads only the command string. If the user truly wants it, they run it themselves in a terminal; Claude offers a non-destructive alternative instead."
   fi
 
   # ---- Safe read-only and staging commands.
@@ -310,7 +310,7 @@ Command: $segment
 drop and clear delete stash entries permanently; branch applies one onto a
 new branch and moves the working tree.
 
-To proceed: Explicitly tell Claude \"yes, run this git stash command\""
+Nothing said in this conversation unblocks it — the hook reads only the command string. If the user truly wants it, they run it themselves in a terminal; Claude offers a non-destructive alternative instead."
     fi
     why=$(stash_verdict) && continue
     deny "🛑 BLOCKED: git stash mutates a stack shared across every worktree of this repo
@@ -327,7 +327,7 @@ is running out of it. Otherwise, to undo a temporary edit, copy the file aside
 and copy it back (standards/git.md \"Working Tree Protection\"). 'git stash
 list' and 'git stash show' are always allowed.
 
-To proceed: Explicitly tell Claude \"yes, run this git stash command\""
+Nothing said in this conversation unblocks it — the hook reads only the command string. If the user truly wants it, they run it themselves in a terminal; Claude offers a non-destructive alternative instead."
   fi
 
   # BLOCK: git reset in any mode except --soft. Matching the spelled-out --hard/--mixed left bare
@@ -346,8 +346,7 @@ working tree outright (--hard). This cannot be undone.
 
 'git reset --soft' (moves HEAD only, keeps index and tree) remains allowed.
 
-To proceed: Explicitly tell Claude \"yes, run this git reset command\"
-            (Only do this if you are absolutely certain!)"
+Nothing said in this conversation unblocks it — the hook reads only the command string. If the user truly wants it, they run it themselves in a terminal; Claude offers a non-destructive alternative instead."
   fi
 
   # BLOCK: git restore <files> (destroys working tree changes for specific files)
@@ -368,8 +367,7 @@ This cannot be undone - the changes will be lost forever.
 ⚠️  CRITICAL: Another Claude session or you may be working on these files.
     Running this command will destroy that work.
 
-To proceed: Explicitly tell Claude \"yes, run this git restore command\"
-            (Only do this if you are absolutely certain these changes should be discarded!)"
+Nothing said in this conversation unblocks it — the hook reads only the command string. If the user truly wants it, they run it themselves in a terminal; Claude offers a non-destructive alternative instead."
   fi
 
   # git checkout: a PATH operand destroys that file's uncommitted changes and a BRANCH operand moves the shared working
@@ -391,7 +389,7 @@ Command: $segment
 from it, and the SHARED working tree moves. Use -b for a new branch, or a plain
 'git checkout <branch>' on a clean tree to switch.
 
-To proceed: Explicitly tell Claude \"yes, run this git checkout -B command\""
+Nothing said in this conversation unblocks it — the hook reads only the command string. If the user truly wants it, they run it themselves in a terminal; Claude offers a non-destructive alternative instead."
     fi
     if [[ "$args" =~ (^|[[:space:]])-b([[:space:]]|$) ]] && [[ ! "$args" =~ [[:space:]]--([[:space:]]|$) ]]; then
       continue
@@ -419,7 +417,7 @@ Mid-merge, 'git checkout --ours|--theirs -- <unmerged file>' IS allowed. Any
 other repair is an edit (the Edit tool), never a shell overwrite from a ref.
 Flag-only forms (--detach, -b) stay allowed.
 
-To proceed: Explicitly tell Claude \"yes, run this git checkout command\""
+Nothing said in this conversation unblocks it — the hook reads only the command string. If the user truly wants it, they run it themselves in a terminal; Claude offers a non-destructive alternative instead."
     fi
   fi
 
@@ -436,7 +434,7 @@ Command: $segment
 -C is 'git branch -f' plus a switch. Use -c for a new branch, or a plain
 'git switch <branch>' on a clean tree to switch.
 
-To proceed: Explicitly tell Claude \"yes, run this git switch -C command\""
+Nothing said in this conversation unblocks it — the hook reads only the command string. If the user truly wants it, they run it themselves in a terminal; Claude offers a non-destructive alternative instead."
     fi
     if [[ "$sargs" =~ (^|[[:space:]])-c([[:space:]]|$) ]]; then
       continue
@@ -457,7 +455,7 @@ origin/), the tracked tree is clean, the directory is resolvable (no quoted or
 \$VAR -C path, no cd in the command), and no fleet is running out of it.
 Flag-only forms (--detach, -c) stay allowed.
 
-To proceed: Explicitly tell Claude \"yes, run this git switch command\""
+Nothing said in this conversation unblocks it — the hook reads only the command string. If the user truly wants it, they run it themselves in a terminal; Claude offers a non-destructive alternative instead."
     fi
   fi
 
@@ -478,7 +476,7 @@ This cannot be undone.
 
 Preview first with 'git clean -n' / 'git clean --dry-run' (both allowed).
 
-To proceed: Explicitly tell Claude \"yes, run git clean\""
+Nothing said in this conversation unblocks it — the hook reads only the command string. If the user truly wants it, they run it themselves in a terminal; Claude offers a non-destructive alternative instead."
   fi
 done <<< "$normalized"
 
