@@ -3040,9 +3040,10 @@ def main():
                       f"already reset** (worst single session {worst:.2f}h). The allowance's own "
                       f"duration is unavoidable; this is not. A session cut off mid-iteration has no "
                       f"ScheduleWakeup pending (it is turn-ending by contract) and fires no Stop hook "
-                      f"(an API-killed turn fires none), so nothing wakes it — check "
-                      f"`~/.claude/logs/auto-stall-watch.log` for whether the watcher flagged it, and "
-                      f"whether anyone acted.")
+                      f"(an API-killed turn fires StopFailure instead), so only `hooks/auto-rewake.sh` "
+                      f"can wake it — check `~/.claude/logs/auto-rewake.log` for whether it retried, "
+                      f"stood down or was capped, `~/.claude/logs/auto-stall-watch.log` for whether the "
+                      f"watcher flagged it, and whether anyone acted.")
             elif kinds:
                 # This branch is the else of `if lags:` — it means NO RECOVERY LAG WAS COMPUTABLE, not
                 # that no limit message exists (the kind two lines up came from one). Printing "no
