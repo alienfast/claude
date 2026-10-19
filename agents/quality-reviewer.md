@@ -83,7 +83,7 @@ Attack the implementation from every angle. Think like a malicious user, a confu
 
 ### FLAG AS NICE-TO-HAVE (the auto-fix lane — non-gating, never optional)
 
-This lane is **not** "won't fix." Everything here is **auto-applied in-session** by `/quality-review` Step 6 with no prompt — it is how these standards get enforced gradually, file by file, without gating the verdict or thrashing the convergence loop. Classifying a finding here means *it will be fixed*, not *it can be skipped* (item 6's marked pre-existing-arm note is the one exception). Put the following here:
+This lane is **not** "won't fix." Everything here is **auto-applied in-session** by `/quality-review` Step 6 with no prompt — it is how these standards get enforced gradually, file by file, without gating the verdict or thrashing the convergence loop. Classifying a finding here means *it will be fixed*, not *it can be skipped* (item 6's no-home note is the one exception). Put the following here:
 
 **1. Disproportionate or non-conforming comments**, per `rules/comments.md`, in any file under review:
 
@@ -102,9 +102,9 @@ This lane is **not** "won't fix." Everything here is **auto-applied in-session**
 **6. A redundant arm in a test file under review** — a test whose cases are a second copy of a matrix already pinned at a lower layer or at the mechanism's own file (a story re-running a shared dialog's rejection arm, a request spec re-walking a policy's clauses). Where it sits decides the grade:
 
 - **An arm the change under review adds is a Medium, not this lane.** It is fixed in the batch with the consolidation ledger (the project's `.claude/rules/storybook.md` § A change that adds or removes exports declares a ledger instead) plus the survivor's mutation proof, never a bare deletion; a vacuous assertion stays High under § Reviewing test code below.
-- **A pre-existing arm in a file the change merely touches is reported here**, under `### Nice-to-Have`, with the marker `note-only — coverage removal belongs to /test-sweep`, and never as Critical/High/Medium: removing coverage is a human decision, so no review lane deletes it.
+- **A pre-existing arm in a file the change merely touches is reported here, under `### Nice-to-Have`, and splits on whether its home is identified** (keeper ruling 2026-10-19). When the finding can name the home — the lower-layer file or the mechanism's own file that already pins the same matrix — it is `fix-now`: removed in the fix batch with the consolidation ledger and the survivor's mutation proof, exactly as the added-arm case above, never a bare deletion. When no home can be named, carry the marker `note-only — coverage removal belongs to /test-sweep`: removing coverage with no identified survivor is a human decision, so no review lane deletes it. Until 2026-10-19 every pre-existing arm was note-only; measured that day on the rspec corpus, about one request-spec example in five re-asserted a cell the policy spec already pinned, and the corpus grew ~2,770 examples a week while every fix batch could see the arm and was forbidden to touch it.
 
-Classify items 1–5 and item 6's pre-existing-arm note **Nice-to-Have** — never Critical/High/Medium (that lane is reserved for the dead-code / unused-implementation rule violations and real defects). The `/quality-review` loop auto-applies every Nice-to-Have in-session except item 6's marked note, which stays `note-only`.
+Classify items 1–5 and both of item 6's pre-existing-arm cases **Nice-to-Have** — never Critical/High/Medium (that lane is reserved for the dead-code / unused-implementation rule violations and real defects). The `/quality-review` loop auto-applies every Nice-to-Have in-session except item 6's no-home note, which stays `note-only`.
 
 ### IGNORE (Non-Issues)
 

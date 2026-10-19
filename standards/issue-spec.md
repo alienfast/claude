@@ -131,7 +131,7 @@ Every issue an agent files — a `/quality-review` deferred item, a `/finish` pr
 - [ ] <optional enhancement>
 
 ## Success Criteria
-- [ ] <specific, testable, implementation-agnostic criterion>
+- [ ] <specific, testable, implementation-agnostic criterion; one that describes behavior names the layer that pins it>
 
 ## Boundaries
 
@@ -163,7 +163,7 @@ A decision-shaped issue (`needs decision`) carries the same Problem and then `##
 
 - [ ] Problem is a story — a named actor, what they saw, the stake in their units, then the mechanism — retellable without the code, with the measurements it does not carry under `## Evidence` (§ The Problem is a story)
 - [ ] Desired outcome is observable — verifiable without reading code
-- [ ] Every success criterion is testable and implementation-agnostic
+- [ ] Every success criterion is testable and implementation-agnostic — and one that describes behavior names the layer that pins it: the lowest layer that owns the mechanism, per the project's test rules (a policy spec rather than the request spec that calls it; a shared dialog's own stories rather than each screen's). Naming the home is not implementation planning — it says where the behavior is verified, never how it is built. Left unnamed, an implementing session pins one criterion at every layer it touches: measured 2026-10-19 on the rspec corpus, about one request-spec example in five re-asserted a cell the policy spec already pinned (keeper ruling 2026-10-19)
 - [ ] Boundaries name at least one explicit exclusion — satisfiable by a deliverable exclusion; a mechanism-exclusion carries `(decided: <who/why>)` (§ Out of Scope bounds the deliverable, never the evidence)
 - [ ] Sized for one focused session (<150k tokens of context); epic-sized work is broken into sub-issues — each certified individually — via `~/.claude/scripts/linear-create-child.sh`
 - [ ] No implementation planning: no technical approach, no file lists, no verification-command blocks — unless the work *is* site enumeration, in which case the census follows the greppable-shape / commit-anchored / re-derivable form above. A `(decided:)`-marked mechanism-exclusion in Boundaries is the one sanctioned negative form (§ Out of Scope bounds the deliverable, never the evidence)

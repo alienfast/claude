@@ -941,6 +941,7 @@ ck_has "md prov fresh share"    "Fresh share **100%**" "$MD11"
 ck_has "md prov creator"        "quality-review-bot (1)" "$MD11"
 ck_has "md trend section"       "## Cross-run trend" "$MD11"
 ck_has "md trend current mark"  " ←" "$MD11"
+ck_has "md tests line: a diff with no spec or story files is measured at net 0" "Tests per shipped issue: +0.0 rspec examples, +0.0 story exports (net declarations across 1 of 1 landed ships" "$MD11"
 # History: the json + md runs above measured the SAME session set -> one row, not two (dedupe).
 ck "history dedupes rerun"  "1" "$(wc -l < "$CK11/tmp/fleet-metrics-history.jsonl" | tr -d ' ')"
 ck "history in json"        "1" "$(q11 "len(d['history'])")"
@@ -2344,6 +2345,122 @@ ck "in-window rate: the history row carries it"         "667" "$(q28 "d['history
 ck_has "in-window rate: reported beside the at-peak line" "Per in-window session-hour: **667** (6.00 session-hours of the 2 sessions fell inside the window, against the 10 the at-peak divisor assumes)" "$MD28"
 ck_has "in-window rate: the set-scope banner names the short member" "**The at-peak rate understates burn here — size on the in-window rate (667), not on 400.** 1 of 2 sessions ran only part of the 5h window (6.00 in-window session-hours against 2x5=10)" "$MD28"
 ck_lacks "in-window rate: no outsider blame under a session set" "probably falls OUTSIDE the run" "$MD28"
+
+# ---- 29. tests per shipped issue: net test declarations over each ship's landed diff ----
+# The 2026-10-19 basefund suite review: ~25.6k rspec examples growing ~2.8k a week, about one request-spec example in five
+# re-asserting a cell the policy spec already pins — invisible to a retro that priced a ship in dollars only. BF-901 lands as a
+# merge commit (diffed against its FIRST parent, the integration branch), BF-902 as a fast-forward commit, BF-903 has no commit.
+mk29() { git -C "$1" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g'; }
+CK29="$WORK/ck29"; mkdir -p "$CK29/tmp" "$CK29/spec" "$CK29/app"
+G29() { git -C "$CK29" -c user.email=t@t -c user.name=t "$@"; }
+git -C "$CK29" init -q 2>/dev/null
+printf 'RSpec.describe Foo do\n  it "old one" do\n  end\n  it "to remove" do\n  end\nend\n' > "$CK29/spec/foo_spec.rb"
+printf "export default { title: 'Foo' };\nexport const Base = {};\n" > "$CK29/Foo.stories.tsx"
+G29 add -A && G29 commit -q -m "init"
+G29 branch -M main
+G29 checkout -q -b bf-901
+printf 'RSpec.describe Foo do\n  it "old one" do\n  end\n  it "new a" do\n  end\n  it "new b" do\n  end\n  it "new c" do\n  end\n  it_behaves_like "shared"\nend\n' > "$CK29/spec/foo_spec.rb"
+printf "export default { title: 'Foo/Renamed' };\nexport const Base = {};\nexport const A = {};\nexport const B = {};\n" > "$CK29/Foo.stories.tsx"
+printf 'class Foo\n  it "is not a spec"\nend\n' > "$CK29/app/foo.rb"
+printf "export default { title: 'Baz' };\n" > "$CK29/Baz.stories.ts"
+G29 add -A && G29 commit -q -m "BF-901: widen the policy"
+G29 checkout -q main
+G29 merge --no-ff -q -m "Merge BF-901" bf-901
+printf 'RSpec.describe Bar do\n  it "x" do\n  end\nend\n' > "$CK29/spec/bar_spec.rb"
+G29 add -A && G29 commit -q -m "BF-902: add the bar spec"
+M29="$(mk29 "$CK29")"; mkdir -p "$WORK/projects/$M29"
+cat > "$CK29/tmp/auto-state-29000001.json" <<'EOF'
+{"status": "drained", "reason": "deadline", "shipped": ["BF-901", "BF-902", "BF-903"], "canceled": [], "skipped": [], "failed": []}
+EOF
+cat > "$WORK/projects/$M29/29000001-0000.jsonl" <<EOF
+{"type":"user","timestamp":"$(ts_ago 7200)","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"$(ts_ago 7000)","message":{"role":"assistant","id":"msg_t29","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"AUTO-HALTED: deadline"}]}}
+EOF
+H29="$CK29/tmp/fleet-metrics-history.jsonl"
+run29() { # run29 <tag> — json and markdown for the same set
+  CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK29" --sessions 29000001 --json > "$WORK/out29$1.json" 2>/dev/null
+  CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK29" --sessions 29000001 > "$WORK/out29$1.md" 2>&1
+}
+q29() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$WORK/out29a.json"; }
+# Seed the ledger: a pre-gauge row (no fields) and an earlier fleet that added fewer tests per ship.
+cat > "$H29" <<'EOF'
+{"fleet_start": "2026-01-01T00:00:00Z", "session_set": "old00001", "shipped": 5, "sessions": 1}
+{"fleet_start": "2026-02-01T00:00:00Z", "session_set": "old00002", "shipped": 4, "sessions": 1, "rspec_examples_per_shipped": 1.0, "story_exports_per_shipped": 0.5, "rspec_examples_net": 4, "story_exports_net": 2, "measured_ships": 4}
+EOF
+run29 a
+# BF-901: +3 `it` -1 `it` = +2 (it_behaves_like, the app/ file and `export default` are not declarations); BF-902: +1. BF-903 is unmeasured.
+ck "tests: rspec net"              "3"   "$(q29 "d['tests_per_shipped']['rspec_examples_net']")"
+ck "tests: story net"              "2"   "$(q29 "d['tests_per_shipped']['story_exports_net']")"
+ck "tests: measured/unmeasured"    "2 1" "$(q29 "' '.join(str(d['tests_per_shipped'][k]) for k in ('measured_ships','unmeasured_ships'))")"
+ck "tests: per-shipped values"     "1.5 1.0" "$(q29 "' '.join(str(d['tests_per_shipped'][k]) for k in ('rspec_examples_per_shipped','story_exports_per_shipped'))")"
+ck "tests: headline row carries the fields" "1.5 1.0 3 2 2" "$(python3 -c "
+import json,sys
+r=[json.loads(l) for l in open(sys.argv[1])][-1]
+print(' '.join(str(r[k]) for k in ('rspec_examples_per_shipped','story_exports_per_shipped','rspec_examples_net','story_exports_net','measured_ships')))" "$H29")"
+ck_has "tests: report line"        "Tests per shipped issue: +1.5 rspec examples, +1.0 story exports (net declarations across 2 of 3 landed ships; previous fleet +1.0 / +0.5)" "$WORK/out29a.md"
+ck_has "tests: rising flag fires against the lower row" "- **Tests per shipped issue rose**: rspec +1.5 vs +1.0, stories +1.0 vs +0.5 — ships are adding tests where the issue sits rather than where the mechanism lives; read the project's layer contract and route the duplicate arms to /test-sweep" "$WORK/out29a.md"
+ck_has "tests: trend header columns" "| filed/ship | ex/ship | st/ship | fresh% |" "$WORK/out29a.md"
+# ex/ship and st/ship cells by header position, per trend row: this fleet, the earlier gauge fleet, and the pre-gauge row.
+ck "tests: trend cells by row" "+1.5,+1.0 +1.0,+0.5 -,-" "$(python3 -c "
+import sys
+cells = lambda l: [c.strip() for c in l.strip().strip('|').split('|')]
+lines = open(sys.argv[1], encoding='utf-8').read().splitlines()
+hdr = cells(next(l for l in lines if l.startswith('| fleet start')))
+ex, st = hdr.index('ex/ship'), hdr.index('st/ship')
+row = lambda start: cells(next(l for l in lines if l.startswith('| ' + start)))
+print(' '.join(','.join((r[ex], r[st])) for r in (row(t) for t in (sys.argv[2], '2026-02-01', '2026-01-01'))))
+" "$WORK/out29a.md" "$(python3 -c "import json; print(json.load(open('$WORK/out29a.json'))['history'][-1]['fleet_start'][:10])")")"
+ck_has "tests: trend paragraph names the columns" "ex/ship and st/ship are the tests-per-shipped gauges" "$WORK/out29a.md"
+
+# A previous fleet that added MORE tests per ship: no flag, and the line still names it.
+cat > "$H29" <<'EOF'
+{"fleet_start": "2026-01-01T00:00:00Z", "session_set": "old00001", "shipped": 5, "sessions": 1}
+{"fleet_start": "2026-02-01T00:00:00Z", "session_set": "old00002", "shipped": 4, "sessions": 1, "rspec_examples_per_shipped": 9.0, "story_exports_per_shipped": 9.0}
+EOF
+run29 b
+ck_lacks "tests: no flag when the previous fleet was higher" "Tests per shipped issue rose" "$WORK/out29b.md"
+ck_has   "tests: previous fleet shown on the line" "previous fleet +9.0 / +9.0)" "$WORK/out29b.md"
+# Either value rising is enough: rspec falls but stories rise against 0.5, then the reverse.
+cat > "$H29" <<'EOF'
+{"fleet_start": "2026-02-01T00:00:00Z", "session_set": "old00002", "shipped": 4, "sessions": 1, "rspec_examples_per_shipped": 9.0, "story_exports_per_shipped": 0.5}
+EOF
+run29 c
+ck_has   "tests: one rising value flags" "rspec +1.5 vs +9.0, stories +1.0 vs +0.5" "$WORK/out29c.md"
+cat > "$H29" <<'EOF'
+{"fleet_start": "2026-02-01T00:00:00Z", "session_set": "old00002", "shipped": 4, "sessions": 1, "rspec_examples_per_shipped": 0.5, "story_exports_per_shipped": 9.0}
+EOF
+run29 e
+ck_has   "tests: the rspec value rising alone flags" "rspec +1.5 vs +0.5, stories +1.0 vs +9.0" "$WORK/out29e.md"
+# Only pre-gauge rows: nothing to compare against.
+cat > "$H29" <<'EOF'
+{"fleet_start": "2026-01-01T00:00:00Z", "session_set": "old00001", "shipped": 5, "sessions": 1}
+EOF
+run29 d
+ck_lacks "tests: no flag without a previous row carrying the field" "Tests per shipped issue rose" "$WORK/out29d.md"
+ck_has   "tests: unavailable previous prints dashes" "previous fleet - / -)" "$WORK/out29d.md"
+
+# Nothing measurable: a ship with no commit anywhere.
+CK29N="$WORK/ck29n"; mkdir -p "$CK29N/tmp"
+git -C "$CK29N" init -q 2>/dev/null
+git -C "$CK29N" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "init"
+M29N="$(mk29 "$CK29N")"; mkdir -p "$WORK/projects/$M29N"
+echo '{"status": "drained", "reason": "deadline", "shipped": ["BF-950"], "canceled": [], "skipped": [], "failed": []}' > "$CK29N/tmp/auto-state-29000002.json"
+sed 's/msg_t29/msg_t29n/' "$WORK/projects/$M29/29000001-0000.jsonl" > "$WORK/projects/$M29N/29000002-0000.jsonl"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK29N" --sessions 29000002 > "$WORK/out29n.md" 2>&1
+ck_has "tests: nothing measurable says why" "Tests per shipped issue: nothing could be measured — none of the 1 shipped issue(s) has a landing commit" "$WORK/out29n.md"
+
+# A net removal prints with its sign: a fast-forward commit dropping two examples.
+CK29M="$WORK/ck29m"; mkdir -p "$CK29M/tmp" "$CK29M/spec"
+git -C "$CK29M" init -q 2>/dev/null
+printf 'RSpec.describe Foo do\n  it "a" do\n  end\n  it "b" do\n  end\nend\n' > "$CK29M/spec/foo_spec.rb"
+git -C "$CK29M" add -A && git -C "$CK29M" -c user.email=t@t -c user.name=t commit -q -m "init"
+printf 'RSpec.describe Foo do\nend\n' > "$CK29M/spec/foo_spec.rb"
+git -C "$CK29M" -c user.email=t@t -c user.name=t commit -q -am "BF-960: retire the duplicate arms"
+M29M="$(mk29 "$CK29M")"; mkdir -p "$WORK/projects/$M29M"
+echo '{"status": "drained", "reason": "deadline", "shipped": ["BF-960"], "canceled": [], "skipped": [], "failed": []}' > "$CK29M/tmp/auto-state-29000003.json"
+sed 's/msg_t29/msg_t29m/' "$WORK/projects/$M29/29000001-0000.jsonl" > "$WORK/projects/$M29M/29000003-0000.jsonl"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK29M" --sessions 29000003 > "$WORK/out29m.md" 2>&1
+ck_has "tests: a net removal keeps its sign" "Tests per shipped issue: -2.0 rspec examples, +0.0 story exports (net declarations across 1 of 1 landed ships" "$WORK/out29m.md"
 
 echo
 echo "$PASS passed / $FAIL failed / $SKIP skipped"

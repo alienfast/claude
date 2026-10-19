@@ -1,6 +1,6 @@
 ---
 name: fleet-retro
-description: Post-mortem on a finished fleet of parallel /loop /auto sessions — measures each session with scripts/fleet-metrics.py (blind-sleep burn, dispatch mode, heartbeat compliance, classifier blocks, state-vs-reality drift, review churn with findings origins and the implementing-tier join, token and estimated-dollar attribution by agent type and model plus the developer-lane split (implementation vs fix batch) — cache-aware, with main-loop thinking share, cost per shipped issue, the context-size distribution (the context gauge), shipped-issue provenance (the treadmill share), and a cross-run trend ledger diffing the last six fleets' headline gauges), reconciles the shipped ledger against git and Linear, audits the issues the run FILED for duplicates and stranded states, then reports ranked findings and applies the fixes you approve. The bookend to /auto-prep. Use when the user says 'fleet retro', 'review the fleet run', 'how did the fleet do', 'post-mortem the auto run', or invokes /fleet-retro.
+description: Post-mortem on a finished fleet of parallel /loop /auto sessions — measures each session with scripts/fleet-metrics.py (blind-sleep burn, dispatch mode, heartbeat compliance, classifier blocks, state-vs-reality drift, review churn with findings origins and the implementing-tier join, token and estimated-dollar attribution by agent type and model plus the developer-lane split (implementation vs fix batch) — cache-aware, with main-loop thinking share, cost per shipped issue, the context-size distribution (the context gauge), shipped-issue provenance (the treadmill share), tests added per shipped issue, and a cross-run trend ledger diffing the last six fleets' headline gauges), reconciles the shipped ledger against git and Linear, audits the issues the run FILED for duplicates and stranded states, then reports ranked findings and applies the fixes you approve. The bookend to /auto-prep. Use when the user says 'fleet retro', 'review the fleet run', 'how did the fleet do', 'post-mortem the auto run', or invokes /fleet-retro.
 argument-hint: "[--since YYYY-MM-DD | --hours N] [checkout-path]"
 model: opus
 effort: xhigh
@@ -144,7 +144,7 @@ real value, and the n=3 5h burst floor `/auto-prep` sized against read 1.9M wher
 4.3–5.5M. Coverage itself varies by run with no cause established — 99% on most fleets, 25% on 2026-09-05
 and 15% on 2026-09-22, all on harness 2.1.278 — so a low share is a finding to carry, not to explain away.
 
-Five gauges ride the same run and the retro reads all five, not just the tables:
+Seven gauges ride the same run and the retro reads all seven, not just the tables:
 
 - **Context distribution** — share of billable prompt volume by context size at call time. This is the
   context gauge. Since 2026-10-09 fleet-launch adds no `--autocompact` cap: the `loop-boundary` mod compacts
@@ -222,6 +222,20 @@ Five gauges ride the same run and the retro reads all five, not just the tables:
   sits in both, and the Pool exhausted line prints the overlap. Measured 2026-10-10/11: two sessions
   launched without `backlog` held 10.1h and 10.9h while the `backlog` sibling landed nine issues, and no
   gauge or flag fired.
+- **Tests per shipped issue** — the net test declarations each shipped issue added, as `Tests per shipped issue:
+  +X.X rspec examples, +Y.Y story exports` (under Output tokens by agent type, beside the cost line),
+  `ex/ship` and `st/ship` in the trend, `tests_per_shipped` in the JSON. It is a static count over each
+  ship's landed diff — added minus removed `it`/`specify`/`example`/`scenario` lines in `spec/**/*_spec.rb`
+  and `export const` lines in `*.stories.ts(x)`; `it_behaves_like` and `export default` never count — against
+  the merge commit's first parent, or the fast-forward commits whose subject names the issue. A ship with no
+  landing commit is excluded from the denominator and counted (`N of M`); a `-` in the trend is a row
+  recorded before the gauge. A rise against the previous fleet flags: ships are adding tests where the issue
+  sits rather than where the mechanism lives, so read the project's layer contract and route the duplicate
+  arms to `/test-sweep`. Measured 2026-10-19 on basefund: 25,618 rspec examples growing about 2,770 a week,
+  roughly one request-spec example in five re-asserting a cell the policy spec already pins — and this
+  retro reported cost per shipped issue but never tests per shipped issue, so the growth was invisible
+  exactly where fleets are reviewed. `/test-sweep`'s `baseline-series.sh` gives the suite-wide slope but
+  reads only trees a session measured, so it cannot attribute growth to ships.
 
 The per-session `obs` count reads three witnesses: the bare `SHIPPED-*: <ID>` line, the
 `mark-ready-for-release.sh <ID>` call the merge path makes (since 2026-10-05), and /auto's

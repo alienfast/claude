@@ -27,7 +27,8 @@ census of 14, 0.74 — so older rows read high wherever a review appended instea
 churn and `avg_cycles` / `findings_per_review` / `crit_high_per_review` / `plan_origin_share` were
 narrowed the same day to verdicts for issues the session set worked; older rows can include an
 interactive review persisted inside the window. `linear_ratelimited` and the table's `linear rl` column — Linear's own
-RATELIMITED answers in tool results — were added 2026-10-16; older rows carry no such field.)
+RATELIMITED answers in tool results — were added 2026-10-16; older rows carry no such field. The tests-per-shipped gauge
+(`rspec_examples_per_shipped`, `story_exports_per_shipped` and their nets) was added 2026-10-19; older rows carry none.)
 
 WHAT IT READS
   <checkout>/tmp/auto-state-<runKey>.json   run bookkeeping written by /auto Step 4
@@ -1644,24 +1645,31 @@ def git_merged(checkout, issues):
     fast-forward. `landed_at` is the latest committer date over the commits the grep finds — a
     `Merge <ID>` commit, or a fast-forward whose only commit is `<ID>: …` — and is the primary source
     for when a session was last productive: transcript SHIPPED tags covered 15 of the 2026-09-16 BFP
-    fleet's 21 ships, and the tag-only idle tail read 13.6h where git read 10.4h."""
+    fleet's 21 ships, and the tag-only idle tail read 13.6h where git read 10.4h. `landing` carries the SHAs
+    tests_per_shipped diffs: the merge commit(s), else the fast-forward commit(s) whose subject names the ID."""
     out = {}
     for issue in sorted(issues):
         landed_at = None
         try:
             lines = subprocess.run(
-                ["git", "-C", str(checkout), "log", "--format=%cI%x09%s", "--all", f"--grep={issue}"],
+                ["git", "-C", str(checkout), "log", "--format=%H%x09%cI%x09%s", "--all", f"--grep={issue}"],
                 capture_output=True, text=True, encoding="utf-8", timeout=30,
             ).stdout.splitlines()
         except (subprocess.SubprocessError, OSError):
             lines = []
         subjects = []
+        merge_shas, ff_shas = [], []
         for line in lines:
-            when, _, subject = line.partition("\t")
+            sha, _, rest = line.partition("\t")
+            when, _, subject = rest.partition("\t")
             subjects.append(subject)
             stamp = ts(when)
             if stamp and (landed_at is None or stamp > landed_at):
                 landed_at = stamp
+            if is_merge_subject(issue, subject):
+                merge_shas.append(sha)
+            elif re.search(rf"\b{issue}\b", subject):
+                ff_shas.append(sha)
         commits = "\n".join(subjects)
         out[issue] = {
             "landed_at": landed_at,
@@ -1671,12 +1679,92 @@ def git_merged(checkout, issues):
             # GitHub as `Merge pull request #N from <owner>/<branch>` — where the issue id appears
             # only inside the branch name, lowercased. Measured 2026-08-20: three PR-flow ships,
             # three false flags, each cleared by a hand `gh pr view`.
-            "merge": bool(
-                re.search(rf"Merge {issue}\b", commits)
-                or re.search(rf"Merge pull request #\d+ from \S*{issue.lower()}\b", commits)
-            ),
+            "merge": bool(merge_shas),
+            "landing": ("merge", merge_shas) if merge_shas else ("ff", ff_shas) if ff_shas else None,
         }
     return out
+
+
+def is_merge_subject(issue, subject):
+    return bool(re.search(rf"Merge {issue}\b", subject)
+                or re.search(rf"Merge pull request #\d+ from \S*{issue.lower()}\b", subject))
+
+
+SPEC_FILE = re.compile(r"(?:^|/)spec/(?:.+/)?[^/]+_spec\.rb$")
+STORY_FILE = re.compile(r"\.stories\.tsx?$")
+# `\b` after the keyword is what keeps `it_behaves_like` out: a declaration count, so shared-example expansion is not counted.
+SPEC_DECL = re.compile(r"[+-]\s*(?:it|specify|example|scenario)\b")
+STORY_DECL = re.compile(r"[+-]export const \w+")
+DIFF_FLAGS = ["--no-color", "--no-ext-diff", "--no-renames", "--src-prefix=a/", "--dst-prefix=b/", "-U0"]
+
+
+def count_declarations(diff_text):
+    """(rspec examples, story exports) net of removals over a unified diff, from files that can declare them."""
+    rspec = story = 0
+    kind, in_hunk = None, False
+    for line in diff_text.splitlines():
+        if line.startswith("diff --git "):
+            m = re.match(r"diff --git a/(.+) b/\1$", line)
+            path = m.group(1) if m else ""
+            kind = "rspec" if SPEC_FILE.search(path) else "story" if STORY_FILE.search(path) else None
+            in_hunk = False
+        elif line.startswith("@@"):
+            in_hunk = True
+        elif in_hunk and kind and line.startswith(("+", "-")):
+            sign = 1 if line[0] == "+" else -1
+            if kind == "rspec" and SPEC_DECL.match(line):
+                rspec += sign
+            elif kind == "story" and STORY_DECL.match(line):
+                story += sign
+    return rspec, story
+
+
+def landed_declarations(checkout, landing):
+    """Net (rspec examples, story exports) one landing added, or None when it cannot be measured. A merge commit's
+    change is its diff against the first parent (the branch merged INTO); fast-forward commits each stand alone."""
+    if not landing or not landing[1]:
+        return None
+    kind, shas = landing
+    rspec = story = 0
+    for sha in shas:
+        cmd = ["diff", *DIFF_FLAGS, f"{sha}^1", sha] if kind == "merge" else ["show", "--format=", *DIFF_FLAGS, sha]
+        try:
+            proc = subprocess.run(["git", "-C", str(checkout), "-c", "core.quotepath=off", *cmd],
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        except (subprocess.SubprocessError, OSError):
+            return None
+        if proc.returncode != 0:
+            return None
+        r, st = count_declarations(proc.stdout)
+        rspec += r
+        story += st
+    return rspec, story
+
+
+def tests_per_shipped(checkout, merged, shipped):
+    """Net test declarations the fleet's landed ships added, per measured ship. A static count over each ship's landed
+    diff because the baseline cache holds only trees a session measured, while every ship leaves a diff."""
+    rspec = story = measured = 0
+    for issue in sorted(shipped):
+        counts = landed_declarations(checkout, (merged.get(issue) or {}).get("landing"))
+        if counts is None:
+            continue
+        measured += 1
+        rspec += counts[0]
+        story += counts[1]
+    return {
+        "rspec_examples_net": rspec,
+        "story_exports_net": story,
+        "measured_ships": measured,
+        "unmeasured_ships": len(shipped) - measured,
+        "rspec_examples_per_shipped": round(rspec / measured, 1) if measured else None,
+        "story_exports_per_shipped": round(story / measured, 1) if measured else None,
+    }
+
+
+def signed_one(v):
+    """One decimal with an explicit sign; `-` for an unavailable value. The `+ 0.0` turns -0.0 into 0.0."""
+    return f"{v + 0.0:+.1f}" if v is not None else "-"
 
 
 def session_alive(pid, recorded_start):
@@ -2281,6 +2369,7 @@ def main():
     sub_final_share = round(sub_msgs_final / sub_msgs_total, 3) if sub_msgs_total else None
     out_per_shipped = round(sum(fleet_tokens.values()) / len(all_shipped)) if all_shipped else None
     cost_per_shipped = round(fleet_cost / len(all_shipped), 2) if all_shipped else None
+    tests = tests_per_shipped(checkout, merged, all_shipped)
 
     fleet_ctx = Counter()
     for s in sessions:
@@ -2320,6 +2409,11 @@ def main():
         "ctx_share_ge150k": round(ctx_ge150_share, 3) if ctx_ge150_share is not None else None,
         "ctx_share_ge200k": round(ctx_ge200_share, 3) if ctx_ge200_share is not None else None,
         "filed_per_shipped": filed_per_shipped,
+        "rspec_examples_net": tests["rspec_examples_net"],
+        "story_exports_net": tests["story_exports_net"],
+        "measured_ships": tests["measured_ships"],
+        "rspec_examples_per_shipped": tests["rspec_examples_per_shipped"],
+        "story_exports_per_shipped": tests["story_exports_per_shipped"],
         "fresh_shipped_share": fresh_share,
         "pool_exhausted_h": pool_exhausted_h,
         "idle_tail_session_hours": idle_tail_session_hours,
@@ -2424,6 +2518,13 @@ def main():
             print("         If it is a mis-scoped or provisional row of this same fleet, delete it from "
                   "tmp/fleet-metrics-history.jsonl and re-run. --allow-overlap persists this row anyway.",
                   file=sys.stderr)
+    # The previous fleet for the tests gauge: the newest ledger row of another session set that carries it.
+    prev_tests = next((r for r in reversed(history)
+                       if r.get("session_set") != headline["session_set"]
+                       and (r.get("rspec_examples_per_shipped") is not None
+                            or r.get("story_exports_per_shipped") is not None)), None)
+    prev_ex = prev_tests.get("rspec_examples_per_shipped") if prev_tests else None
+    prev_st = prev_tests.get("story_exports_per_shipped") if prev_tests else None
     burn_rate_all = round(sum(fleet_tokens.values()) / session_hours) if session_hours else None
     stall_groups = quota_stalls(sessions)
 
@@ -2540,6 +2641,7 @@ def main():
             "subagent_final_rows": {"messages": sub_msgs_total, "with_final_row": sub_msgs_final,
                                     "share": sub_final_share},
             "per_shipped": {"output_tokens": out_per_shipped, "est_cost_usd": cost_per_shipped},
+            "tests_per_shipped": tests,
             "context_distribution": {
                 "volume_tokens": {b: fleet_ctx[b] for b in CTX_BUCKETS if fleet_ctx[b]},
                 "share_ge150k": headline["ctx_share_ge150k"],
@@ -2803,6 +2905,16 @@ def main():
               f"{prov_counts['unknown']} unknown (absent from the export). {fresh}{by_creator}"
               f"Sources: {', '.join(Path(p).name for p in linear_read)}.\n")
 
+    if tests["measured_ships"]:
+        tests_line = (f"Tests per shipped issue: {signed_one(tests['rspec_examples_per_shipped'])} rspec examples, "
+                      f"{signed_one(tests['story_exports_per_shipped'])} story exports (net declarations across "
+                      f"{tests['measured_ships']} of {len(all_shipped)} landed ships; previous fleet "
+                      f"{signed_one(prev_ex)} / {signed_one(prev_st)})")
+    elif all_shipped:
+        tests_line = (f"Tests per shipped issue: nothing could be measured — none of the {len(all_shipped)} shipped issue(s) "
+                      f"has a landing commit in this checkout's history, or git was unavailable")
+    else:
+        tests_line = "Tests per shipped issue: no shipped issues to measure"
     print("## Output tokens by agent type\n")
     if fleet_tokens:
         total_out = sum(fleet_tokens.values())
@@ -2819,6 +2931,7 @@ def main():
         unpriced_note = f" · excluded from $ (no price row): {', '.join(sorted(unpriced))}" if unpriced else ""
         print(f"\n**Cost estimate** — ${fleet_cost:,.2f} at list prices (input + cache + output; cache "
               f"writes at the 1h-TTL rate) · {per_ship} · {think}{unpriced_note}\n")
+        print(tests_line + "\n")
         if sub_msgs_total:
             bound = ("" if sub_msgs_final == sub_msgs_total else
                      " — every subagent output figure above is a LOWER BOUND: a message with no final "
@@ -2872,6 +2985,7 @@ def main():
                   "context accumulated across iterations up to the engine's own threshold.\n")
     else:
         print("- no usage data found in transcripts\n")
+        print(tests_line + "\n")
 
     print("## Rate-limit windows\n")
     if peak_5h:
@@ -3076,8 +3190,9 @@ def main():
         def pct(v):
             return f"{round(100 * v)}%" if v is not None else "-"
         print("| fleet start | n | hours | shipped | $/issue | ktok/issue | $/Mtok out | sub-final% | "
-              "cycles | find/rev | C+H/rev | plan% | ctx>=200k% | filed/ship | fresh% | idle% | thr% | hold% | rewr% | 5h% |")
-        print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+              "cycles | find/rev | C+H/rev | plan% | ctx>=200k% | filed/ship | ex/ship | st/ship | fresh% | idle% | thr% | hold% | rewr% | "
+              "5h% |")
+        print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
         for r in history[-6:]:
             mark = " ←" if r.get("session_set") == headline["session_set"] and not args.all else ""
             fs = (r.get("fleet_start") or "?")[:16].replace("T", " ")
@@ -3089,6 +3204,7 @@ def main():
                   f"{cell(r.get('avg_cycles'))} | {cell(r.get('findings_per_review'))} | "
                   f"{cell(r.get('crit_high_per_review'))} | {pct(r.get('plan_origin_share'))} | "
                   f"{pct(r.get('ctx_share_ge200k'))} | {cell(r.get('filed_per_shipped'))} | "
+                  f"{signed_one(r.get('rspec_examples_per_shipped'))} | {signed_one(r.get('story_exports_per_shipped'))} | "
                   f"{pct(r.get('fresh_shipped_share'))} | {pct(r.get('idle_tail_share'))} | "
                   f"{pct(r.get('throttle_share'))} | {pct(r.get('hold_share'))} | {pct(r.get('rewritten_request_share'))} | "
                   f"{cell(r.get('peak_five_hour_pct'), '{}%')} |")
@@ -3099,6 +3215,8 @@ def main():
               "of work (ctx>=200k% names the driver — the loop-boundary lever since 2026-10-09, the autocompact cap before). sub-final% is the share of "
               "subagent messages whose final usage row was written: below 100% that row's ktok/issue is a "
               "floor and its $/Mtok out a ceiling, and a `-` is a row measured before the gauge existed. "
+              "ex/ship and st/ship are the tests-per-shipped gauges: the net rspec examples and story exports the fleet's landed "
+              "ships added, per measured ship, and a `-` is a row recorded before the gauge existed. "
               "fresh% is the treadmill "
               "gauge: the share of shipped issues created during or within 7 days before the run. "
               "idle% is the pool-exhausted gauge: session-hours sessions sat on an empty or gated pool "
@@ -3337,6 +3455,13 @@ def main():
               f"the verdict names deferred filings but never says whether sibling edges were wired or "
               f"none were owed, so retro Step 4's edge audit starts blind on these (unwired "
               f"same-mechanism siblings recurred on two consecutive fleets; BF-1226).")
+    cur_ex, cur_st = tests["rspec_examples_per_shipped"], tests["story_exports_per_shipped"]
+    if (cur_ex is not None and prev_ex is not None and cur_ex > prev_ex) \
+            or (cur_st is not None and prev_st is not None and cur_st > prev_st):
+        flagged = True
+        print(f"- **Tests per shipped issue rose**: rspec {signed_one(cur_ex)} vs {signed_one(prev_ex)}, stories "
+              f"{signed_one(cur_st)} vs {signed_one(prev_st)} — ships are adding tests where the issue sits rather than where the "
+              f"mechanism lives; read the project's layer contract and route the duplicate arms to /test-sweep")
     no_merge = [i for i, m in merged.items() if m["commit"] and not m["merge"]]
     if no_merge:
         print(f"- Landed without a merge commit of either shape — no `Merge <ID>` and no "
