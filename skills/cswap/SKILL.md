@@ -26,21 +26,27 @@ Verbs: `quota` (default when no argument or `/cswap` alone), `log`, `next`, `set
 
 ## quota
 
-One read. `// "-"` marks a figure the read did not carry; show it as absent, never as zero. `willLastToReset` is tested
-for null explicitly because jq's `//` also swallows `false`, the value that matters.
+One read. `dash` turns a figure the read did not carry into an em dash (`—`), and that is how every absent cell is
+shown — never as zero, never as a phrase. Absence is tested against null rather than with jq's `//`, which also
+swallows `false`, the `willLastToReset` value that matters. The weekly reset is formatted from `resetsAt` instead of
+cswap's `clock` (`Oct 20 06:59`): a weekly window resets within seven days, so the weekday names the day with less to
+read than a date. The two `sub`s strip the fractional seconds and `+00:00` offset cswap emits, which `fromdateiso8601`
+rejects.
 
 ```bash
 cswap list --json | jq -r '
+  def dash: if . == null then "—" else . end;
+  def local_dow: if . == null then "—" else (sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601 | strflocaltime("%a %H:%M")) end;
   .accounts[] | [
     .number, .email, (if .active then "active" else "" end), .usageStatus,
-    (.usage.fiveHour.pct // "-"), (.usage.fiveHour.countdown // "-"),
-    (.usage.sevenDay.pct // "-"), (.usage.sevenDay.clock // "-"),
-    (.usage.sevenDay.willLastToReset | if . == null then "-" else . end),
-    ((.usage.scoped // []) | map(select(.name == "Fable")) | (.[0].pct // "-")),
-    ((.usage.spend.used // "-") | tostring) + " / " + ((.usage.spend.limit // "-") | tostring),
-    (.loginExpiresAt // "-"),
-    (.usageFetchedAt // "-"),
-    (.usageAgeSeconds | if . == null then "-" else (. / 60 | floor) end)
+    (.usage.fiveHour.pct | dash), (.usage.fiveHour.countdown | dash),
+    (.usage.sevenDay.pct | dash), (.usage.sevenDay.resetsAt | local_dow),
+    (.usage.sevenDay.willLastToReset | dash),
+    ((.usage.scoped // []) | map(select(.name == "Fable")) | (.[0].pct | dash)),
+    (.usage.spend | if . == null then "—" else ((.used | tostring) + " / " + (.limit | tostring)) end),
+    (.loginExpiresAt | dash),
+    (.usageFetchedAt | dash),
+    (.usageAgeSeconds | if . == null then "—" else (. / 60 | floor) end)
   ] | @tsv'
 cswap config get autoswitch.threshold
 date -u
@@ -50,11 +56,12 @@ date -u
 good figure as `ok` for up to two hours — right for the switcher, wrong for a person reading the table — so the last
 two columns (when the figure was read, and its age in minutes) are what say whether a row is current.
 
-Present one table, one row per account: account, active, 5h % and time to reset, weekly % and reset time, Fable weekly
-%, extra-usage spend against its cap, login expiry, age in minutes. A row older than 15 minutes shows its usage cells
-as OUT OF DATE, never as current values, and no condition below is judged from it (a healthy row refreshes within about
-10 minutes). A 5h "time to reset" of `-` on a 0% account means no window is open — the window starts on first use —
-and is said that way, not left as a dash. Reset clocks are local time.
+Present one table, one row per account: account, active, 5h % and time to reset, weekly % and reset as weekday and
+time, Fable weekly %, extra-usage spend against its cap, login expiry, age in minutes. A row older than 15 minutes
+shows its usage cells as OUT OF DATE, never as current values, and no condition below is judged from it (a healthy row
+refreshes within about 10 minutes). An absent figure stays the em dash the read produced — a 5h reset with no window
+open (the window starts on first use), a spend the plan does not report — and is not expanded into words. Reset
+clocks are local time.
 
 Under the table, one line per condition that holds, and "nothing needs action" when none does:
 
@@ -91,7 +98,7 @@ With a number (`log 20`), show that many non-poll events instead of the last one
 ## next
 
 ```bash
-cswap auto --once --dry-run --json 2>&1 | tail -n 3; echo "exit=$?"
+set -o pipefail; cswap auto --once --dry-run --json 2>&1 | tail -n 3; echo "exit=$?"
 ```
 
 Dry run decides and never switches. Exit 0: it would switch now — name from, to and trigger from the `switch` line.
