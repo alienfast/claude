@@ -1,20 +1,18 @@
 ---
 name: reap-tmp
-description: Inspect and reclaim aged scratch under a project's tmp/. Classifies every top-level entry by name into a lane — never (fleet-metrics history, fleet markers, auto ledgers, triage and test-sweep proposals, tmp/keep/), state-gated (the /quality-review → /finish verdict once its branch is merged, a sequence marker once its branch is gone), cache, handoff, scratch — and ages only the deletable lanes out, while a directory the manifest does not know is reported and never deleted. A daily launchd agent runs it unattended; `list` shows what it would do. Use when the user says 'reap tmp', 'clean up tmp', 'prune tmp', 'what's in tmp', 'tmp is full of junk', or invokes /reap-tmp.
+description: Inspect and reclaim aged scratch under a project's tmp/. Classifies each entry by name into a lane — never, state-gated, handoff, cache, scratch — ages out only the deletable lanes, and reports an unknown directory without deleting it. A daily launchd agent runs it; `list` is the dry run. Use when the user says 'reap tmp', 'clean up tmp', 'what's in tmp', 'tmp is full of junk', or invokes /reap-tmp.
 ---
 
 # Reap Tmp
 
-Every skill writes to `<project>/tmp/` (CLAUDE.md § Guidelines), and most of what lands there is dead the
+Every skill writes to `<project>/tmp/` (CLAUDE.md § Scratch, local state, files), and most of what lands there is dead the
 moment its session ends: check logs, Linear staging bodies, fix-delta snapshots, test output. A small set of
 named files is the opposite — read later by a different skill, often from a different session: the
 `/quality-review` → `/finish` verdict, the fleet ledgers `/fleet-retro` measures, the triage and test-sweep scan →
 apply proposals — or never safe to lose at all (`fleet-metrics-history.jsonl`, the six-fleet trend ledger). Age
 is the wrong test for those and the only right test for the rest, so
-[reap-tmp.sh](../../scripts/reap-tmp.sh) classifies by **name first** and applies a per-lane rule. Measured
-before it existed: 359 files in `~/.claude/tmp`, 207 of them older than a month, and a project `tmp/` that
-was being wiped by hand — which is exactly the `rm -rf tmp/` CLAUDE.md forbids, because it takes the
-handoff files with it.
+[reap-tmp.sh](../../scripts/reap-tmp.sh) classifies by **name first** and applies a per-lane rule. The alternative
+is a `tmp/` wiped by hand — the `rm -rf tmp/` CLAUDE.md forbids, because it takes the handoff files with it.
 
 ## The lanes
 

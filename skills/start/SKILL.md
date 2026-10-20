@@ -1,407 +1,344 @@
 ---
 name: start
-description: Start working on a Linear issue — check blockers, assign, move to In Progress, create branch, plan implementation, execute with checkpoint updates, review and triage findings. Autonomous mode via the `auto` token (skips plan approval; converts prompts to documented defaults; used by /auto). The `simple` token — or the issue's `simple` label — selects /quality-review's simple review tier at Step 9. The `interactive` token (implies worktree mode) sets up the worktree and claims the issue, then hands off to the user without planning/implementing, so you can work in an isolated worktree without interfering with background `wt` agents. Use when the user says 'start issue', 'work on PL-XX', 'begin PL-XX', or invokes /start.
+description: Start working on a Linear issue — check blockers, claim it (assign + In Progress), set up the branch or worktree, plan, implement by delegation with checkpoints, then review. Tokens — `wt` (isolated worktree), `auto` (unattended; used by /auto), `simple` (simple review tier), `interactive` (worktree + claim, then hand off). Use when the user says 'start issue', 'work on PL-XX', 'begin PL-XX', or invokes /start.
 ---
 
 # Start Issue
 
-Automates the full workflow for starting and implementing a Linear issue using the `linear-cli` CLI.
+Automates the workflow for starting and implementing a Linear issue with the `linear-cli` CLI.
 
 ## Working Application Contract
 
-This is the non-negotiable rule that governs everything in this workflow:
+This skill is the canonical home of the contract; `/quality-review` and the delegation template below point here.
 
 **We are modifying a WORKING application. If the application stops working, that is OUR failure. Period.**
 
-There is no such thing as a "pre-existing" failure during implementation. The baseline check in Step 5 establishes a clean starting point. From that moment forward, every failure in `pnpm check` is caused by our changes and is our responsibility to fix. If we go from a working application to a non-working application, we broke it — no excuses, no deflection, no deferral.
+There is no "pre-existing" failure during implementation. Step 5's baseline establishes a clean starting point; from
+that moment every `pnpm check` failure is caused by our changes and is ours to fix — no excuses, deflection or deferral.
 
-Rules that flow from this contract:
-
-1. **`pnpm check` must pass at all times.** Turborepo caching makes repeated runs on an unchanged tree cheap — provided the project keeps its heavyweight lanes (browser suites) behind cached turbo tasks. Run it early, run it often.
-   Note that `pnpm check` may not cover every suite in a given project — basefund's rspec is a documented example (see its `CLAUDE.md` § Running RSpec). The contract's "never pre-existing" rule is anchored to what the baseline actually ran, so when this issue's changes touch a suite outside it, the orchestrator captures that suite's own baseline alongside `pnpm check`, and records — does not adopt — failures it shows at HEAD. Capturing it is orchestrator work: do not hand this instruction to parallel delegations, which would run the suite concurrently against shared fixtures.
-   **It is owed before the first edit, not before planning — and a sibling session may already have measured this exact tree.** The sequence: check `~/.claude/scripts/suite-baseline-cache.sh lookup <suite>` first — a `HIT` *is* the baseline (its `SUMMARY` and `FAILING` lines), with nothing to run. On a `MISS`, launch the run detached at once, do every read-only step while it runs (Step 6's exploration and plan composition, Step 7's plan post), and join its completion marker immediately before Step 8's first edit. The run measures the tree as of its start, so the edit hold is the only ordering the baseline needs; joining earlier idles the orchestrator for the suite's whole duration. After any *complete* full-suite run — the baseline or the post-change verification — `record` it before the next edit, so every session forked from the same tree skips the run (a fleet's first picks all fork one tip; in `/fleet-sequence` every issue after the first forks its predecessor's verified tree). The project's suite recipe carries the exact commands (basefund: `CLAUDE.md` § Running RSpec).
-2. **Failures are never "pre-existing."** The baseline passed. Any failure after that is ours — for what the baseline ran (rule 1).
+1. **`pnpm check` must pass at all times.** Run it early and often; Turborepo caching keeps an unchanged tree cheap when
+   the heavyweight lanes sit behind cached turbo tasks. It may not cover every suite a project has (the project's
+   `CLAUDE.md` names any outside it); the contract anchors to what the baseline actually ran, so when this issue touches
+   an outside suite the orchestrator — never a parallel delegate, which would run it against shared fixtures — captures
+   that suite's own baseline too and records, never adopts, failures it shows at HEAD. It is owed before the first edit,
+   not before planning: `~/.claude/scripts/suite-baseline-cache.sh lookup <suite>` first — a `HIT` *is* the baseline (its
+   `SUMMARY` and `FAILING` lines). On a `MISS`, launch the run detached at once, do every read-only step while it runs
+   (Step 6's exploration and plan, Step 7's post), and join its completion marker immediately before Step 8's first edit.
+   After any *complete* full-suite run, `record` it before the next edit so sessions forked from the same tree skip it.
+2. **Failures are never "pre-existing."** The baseline passed; any failure after it is ours, for what the baseline ran.
 3. **Failures are never "out of scope."** If our changes cause a check to fail, fixing it IS our scope.
 4. **Failures are never deferred.** We do not proceed with a broken application. We stop and fix.
-5. **The contract is in effect from Step 5's baseline through Step 9's review.** Steps 1–4 gather context and claim the issue (assign + In Progress), Step 6 runs plan mode (read-only by definition), Step 7 posts the plan, Step 10 summarizes — none modify code. Steps 5, 8, and 9 are the ones that can break the application; they run in-session and must keep `pnpm check` green. Step 8's `developer` / `debugger` / `quality-reviewer` / `architect` delegations must include this contract verbatim in the delegation prompt.
+5. **In effect from Step 5's baseline through Step 9's review.** Steps 1–4, 6, 7 and 10 modify no code; Steps 5, 8 and 9
+   can break the application and must keep `pnpm check` green. Every Step 8 delegation (`developer`, `debugger`,
+   `quality-reviewer`, `architect`) includes this contract verbatim in its prompt.
 
-Violating this contract — by shipping broken code, by claiming failures were pre-existing, by deferring breakage to a follow-up ticket — is the single worst outcome of this workflow. A partially-implemented feature on a working application is infinitely better than a "complete" feature on a broken one.
+Shipping broken code, calling a failure pre-existing, or deferring breakage to a follow-up is the single worst outcome
+of this workflow. A partially implemented feature on a working application beats a "complete" one on a broken one.
+
+## Arguments
+
+```text
+/start <ISSUE-ID> [wt] [auto] [simple] [interactive]
+```
+
+Tokens are case-insensitive and position-agnostic. Parse in order: **(1)** strip the recognized tokens; **(2)** exactly
+one non-token argument must remain, else error; **(3)** normalize it with
+`~/.claude/scripts/detect-issue-id.sh --validate-only --input <arg>` (enforces `^[A-Z]+-[0-9]+$`, uppercases). Multiple
+IDs, duplicated tokens, and `auto` with `interactive` (unattended vs user-driven — contradictory) are usage errors.
+
+- `wt` — worktree mode (Step 0). Implied by `interactive`; an existing worktree for the issue arms it without the token.
+- `auto` — unattended: every prompt resolves to its documented default (Auto Mode below).
+- `simple` — `/quality-review`'s simple tier at Step 9 ([standards/issue-spec.md](../../standards/issue-spec.md) § The
+  `simple` label); the issue's `simple` label implies it without the token (Step 1's Labels bullet). Inert under
+  `interactive`, whose path never reaches Step 9 — pass `simple` to the `/quality-review` you run by hand.
+- `interactive` — set up the worktree and claim the issue, then halt and hand off: no planning, implementation or
+  review, so interactive work lands in an isolated worktree without disturbing background `wt` agents. Read
+  `references/interactive.md` when the token is present.
 
 ## Auto Mode (`auto` token)
 
-`/start auto <ISSUE-ID>` runs the same workflow with **no user prompts** — every decision point that would normally ask the user resolves to a documented default. It exists for the `/auto` loop (via `/full auto`), where nobody is watching. The conversions, all specified inline at the step where each prompt lives:
-
-- Step 2 unresolved blocker → `SKIPPED-BLOCKED`, stop (nothing claimed)
-- Step 3 owned-by-someone-else or terminal state → `SKIPPED-BLOCKED`, stop (never reassign, never reopen)
-- Step 6 plan approval → skipped entirely; the plan is still composed and posted to Linear (Step 7), which becomes the audit record
-- Step 8.5 CANCELED-vs-ABANDONED ambiguity → default `ABANDONED`
-- Step 9 passes `auto` through to `/quality-review` (and `simple`, when the token or the issue's label calls for it)
-
-Auto mode changes **no other contract** — the Working Application Contract, checkpointing, delegation rules, and tagged final lines all apply unchanged.
+`/start auto <ISSUE-ID>` runs the same workflow with **no user prompts**: every prompt resolves to its documented
+conservative default (`skills/full/SKILL.md` § Auto mode owns the token; `/auto` reaches it through `/full auto`). This
+skill's defaults, each stated where the prompt lives: Step 2 unresolved blocker → `SKIPPED-BLOCKED`; Step 3 owned by
+someone else, terminal state, `needs decision` or `human` → `SKIPPED-BLOCKED` (never reassign, reopen or decide); Step 5
+red baseline → at most two fix delegations; Step 6 plan approval → skipped, the plan posted at Step 7 is the audit
+record; Step 8.5 CANCELED-vs-ABANDONED doubt → `ABANDONED`; Step 9 passes `auto` (and `simple`) through to
+`/quality-review`. Nothing else changes: the contract, checkpointing, delegation rules and tagged final lines all apply.
 
 ## Workflow
 
 ### Step 0: Worktree Mode (`wt` in args, or an existing worktree for this issue)
 
-**Argument parsing.** Tokens are case-insensitive and position-agnostic; the recognized tokens are `wt`, `auto`, `interactive`, and `simple`. Parse in this order: **(1)** strip the recognized tokens; **(2)** verify exactly one non-token argument remains, otherwise error; **(3)** pass that remaining argument through `~/.claude/scripts/detect-issue-id.sh --validate-only --input <arg>` to normalize and validate (the script enforces `^[A-Z]+-[0-9]+$` and uppercases). Multiple IDs or duplicated tokens are errors — **and so is `auto` together with `interactive`** (mutually exclusive: `auto` is unattended, `interactive` is user-driven — reject the pair with a usage error before proceeding, per rule (b) below). **A present `interactive` token implies `wt`:** normalize it to set `wt` for the rest of Step 0 — the worktree gate below and the `IS_WT` derivation both then read `wt` as present — so `/start <ISSUE-ID> interactive` takes the same worktree path as `/start wt <ISSUE-ID> interactive`. **`simple`** selects `/quality-review`'s simple tier at Step 9 ([standards/issue-spec.md](../../standards/issue-spec.md) § The `simple` label); the issue's `simple` label implies it without the token — Step 1's Labels bullet says where that is read. It is inert under `interactive`, whose path never reaches Step 9 — pass `simple` to the `/quality-review` you run by hand.
+Fires when the args contain `wt` (including when `interactive` implied it) **or a worktree already exists for this
+issue** — `git worktree list --porcelain` has an entry at `.claude/worktrees/<issue-id-lowercased>`; that is a
+resumption, so also read `references/resumption.md`. If neither holds, proceed to Step 1 in place, on the current branch.
 
-**`interactive` token — set up the worktree, then hand off to the user.** `/start wt <ISSUE-ID> interactive` runs Step 0 in full (worktree create/enter, identity stamp, baseline, claim + In Progress) and then **STOPS before Step 6** — no planning, no implementation, no review. It leaves you cwd'd inside the isolated worktree so your interactive edits land there and the main checkout stays clean (the whole point: not interfering with background `wt` agents' merges). Three rules govern it: **(a) `interactive` implies worktree mode** — it arms Step 0's worktree path even when `wt` is absent (interactive-in-place on the main checkout would reintroduce the very interference it exists to avoid), so `/start <ISSUE-ID> interactive` behaves as `/start wt <ISSUE-ID> interactive`; **(b) `interactive` + `auto` is an error** — `auto` means unattended (no user), `interactive` means the user drives, so the combination is contradictory: reject it with a usage error rather than picking one; **(c)** it is otherwise position-agnostic and case-insensitive like the other tokens. The halt itself lives in sub-step 4 below.
+**`IS_WT`** — the session flag Step 8's isolation scoping gates on — is true whenever Step 0 fires this session or Step 5's
+`git config --worktree --get start.source-branch` probe returns a value later. A POSITIVE probe always arms it; a NEGATIVE
+probe never disarms it (a hijack can wipe the value, and a broken `EnterWorktree` registration can fake a negative).
 
-**`IS_WT`** is the session-level flag Step 8 gates its worktree-isolation scoping on (the READ-SCOPING/WRITE-PLACEMENT delegation blocks and the item-1 placement check). It is true whenever Step 0 fires this session — either this invocation's args contained `wt` (just parsed above — including when `interactive` implied it), or Step 0's widened gate below detected an existing worktree for this issue (the resumption case, invoked as plain `/start <ISSUE-ID>` with no token) — OR, as a backstop, when Step 5's per-worktree short-circuit fires later this session (see Step 5) even if Step 0's worktree-existence check was somehow missed. **The rule governing every `IS_WT` derivation in this skill: a POSITIVE result from a `git config --worktree --get start.source-branch` probe is always a valid trigger — it can only over-arm the scoping, which is safe (carrying the isolation blocks in a session that turns out not to need them costs nothing) — but a NEGATIVE result must never be used to conclude `IS_WT` is false and disarm it, because an absent or wiped `start.source-branch` config does not prove "not a worktree" (a hijack can wipe it).** This is exactly why Step 5's own copy of this probe — a positive-result check — is a valid second trigger (see Step 5). What is unsafe, and never permitted, is deriving `IS_WT` from that probe run **unscoped against bare cwd** somewhere a broken `EnterWorktree` registration could make a negative result look like confirmation of "not a worktree".
+**Keeper issues.** A `keeper`-labeled issue's deliverable lives in the shared `~/.claude` repo: the project worktree is the
+process anchor only and correctly ends with **zero** project commits. Edit `~/.claude` directly and leave it
+**uncommitted** (the keeper's review is the gate; `/auto`'s commit grant never extends there). `/quality-review`,
+`/finish` (`already-synced (no-op)`) and `finish-merge.sh` (`already-merged: nothing to advance`) expect that state.
 
-**Keeper issues — the deliverable lives in `~/.claude`, not this repo.** A `keeper`-labeled issue's real change targets the shared user-level `~/.claude` repo (a different git repository), so the project worktree this step creates is the issue's process anchor only — branch, claim, baseline, review scope — and correctly ends the run with **zero** project commits: that is the expected end state, not a failure and not evidence of no work. Make the `~/.claude` edits directly in that repo, and leave them **uncommitted** — the keeper's deliberate review is the gate; that rule lives in `/reflect` (Triage gates), and `/auto`'s run-scoped commit grant never extends to `~/.claude` (an interactive session commits there only when the user explicitly says to). Downstream needs nothing special: `/quality-review` Step 1's outside-this-repo carve-out resolves review scope from the issue body's named targets and points Step 2's gate at that repo's `pnpm check` too, `/finish` Step 7 documents `finish-commit.sh`'s zero-commit `already-synced (no-op)` state, and `finish-merge.sh` explicitly handles the commit-free merge (`already-merged: nothing to advance`) — expected states, not errors, so do not improvise recovery when they appear.
-
-If the args contain `wt` (**including when `interactive` implied it** — see Argument parsing above), **or a worktree already exists for this issue** (check `git worktree list --porcelain` for an entry at `.claude/worktrees/<issue-id-lowercased>` — the resumption case, invoked as plain `/start <ISSUE-ID>` with no token):
-
-1. **Run the worktree setup script.** It encapsulates the procedural setup: argument validation, source-branch capture, per-worktree config enable, issue fetch (title for branch-name composition, plus state/assignee for the Step 3 claim decision), worktree create/attach/reuse with branch-collision detection, source-branch recording, a **tamper-evident identity stamp** (branch + baseline SHA + owner session, written to per-worktree git config AND immune sidecars — `$CLAUDE_JOB_DIR` plus a repo-level `.claude/worktree-identity/` fallback so a *different* session's `/finish` can still detect a hijacked worktree), and digest pre-fetch into the worktree's `tmp/`. The git-mutating create + stamp runs inside `start-wt-create.sh` **under a repo lock** (`with-repo-lock.py`, the same key `/finish merge` uses), so concurrent `/start wt` runs can no longer race the create and clobber each other's worktree branch/HEAD/config. On a fresh create it also carries the project's gitignored local files into the worktree — the paths listed in `.worktreeinclude` (one per line), or, when the project has no such file, every gitignored `.env` / `.env.*` it finds (templates excluded), with a `NOTE:` on stderr asking for the list to be made explicit — because `git worktree add` copies tracked files only, and a worktree without its `.env.local` fails the first command that loads one.
-
-   **Before running it, load every deferred-tool schema this workflow needs in ONE `ToolSearch` call** — `select:EnterWorktree,EnterPlanMode,ExitPlanMode` (auto mode needs only `EnterWorktree`) — rather than separate loads here and at Step 6.
+1. **Run the setup script** — after loading every deferred-tool schema this workflow needs in ONE `ToolSearch` call,
+   `select:EnterWorktree,EnterPlanMode,ExitPlanMode` (auto mode needs only `EnterWorktree`). Under a repo lock
+   (`with-repo-lock.py`, the key `/finish merge` uses) it creates, attaches or reuses the worktree, records the source
+   branch, writes the tamper-evident identity stamp `/finish` verifies, carries gitignored local files in
+   (`.worktreeinclude` paths, else every gitignored `.env*`, templates excluded, with a `NOTE:` asking for an explicit
+   list), and pre-fetches the digest.
 
    ```bash
    ~/.claude/scripts/start-wt-setup.sh PL-13
    ```
 
-   **Read the tool output carefully.** Stdout contains these `KEY=value` lines. Sub-steps 2–3 consume `WT_ABS`, `DIGEST_FILE`, `STATE`, `ASSIGNEE`, and `ISSUE_ID` directly; `BRANCH` and `SOURCE_BRANCH` aren't needed until later in the session (Step 8.5's cleanup commands, the `/finish` dispatch), but carry all seven forward regardless — the last three lines below are the only purely informational ones:
+   Stdout is `KEY=value` lines; carry all of them forward: `WT_ABS` (absolute worktree path), `BRANCH`, `SOURCE_BRANCH`,
+   `ISSUE_ID` (uppercased), `STATE`, `ASSIGNEE` (empty if unassigned), `DIGEST_FILE` (absolute path; empty if the fetch
+   failed), plus the informational `BASELINE_SHA`, `OWNER_SESSION` and `IDENTITY_SIDECAR`. Sub-steps 2–3 consume the
+   first group; `BRANCH` and `SOURCE_BRANCH` feed Step 8.5 and the `/finish` dispatch.
 
-   ```text
-   WT_ABS=<absolute worktree path>
-   BRANCH=<the worktree branch name>
-   SOURCE_BRANCH=<the branch the worktree forks from>
-   ISSUE_ID=<normalized (uppercased) issue ID>
-   STATE=<issue state name, e.g. Planned>
-   ASSIGNEE=<assignee email, or empty if unassigned>
-   DIGEST_FILE=<absolute path to pre-fetched digest, or empty if fetch failed>
-   BASELINE_SHA=<fork-point commit; the identity anchor /finish verifies>   # informational
-   OWNER_SESSION=<owning session id, or empty>                              # informational
-   IDENTITY_SIDECAR=<path of the immune identity sidecar, or empty>         # informational
-   ```
+   Stderr is diagnostics: `[finish-queue] waiting for <repo> ...` is the lock serializing, not a hang; heed a `WARN:` to
+   park the main checkout off the shared source branch (`git checkout --detach`) for parallel runs. **Non-zero exit →
+   stop; read `references/wt-failures.md`** (it maps the `owned by another live session` refusal). Never set
+   `start.source-branch` by hand at common scope — Step 5's short-circuit reads any value as a `/start wt` worktree.
 
-   Stderr contains diagnostics (drift warnings, progress, errors). It may briefly print `[finish-queue] waiting for <repo> ...` while another session holds the repo lock — that is the serialization working, not a hang; wait for it. It may also print a `WARN:` advising you to park the main checkout off the shared source branch (`git checkout --detach`) when it sees the main checkout on the source branch with other worktrees already active — heed it for parallel `/full wt` runs (it keeps every merge on the contention-free ref-only path). **If the script's exit code is non-zero, stop.** Do not proceed to sub-step 2 — the worktree is in an indeterminate state and the locked helper has already cleaned up via its EXIT trap. Surface the script's stderr to the user. **One failure has its own mapping:** stderr containing `owned by another live session` is the locked create's parallel-session refusal — normally a live sibling session actively working this issue's worktree (a `/next` pick race, or an orphan-resume of work that isn't orphaned). The worktree was NOT touched (the reuse path never arms the cleanup trap) and nothing was claimed this session. Before acting on it, probe the issue for the `stalled` label (`linear-cli issues get <ISSUE-ID> -o json | jq -r '.labels.nodes[].name' | grep -qix stalled`); a probe failure (auth/network) counts as label-absent — never block on the probe. **Label absent** (the normal case — a live sibling really owns it): auto mode, emit `SKIPPED-BLOCKED: <ISSUE-ID> — worktree owned by a live parallel session; nothing claimed. No state change.` and stop — `/auto` records a skip, not a failure; interactive, surface it and suggest either waiting for that session or picking different work. **Label present**: the claim is almost certainly stale — `/auto` releases ownership (`wt-disown.sh`) when it applies `stalled`, so a stamp still reading alive under the label is a pre-release-era claim or a failed best-effort release; the one live possibility is a resumer mid-claim (it removes the label at Step 3, moments after claiming). Interactive: state both facts and ask the user once — force-release and take over, or leave it; on yes, run `~/.claude/scripts/wt-disown.sh --force <wt-abs>` and re-run this sub-step's setup script (the retry's reuse path re-stamps ownership to this session, and Step 3 removes the label normally). Auto mode: never force — emit `SKIPPED-BLOCKED: <ISSUE-ID> — stamp claims a live owner but the issue is labeled stalled (likely a stale pre-release claim); run /start <ISSUE-ID> interactively to force-release it. Nothing claimed.` and stop. (The label lives in Linear and the stamp in git — no lock spans them, so no automation can close the mid-claim race; a human confirmation is the right gate, and this path only fires for legacy stamps or release failures.)
+   **Source branch.** The script forks from — and records for `/finish` — `start.<id-lower>.wt-source-branch` when set
+   (the per-issue key `/fleet-sequence` and an epic fleet's `/auto` set before dispatching that one issue), else the
+   checkout's current branch, else (detached HEAD) `start.wt-source-branch`; from the branch's ref, not HEAD, so a running
+   sequence or fleet never steers another issue's `/start wt`. Stderr notes a per-issue key in use and warns when your own
+   epic-member `/start wt` will land off the epic's PR.
 
-   **Foot-gun warning.** Do not manually set `start.source-branch` at common (non-`--worktree`) scope. The Step 5 short-circuit treats any value as evidence of a `/start wt` worktree, so a stray manual config would silently bypass branch creation in a regular `/start` session. The setup script writes only at per-worktree scope.
+2. **Enter the worktree with `EnterWorktree(path=<WT_ABS>)` and, in the SAME message, `Read` the digest at
+   `DIGEST_FILE`** (Step 1's digest read, a turn early). Note the `**Labels:**` line — `simple` sets the `simple` token
+   for Step 9. If `DIGEST_FILE=` is empty, run Step 1's generate-then-read after entering, as its own call.
 
-   **Source-branch resolution.** The script forks from, and records for `/finish`, the branch named by `start.<id-lower>.wt-source-branch` when set — a per-issue key `/fleet-sequence`'s runner sets just before dispatching that one issue, so the sequence's children fork from its integration branch while the main checkout stays wherever it is — else the checkout's current branch, else (HEAD detached) the checkout-wide `start.wt-source-branch`, the escape hatch for a deliberately parked checkout. An epic fleet steers the same way a sequence does — its `/auto` sets the per-issue key from the fleet marker before each dispatch (`auto-fork-key.sh`) — so the checkout is never parked for it, and your own `/start wt` for an epic member forks from the checkout's branch; the script prints a `WARN:` naming the fleet's branch when that happens, so you know the issue's code will land off the epic's PR. The worktree forks from that branch's ref, not from HEAD, so a running sequence or fleet never steers a `/start wt` for any other issue; a `NOTE:` on stderr says when the per-issue key was used.
+   Call `EnterWorktree` **while cwd is still the main checkout**, before any `cd`: the `path` form switches the session
+   into the worktree **and** registers it as the harness-level isolation root, which a shell `cd` does not — the guard
+   then blocks a background `developer` subagent's Write-tool edits. Entering from the main checkout never trips the
+   same-cwd refusal; cwd persists for every later Bash call. Sub-step 3's script confirms cwd first (canonicalizing both
+   sides); on a mismatch the registration did not take — **STOP and surface**, never fall back to a bare `cd`.
 
-2. **Enter the worktree with `EnterWorktree(path=<WT_ABS>)` — and, in the SAME message, `Read` the digest at `DIGEST_FILE`.** The two calls are independent (the digest path is already known from sub-step 1's output), so issue them as parallel tool calls in one message — this is Step 1's digest read, done a turn early. While reading it, note the `**Labels:**` line — a `simple` label sets the `simple` token for Step 9 (Step 1's Labels bullet), and worktree mode skips Step 1, so this is where that read happens. If `DIGEST_FILE=` came back empty, fall back to Step 1's generate-then-read after entering, as its own call — that read owes the same Labels note.
-
-   Read `WT_ABS` from sub-step 1's stdout and pass it as the tool's `path`. Call this **while cwd is still the main checkout** — i.e. right here, before any `cd`. The `path` form switches the session into the existing worktree **and** registers it as the session's harness-level isolation root. A shell `cd` alone would move only the Bash cwd; it does **not** register isolation, so in a **background session** the worktree-isolation guard blocks a `developer` subagent's Write-tool edits (the guard tracks the `EnterWorktree` registration, not the shell cwd). Registering here makes subagent writes land in the worktree with the guard **on** — no lever, no settings change. Because we enter from the main checkout at first entry, this is *not* the rejected "cd back to main, then `EnterWorktree`" recovery recipe and never trips the same-cwd refusal. `EnterWorktree` also switches cwd (persisting across subsequent Bash calls for Steps 1–10), so no separate `cd` is needed — sub-step 3's `start-wt-verify.sh` call confirms cwd as its first stage.
-
-   If that confirmation fails (canonicalized `pwd -P` ≠ `realpath <WT_ABS>` — canonicalize both sides, since a symlinked path component otherwise makes a successful entry look like a failure), the `EnterWorktree` registration did not take — **STOP and surface** rather than continue. Steps 1–10 would otherwise run against the main checkout (wrong baseline SHA, wrong Step 5 branch short-circuit, wrong tree for every delegation), and a background session's `developer` writes would still hit the guard. Do **not** fall back to a bare shell `cd`: that would fix cwd but leave isolation unregistered — the original bug.
-
-3. **Run the verification script — Steps 2–5's actions in one call, with Step 6's exploration dispatched in the same message** (except with the `interactive` token, which dispatches no exploration — see the exceptions below). The digest (sub-step 2) and `STATE=`/`ASSIGNEE=` (sub-step 1) are already in hand, so make the decisions FIRST, before composing the call:
-
-   - **Blockers (Step 2's rules):** check the digest's Blockers section. Any unresolved blocker → do NOT run this script; fall back to Step 2's prompt (interactive) or its auto-mode `SKIPPED-BLOCKED` exit.
-   - **Availability (Step 3's rules):** owned-by-someone-else or terminal state → do NOT run this script; fall back to Step 3's prompts or auto-mode exits. Already In Progress and mine → run the script with `--no-claim` in place of `--claim` (idempotent resumption).
-
-   On the happy path, run exactly this — substituting `<WT_ABS>` and the issue ID, and giving the Bash call an explicit timeout ≥ 300000ms (`pnpm check` runs inside the script and can exceed the 120s default on a cold cache):
-
-   ```bash
-   ~/.claude/scripts/start-wt-verify.sh '<WT_ABS>' <ISSUE-ID> --claim
-   ```
-
-   - **Claim flag:** happy-path claim → `--claim`. Idempotent resumption (already In Progress and mine, per the Availability bullet above) → `--no-claim`.
-
-   **In the SAME message, dispatch Step 6's exploration agents** (see Step 6 for how many and how to focus them) — **except when the `interactive` token was given, in which case dispatch NO exploration at all** (per the exceptions below): the run halts at sub-step 4 before Step 6, so exploration would be pure waste with nothing to feed, and dispatching it contradicts interactive mode's no-planning contract. They are read-only and need only the digest and the worktree, both already in hand; the claim executes early in the script's run, seconds after dispatch, so Step 3's claim-before-research intent (broadcast ownership the moment work begins) is preserved. Do not wait for the script to return before exploring — a red baseline stops the workflow before any implementation regardless, and the exploration output is simply discarded in that case. When `IS_WT` is true, these are delegations like any other: every exploration prompt carries the READ-SCOPING block from Step 8's delegation format (Step 8's blockquote applies to EVERY delegation `/start` makes, in any step — not only Step 8's own).
-
-   **Two exceptions to same-message dispatch:** when resuming an issue whose approved plan is already posted (see **Resumption**, Step 8), skip the exploration dispatch entirely — that resumption path goes straight to Step 8 with no new exploration to feed; if that plan is later judged stale (see **Resumption**, Step 8), dispatch the exploration then — at Step 6, before `EnterPlanMode`. And when the `interactive` token was given, skip the exploration dispatch entirely — sub-step 4 halts the skill before Step 6 ever runs, so run `start-wt-verify.sh` alone (its cwd-confirm, claim, source-branch probe, and green `pnpm check` baseline are all interactive mode needs) and proceed to the halt with no exploration to consume.
-
-   Failure handling by verdict (the first line of the script's stdout is the verdict — see its header docblock for the full contract):
-
-   **Do not merge the streams — the verdict is the first line of *stdout*, but the LAST line of a `2>&1` capture.** The script sends everything else to stderr *including* `pnpm check`'s own stdout (`pnpm check >&2`), so stdout holds exactly one line and the contract above is exact — but merged, hundreds of check lines precede it, and the capture routinely exceeds the harness's inline output limit, leaving the tool result showing only a head preview starting `== cwd confirm ==` with no verdict in it at all. Redirect **stderr only**, which keeps the verdict inline and small while still persisting the diagnostics this step needs (the `FAILED-CLAIM` 5xx probe, `WARN:`, `SOURCE_BRANCH=`):
+3. **Run the verification script — Steps 2–5's actions in one call — with Step 6's exploration dispatched in the SAME
+   message.** Decide FIRST from the digest and `STATE=`/`ASSIGNEE=`: an unresolved blocker (Step 2) or an unavailable
+   issue (Step 3: owned by someone else, terminal state, `needs decision`, `human`) → do NOT run the script; take that
+   step's prompt or auto exit. Already In Progress and mine → `--no-claim` in place of `--claim`. On the happy path, with
+   an explicit Bash timeout ≥ 300000ms (`pnpm check` runs inside), redirecting **stderr only**:
 
    ```bash
    ~/.claude/scripts/start-wt-verify.sh '<WT_ABS>' <ISSUE-ID> --claim 2>tmp/start-wt-verify-<issue-id-lowercased>.err
    ```
 
-   If you did merge them, recover the verdict explicitly before branching — never from the head of the file. `fail()` mirrors each `FAILED-*` line to both streams, so a merged file contains it twice; take the last match:
+   Stdout is exactly one line, the verdict; stderr holds everything else (`pnpm check`'s output, `WARN:`, `SOURCE_BRANCH=`).
+   A `2>&1` capture buries the verdict as the LAST of hundreds of lines and overflows the inline output limit; if you did
+   merge them, recover it with `grep -nE '^(VERIFIED|FAILED-[A-Z-]+)' <file> | tail -n 1`, never from the file's head.
 
-   ```bash
-   grep -nE '^(VERIFIED|FAILED-[A-Z-]+)' <persisted-output-path> | tail -n 1
-   ```
+   **Dispatch Step 6's exploration agents in the SAME message** (Step 6 sizes them): read-only, needing only the digest
+   and the worktree; the claim lands seconds into the script's run, so claim-before-research holds. Under `IS_WT` every
+   exploration prompt carries Step 8's READ-SCOPING block — Step 8's isolation rules apply to EVERY delegation this skill
+   makes, in any step. **Two exceptions dispatch none:** a resumption whose posted plan still applies
+   (`references/resumption.md`), and the `interactive` token.
 
-   - `VERIFIED` → Steps 1–5 complete, the Working Application Contract is in effect; proceed to Step 6 (whose exploration is already running) — **unless the `interactive` token was given, in which case sub-step 4 halts the skill here instead of continuing to Step 6.** **The claim is verified, not merely attempted** — `start-wt-verify.sh` reads the assignee and state back rather than trusting the write's exit status (`skills/linear/SKILL.md` gotcha #8: `issues update` reports success off the mutation call, intermittently having written nothing) — **with one gap this verdict does not close:** when the read-back itself fails, the stage emits a `WARN:` on stderr and proceeds, because an unconfirmable claim is not a failed one and a transient network blip must not kill the session. So `VERIFIED` means *claimed, or claimed-and-unconfirmable* — never *confirmed unclaimed*, which is `FAILED-CLAIM`. If that WARN appears and siblings may contend for the issue, re-check it before implementing. **One part of Step 5 is NOT discharged by this verdict:** `start-wt-verify.sh` runs `pnpm check` and no other suite, so when this issue's changes will touch a suite `pnpm check` does not run (in basefund, rspec — see its `CLAUDE.md` § Running RSpec), the Working Application Contract's rule 1 baseline for that suite is still owed: `wt` mode never reaches Step 5's body, where that instruction is stated. Start rule 1's sequence now — the cache lookup, and on a miss the detached launch — but join the run only at Step 8's first edit, not here; record its example count and failing list either way.
-   - `FAILED-CWD` → sub-step 2's STOP-and-surface. Auto mode: emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — EnterWorktree registration did not take (cwd mismatch); manual investigation required. No state change.` and stop.
-   - `FAILED-CLAIM` → the update command itself failing (auth expired, network, unknown state name) is distinct from Step 3's ordinary availability decisions (made BEFORE this script runs, per the bullets above) — STOP and surface; do not proceed unclaimed. Auto mode: emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — claim update failed (linear-cli error). No state change.` and stop. **One exception — a transient Linear 5xx.** When the script's stderr shows `HTTP 5xx` / `Service Unavailable` / a timeout (as distinct from auth expiry, a permissions error, or an unknown state name), the claim failed on Linear's infrastructure, not on anything about this issue. Probe once (`linear-cli issues get <ISSUE-ID>`); if the probe succeeds, re-run the identical `start-wt-verify.sh` invocation and continue on `VERIFIED`. Bounded to one retry — if it fails again, take the stop above.
-   - `FAILED-SOURCE-BRANCH` → empty output is unexpected here (sub-step 1 recorded the value this session); treat as a possible hijack/corruption signal — STOP and surface; do NOT continue to implementation. Auto mode: emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — start.source-branch missing from worktree config (possible parallel-session interference); manual investigation required.` (By this point the claim has already run — or, on the `--no-claim` idempotent-resumption path, the issue was already claimed by a prior session — so this entry carries no "No state change." clause either way.)
-   - `FAILED-CHECK` → Step 5's baseline-failure path (including its auto-mode 2-delegation bound).
-   - **Any other output** — a `FAILED-USAGE` verdict (a malformed invocation, which should never happen if this step composed the command correctly), no verdict line at all, or empty stdout — is a FAILED check: fail closed, STOP (never treat unrecognized or missing output as success). Auto mode: emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — start-wt-verify.sh returned no recognizable verdict (<first output line, or 'empty stdout'>); fail closed, manual investigation required.` and stop. (This branch can fire before OR after the claim stage ran — or with the claim skipped entirely on the `--no-claim` resumption path — so this entry carries no "No state change." clause; on the `--claim` path Linear state is indeterminate until a human checks.)
+   **`VERIFIED`** → Steps 1–5 complete, the contract is in effect; proceed to Step 6 (or sub-step 4's halt under
+   `interactive`). The claim is **read back**, not trusted from the write's exit status (linear skill gotcha #8); a
+   failed read-back is a `WARN:` and proceeds, so `VERIFIED` means *claimed, or claimed-and-unconfirmable* — on that
+   WARN, re-check before implementing if siblings may contend. The script runs `pnpm check` only: an outside suite this
+   change touches still owes contract rule 1's baseline — start it now, join at Step 8's first edit. **Any other verdict
+   → read `references/wt-failures.md`** (`FAILED-CHECK` is Step 5's baseline-failure path).
 
-4. **Interactive token — halt here; the user drives from now on.** If the `interactive` token was given (Step 0 header) and sub-step 3 returned `VERIFIED`, this is where Step 0 ends the skill. Do **NOT** proceed to any later step — not Step 1, and not Steps 6–10 (this includes Step 10: the `INTERACTIVE-READY` line below **is** this session's completion summary and its single lifecycle tag, so do not also run Step 10's Completion Summary — doing so would emit a second, contradictory tag, since Step 10 keys off a `/quality-review` verdict that never ran here and would wrongly map to `BLOCKED-ON-REVIEW`). Everything the setup needed is done — the worktree exists and is entered (cwd registered via `EnterWorktree`, so edits made through *this Claude session* land in the worktree, not the main checkout — but note `EnterWorktree` moves only the session's cwd, **not** the VS Code editor's file tree, which stays rooted on the main checkout; the halt therefore opens the worktree in its own editor window, see below), its identity is stamped, the issue is claimed (In Progress, assigned to you), and the baseline `pnpm check` is green. The worktree is a first-class `/start wt` worktree — the reaper never reaps it while this session's cwd is inside it (its live-session guard), keeps it while unstarted-or-unmerged otherwise, and `/finish` merges/removes it later exactly as for any other, so no special cleanup applies; pin it (`git config --worktree reap.keep true`) only if you will drive it from outside or come back to it after this session ends once its issue is merged or Done. Open the worktree in its own **new VS Code window** with the `code` CLI (best-effort — guard on `code` being present; never fail the halt if it is absent or errors; do this yourself, do NOT tell the user to run it), then emit the tag:
-
-   ```bash
-   command -v code >/dev/null 2>&1 && code -n "<WT_ABS>" || true   # <WT_ABS> from sub-step 1's stdout; -n opens a NEW window, so this session survives
-   ```
-
-   Then emit the tagged final line as the session's last output and stop (substitute `ISSUE_ID` and `BRANCH` from sub-step 1's stdout; the path is `.claude/worktrees/<issue-id-lowercased>`). The ` ```text ` fence below is illustrative — emit the tag **bare**, as the last non-empty line, with no fence around it (see `standards/lifecycle-tags.md`):
-
-   ```text
-   INTERACTIVE-READY: <ISSUE-ID> — worktree ready at .claude/worktrees/<issue-id-lowercased> (branch <BRANCH>), claimed In Progress, baseline green. Work here; when done run /quality-review <ISSUE-ID>, then /finish <ISSUE-ID> merge.
-   ```
-
-   This is a genuine terminal state per `standards/lifecycle-tags.md` (`INTERACTIVE-READY`), not a `/checkpoint`-style `IN-PROGRESS` pause: `/start` has finished its job and there is no further `/start` work to resume — the user continues in the live session. The token changes ONLY what happens after a `VERIFIED` sub-step 3; every guard before it still fires (a blocker, an owned-by-someone-else issue, a terminal state, or a red baseline all route to their normal Step 2/Step 3/Step 5 handling and stop with their own tags, never reaching this halt). **Resumption composes for free:** re-running `/start <ISSUE-ID> interactive` later hits Step 0's widened worktree-exists gate, reuses the same worktree, re-enters it, re-baselines, and claims idempotently (`--no-claim`) — then halts here again. The rest of this sub-step (the continuation into planning/implementation/review below) applies only when `interactive` was NOT given.
-
-   **Continue in this same session — no subagent.** The user is already in an isolated agent-view session; the worktree — now registered via `EnterWorktree` — provides the isolation. Do **not** additionally wrap `/start` itself in an isolation *subagent*: the `EnterWorktree` registration is session-level and keeps plan-mode prompts and `/quality-review` output visible to the user, whereas a subagent wrapper would hide them. Steps 1–5 were satisfied by sub-steps 2–3 (digest read; blockers checked; claim; branch short-circuit; baseline check); the remaining steps run unchanged:
-
-   - Step 6 (`EnterPlanMode`) surfaces the approval UI to the user once exploration returns (skipped in auto mode — see Auto Mode above).
-   - Step 8 delegates implementation to `developer` subagents (those are appropriate — they're scoped tasks, not whole-workflow dispatch).
-   - Step 9 (`/quality-review`) runs with visible findings, fix loop, and deferred-items triage.
-
-If neither condition holds, proceed to Step 1 as today (in-place on the current branch).
+4. **`interactive` token → halt here**: on `VERIFIED`, read `references/interactive.md` and follow its hand-off (open the
+   worktree in its own editor window, emit `INTERACTIVE-READY` as the session's only tag; nothing after Step 0 runs).
+   Otherwise **continue in this same session — no subagent wrapper**: the `EnterWorktree` registration is the isolation,
+   and a wrapper would hide plan-mode prompts and `/quality-review` output. Steps 1–5 are satisfied by sub-steps 2–3;
+   Steps 6, 8 (scoped `developer` delegations, not whole-workflow dispatch) and 9 run unchanged.
 
 ### Step 1: Gather Issue Context
 
-**Worktree mode:** Step 0 sub-step 2 already read the pre-fetched digest, and sub-step 3's `start-wt-verify.sh` call folded Steps 2–5's actions in — if it returned `VERIFIED`, skip ahead to Step 6 (whose exploration is already running), **or, when the `interactive` token was given, stop at sub-step 4's halt instead of reaching this step at all.** Steps 1–5 below run as written in plain (in-place) mode, or when Step 0's happy path did not complete.
+**Worktree mode:** sub-step 2 read the digest and sub-step 3 folded Steps 2–5 in — on `VERIFIED`, skip to Step 6 (whose
+exploration is already running). Steps 1–5 run as written in place, or when Step 0's happy path did not complete.
 
-The issue digest is a markdown summary of the issue, parent chain, dependency graph, comments summary, and attachment URLs. Generate or read it:
+The digest (`tmp/linear-context-<issue-id-lowercased>.md`) summarizes the issue, parent chain, dependency graph, comments
+and attachment URLs. If the file exists and contains a `**Labels:**` line, read it; otherwise (`mkdir -p tmp` first)
+generate it: `~/.claude/scripts/linear-context.sh PL-13 | tee tmp/linear-context-pl-13.md`. A cached digest without a
+Labels line predates the label read, and one cached before a label attached misses it — regenerate when in doubt. Note:
 
-```bash
-mkdir -p tmp
-DIGEST=tmp/linear-context-pl-13.md   # use the actual lowercased issue ID
-# In `/start wt` mode, Step 0's setup script already cached the digest here.
-# In plain `/start` mode (or if the pre-fetch failed), generate it now.
-if [ -s "$DIGEST" ] && grep -q '^\*\*Labels:\*\*' "$DIGEST"; then
-  cat "$DIGEST"   # a cached digest without a Labels line predates the label read — regenerate it
-else
-  ~/.claude/scripts/linear-context.sh PL-13 | tee "$DIGEST"
-fi
-```
-
-Read the digest carefully. Note:
-
-- **Description** — requirement checkboxes (`- [ ]` items), success criteria checkboxes, "Nice to Have" vs "Must Have" distinctions
-- **Parent chain** — each ancestor's title and state; higher-level issues often contain architectural decisions and scope boundaries
-- **Dependencies** — blockers with states; comments summary
-- **Attachments** — `uploads.linear.app` URLs to inspect (download separately when needed)
-- **Labels** — the `**Labels:**` line. `simple` present → carry the `simple` token to Step 9 exactly as if it had been typed: the label is how a fleet run, whose only input is Linear, selects the review tier ([standards/issue-spec.md](../../standards/issue-spec.md) § The `simple` label). Forward it without adjudicating co-labels — `/quality-review`'s guard 2 escalates on `security`/`human`/`needs decision`/`epic` and removes the mislabel. In worktree mode this line was read at Step 0 sub-step 2. It is also what Step 3's `needs decision` and `stalled` checks read; the digest carried no labels before 2026-08-28, so the snippet above regenerates a cached digest that lacks the line — one cached before a label attached still misses it, so delete and regenerate when in doubt.
+- **Description** — requirement checkboxes (`- [ ]`), success criteria, "Nice to Have" vs "Must Have"
+- **Parent chain** — each ancestor's title and state; ancestors often carry architectural decisions and scope bounds
+- **Dependencies** — blockers with states; comments summary; **Attachments** — `uploads.linear.app` URLs (Step 4)
+- **Labels** — `simple` present → carry the `simple` token to Step 9 exactly as if typed (the label is how a fleet run,
+  whose only input is Linear, selects the review tier), without adjudicating co-labels — `/quality-review`'s guard 2
+  escalates on `security`/`human`/`needs decision`/`epic` and removes the mislabel. Step 3's `needs decision`, `human`
+  and `stalled` checks read the same line.
 
 ### Step 2: Check for Blockers
 
-The digest from Step 1 includes a **Blockers (issues blocking this)** section listing each blocker's state. Decide whether each blocker is resolved by checking its state against the team's terminal states (typically `Done`, `Canceled`, `Ready For Release`, plus any team-custom terminal states like `Released`, `Shipped`, `Won't Do`). When in doubt, treat the state as unresolved — false positives are recoverable; silently proceeding past a real blocker is not.
-
-For each unresolved blocker:
-
-- List it with its state
-- Ask the user whether to proceed anyway or address the blocker first
-- Do not silently skip
-
-**Auto mode:** do not ask. Emit the tagged final line `SKIPPED-BLOCKED: <ISSUE-ID> — blocked by <BLOCKER-ID> (<state>)` and stop. Nothing has been claimed or modified; `/auto` treats this as a skip (not a failure) and tries the next candidate. `/next` pre-filters blocked issues, so this fires only when the digest reveals a blocker `/next`'s ranking missed.
+The digest's **Blockers (issues blocking this)** section lists each blocker's state. A blocker is resolved only when its
+state is terminal for the team (typically `Done`, `Canceled`, `Ready For Release`, plus team-custom terminal states such
+as `Released`, `Shipped`, `Won't Do`); in doubt treat it as unresolved — a false positive is recoverable, silently passing
+a real blocker is not. List each unresolved blocker with its state and ask whether to proceed anyway or address it first.
+**Auto mode:** do not ask — emit `SKIPPED-BLOCKED: <ISSUE-ID> — blocked by <BLOCKER-ID> (<state>)` and stop; nothing is
+claimed or modified, and `/auto` records a skip, not a failure (`/next` pre-filters blocked issues, so this is rare).
 
 ### Step 3: Claim the Issue — Assign & Move to In Progress
 
-**Claim before you research.** This is the first action after availability is verified, and it happens **before** any deepen-context, codebase exploration, or implementation. Assigning + moving to In Progress immediately broadcasts to the team that the issue is owned; researching first leaves it looking unclaimed while work is already underway — a bad signal in a multi-person workspace. **The two halves do different jobs and only one of them hides the issue:** the assignee is the signal to other *people* and does nothing to a session sharing your Linear identity (`next-candidates.sh` keeps a self-assigned issue and ranks it tier 1 — `standards/linear-workflow.md` § A self-claim does not hide an issue), while the **state** is what removes it from every ranking, since `WORKABLE_STATES` is Backlog/Planned/Todo. A claim whose assignee landed but whose state did not therefore looks owned to a human and stays fully pickable to every sibling — which is why both halves are read back rather than inferred from the write's exit status. (Worktree mode: Step 0 sub-step 3 executes this claim early in its `start-wt-verify.sh` call. On the non-interactive happy path that call is dispatched in the same message as Step 6's exploration agents — the documented exception to strict sequencing; with the `interactive` token the script is dispatched alone, per sub-step 3's third dispatch exception, but the claim still lands early in its run. Either way the claim lands seconds after dispatch, and the availability check still precedes it.)
+**Claim before you research** — the first action after availability is verified, before any deepen-context, exploration
+or implementation, so ownership is broadcast the moment work begins. The assignee signals other *people* and does nothing
+to a session sharing your Linear identity (`standards/linear-workflow.md` § A self-claim does not hide an issue); the
+**state** is what removes it from every ranking (`WORKABLE_STATES` is Backlog/Planned/Todo) — so both halves are read
+back rather than inferred from the write's exit status. (Worktree mode: sub-step 3's script claims early in its run, in
+the same message as Step 6's exploration — the documented exception to strict sequencing; availability still precedes it.)
 
-Verify availability from the Step 1 digest's `**State:**` and `**Assignee:**` line (already fetched — no extra call):
+Verify availability from the digest's `**State:**`, `**Assignee:**` and `**Labels:**` lines (no extra call):
 
-- Already `In Progress` assigned to **someone else** → warn and ask whether to reassign (Error Handling) before claiming. **Auto mode:** never reassign — emit `SKIPPED-BLOCKED: <ISSUE-ID> — In Progress, assigned to <assignee>` and stop.
-- Already `Done` / `Ready For Release` / other terminal state → warn and ask whether to reopen (Error Handling) before claiming. **Auto mode:** never reopen — emit `SKIPPED-BLOCKED: <ISSUE-ID> — already <state>` and stop.
-- Carries the `needs decision` label (visible in the digest's labels, like `stalled` below) → a human decision is pending on this issue (`standards/issue-spec.md`; the issue's comments name it). Warn with that reason and ask whether to proceed — proceeding IS the decision being made: on yes, remove the label (`~/.claude/scripts/linear-remove-label.sh <ISSUE-ID> 'needs decision'`) and continue the claim. **Auto mode:** never proceed — emit `SKIPPED-BLOCKED: <ISSUE-ID> — needs decision (see issue comments); decide and clear the label, or /spec <ISSUE-ID>. Nothing claimed.` and stop. (`/next` hides the label from ranking, so in auto mode this fires only on a targeted invocation or a resumption of a decision-gated failure.) This bullet outranks the resumption bullet below — a pending decision gates even an idempotent resume.
-- Carries the `human` label → the work is human-performed (`standards/issue-spec.md`); an implementation session has nothing to ship here. Warn and ask whether to proceed anyway — proceeding means assisting the human owner (drafting materials, building a supporting tool), so **keep the label** on yes: unlike `needs decision`, proceeding resolves nothing and the issue must stay hidden from every ranking. **Auto mode:** never proceed — emit `SKIPPED-BLOCKED: <ISSUE-ID> — human-owned work (human label); assign a person, or /spec <ISSUE-ID> to split out an agent-shippable slice. Nothing claimed.` and stop.
-- Already `In Progress` assigned to **me** → idempotent resumption; the issue is already claimed. Skip the update and continue (matches the Step 8 resumption note). Applies in auto mode too.
+- `In Progress`, assigned to **someone else** → warn and ask whether to reassign. **Auto:** never reassign — emit
+  `SKIPPED-BLOCKED: <ISSUE-ID> — In Progress, assigned to <assignee>` and stop.
+- `Done` / `Ready For Release` / other terminal state → warn and ask whether to reopen. **Auto:** never reopen — emit
+  `SKIPPED-BLOCKED: <ISSUE-ID> — already <state>` and stop.
+- `needs decision` label → a human decision is pending (`standards/issue-spec.md`; the comments name it). Warn with the
+  reason and ask whether to proceed — proceeding IS the decision: on yes, remove the label
+  (`~/.claude/scripts/linear-remove-label.sh <ISSUE-ID> 'needs decision'`) and claim. **Auto:** never proceed — emit
+  `SKIPPED-BLOCKED: <ISSUE-ID> — needs decision (see issue comments); decide and clear the label, or /spec <ISSUE-ID>.
+  Nothing claimed.` and stop. Outranks the resumption bullet — a pending decision gates even an idempotent resume.
+- `human` label → human-performed work (`standards/issue-spec.md`); nothing for an implementation session to ship. Warn
+  and ask whether to proceed anyway — proceeding means assisting the human owner, so **keep the label** on yes (it
+  resolves nothing and the issue must stay hidden from ranking). **Auto:** never proceed — emit
+  `SKIPPED-BLOCKED: <ISSUE-ID> — human-owned work (human label); assign a person, or /spec <ISSUE-ID> to split out an
+  agent-shippable slice. Nothing claimed.` and stop.
+- `In Progress`, assigned to **me** → idempotent resumption; skip the update and continue (either mode).
 
-Otherwise, claim it immediately:
+Otherwise claim it immediately: `linear-cli issues update PL-13 --assignee me --state "In Progress"`.
 
-```bash
-linear-cli issues update PL-13 --assignee me --state "In Progress"
-```
-
-**`stalled` label cleanup (both claim and resumption, either mode).** If the Step 1 digest shows the `stalled` label — `/auto` applies it when it abandons an In Progress issue (its Step 4 failure row) — remove it now that the issue is actively owned again: `~/.claude/scripts/linear-remove-label.sh <ISSUE-ID> stalled`. Being picked back up is exactly the attention the flag was requesting. Best-effort: a removal failure never blocks the claim or the workflow. (Worktree mode claims via `start-wt-verify.sh`, which doesn't touch labels — run the removal as its own command after Step 0 sub-step 3 returns `VERIFIED`.)
-
-Only after the issue is claimed do you proceed to Step 4 (deepen context, only if needed) and the rest of the workflow.
+**`stalled` label cleanup (claim or resumption, either mode).** `/auto` applies `stalled` when it abandons an In Progress
+issue; being picked up again is the attention it asked for, so remove it now —
+`~/.claude/scripts/linear-remove-label.sh <ISSUE-ID> stalled` — best-effort, never blocking the claim (worktree mode: run
+it after sub-step 3 returns `VERIFIED`; the script does not touch labels). Only after the claim do you proceed to Step 4.
 
 ### Step 4: Deepen Context (only as needed)
 
-The digest covers most context. Reach for these only when its summary is insufficient for the work at hand:
+The digest covers most context. Reach for these only when its summary is insufficient:
 
-**Full standalone comment bodies** (the digest shows *anchored* comments in full, but truncates *standalone* comments to their first line):
-
-```bash
-linear-cli comments list PL-13 -o json | jq -r '.comments.nodes[].body'
-```
-
-**Project description** (digest does not include the project body; the digest's `**Project ID:**` line is the project UUID). Use the project ID directly from the Step 1 digest:
-
-```bash
-# Read the **Project ID:** value from the digest you printed in Step 1.
-# If the digest had no Project ID line, the issue has no project — skip.
-linear-cli projects get <project-uuid-from-digest>
-```
-
-**Inline images** — `uploads.linear.app` URLs from the digest's Attachments section require authentication; do NOT use `WebFetch` or `curl`:
-
-```bash
-linear-cli uploads fetch "https://uploads.linear.app/..." -f tmp/linear-img.png
-```
-
-Then `Read` the downloaded path (`tmp/linear-img.png`) to view the image.
+- **Full standalone comment bodies** (the digest truncates *standalone* comments to their first line; *anchored* ones
+  show whole): `linear-cli comments list PL-13 -o json | jq -r '.comments.nodes[].body'`
+- **Project description** (the digest's `**Project ID:**` line; none means no project): `linear-cli projects get <uuid>`
+- **Inline images** — `uploads.linear.app` URLs need authentication, so never `WebFetch` or `curl` them:
+  `linear-cli uploads fetch "https://uploads.linear.app/..." -f tmp/linear-img.png`, then `Read` the downloaded path.
 
 ### Step 5: Ensure Correct Git Branch
 
-**Worktree mode short-circuit.** If Step 0 ran this session and its sub-step 3 `start-wt-verify.sh` call returned `VERIFIED`, Step 5 is complete; proceed to Step 6 (or, when the `interactive` token was given, Step 0 sub-step 4 already halted the skill — this step is never reached). This whole step applies whenever that isn't the case — Step 0 did not run this session, or it ran but its `start-wt-verify.sh` call did not execute (a blocker or availability issue routed to Step 2/Step 3's fallback prompts instead). Check at per-worktree scope (`--worktree`) so a manual `start.source-branch` at common scope can't false-trigger this from outside a `/start wt` worktree. If `git config --worktree --get start.source-branch` returns a value, the branch is already correct and the source branch is recorded for `/finish`. Skip the branch-selection logic below and jump directly to the **Baseline check** at the end of this step. **This is also the second `IS_WT` trigger** (see Step 0): when this probe returns a value, `IS_WT` is true for the rest of the session even though this invocation's args never carried `wt` — the mechanism that keeps Step 8's isolation scoping armed on a resumed `/start <ISSUE-ID>`. This is a POSITIVE result arming `IS_WT`, always valid per Step 0's `IS_WT` rule — it never disarms anything.
+Settles which branch the work lands on and runs the `pnpm check` baseline that brings the contract into effect; in place,
+its `start.source-branch` probe is also `IS_WT`'s second trigger. In-place mode (no `wt`): read
+`references/in-place-path.md` § Step 5.
 
-**If a non-happy-path decision at Step 2/Step 3 was overridden by the user** (proceed-anyway on a blocker, reassign, or reopen a terminal-state issue), return to Step 0 sub-step 3 and run `start-wt-verify.sh` then (with `--claim` or `--no-claim` per the availability outcome) — do not fall through to the branch-selection logic below.
+**Worktree short-circuit.** If sub-step 3 returned `VERIFIED` this session, Step 5 is complete — proceed to Step 6.
 
-**If this probe is what arms `IS_WT` this session — Step 0's own worktree-existence gate did not fire** (e.g., cwd started this session already inside a leftover worktree directory such as `.claude/worktrees/pl-99/`, and the user ran a plain `/start <ISSUE-ID>`) **— `WT_ABS` has not been derived yet.** Unlike Step 0's `start-wt-verify.sh` call (sub-step 3) — where `pwd -P` is safe because its first stage cross-checks it against the setup script's own `WT_ABS` output — this path has no such cross-check: cwd may be a **subdirectory** of the worktree (e.g. `.claude/worktrees/pl-99/src`) rather than its root, so derive `WT_ABS` with the canonical `git rev-parse --show-toplevel` form instead of `pwd -P`; using `pwd -P` here would silently substitute the wrong root into every later delegation's READ-SCOPING. Run it as its own plain Bash call — the assign-and-run compound (`WT_ABS="$(git rev-parse …)"; …`) is refused by the worktree-isolation guard in exactly these sessions (`standards/git.md` § Worktree-isolated sessions):
+**If the user overrode a Step 2/3 decision** (proceed past a blocker, reassign, reopen), return to Step 0 sub-step 3 and
+run `start-wt-verify.sh` (`--claim` or `--no-claim` per the outcome) — do not fall through to in-place branch selection.
 
-```bash
-git rev-parse --show-toplevel   # output = WT_ABS; carry the literal value
-```
-
-```bash
-# Probe only — interpret the printed value, not the exit code. `|| true` is
-# unnecessary here (unlike the capture-assignment sites in /finish) because
-# this isn't being captured into a variable; a non-zero exit from the lookup
-# is fine for the orchestrator to read as "no value set".
-git config --worktree --get start.source-branch 2>/dev/null
-```
-
-```bash
-git branch --show-current
-```
-
-- **If already on a non-`main` branch**: stay on it and skip to Step 6. **Do NOT create a new branch** — not even when the current branch looks wrong for this issue (unrelated name, far ahead of `main`, or you'd prefer a "cleaner" dedicated branch). In a shared in-place checkout, `git checkout -b` moves the shared working tree's HEAD and can drag or strand a concurrent session's uncommitted work (see standards/git.md, "Branch operations mutate the SHARED working tree — never reach for them unasked"). If the branch genuinely seems wrong for this issue, STOP and ASK the user which branch to use — never decide unilaterally.
-- **If on `main`**: create or switch to a feature branch:
-
-```bash
-# Check for existing branch
-git branch --list "*pl-13*"
-
-# If found, switch to it
-git checkout <existing-branch>
-
-# If not found, get GitHub username and create branch
-gh api user --jq .login
-git checkout -b <username>/pl-13-short-kebab-title
-```
-
-**Branch naming rules:**
-
-- Prefix with your GitHub username (from `gh api user --jq .login`)
-- Issue key in lowercase (e.g., `pl-13`)
-- Kebab-case title, truncated to keep the branch name reasonable
-
-**Fetch before baselining — a baseline taken on a stale branch is worthless, and so is the plan built on it.** On a long-lived shared branch the tree can be far behind origin, and every artifact from here on is anchored to it: the `pnpm check` result, the out-of-band suite baseline's example count, the files Step 6's exploration reads, and the plan composed from them. Nothing on this path fetches — not Step 0, not here — so nothing reports it:
-
-```bash
-git fetch origin
-git rev-list --left-right --count HEAD...origin/<current-branch>   # output: "<ahead>\t<behind>"
-```
-
-Substitute the literal branch name from `git branch --show-current` above rather than a `$(…)` substitution — the worktree-isolation guard refuses command substitution, and this step is reachable with `IS_WT` armed. A branch with no origin counterpart makes that command error; compare against `origin/main` instead, which is what catches a branch just cut from a stale local `main`.
-
-Behind by anything non-trivial: **STOP and ask before pulling.** The in-place checkout is shared — a pull advances its HEAD and rewrites files under a concurrent session's uncommitted edits, the same hazard the "do NOT create a new branch" bullet above and `standards/git.md` § *Branch operations mutate the SHARED working tree* guard. On approval, `git pull` (merge; never rebase a shared branch), then baseline. Skipping this cost a full redo on BF-917: the tree was 50 commits behind, and the pull brought a rewrite of one of the two files the approved plan targeted plus migrations that had already made the first suite baseline fail at load with `PendingMigrationError`. **`/start wt` does not cover this for free** — nothing in its path fetches either, its fresh create forks off the main checkout's unfetched HEAD, and `start-wt-create.sh`'s behind/ahead NOTE fires only on the reuse path and only against the *local* source ref.
-
-**Baseline check — THIS ESTABLISHES THE CONTRACT.** Run `pnpm check` to prove the application works before we touch anything:
-
-```bash
-pnpm check
-```
-
-**Dispatch Step 6's exploration agents in the SAME message as this Bash call** (see Step 6 for how many and how to focus them) — they are read-only, the digest is already in hand, and a red baseline stops the workflow before any implementation regardless (the exploration output is simply discarded in that case). Waiting for the check before exploring serializes the two longest pre-plan waits for no benefit.
-
-- If it **passes**: the Working Application Contract is now in effect. The application works. From this moment forward, any failure in `pnpm check` is caused by our implementation and is our responsibility to fix. No exceptions. Per rule 1 of the contract, this is also the moment to *start* a separate baseline for any suite `pnpm check` does not run that this issue's changes will touch (in basefund, rspec) — the contract can only anchor to what was actually measured here. Start, not finish: rule 1's sequence is a cache lookup, then on a miss a detached launch that planning overlaps, joined at Step 8's first edit.
-- If it **fails**: STOP. Do NOT proceed with planning. The application must be working before we begin. Investigate and fix the failures first — delegate to `developer` or `debugger` as needed (when `IS_WT` is true: these fix delegations carry the same READ-SCOPING/WRITE-PLACEMENT blocks and item-1 placement check as any other Step 8 delegation — see Step 8's blockquote). Re-run until the baseline is clean. The contract cannot be established on a broken baseline. **Auto mode:** bound this to **2** fix delegations — a broken baseline in an unattended run is pre-existing, likely systemic breakage, not this issue's scope. If still red, post a Linear comment (baseline failure, first failing output lines), return the issue to availability per Step 8.5's ABANDONED mechanics, and emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — baseline pnpm check failing before any implementation; likely systemic. No changes made.` (`/auto` counts the failure; two such in a row trip its breaker — the correct response to a broken main.)
+**Baseline fails** (sub-step 3's `FAILED-CHECK`, or a red `pnpm check` in place) → STOP; do not plan. Delegate the fix to
+`developer` or `debugger` (under `IS_WT` these carry Step 8's isolation blocks and placement check like any other
+delegation) and re-run until clean. **Auto mode:** at most **2** fix delegations — a broken baseline in an unattended run
+is systemic, not this issue's scope. If still red, post a Linear comment (baseline failure, first failing lines), return
+the issue per `references/early-exit.md` § ABANDONED, and emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — baseline pnpm check
+failing before any implementation; likely systemic. No changes made.` (`/auto` counts the failure; two in a row trip its
+breaker.)
 
 ### Step 6: Enter Plan Mode
 
-**Exploration starts BEFORE plan mode — dispatched in the same message as the baseline `pnpm check`** (Step 0 sub-step 3 in worktree mode; Step 5's baseline check in-place), so the two longest pre-plan waits overlap instead of serializing. The agents are read-only (`Explore` type) and need only the digest, already in hand. In worktree mode these agents get READ-SCOPING in their prompts, like every other delegation. Scale the fan-out to the issue, splitting by AREA rather than by question:
+**Exploration starts BEFORE plan mode**, dispatched in the same message as the baseline (sub-step 3 in worktree mode,
+Step 5 in place): read-only `Explore` agents needing only the digest, carrying READ-SCOPING in worktree mode. Split by
+AREA, not by question — a narrow, well-located change gets ONE agent (a fan-out re-finds the same files); a multi-area
+issue (component + theme + i18n + stories; API + UI + tests) gets **2–3 focused agents in one message**, each named an
+area and concrete starting points; more than 3 buys little. If exploration was not pre-dispatched (a non-happy-path
+re-entry, a stale resumed plan), dispatch it now — never read exploration targets yourself.
 
-- **Narrow, well-located change** (one component, one file cluster): ONE agent — a fan-out would just re-find the same files.
-- **Multi-area issue** (e.g. component + theme + i18n + stories, or API + UI + tests): **2–3 focused agents in a single message**, each named a specific area and concrete starting points (paths, symbols, conventions to map). Wall-clock becomes the slowest agent instead of one agent's serial sweep; overlap in findings is fine. More than 3 buys little — synthesis cost grows faster than coverage.
+**Auto mode: skip the plan-mode tools entirely.** Nobody can approve, so do NOT call `EnterPlanMode`/`ExitPlanMode` (an
+unanswered prompt stalls the loop). Do items 1–6 below, compose the plan in Step 7's format, and go **directly to
+Step 7**: the posted plan is the audit record. The rest of this step is interactive only.
 
-If exploration was not pre-dispatched (a non-happy-path re-entry, a plain-mode flow that skipped the note in Step 5, or a worktree resumption whose posted-but-stale plan suppressed sub-step 3's dispatch), dispatch it now — do not begin reading exploration targets yourself.
+**Call `EnterPlanMode` once exploration returns.** Do not write the plan inline in chat — plan mode's tool flow surfaces
+the approval UI (in VS Code a side pane that supports annotation); inline text bypasses it. In plan mode:
 
-**Auto mode: skip the plan-mode tools entirely.** There is no user present to approve, so do NOT call `EnterPlanMode`/`ExitPlanMode` (an unanswered approval prompt would stall the loop). Do the same planning work — items 1–6 of the list below — compose the plan in the Step 7 comment format, and proceed **directly to Step 7**: the plan posted to Linear is the audit record a human reviews after the fact. Everything below this paragraph is interactive mode only.
+1. Requirements are the description, checkboxes and parent context — **plus any comment that amends them.** The digest
+   truncates each *standalone* comment to 140 chars, and a comment can carry binding requirements (`/auto-prep`
+   consolidates an issue family by appending each absorbed issue's Problem and Success Criteria as a checklist comment on
+   the canonical issue). **Whenever the Comments section is non-empty, read the standalone bodies before planning**
+   (Step 4's `comments list` command — the only prompt on the worktree path, which never passes Step 4). A comment that
+   says its criteria are live here, or supersedes the description, is a requirement. **`### Nice to Have` checkboxes are
+   NOT requirements** (`standards/issue-spec.md`): attempt one only when it falls out in-path, else leave it out — never
+   "defer" one or promise a follow-up filing, which `/finish`'s reconciliation would convert into manufactured work.
+2. **Search the tracker for adjacent open issues before designing.** The digest surfaces no *sibling* naming the same
+   file, predicate or resolver without a relation edge — routinely a duplicate, the systemic fix your point fix instances,
+   or in-flight overlapping work; `/quality-review`'s search-before-filing runs after scope is fixed. Run two or three
+   `linear-cli search issues "<token>"` calls on the change's most distinctive identifiers, **one token per call** — it
+   matches a contiguous phrase, so a composed multi-word query matches nothing and exits 0 (linear skill gotcha #14).
+   Read every open hit, then set scope knowing what is filed: dedup, narrow, or record the overlap in the Step 7 comment.
+3. **Read an either/or Desired Outcome as ordered, not as a menu** (`standards/issue-spec.md` § An either/or Desired
+   Outcome is ordered): plan the stronger arm and record which arm and why. It binds mid-implementation too — when the
+   work's own findings prove the stronger arm reachable (evidence in hand, within file scope, no human decision pending),
+   delivering it is in-mandate, never scope expansion to defer. A *fork* offering two complete end-states is co-equal.
+4. **Read Out of Scope as bounding the deliverable, never the evidence** (`standards/issue-spec.md` § Out of Scope bounds
+   the deliverable, never the evidence — authoritative, with its `(decided:)` rule, three gates and two overlays). A
+   crossing those gates admit is in-mandate, auto mode included: plan it, recording the crossing and evidence in the plan
+   (or a checkpoint comment if it surfaces during Step 8) and in the completion comment. Otherwise route out, never
+   silently comply: if the outcome still ships and verifies within bounds, plan the in-scope work and file the excluded
+   fix with its evidence through `/quality-review`'s filing recipe (`standards/linear-filing.md`), labeled by `/auto`'s
+   shape test (decision-shaped → `needs decision`, `specified` withheld; human-performed → `human`, `specified` kept when
+   the body meets the bar) — unless nothing is pending, where the either/or rule's no-automatic-filing governs. If the
+   outcome cannot ship or verify without the crossing, stop: surface it interactively; in auto mode return the issue per
+   `references/early-exit.md` § ABANDONED and emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — decision required: <the pick, one
+   sentence>; root cause sits inside a spec exclusion, evidence posted to the issue.` This binds through Step 8; from
+   Step 9 on, a collision routes by `/quality-review`'s own machinery.
+5. Synthesize the exploration into relevant files, patterns and dependencies — a follow-up `Explore` only for a gap.
+6. Design a step-by-step plan, marking independent (parallelizable) vs dependent (sequential) tasks.
+7. Write the plan to the plan file named in the plan-mode system message.
 
-**Call the `EnterPlanMode` tool once the exploration results are back** to transition into plan mode. Do not write the plan inline in chat — plan mode has a dedicated tool flow that surfaces an approval UI (in VSCode: a side pane that supports annotation), and the inline-text path bypasses it.
-
-While in plan mode:
-
-1. Use the issue description, checkboxes, and parent context as requirements — **plus any comment that amends them.** The digest is lossy on comments by design: each *standalone* comment renders as one line, its first line truncated to 140 chars (*anchored* comments are shown in full). A comment can carry binding requirements — `/auto-prep` consolidates an issue family by appending each absorbed issue's Problem + Success Criteria as a checklist block in a comment on the canonical issue, then wiring a `duplicate` relation and de-certifying the absorbed one, so the canonical's real requirement set is *description + absorbed criteria*. **Whenever the digest's Comments section is non-empty, read the standalone bodies before planning** — `linear-cli comments list <ISSUE-ID> -o json | jq -r '.comments.nodes[].body'` (Step 4's command; `issues get <ID> --comments` also works but returns standalone comments only). Treat any comment that says its criteria are live here, or that supersedes/amends the description, as part of these requirements; discussion and progress notes need nothing further. **Worktree mode reaches this step without passing Step 4** — Step 1 skips Steps 1–5 on `VERIFIED` — so this is the only prompt to fetch bodies on the `/start wt` path, and BF-627 planned off the 140-char stub and shipped missing six absorbed criteria. **`### Nice to Have` checkboxes are NOT requirements** — they are targets of opportunity (`standards/issue-spec.md`): attempt one only when it falls out easily in-path, otherwise leave it out of the plan entirely. Never "defer" one and never promise a follow-up filing for one — the promise is what `/finish`'s reconciliation would otherwise convert into manufactured work (the BF-1182 feature creep).
-2. **Search the tracker for adjacent open issues before designing the plan.** The digest carries this issue's own description, parent chain, blockers, and comments — none of which surfaces a *sibling issue naming the same file, predicate, or resolver* that has no relation edge to this one. Those siblings routinely include an outright duplicate, the systemic fix your point fix is one instance of, and in-flight work overlapping your scope. `/quality-review`'s search-before-filing rule is not a substitute — it runs after the implementation is written, when scope is already fixed. Run two or three `linear-cli search issues "<token>"` calls on the change's most distinctive identifiers: the predicate, resolver, class, or file basename the Problem names. **One token per call** — `search issues` matches a contiguous phrase, so a multi-word query you composed to describe the defect matches nothing and exits 0, indistinguishable from a clean result (linear skill gotcha #14); a multi-word query is safe only when it is text you have seen verbatim in an existing title. Read every open hit, then decide scope knowing what is already filed — dedup into the existing issue, narrow to what the siblings do not cover, or record the overlap in the Step 7 plan comment.
-
-   BF-662 was planned and implemented off the digest alone. Only at `/quality-review`'s filing step did three facts surface: BF-713 duplicated it outright, BF-711 was the systemic fix its deliberately-deferred residue belonged to, and BF-710 already tracked two of the predicates it had just edited — including a nil-user `NoMethodError` on lines the change had modified, which the change's adversarial review had already cleared. All three are returned by single tokens taken verbatim from BF-662's own Problem statement (`debt_service_payments`, `DebtServicePaymentBookPolicy`, `GetPolicy`). They existed as a cluster because one adversarial review files several issues at once — BF-708 through BF-713 were six filed inside three minutes from a single run's sweep.
-3. **Read an either/or Desired Outcome as ordered, not as a menu.** "X cannot happen, or if it can, Y" targets X; Y is the fallback (standards/issue-spec.md § An either/or Desired Outcome is ordered). Plan for the stronger arm and record which arm the plan targets and why. This binds mid-implementation too: when the work's own findings prove the stronger arm reachable — evidence in hand, within the issue's file scope, no human decision pending — delivering it is in-mandate, never scope expansion to defer as a follow-up. Fallback form only: a *fork* offering two complete end-states ("either A, or B documented with the reason") is co-equal and resolved on its merits — see that section's fork paragraph.
-4. **Read Out of Scope as bounding the deliverable, never the evidence** (standards/issue-spec.md § Out of Scope bounds the deliverable, never the evidence — authoritative; this item is its consumer summary). Investigating excluded territory is always in-scope; the diff is what an exclusion bounds, and a conditional exclusion ("if it recurs") must be measured, not presumed dormant. When this session's own findings prove the root cause of the issue's Problem sits inside an exclusion: a `(decided: …)` exclusion is never crossed — take the route-out below, addressing the evidence to whoever decided; any other exclusion (`(assumed)` or unmarked) is a hypothesis — apply that section's three gates (in-repo; evidence-in-hand; no behavior left to decide, pinned vs. picked with the wide reading) plus its two overlays (no shared-operational-surface crossing while a fleet runs; re-run item 2's sibling search on the crossed files, which certification-time collision edges never saw). All pass → the fix is in-mandate, auto mode included — plan it, recording the crossing and its evidence in the plan, in a checkpoint comment when the evidence arrives during Step 8, and in the completion comment. Otherwise route out, never silently comply: when the outcome still ships and verifies within bounds, plan the in-scope work and file the excluded fix with its evidence through `/quality-review`'s filing recipe (a raw create strands the filing), labeled by `/auto`'s shape test — decision-shaped → its needs-decision exception (`specified` withheld, `needs decision` attached after create); human-performed gate → `human` attached after create, `specified` kept when the body meets the bar — unless nothing is actually pending (outcome satisfied, the excluded path a mere refinement), where the either/or rule's no-automatic-filing governs; when the outcome cannot ship or verify without the crossing, stop — interactively surface it (reopening a boundary is the user's move); in auto mode return the issue per Step 8.5's ABANDONED mechanics and emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — decision required: <the pick, one sentence>; root cause sits inside a spec exclusion, evidence posted to the issue.` — `/auto`'s human-gated-stops rule parks it `needs decision`. Route the decision, not the doubt: evidence presented as settled, only the pick open. This binds through Step 8; once Step 9's review is running, a collision its findings surface routes by `/quality-review`'s own machinery (stop-and-report, deferred items) — never an in-loop crossing.
-5. Synthesize the exploration results into relevant files, patterns, and dependencies — dispatch a follow-up `Explore` only for genuine gaps
-6. Design a step-by-step implementation plan
-7. Identify which tasks are independent (parallelizable) vs dependent (sequential)
-8. Write the plan to the plan file specified in the plan-mode system message
-
-**When the plan is complete, call the `ExitPlanMode` tool.** This is what requests user approval and surfaces the annotation pane. If the user annotates or pushes back, incorporate the feedback, update the plan file, and call `ExitPlanMode` again — repeat until approved. Do NOT use `AskUserQuestion` to ask "is this plan okay?" — `ExitPlanMode` is the approval mechanism.
-
-Do not start implementation until the user approves the plan via `ExitPlanMode`. After approval, proceed **immediately** to Step 7 — do not read files, grep, or do any implementation research until the plan is posted to Linear.
+**Call `ExitPlanMode` when the plan is complete** — that is what requests approval and surfaces the annotation pane. On
+pushback, incorporate it, update the plan file, and call `ExitPlanMode` again until approved; never ask "is this plan
+okay?" through `AskUserQuestion`. After approval go **immediately** to Step 7 — no reads, grep or research before the post.
 
 ### Step 7: Post Approved Plan to Linear
 
-**This step MUST complete before any implementation work begins — no exceptions.** No file reads, no grep, no dependency research. Post first, then stop.
+**This step MUST complete before any implementation work begins — no exceptions.** No file reads, no grep, no dependency
+research: post first, then stop. The comment is the permanent record from which anyone, a future session included, can
+reconstruct intent if the session is interrupted.
 
-Record the approved plan as a comment on the issue before starting work. This creates a permanent record so that if the session is interrupted, anyone (including a future session) can reconstruct intent from Linear.
-
-1. Use the `Write` tool to save the plan as a structured comment to `tmp/linear-comment-<issue-id-lowercased>.md` (e.g., `tmp/linear-comment-pl-13.md`):
-
-```markdown
-## Implementation Plan
-
-_Approved before implementation started._
-
-### Approach
-[1–3 sentence summary of the overall strategy]
-
-### Steps
-1. [Step — what will be done and why]
-2. ...
-
-### Key Files
-- [File paths identified during planning]
-```
-
-1. Run:
-
-```bash
-~/.claude/scripts/linear-post.sh comment PL-13 tmp/linear-comment-pl-13.md
-```
+1. `Write` the plan to `tmp/linear-comment-<issue-id-lowercased>.md` (e.g. `tmp/linear-comment-pl-13.md`), headed
+   `## Implementation Plan` and `_Approved before implementation started._`, with three sections: `### Approach` (a 1–3
+   sentence summary of the strategy), `### Steps` (numbered — what will be done and why), `### Key Files` (the paths
+   identified during planning).
+2. Post it: `~/.claude/scripts/linear-post.sh comment PL-13 tmp/linear-comment-pl-13.md`
 
 ### Step 8: Implement via Delegation
 
-**Your role is orchestrator only.** Do not read source files, write code, run grep, or make edits yourself. Every implementation action must be delegated to a subagent. You only:
+**Your role is orchestrator only.** Do not read source files, write code, run grep, or edit. Every implementation action
+is delegated through the Agent tool; you dispatch, verify with `pnpm check`, update Linear (checkboxes, comments), and
+decide what to delegate next. If you catch yourself reading a source file or editing code, stop — delegate it.
 
-- Dispatch tasks to subagents (via the Agent tool)
-- Verify results by running `pnpm check`
-- Update Linear (checkboxes, comments)
-- Decide what to delegate next based on results
+**Agents:** `developer` (implements, tests, fixes), `quality-reviewer` (security, performance, best practices),
+`debugger` (errors, root causes), `architect` (designs when implementation reveals architectural questions).
 
-If you catch yourself reading a source file or editing code, stop — delegate it instead.
+**Parallel is the default, not the exception.** Tasks that do not depend on each other's output launch in one message
+with multiple Agent calls; sequential needs a justification. Before dispatching a batch, enumerate each agent's write
+targets ([standards/agent-coordination.md](../../standards/agent-coordination.md) § Write-target exclusivity). Dispatch
+synchronously (`run_in_background: false`) whenever the next step consumes the result — every implementation and fix
+dispatch here; a backgrounded dispatch reports in a completion notification (same file, § Background-agent completion
+reports — the spawn-policy mod forces synchronous dispatch for `developer`, `quality-reviewer` and `quality-verifier`
+under the `auto` permission mode).
 
-**Available agents:**
+**Derive and carry `WT_ABS` and `MAIN_CHECKOUT` before composing any delegation** when `IS_WT` is true — the template
+substitutes them into the very first prompt; both live in the orchestrator's context, never in shell state. `WT_ABS` came
+from sub-step 1's stdout; if either is missing, run the two plain probes in `standards/git-worktrees.md`
+§ Worktree-isolated sessions, **each its own Bash call**. Check by inspection before substituting the **literal absolute
+paths**: both non-empty, existing directories, and `WT_ABS != MAIN_CHECKOUT` (equality means isolation was never
+registered); STOP and surface on any violation — an empty value would silently scope every delegation to the wrong tree.
 
-- `developer` — Implements code, writes tests, fixes bugs
-- `quality-reviewer` — Reviews for security, performance, best practices
-- `debugger` — Investigates errors, analyzes root causes
-- `architect` — Designs solutions when implementation reveals architectural questions
+**Delegation format.** Every delegation includes the Working Application Contract; subagents do not get to claim
+ignorance of it. Under `IS_WT`, every delegation of any agent type (`Explore` and `general-purpose` included — a read-only
+search can leak another session's uncommitted content) carries READ-SCOPING, and every write-capable one (`developer`,
+`debugger`) carries WRITE-PLACEMENT too; omit both when `IS_WT` is false. Why:
+[standards/git-worktrees.md](../../standards/git-worktrees.md) § Delegation placement.
 
-**Parallel execution is the default, not the exception.** If two tasks don't depend on each other's output, launch them simultaneously in a single message with multiple Agent calls. This applies to implementation tasks, fix tasks, and review tasks equally. Sequential execution requires justification (e.g., task B needs task A's output). Before dispatching the batch, enumerate each agent's write targets — see [Agent Coordination Standards](~/.claude/standards/agent-coordination.md) § Write-target exclusivity.
-
-**Derive and carry `WT_ABS` and `MAIN_CHECKOUT` before composing any delegation.** The READ-SCOPING/WRITE-PLACEMENT template below substitutes `<WT_ABS>` and `<MAIN_CHECKOUT>` into the very first delegation prompt this step composes — both values must be known before that composition, not derived lazily inside "After each delegation completes" (by then the first prompt would already have had nothing to substitute). Step 0 sub-step 1 emitted `WT_ABS=` on stdout, and both values are carried in the orchestrator's own context (for `<WT_ABS>`/`<MAIN_CHECKOUT>` prompt substitution) — not in shell state, which never survives across separate Bash tool calls. If either value is missing from context, derive it with two plain probes, **each its own Bash call** — the worktree-isolation guard refuses `$(git …)` command substitution in exactly these sessions (`standards/git.md` § Worktree-isolated sessions), so a single assign-and-guard block cannot run here:
-
-```bash
-git rev-parse --show-toplevel   # output = WT_ABS (the worktree root)
-```
-
-```bash
-git rev-parse --path-format=absolute --git-common-dir   # prints <MAIN_CHECKOUT>/.git — its parent directory is MAIN_CHECKOUT
-```
-
-Apply the guards by inspection before substituting the resulting **literal absolute paths** anywhere: both values non-empty and existing directories, and `WT_ABS != MAIN_CHECKOUT` — equality means isolation was never registered. STOP and surface on any violation; substituting an empty or wrong value would silently scope every delegation's READ-SCOPING to the wrong tree instead of failing loudly (`git -C ""` is a documented no-op).
-
-**Delegation format:**
-
-Every delegation MUST include the Working Application Contract. Subagents do not get to claim ignorance of it.
-
-Dispatch every delegation as a one-shot **unnamed** `Agent` call — never pass `name`. A named spawn becomes a mailbox teammate whose turn-final report is silently discarded, surfacing only a bare idle notification and stalling the run; unnamed calls return the report in the completion notification (see `standards/agent-coordination.md` § "Background-agent completion reports", including the ping-then-verify recovery if one was named anyway).
-
-When `IS_WT` is true, split the isolation instructions by what the delegation actually does. The READ-SCOPING block below is required on **every** delegation this skill dispatches, regardless of agent type — the four agent types named below (`developer`, `debugger`, `quality-reviewer`, `architect`) are a floor, not the set; a delegation to `Explore`, `general-purpose`, or any other type still gets it, since even a read-only search can leak another session's uncommitted file content into its output. The WRITE-PLACEMENT block (the changed-path self-report) is required only for delegations that can write — `developer` and `debugger` here — since `quality-reviewer` and `architect` are expected to change nothing and produce no changed-path list. Omit both blocks entirely when `IS_WT` is false.
-
-```md
+```markdown
 Task for [agent]: [Specific, focused task]
 Context: [Why this task matters, relevant issue context]
 Files: [Exact paths and lines]
@@ -424,188 +361,131 @@ Requirements:
 Acceptance: [How to verify success — MUST include "pnpm check passes"]
 ```
 
-> **When `IS_WT` is true, the READ-SCOPING/WRITE-PLACEMENT blocks and the item-1 placement check below apply to EVERY delegation `/start` makes, in any step — not only Step 8's.** That includes Step 5's auto-mode baseline-repair fix delegations, which run before this step and would otherwise carry no isolation instructions and get no placement check.
->
-> **The `EnterWorktree` registration is best-effort, not a guarantee.** This applies to every `IS_WT` session, in either foreground or background. Step 0 entered the worktree with `EnterWorktree(path=<WT_ABS>)`, which registers it as the session's isolation root and is *meant* to bind every subagent's Write tool to that root; it has been observed to miss some parallel delegates silently (BF-380). So every delegation carries READ-SCOPING (and `developer`/`debugger` delegations carry WRITE-PLACEMENT too, per the paragraph above), naming the absolute worktree root (`<WT_ABS>`) and forbidding the main checkout (`<MAIN_CHECKOUT>`) by name — and **a delegate's success report is not evidence its writes landed in the worktree**: item 1 below confirms them there after every write-capable delegation.
->
-> None of this loosens the existing guard: a delegate's Write being *blocked* is still a **hard stop, not a license to weaken isolation** — do **not** set `worktree.bgIsolation: "none"`, do **not** edit `settings.json` / `settings.local.json` to change isolation (the auto-mode self-modification classifier is right to block that), and — above all — do **not** take over the implementation yourself. The orchestrator-only rule at the top of this step is absolute and is **never** suspended by a delegation-mechanics failure. If a delegate reports writes are blocked: re-confirm Step 0's `EnterWorktree` registration succeeded (cwd is the worktree; it was entered from the main checkout, not via a shell `cd` — Step 0 sub-step 2); if writes are still blocked, **STOP**. Compose the failure detail — which delegation, what it reported, the registration re-confirmation result.
->
-> - **Interactive mode:** surface all of the above in chat before the tagged line.
-> - **Auto mode:** write it to a Linear comment first — save the body with the `Write` tool to `tmp/blocked-write-comment-<issue-id-lowercased>.md`, then run `~/.claude/scripts/linear-post.sh comment <ISSUE-ID> tmp/blocked-write-comment-<issue-id-lowercased>.md`. Without this comment, auto mode's tagged line would be the ONLY durable record of what happened — posting first gives a human something to act on beyond a single line.
->
-> Both modes then emit the tagged line and stop: `BLOCKED-ON-REVIEW: <ISSUE-ID> — delegate writes blocked by the worktree isolation guard; manual investigation required.` A stopped session must never end with no tag (`standards/lifecycle-tags.md`, "every session ends with exactly one").
-
 **After each delegation completes:**
 
-1. **Confirm the delegate's edits landed in the worktree — after every write-capable delegation, gated on `IS_WT`.** Probe each path in the delegate's WRITE-PLACEMENT report with `git -C <WT_ABS> status --porcelain --untracked-files=all -- <path>` (`<WT_ABS>` is the literal carried per this step's derivation note; an in-worktree `-C` target runs under the isolation guard normally). Empty output for a reported path that was not marked a deliberate no-op or revert means the delegation's work is not in the tree it reported on — the writes were lost or misrouted (the BF-380 shape: a mis-bound `EnterWorktree` registration let parallel delegates write into the main checkout while reporting success). A green `pnpm check` is not evidence either — a worktree missing a delegate's changes still type-checks.
+1. **Confirm the edits landed in the worktree — after every write-capable delegation, gated on `IS_WT`** — per
+   `standards/git-worktrees.md` § Delegation placement: probe each WRITE-PLACEMENT path with
+   `git -C <WT_ABS> status --porcelain --untracked-files=all -- <path>`; empty output for a path not marked no-op is a
+   failed delegation (a green `pnpm check` is no evidence either) — re-confirm the `EnterWorktree` registration,
+   re-dispatch scoped to the missing paths with the same blocks, and if that misses too, STOP and surface; never hunt in
+   the main checkout, never implement it yourself. **Auto mode:** first `Write` the detail (which delegation, both
+   reports, the missing paths) to `tmp/misrouted-write-comment-<issue-id-lowercased>.md` and post it with
+   `~/.claude/scripts/linear-post.sh comment`. Both modes then emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — delegate's reported
+   edits missing from the worktree after re-dispatch (<bare paths>); manual investigation required.` and stop, state
+   unchanged. A write-capable report with no path list is a protocol failure: check the worktree's whole dirty set
+   against its scope. **A Write blocked by the isolation guard is a hard stop: read `references/blocked-write.md`.**
+2. **A self-resolved deviation is design feedback, not a note.** When a delegate reports it departed from the plan (a
+   rename to dodge a collision, an uncalled-for guard, a split step), ask what made it necessary and whether the plan's
+   shape did; where the report does not say, dispatch `architect` rather than reading the code yourself. Accepting the
+   workaround silently costs a review cycle — the reviewer reads the same evidence and files the finding you already had.
+3. Verify the result (type checks, tests, dev server — whatever applies).
+4. If validation fails, the delegate broke the working application: delegate the fix back to `developer` or `debugger`
+   framed as "The application was working before our changes. Your changes broke it. Fix it." Never accept
+   "pre-existing" — the baseline passed.
+5. Check off completed checkboxes: `linear-cli issues get PL-13 --output json` for the current description, `Write` the
+   full description to `tmp/linear-description-<issue-id-lowercased>.md` changing only `- [ ]` → `- [x]` (no rewrite
+   or reformat), then `~/.claude/scripts/linear-post.sh description PL-13 tmp/linear-description-pl-13.md`.
 
-   Treat it as a failed delegation, not a halt. Do not go looking for the writes in the main checkout — it is shared with other sessions, and nothing there is this session's to take or clean up — and do not implement the missing work yourself (the orchestrator-only rule at the top of this step). Re-confirm Step 0's `EnterWorktree` registration (cwd is the worktree, entered from the main checkout — sub-step 2), then re-dispatch the delegation scoped to exactly the missing paths, with the same READ-SCOPING/WRITE-PLACEMENT blocks. If the re-dispatch's edits are missing too, STOP and surface: which delegation, both reports, the missing paths, and a note that the writes may have landed in the main checkout for a human to check with `git status` there. **Auto mode:** post that as a Linear comment first — `Write` the body to `tmp/misrouted-write-comment-<issue-id-lowercased>.md`, then `~/.claude/scripts/linear-post.sh comment <ISSUE-ID> tmp/misrouted-write-comment-<issue-id-lowercased>.md`. Both modes then emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — delegate's reported edits missing from the worktree after re-dispatch (<bare paths>); manual investigation required.` and stop — no Linear state change, worktree and branch preserved.
+**Do NOT change the issue state during implementation.** It stays In Progress for this whole skill; `/finish` alone
+moves it to Ready For Release, even with every checkbox checked. The only exceptions are the two terminal exits in
+`references/early-exit.md`; a third state-transitioning exit is added there, never invented elsewhere.
 
-   **A `developer`/`debugger` delegation that returns with no path list is a protocol failure, not "changed nothing"** — note it in the log and check the worktree's whole dirty set (`git -C <WT_ABS> status --porcelain --untracked-files=all`) against the delegation's named scope instead. Read-only delegations (`quality-reviewer`, `architect`, `Explore`) have no expected footprint and nothing to confirm here; `/quality-review`'s worktree-isolation blockquote owns the residue check for those. If `IS_WT` is false, skip this item: there is no second tree for the writes to have missed, and the delegate's own diff is the work. The main checkout itself is never measured: other sessions dirty it routinely, so any check on it halts on their scratch files rather than on anything this session did (a dirty-state diff of it once stranded green runs exactly that way), and the one moment main matters — the merge — is already `/finish`'s to handle, where a busy main defers to the merge queue (`DEFERRED-MERGE`) instead of stopping anyone.
+**Progress checkpoints.** On significant decisions or unexpected blockers, `Write` a brief comment to
+`tmp/linear-comment-<issue-id-lowercased>.md` and post it with `~/.claude/scripts/linear-post.sh comment PL-13 <file>`;
+the next session resumes per `references/resumption.md`.
 
-2. **A delegate's self-resolved deviation is design feedback, not a note.** When a delegation reports that it departed from the plan — renamed something to dodge a collision, added a guard the plan did not call for, split a step the plan wrote as one — the friction it routed around is evidence about the design, and the delegate proved that friction is real by having to route around it. Before accepting the workaround, ask what made the deviation necessary and whether the plan's shape is what made it necessary. Where that is not obvious from the report, it is exactly the "implementation reveals architectural questions" case the `architect` agent exists for (see **Available agents** above) — dispatch it rather than reading the code yourself; the orchestrator-only rule at the top of this step is not suspended here. Note the asymmetry this closes: a delegate that **stops** and reports gets explicit adjudication wherever a skill provides for one (`/quality-review`'s "Routing a stop-and-report", for its fix dispatches — this step's delegations carry no such escape hatch at all), while a delegate that works around and reports gets accepted silently, even though the second case carries the stronger signal. Accepting the workaround is often right; accepting it *without asking* is what costs a review cycle, because the reviewer reads the same evidence and files the design finding you already had in hand.
-3. Verify the result (type checks, tests, dev server — whatever is appropriate)
-4. If validation fails: the subagent broke the working application. Delegate the fix back to `developer` or `debugger` with this framing: "The application was working before our changes. Your changes broke it. Fix it." Do not accept "pre-existing" as an explanation — the baseline passed.
-5. Check off the corresponding checkbox(es) in the issue description:
+**Implementation is finished only when Step 9's review passes.**
 
-```bash
-# Get current description
-linear-cli issues get PL-13 --output json
-```
+### Step 8.5: Early-Termination Exits (CANCELED / ABANDONED)
 
-Update completed checkboxes (`- [ ]` → `- [x]`) and push the update:
-
-1. Use the `Write` tool to save the full updated description to `tmp/linear-description-<issue-id-lowercased>.md` (e.g., `tmp/linear-description-pl-13.md`)
-2. Run:
-
-```bash
-~/.claude/scripts/linear-post.sh description PL-13 tmp/linear-description-pl-13.md
-```
-
-**Important**: Preserve the entire description — only change `- [ ]` to `- [x]` for completed items. Do not rewrite or reformat the description.
-
-**Do NOT change the issue state** during implementation. The issue stays "In Progress" throughout this entire skill. Moving to "Ready For Release" is handled exclusively by the `/finish` skill after the commit. Even if all checkboxes are checked, do not transition the state.
-
-**The only exceptions** to this rule are Step 8.5's two state-transitioning terminal-exit paths (CANCELED / ABANDONED), which move the issue to `Canceled` or `Planned` respectively. Those are explicit terminal contracts — when one of the Step 8.5 triggers fires (work already shipped / no longer needed; user halting before completion), Step 8.5 supersedes this prohibition. Outside Step 8.5, the rule above holds with no further exceptions: no state changes during implementation. A future skill or subagent invoked from /start MUST NOT change the issue state on its own; if a third *state-transitioning* terminal-exit path becomes necessary, add it to Step 8.5 (not invented elsewhere) — a stop that leaves state unchanged needs no entry there.
-
-**Progress Checkpoints** — As implementation progresses, add brief comments on significant design decisions or unexpected blockers:
-
-1. Use the `Write` tool to save the comment to `tmp/linear-comment-<issue-id-lowercased>.md` (e.g., `tmp/linear-comment-pl-13.md`)
-2. Run:
-
-```bash
-~/.claude/scripts/linear-post.sh comment PL-13 tmp/linear-comment-pl-13.md
-```
-
-This ensures progress is visible in Linear even if the session is interrupted, and enables picking up where we left off.
-
-**Resumption.** `/start` is idempotent on the same issue: re-running `/start PL-13` after a `/checkpoint`-and-stop hits Step 0's widened gate (a worktree already exists for this issue — see Step 0), so Step 0 runs the same procedure as a fresh start rather than being skipped. Sub-step 1's setup script safely reuses the existing worktree and branch (its create/attach/reuse logic handles this), and sub-step 2 re-enters via `EnterWorktree(path=<WT_ABS>)` so the resumed session's isolation is registered (else a background resumption's `developer` writes hit the guard). Sub-step 2's cwd precondition applies exactly as written: **re-anchor cwd to the main checkout first** if a manual resumption launched with cwd already inside the worktree (that would trip the same-cwd refusal), passing the **absolute** path `git worktree list` reports for the issue-keyed `.claude/worktrees/<id>` (the tool rejects a relative path as not a registered worktree).
-
-After Step 0 — whose sub-step 3 `start-wt-verify.sh` call re-verifies cwd and re-probes availability, running with `--no-claim` per its idempotent-resumption rule (the issue is already claimed by me) rather than skipping Step 3 wholesale (its availability check still runs) — check the digest's comments for an already-posted implementation plan. If one exists and still applies, skip Step 6/7 entirely (no new exploration — sub-step 3's own exploration dispatch is SKIPPED on this path, per its "Two exceptions" note) and resume directly at Step 8. Otherwise — the plan is judged STALE, or none was ever posted — continue at Step 6, but the exploration state differs by which: if a plan was posted but is STALE, sub-step 3 already skipped its exploration dispatch (per its "Two exceptions" note), so dispatch exploration now, at Step 6 before `EnterPlanMode` (Step 6's re-dispatch fallback covers exactly this case); if no plan was ever posted, sub-step 3 dispatched exploration as usual and it is already running. If Step 9 (review) had previously run, the existing `tmp/quality-review-verdict-<issue-id-lowercased>.md` file (e.g., `tmp/quality-review-verdict-pl-13.md`) is still consulted by `/finish` Step 1.5 — the user can decide to re-run `/quality-review` to refresh it, or skip ahead to `/finish` if the prior verdict still applies.
-
-**After all implementation tasks are complete, proceed to Step 9.** Implementation is not finished until the review passes.
-
-### Step 8.5: Early-Termination Exit Paths (CANCELED / ABANDONED)
-
-Two state-transitioning terminal exits can fire BEFORE the normal Step 9 → Step 10 flow: CANCELED and ABANDONED. Both CANCELED and ABANDONED bypass Step 9 entirely and emit a tagged final line per `standards/lifecycle-tags.md`. Use these explicitly rather than ad-hoc'ing an exit; they are documented contracts other sessions (and the user) can scan.
-
-**CANCELED — "the work is already done or no longer needed."** Fires when implementation discovery reveals that:
-
-- The change the issue requested already shipped (under another issue, on the source branch, or via a parallel session — the PL-292 case).
-- The change is no longer wanted (requirements changed, design pivot).
-- The issue is a duplicate of work currently in progress elsewhere.
-
-Steps:
-
-1. Post a Linear comment summarizing what was found and why no code is shipping. Use `~/.claude/scripts/linear-post.sh comment <ISSUE-ID> tmp/canceled-comment-<issue-id-lowercased>.md` (e.g., `tmp/canceled-comment-pl-292.md`). Body should name the issues/PRs that already cover the work (if applicable) and note any out-of-scope findings worth filing as separate issues.
-2. Move the Linear issue state to a "canceled" terminal state. Try the canonical name first, then fall back per `/quality-review` sub-step 6's fallback pattern:
-
-   ```bash
-   linear-cli issues update <ISSUE-ID> --state Canceled
-   ```
-
-   If the team's canceled-state name differs (rejected), derive the team key from the issue ID prefix (e.g., `PL-13` → team `PL`), then probe `linear-cli statuses list -t PL` and pick the first state whose name matches `/^(canceled|cancelled|won.?t.?do|abandoned)/i` (case-insensitive, prefix). If none match, surface the available states to the user and ask which to use — do not silently fall through to the team default. **Auto mode:** do not ask — leave the state unchanged, name the intended state in the Linear comment from sub-step 1 (a human re-states it later), and continue to the tagged line.
-
-   After the state transition succeeds, clear the assignee so the Step 3 claim does not linger on a terminal issue (mirrors `mark-ready-for-release.sh`'s unassign-on-terminal behavior — a Canceled issue should not clutter anyone's "my issues" view):
-
-   ```bash
-   linear-cli issues assign <ISSUE-ID>   # no user arg unassigns
-   ```
-
-3. Surface the cleanup commands to the user (do NOT run them automatically — the worktree might contain in-progress notes worth saving):
-
-   ```bash
-   git worktree remove .claude/worktrees/<issue-id-lowercased>
-   git branch -D <worktree-branch-name>
-   ```
-
-4. **Release the ownership stamp** (worktree mode only): `~/.claude/scripts/wt-disown.sh .claude/worktrees/<issue-id-lowercased>`. The worktree stays on disk until someone runs the commands above, and an unreleased stamp keeps claiming it: while the session idles, and — once the session is deleted from `claude agents`, which removes its job dir — for as long as the shared daemon whose pid a fleet stamp carries keeps running. On 2026-10-17 a canceled `/auto BF-2698` run's stamp read `alive` that way and held a `/pr-merge-deferred` wait after the fleet had drained, until it was force-released by hand. Best-effort: on failure, warn, continue, and note in the tagged line that ownership was not released.
-5. Emit the tagged final line and stop. Do NOT run Step 9 or Step 10:
-
-   ```text
-   CANCELED: <ISSUE-ID> — <one-line reason>. Run git worktree remove .claude/worktrees/<issue-id-lowercased> && git branch -D <worktree-branch-name>.
-   ```
-
-**ABANDONED — "user is halting the session before completion."** Every trigger is user-initiated — a session never self-invokes this path. Fires when:
-
-- The user explicitly asks to pause and return the issue to the backlog ("move PL-322 back to Planned").
-- A blocker emerges that the user wants to defer (waiting on external decision, dependency not ready).
-- The user is intentionally parking the session for resumption later (different context, different person).
-
-The fleet deadline is NEVER a trigger. It gates picking new work only (`/auto`'s deadline gate; `/fleet-stop`'s whole contract is that in-flight issues run to completion), and a mid-issue estimate that the remaining gates overrun it is neither a blocker nor a park: finish the full pipeline, gates uncut, and let the overrun happen — it is budgeted by design. Measured 2026-08-13 (BF-1108): a fleet session estimated 13–18 min of remaining gates against ~10, self-invoked this path on a shipping-ready change, and traded ~8 minutes of overrun for a full re-entry cycle plus a human intervention.
-
-Steps:
-
-1. Post a Linear comment noting where things stand: what's done, what's not, any decisions made, where the implementation left off. Use `~/.claude/scripts/linear-post.sh comment <ISSUE-ID> tmp/abandoned-comment-<issue-id-lowercased>.md` (e.g., `tmp/abandoned-comment-pl-322.md`).
-2. Move the Linear issue state back to a "ready-to-work" state. Try the canonical name first, then fall back per `/quality-review` sub-step 6's fallback pattern:
-
-   ```bash
-   linear-cli issues update <ISSUE-ID> --state Planned
-   ```
-
-   If the team's planned-state name differs (rejected), derive the team key from the issue ID prefix (e.g., `PL-13` → team `PL`), then probe `linear-cli statuses list -t PL` and pick the first state whose name matches `/^(planned|backlog|to.?do)$/i` (exact match on these four; NOT a prefix match) — preferring `Planned` if present, since it preserves the "we intend to do this" signal more strongly than `Backlog`. **Deliberately exclude `ready` from the regex** — a prefix match on `ready` would latch onto `Ready For Release` or `Ready For Review` on teams that have those states, silently moving an abandoned issue into a release/review state. If none match, surface the available states to the user and ask which to use — do not silently fall through to the team default. **Auto mode:** do not ask — leave the state unchanged (the issue stays In Progress), name the intended state in the Linear comment from sub-step 1, and continue to the tagged line.
-3. **Preserve the worktree** — the whole point of `ABANDONED` (vs `CANCELED`) is that resumption is expected. Do not run `git worktree remove` and do not delete the branch.
-4. **Release the ownership stamp** (worktree mode only) so *any* session can resume, not just this one: `~/.claude/scripts/wt-disown.sh .claude/worktrees/<issue-id-lowercased>` (this session is the stamped owner, so the gate passes without `--force`). Without this, "preserved for resumption" holds only for this harness — the stamp reads `alive` to every other session for as long as the shared harness process lives. Best-effort: on failure, warn, continue, and note in the tagged line that ownership was not released.
-5. Emit the tagged final line and stop:
-
-   ```text
-   ABANDONED: <ISSUE-ID> — <one-line reason>. Worktree preserved at .claude/worktrees/<issue-id-lowercased> for resumption.
-   ```
-
-**Distinguishing the two:** if the user (or implementation discovery) determined the work is done or unneeded → `CANCELED`. If the user is pausing with intent to resume → `ABANDONED`. When in doubt, ask the user once which they intend; do not silently pick. **Auto mode:** do not ask — when the evidence clearly shows the work already shipped or is unneeded, use `CANCELED`; in every other doubtful case default to `ABANDONED` (it preserves all state for a human to inspect).
+Two state-transitioning terminal exits can fire before Step 9: **CANCELED** — the requested change already shipped
+(another issue, the source branch, a parallel session), the requirement was dropped, or the issue duplicates in-progress
+work — and **ABANDONED** — the user halts before completion (an explicit "move it back to Planned", a blocker the user
+defers, a session parked for resumption). ABANDONED is always user-initiated; a session never self-invokes it, and the
+fleet deadline is never a trigger — it gates new picks only, so finish the pipeline, gates uncut. Both exits bypass
+Steps 9–10 and end on their own tag. When either applies, read `references/early-exit.md` and follow it exactly. In
+doubt, ask once; **auto mode** uses `CANCELED` only when the evidence clearly shows the work shipped or is unneeded,
+else `ABANDONED` (it preserves all state).
 
 ### Step 9: Adversarial Review and Triage
 
-Use the `/quality-review` skill to run the adversarial implementation review and triage/fix loop, passing the current issue ID as context. The `/quality-review` skill enforces the `pnpm check` gate, delegates to `quality-reviewer`, and loops up to 5 review/fix cycles before escalating. When it returns a passing verdict (`passed-clean` or `passed-after-fixes`), proceed to Step 10. If it returns `terminated-with-open-items`, print the verdict block (as composed by `/quality-review`) to chat as a single message — no `AskUserQuestion` prompt at this point. Step 10 will re-render the same block as part of the structured summary; the duplication is intentional (chat-visibility now, structured artifact later).
+Invoke `/quality-review` with the issue ID: it enforces the `pnpm check` gate, delegates to `quality-reviewer`, and loops
+up to 5 review/fix cycles before escalating. On `passed-clean` or `passed-after-fixes`, proceed to Step 10. On
+`terminated-with-open-items`, print its verdict block to chat as a single message — no `AskUserQuestion`; Step 10
+re-renders the same block deliberately. On `escalated-to-architect`, surface the open items and the architect
+recommendation in chat, then proceed to Step 10, whose item 6 handles it — never invent a separate exit.
 
-**Dispatch via the Skill tool.** Call `Skill(skill: "quality-review", args: "<ISSUE-ID>")` (e.g., `Skill(skill: "quality-review", args: "PL-13")`) — in auto mode, `args: "auto <ISSUE-ID>"` so `/quality-review`'s own prompts resolve to their auto defaults, and add `simple` whenever the token was given or the digest **file** on disk (`DIGEST_FILE` in worktree mode, `tmp/linear-context-<issue-lower>.md` in place) names it on its `**Labels:**` line — re-read the file here (`grep -m1 '^\*\*Labels:\*\*' <digest>`) rather than trusting a memory of Step 0/1, which a long Step 8 routinely compacts away (`args: "auto simple <ISSUE-ID>"`, `args: "simple <ISSUE-ID>"`) — it selects the simple review tier, and `/quality-review`'s own guards escalate to the full tier when the change does not fit it. Do NOT emit the literal `/quality-review PL-13` as chat text. Slash commands in chat output are not re-parsed by the harness; they render as plain text and the skill never runs. The Skill tool is the only programmatic invocation path. Pass the issue ID positionally so `/quality-review` Step 1 doesn't fall back to branch parsing.
+**Dispatch via the Skill tool** — `Skill(skill: "quality-review", args: "<ISSUE-ID>")`; in auto mode
+`args: "auto <ISSUE-ID>"`. Add `simple` (`"simple <ISSUE-ID>"`, `"auto simple <ISSUE-ID>"`) whenever the token was given
+or the digest **file** on disk names it on its `**Labels:**` line — re-read the file (`grep -m1 '^\*\*Labels:\*\*'
+<digest>`) rather than trusting a memory of Step 0/1, which a long Step 8 routinely compacts away. Never emit the literal
+`/quality-review PL-13` as chat text (slash commands in output are not re-parsed, so the skill never runs), and pass the
+ID positionally so `/quality-review` Step 1 does not fall back to branch parsing.
 
-If `/quality-review` returns `escalated-to-architect`, surface the open items and the architect-agent recommendation in chat, then proceed to Step 10. Step 10 item 6's verdict-conditional Next-steps branch handles this verdict correctly (it emits the "architect recommendation supersedes — do NOT suggest /finish" line). Do not invent a separate exit path here — go through Step 10 like any other verdict.
-
-**Step 10 ALWAYS fires** — even when `/quality-review` failed to produce a clean verdict. The user must always see Step 10's structured summary including the Next-steps line; silently ending the session at a broken `/quality-review` violates the "Next steps MUST be the final line" rule.
-
-Two distinct failure modes route Step 10 differently:
-
-- **`/quality-review` ran to completion and wrote a verdict file** — even with malformed reviewer output (Error Handling fallthrough writes `Verdict: terminated-with-open-items`) or unavailable agent (writes the same). In this case Step 10 item 4 reads the persisted verdict block normally and item 6 takes the `terminated-with-open-items` branch (`Re-run /quality-review to address open items, or open follow-up issues, before /finish`). This is the common failure path.
-
-- **`/quality-review` crashed mid-flight without writing any verdict file** (orchestrator killed, OOM, network blip during the Output step, etc.) — narrow window. In this case Step 10 item 4 renders `Verdict: unavailable (see chat above for /quality-review failure details)` and item 6 takes the missing/unavailable branch (`Investigate /quality-review failure ... before /finish`).
-
-Do not skip Step 10 to "save the user from noise" — the structured summary IS the contract.
+**Step 10 ALWAYS fires**, even when `/quality-review` failed to produce a clean verdict. A run that completed and wrote a
+verdict file (malformed reviewer output and an unavailable agent both write `Verdict: terminated-with-open-items`) takes
+item 6's open-items branch; a run that crashed with no verdict file renders `Verdict: unavailable (see chat above for
+/quality-review failure details)` and takes the missing/unavailable branch.
 
 ### Step 10: Completion Summary
 
-When implementation and review are complete, present a summary to the user that includes:
+Present a summary that includes:
 
 1. **Issue**: ID and title
-2. **What was implemented**: Brief description of changes made
-3. **Files changed**: List of created/modified files
-4. **Adversarial review**: Confirm the adversarial quality review ran. Reproduce the verdict block from `/quality-review` verbatim — its field order is the canonical order:
-   - Final review verdict (`passed-clean` / `passed-after-fixes` / `terminated-with-open-items` / `escalated-to-architect`)
-   - Number of review cycles (initial + re-reviews)
-   - Critical/High/Medium findings resolved
-   - Deferred (Nice-to-Have) items fixed in-session
-   - Deferred items filed as Linear issues (with issue IDs)
-   - Deferred items dropped (not fixed and not filed — note-only items plus anything the filing reply did not select)
-   - Open items (only on `terminated-with-open-items` or `escalated-to-architect`; includes any deferred items not handled above)
-   - The trailing `Review tier:` note, when the run took the simple tier (it is part of the reproduced block)
-5. **Checks**: Confirm `pnpm check` passes. Four exception paths to handle explicitly, mutually exclusive by `/quality-review` termination point:
-   - **Terminated at sub-step 5 regression-cap** (verdict = `terminated-with-open-items` from the deferred-items regression path) → `pnpm check` may be red. Surface that failure here rather than asserting passes.
-   - **Terminated at Step 3+ Error Handling** (malformed reviewer output across two attempts, OR agent unavailable returned after Step 2's gate passed) → `pnpm check` is green as last observed at Step 2's gate. Report explicitly: `pnpm check passed at /quality-review Step 2 gate (review terminated at Error Handling after Step 2; fix loop did not run)`.
-   - **Terminated at Step 2 itself** (`pnpm check` failed and Error Handling escalated to the user without proceeding) → `pnpm check` is red. Report the failing output and direct the user to fix before any further action.
-   - **`/quality-review` never ran or crashed before reaching Step 2** (verdict = unavailable per the Step 9 always-fires fallback, no verdict file written) → report the most recent `pnpm check` state from the implementation phase, or note that the gate was not exercised.
-6. **Next steps (tagged final line — see `standards/lifecycle-tags.md`)**: Emit ONE line, structured as `<TAG>: <ISSUE-ID> — <one-line summary including the recommended next command>`. Tag is mechanical, keyed off the verdict from Step 9:
-   - `passed-clean` / `passed-after-fixes` → `READY-FOR-FINISH: <ISSUE-ID> — <impl summary>. Run /finish <ISSUE-ID>[ merge]` (append ` merge` when in a `/start wt` worktree). `/start` emits this same line regardless of caller. When `/full` dispatched `/start`, the `full-continue.sh` Stop hook keys off this `READY-FOR-FINISH:` line to drive the handoff to `/finish` automatically — `/start` needs no `/full`-specific variant.
-   - `terminated-with-open-items` → `BLOCKED-ON-REVIEW: <ISSUE-ID> — open items unresolved after N cycles. Re-run /quality-review or file follow-up issues before /finish.`
-   - `escalated-to-architect` → `BLOCKED-ON-REVIEW: <ISSUE-ID> — escalated to architect agent. Review its recommendation before any further action; do NOT run /finish.`
-   - missing/unavailable verdict (subagent emitted malformed output, infrastructure error, etc.) → `BLOCKED-ON-REVIEW: <ISSUE-ID> — /quality-review verdict unavailable (likely malformed reviewer output or infrastructure error). Investigate before /finish.`
-   - **Any other value** (defense in depth — `/quality-review` should normalize to one of the four above) → `BLOCKED-ON-REVIEW: <ISSUE-ID> — unrecognized /quality-review verdict <value>. Investigate before /finish; do NOT guess.` (`<value>` is a substitution site — see `/quality-review` Step 6 sub-step 6's "Every `<...>` token below is a substitution site" paragraph for the general rule — replace with the literal verdict string the orchestrator received, e.g., if `/quality-review` returned `Verdict: passed-after-fixes-extra`, emit `unrecognized /quality-review verdict passed-after-fixes-extra` — never the literal `<value>` token.)
+2. **What was implemented**: brief description of the changes
+3. **Files changed**: created/modified files
+4. **Adversarial review**: reproduce `/quality-review`'s verdict block verbatim, in its canonical field order — verdict;
+   review cycles; Critical/High/Medium findings resolved; deferred items fixed in-session, filed (with IDs) and dropped;
+   open items (only on `terminated-with-open-items` or `escalated-to-architect`); the trailing `Review tier:` note when
+   the run took the simple tier.
+5. **Checks**: confirm `pnpm check` passes — with four exceptions, by where `/quality-review` ended: terminated at its
+   sub-step 5 regression cap → the check may be red, surface that; terminated at Step 3+ Error Handling → report
+   `pnpm check passed at /quality-review Step 2 gate (review terminated at Error Handling after Step 2; fix loop did not
+   run)`; terminated at its Step 2 gate → red, report the failing output and direct the user to fix first; never ran or
+   crashed before Step 2 → report the last `pnpm check` state from implementation, or that the gate was not exercised.
+6. **Next steps — the tagged final line** ([standards/lifecycle-tags.md](../../standards/lifecycle-tags.md)): ONE line,
+   `<TAG>: <ISSUE-ID> — <one-line summary including the recommended next command>`, keyed mechanically off the verdict:
+   - `passed-clean` / `passed-after-fixes` → `READY-FOR-FINISH: <ISSUE-ID> — <impl summary>. Run /finish <ISSUE-ID>[ merge]`
+     (append ` merge` in a `/start wt` worktree). Emitted regardless of caller: when `/full` dispatched `/start`, the
+     `full-continue.sh` Stop hook keys off `READY-FOR-FINISH:` to drive the `/finish` handoff — no variant needed.
+   - `terminated-with-open-items` → `BLOCKED-ON-REVIEW: <ISSUE-ID> — open items unresolved after N cycles. Re-run
+     /quality-review or file follow-up issues before /finish.`
+   - `escalated-to-architect` → `BLOCKED-ON-REVIEW: <ISSUE-ID> — escalated to architect agent. Review its recommendation
+     before any further action; do NOT run /finish.`
+   - missing/unavailable verdict → `BLOCKED-ON-REVIEW: <ISSUE-ID> — /quality-review verdict unavailable (likely
+     malformed reviewer output or infrastructure error). Investigate before /finish.`
+   - **Any other value** (defense in depth) → `BLOCKED-ON-REVIEW: <ISSUE-ID> — unrecognized /quality-review verdict
+     <value>. Investigate before /finish; do NOT guess.` — `<value>` is a substitution site: emit the literal verdict
+     string received, never the `<value>` token.
 
-**Ordering — the tagged line MUST be the final line, emitted BARE.** The tagged line is the only scannable lifecycle signal in the agents-list display; the user scans bottom-up when running parallel sessions. Do not emit a separate end-of-turn `result:` summary, a one-line recap, or any trailing prose after the tagged line — and do **not** wrap the tag in a ` ```text ` (or any) code fence: a trailing closing ` ``` ` becomes the last line, which reads as a summary close and defeats the `full-continue.sh` handoff hook (see `standards/lifecycle-tags.md`). Any ` ```text ` tag examples above are documentation formatting only. The Step 10 block IS your end-of-turn summary — nothing follows the bare tag. (The harness may append its own `※ recap:` line, which you cannot suppress; the goal is that no LLM-authored text comes between the tagged line and that harness line.)
+**The tagged line MUST be the final line, emitted BARE** — the only scannable lifecycle signal in the agents-list display,
+scanned bottom-up across parallel sessions. No trailing summary, recap or prose after it, and no code fence around it (a
+closing fence would become the last line and defeat the `full-continue.sh` hook; the ` ```text ` examples in this skill
+are documentation formatting). The Step 10 block IS the end-of-turn summary; only the harness's own `※ recap:` line,
+which you cannot suppress, may follow.
 
 ## Error Handling
 
-- If the issue is already In Progress assigned to someone else, warn the user and ask whether to reassign (auto mode: `SKIPPED-BLOCKED`, never reassign)
-- If the issue is already Done or Ready For Release, warn the user and ask if they want to reopen it (auto mode: `SKIPPED-BLOCKED`, never reopen)
-- If there are unresolved blockers, list them and ask the user how to proceed (auto mode: `SKIPPED-BLOCKED`)
-- If `linear-cli` is not authenticated, prompt: `linear-cli auth oauth` (auto mode: do not prompt — stop with `BLOCKED-ON-REVIEW: <ISSUE-ID> — linear-cli unauthenticated. No state change.`)
-- If a git branch for this issue already exists, switch to it instead of creating a new one
+- Issue In Progress assigned to someone else → warn, ask whether to reassign (auto: `SKIPPED-BLOCKED`, never reassign)
+- Issue already Done or Ready For Release → warn, ask whether to reopen (auto: `SKIPPED-BLOCKED`, never reopen)
+- Unresolved blockers → list them and ask how to proceed (auto: `SKIPPED-BLOCKED`)
+- `linear-cli` not authenticated → prompt `linear-cli auth oauth` (auto: do not prompt — stop with
+  `BLOCKED-ON-REVIEW: <ISSUE-ID> — linear-cli unauthenticated. No state change.`)
+- A git branch for this issue already exists → switch to it instead of creating a new one
+
+## References
+
+Each file is read at the step that names it and nowhere else.
+
+- `references/interactive.md` — the `interactive` token's hand-off: Arguments; Step 0 sub-step 4.
+- `references/resumption.md` — re-running `/start` on an issue it already began: Step 0's existing-worktree gate and
+  sub-step 3's exploration exception; Step 5's `IS_WT`-arming probe; Step 8's checkpoints.
+- `references/wt-failures.md` — the setup script's `owned by another live session` refusal and every
+  `start-wt-verify.sh` verdict other than `VERIFIED`: Step 0 sub-steps 1 and 3.
+- `references/in-place-branch.md` — branch selection, naming, and fetch-before-baseline for a non-worktree run: Step 5.
+- `references/in-place-path.md` — the in-place (no `wt`) body of Step 5: the `start.source-branch` probe that arms
+  `IS_WT` without Step 0, the `in-place-branch.md` hand-off, and the baseline check that establishes the contract; read
+  from Step 5 when Step 0 did not fire.
+- `references/blocked-write.md` — a delegate's Write blocked by the worktree isolation guard: Step 8 item 1.
+- `references/early-exit.md` — the CANCELED and ABANDONED exits: Step 8.5; ABANDONED's return-to-availability mechanics
+  from Step 5's auto-mode baseline failure and Step 6 item 4's auto-mode boundary stop.

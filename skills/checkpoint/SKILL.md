@@ -105,7 +105,7 @@ Record whether checks pass or fail. Do NOT gate on this — it's WIP. If checks 
 ### Step 7: Git Commit & Push
 
 **Invoking `/checkpoint` IS the commit/push grant** for this one WIP checkpoint — see
-[Git Standards](~/.claude/standards/git.md) § Named exceptions. It is bounded to the named issue's
+[Git Standards](../../standards/git.md) § Named exceptions. It is bounded to the named issue's
 change set, staged by name; the push half is suppressible with `no push`. It grants nothing beyond
 this invocation.
 

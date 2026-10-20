@@ -45,6 +45,16 @@ default-on paste-to-upload as a plain `### Features` entry in 19.2.0, and the 20
 - **Passing the flag that restores the previous behavior is not adopting the feature** — it holds the line
   the scope drew, and belongs in the same change.
 
+## Never put a non-version tag in `refs/tags/`
+
+A release pipeline that derives the version from `git describe --tags --abbrev=0` (with no `--match`) treats every tag
+in `refs/tags/` as a version candidate, and `git describe` picks by commit distance first: a marker tag planted on a
+deployed commit sits nearer than the last `vX.Y.Z` tag and wins, so the next bump feeds `npm version` a non-version
+string and the build dies. Annotation breaks only a same-commit tie. Put pointers and markers in their own ref namespace
+(`refs/prod/current`, say), which `git describe` cannot see: write with `git update-ref`, read with `git rev-parse`, and
+push and fetch with an explicit refspec (`git fetch origin '+refs/prod/*:refs/prod/*'`); neither `clone` nor
+`fetch --tags` brings it down.
+
 ## Downstream expectations
 
 - **Implementation**: plan the testing strategy and the rollback path from the classification —

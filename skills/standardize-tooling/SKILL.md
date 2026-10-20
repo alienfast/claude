@@ -1,14 +1,10 @@
 ---
 name: standardize-tooling
 description: >-
-  Converge a TypeScript project's dev tooling onto the house conventions — pnpm 12 (with the supply-chain
-  release-age cooldown, allow-builds, and @alienfast registry wiring), Biome for lint/format (no ESLint, no
-  Prettier), markdownlint-cli2, madge, the standardized parallel `check` script suite, tsdown (for libraries/CLIs),
-  and — if published to npm — `auto` with OIDC token-less trusted publishing and current GitHub Actions — then gate
-  on `pnpm check`. Adaptive and idempotent: detects the project's current package manager, linter, bundler,
-  single-vs-monorepo layout, and public-vs-private registry, and applies only the gaps. Use when the user says
-  "standardize tooling", "migrate to pnpm/Biome/tsdown", "update tooling", "apply house tooling conventions", or
-  asks to convert a project off yarn/npm + ESLint/Prettier + tsup.
+  Converge a TypeScript project's dev tooling onto the house conventions — pnpm 12, Biome (no ESLint/Prettier),
+  markdownlint-cli2, madge, the parallel `check` suite, tsdown for libraries, `auto` with OIDC publishing — then gate on
+  `pnpm check`. Idempotent; applies only the gaps. Use when the user says 'standardize tooling', 'migrate to
+  pnpm/Biome/tsdown', 'apply house tooling conventions', or asks to convert off yarn/npm + ESLint/Prettier + tsup.
 ---
 
 # Standardize Tooling

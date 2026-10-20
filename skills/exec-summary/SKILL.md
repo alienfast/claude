@@ -1,11 +1,11 @@
 ---
 name: exec-summary
-description: Compose a Slack-shareable executive summary of a change for business readers — a single issue is problem first, then the fix; a hotfix or release bundle is a headline, a roll-up by theme, and the per-issue ID list last as a reference — concise per item and complete per shipped issue, put straight on the clipboard as rich text, ready to paste into Slack. Sources from the current session by default, or a named issue/PR. Use when the user says 'exec summary', 'summary for <person>', 'summary I can share', or invokes /exec-summary.
+description: Compose a Slack-shareable executive summary of a change for business readers — single issue is problem then fix; a release bundle is a headline, a roll-up by theme, and the per-issue ID list last — complete per shipped issue, placed on the clipboard as rich text. Sources the session by default, or a named issue/PR. Use when the user says 'exec summary', 'summary for <person>', 'summary I can share', or invokes /exec-summary.
 ---
 
 # Executive Summary
 
-Produce a short, shareable summary of a shipped change for a non-technical audience, delivered ready to paste into Slack. The reader is busy: the summary's only job is to say what changed for them and why it matters. Anything else costs readers. A single-issue change is one problem and one fix. A hotfix or release bundle is many problems, so it reads as a headline and a roll-up by theme — the story a business reader actually follows — with the per-issue list last, as a reference. The one thing concision never buys is coverage — a business reader's second question about a bundle is "did the issue we reported ship?", and a summary that folded that issue into "and other fixes" answers nothing. Words per item are cut; items are not. Measured 2026-09-28 on a 54-issue release PR: one Problem paragraph over a 43-line ID-first roster, and the keeper's verdict was that no business user would read it — the problem read as one when many were solved, nothing rolled the list up, and the list belonged last, like a bibliography.
+Produce a short, shareable summary of a shipped change for a non-technical audience, delivered ready to paste into Slack. The reader is busy: the summary's only job is to say what changed for them and why it matters. Anything else costs readers. A single-issue change is one problem and one fix. A hotfix or release bundle is many problems, so it reads as a headline and a roll-up by theme — the story a business reader actually follows — with the per-issue list last, as a reference. The one thing concision never buys is coverage — a business reader's second question about a bundle is "did the issue we reported ship?", and a summary that folded that issue into "and other fixes" answers nothing. Words per item are cut; items are not. One Problem paragraph over a long ID-first roster is what no business user reads: the problem reads as one when many were solved, nothing rolls the list up, and the list belongs last, like a bibliography.
 
 ## Arguments
 
@@ -14,13 +14,13 @@ Produce a short, shareable summary of a shipped change for a non-technical audie
 
 ## Census before composing
 
-A summary written from memory names what the session discussed and nothing else — measured on three bundled hotfix PRs that shipped 2, 5, and 6 issues, the shared text named zero. Enumerate first, from surfaces that cannot forget, then sort:
+A summary written from memory names what the session discussed and nothing else — on a bundled hotfix PR it names zero of the issues shipped. Enumerate first, from surfaces that cannot forget, then sort:
 
 ```bash
 gh pr view <n> --json body,headRefName,commits --jq '.body, .headRefName, (.commits[] | .messageHeadline, .messageBody)' | grep -o -i -E '<KEY>-[0-9]+' | tr 'a-z' 'A-Z' | sort -u
 ```
 
-`<KEY>` is the team's Linear key (`$LINEAR_TEAM` where the project exports it). The scan over-collects by design — commit bodies cite the follow-ups `/quality-review` filed and the siblings a fix supersedes (21 IDs on a PR that shipped 6), and the commit list itself over-reports on a long-lived branch with duplicated history (a hotfix bundle's list carried two prior releases' version bumps and an issue merged to `main` five days earlier) — so every ID is a candidate, never a conclusion. Sort each into one of three buckets:
+`<KEY>` is the team's Linear key (`$LINEAR_TEAM` where the project exports it). The scan over-collects by design — commit bodies cite the follow-ups `/quality-review` filed and the siblings a fix supersedes, and the commit list itself over-reports on a long-lived branch with duplicated history (prior releases' version bumps, an issue already merged to the base) — so every ID is a candidate, never a conclusion. Sort each into one of three buckets:
 
 - **Shipped, customer-visible** — passes both tests below, and a user, a customer, or the support team can see the difference. Its outcome is told in a theme bullet (the Solution, on a single-issue change) and its ID gets a line in the reference list.
 - **Shipped, internal** — passes both tests, but nobody outside engineering can tell (collation, alert routing, test coverage, refactors). Goes on the trailing internal line.
@@ -28,8 +28,8 @@ gh pr view <n> --json body,headRefName,commits --jq '.body, .headRefName, (.comm
 
 "Shipped" is two tests, and a commit subject or branch name satisfies neither on its own:
 
-1. **In the diff against the base.** `git diff origin/<base>...HEAD` carries the change — the same bar pr-update's §4 applies to every "fixes" claim. An ID whose commits sit in the PR's history but whose content already reached the base through another PR nets to zero here and is referenced-only (measured: three such issues on one hotfix bundle, all `Done` in Linear).
-2. **Goes live on merge.** A file that mirrors an externally managed system — a Descope snapshot, a vendor-console export, any config that reaches production through a tool or a console rather than the deploy — changes nothing when merged. A production mirror changed by export records a fix that was live *before* the PR; a dev- or staging-only change ships on a later promote. Neither is release content: leave it out, or state it as already live. Measured on a hotfix bundle: three of eleven roster bullets were Descope snapshot changes, and two of their commit bodies said "fixed in the console; this is its export".
+1. **In the diff against the base.** `git diff origin/<base>...HEAD` carries the change — the same bar pr-update's §4 applies to every "fixes" claim. An ID whose commits sit in the PR's history but whose content already reached the base through another PR nets to zero here and is referenced-only, however `Done` it reads in Linear.
+2. **Goes live on merge.** A file that mirrors an externally managed system — an identity-provider snapshot, a vendor-console export, any config that reaches production through a tool or a console rather than the deploy — changes nothing when merged. A production mirror changed by export records a fix that was live *before* the PR (its commit body usually says "fixed in the console; this is its export"); a dev- or staging-only change ships on a later promote. Neither is release content: leave it out, or state it as already live.
 
 A customer-visible change that rode along without an issue (a copy tweak, a screen reorder) is subject to both tests and, passing them, still gets a theme bullet — it has no ID, so no reference line. Every shipped ID lands in exactly one place; a shipped ID in neither is a defect, never a concision win.
 

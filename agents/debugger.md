@@ -51,9 +51,8 @@ Debug statements are NOT removed during investigation. They are enumerated in re
 
 ## Test File Creation
 
-Create isolated test files for reproduction. Track in TodoWrite immediately with cleanup task.
-
-Write these files — and any captured command output / run logs — to the project-relative `tmp/` directory (`mkdir -p tmp` first), NEVER to bare system roots (`/tmp`, `/private/tmp`) or ad-hoc absolute paths like `/check_output.log`, which trip the harness's dangerous-path confirmation and stall unattended runs.
+Create isolated test files for reproduction, and add each one to your cleanup list the moment you create it. They go
+under the project-relative `tmp/`, like all scratch (CLAUDE.md § Scratch, local state, files).
 
 Example naming: `tmp/testDebug_<issue>.ext`
 
@@ -102,7 +101,6 @@ Include in every report (for deferred cleanup by user/orchestrator):
 
 - [ ] All debug statements listed with file:line locations
 - [ ] All test files listed with paths
-- [ ] TodoWrite entries for cleanup tasks created
 - [ ] Root cause identified with evidence (if investigation complete)
 - [ ] Fix strategy provided (if root cause found)
 - [ ] Prevention recommendations included (if applicable)

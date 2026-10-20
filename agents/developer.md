@@ -69,7 +69,7 @@ Implement tests according to CLAUDE.md requirements:
   - Revert **each independently-revertable part alone** (two code paths, a guard plus a transaction wrapper) — a whole-fix revert hides a half-fix regression.
   - If the asserted outcome is already correct pre-fix, assert the **mechanism** instead — write/version counts, the specific error raised — not the end state.
   - **Not only regression tests — any assertion that the code chose A over B owes the same proof.** A new test for new behavior has no fix to revert, so mutate the implementation line the assertion exists to pin (swap the chosen value for the rejected one; delete the restamp) and confirm that arm — and only that arm — reddens.
-  - **Apply the mutation with the Edit tool — never `sed -i`, `perl -pi` or an in-place script — after copying the file aside under `tmp/`, and restore by copying it back** ([standards/git.md](../standards/git.md) § To undo a temporary edit). The auto-mode note preferring `sed` for small edits does not cover this one: an unattended run's permission classifier has refused every in-place shell rewrite of a shipped module it was shown (2026-09-22: six of six across four issues, as destruction or a weakened guard), and has refused the Edit too where the mutation itself removes a guard or touches a shared component. A refused mutation leaves that arm unproven — never retry a shell form; either prove it off-suite by running the mutant and its arm against a scratch copy under `tmp/` (a copy the suite never loads is not the suite-level proof, so say which you ran), or report the arm as asserted-but-unproven.
+  - **Apply the mutation with the Edit tool — never `sed -i`, `perl -pi` or an in-place script — after copying the file aside under `tmp/`, and restore by copying it back** ([standards/git.md](../standards/git.md) § To undo a temporary edit). This holds in auto mode too, where `sed` is otherwise preferred: the permission classifier refuses in-place shell rewrites of a shipped module, and can refuse the Edit where the mutation removes a guard or touches a shared component. A refused mutation leaves that arm unproven — never retry a shell form; either prove it off-suite by running the mutant and its arm against a scratch copy under `tmp/` (a copy the suite never loads is not the suite-level proof, so say which you ran), or report the arm as asserted-but-unproven.
   - This is the protocol. **Choosing a fixture that can discriminate at all is a separate skill** — [standards/testing.md](../standards/testing.md) owns it: the boundary rule (an A-over-B assertion pins nothing unless the two records straddle the predicate's crossing), the tautological shape, the two read-time shapes that stay green against their own mutation, and the UI state-transition rule.
 
 ## NEVER Do These
@@ -83,7 +83,6 @@ Implement tests according to CLAUDE.md requirements:
 - NEVER bypass TypeScript type checking
 - NEVER ignore project dependency patterns
 - NEVER introduce technical debt unless explicity requested
-- NEVER write scratch/intermediate output — captured command output, run logs (e.g. a `pnpm check` or rspec redirect) — to bare system roots (`/tmp`, `/private/tmp`) or ad-hoc absolute paths like `/check_output.log`; write it to the project-relative `tmp/` directory instead (`mkdir -p tmp` first). Bare-root writes trip the harness's dangerous-path confirmation and stall unattended runs
 
 ## ALWAYS Do These
 
@@ -94,8 +93,7 @@ Implement tests according to CLAUDE.md requirements:
 - ALWAYS verify resource cleanup (useEffect cleanup, etc.)
 - ALWAYS follow the established package dependency hierarchy
 - ALWAYS run linter before submitting code
-- ALWAYS fix disproportionate or over-wide comments in files you touch (per rules/comments.md — proportion and ~160-col; the rule is injected on every file edit, so pre-existing violations are visible). These fixes are in-scope, not churn — push back if a caller asks you to revert them
-- DEFAULT to no comments; add one only when the WHY is non-obvious. When you do, size it to what the reader needs at that line, not the effort it took to discover — a multi-hop debugging chain is usually one sentence naming the single invisible constraint, not a paragraph. If the WHY needs more, put it in the PR/Linear and leave a one-line pointer (see rules/comments.md)
+- ALWAYS apply [rules/comments.md](../rules/comments.md) to the comments in every file you touch, pre-existing ones included
 
 ## Quality Verification
 
@@ -108,9 +106,7 @@ Before returning any code:
 
 ## Report Delivery
 
-How you were spawned decides how your completion report reaches the orchestrator:
-
-- **Direct/one-shot spawn** (your task arrived as the initial prompt): your turn-final text IS the report.
-- **Named teammate spawn** (your task arrived inside a `<teammate-message>` and you communicate via mailbox): turn-final text is silently discarded — your final action MUST be `SendMessage` to `team-lead` carrying the completion report (load the tool via ToolSearch if needed). Never end a turn believing plain text was delivered.
+The completion report is your final output. When the harness offers a `SubagentHandback` tool, that call is the only
+path that reaches the orchestrator; otherwise the report is your turn-final text.
 
 Remember: Your implementation must be production-ready with zero linting issues. Quality and adherence to project standards are non-negotiable. When in doubt about any project-specific pattern, refer to CLAUDE.md or ask for clarification.

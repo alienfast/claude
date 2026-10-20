@@ -93,7 +93,7 @@ fi
 # Repo lock key — same as finish-merge.sh / start-wt-create.sh, so the worktree
 # add here serializes against concurrent setups and merges on this parent repo.
 # --path-format=absolute yields the SAME key from any worktree or the main checkout (avoids the MSYS
-# `pwd -P` divergence — see standards/git.md "Windows Git Bash: comparing paths").
+# `pwd -P` divergence — see standards/git-windows.md "Comparing paths").
 repo_key=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || {
   echo "ERROR: not inside a git repository (cwd: $PWD)" >&2
   exit 1

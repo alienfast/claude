@@ -1,36 +1,52 @@
 # Claude Code User Configuration
 
-Reusable agents, skills, standards, rules, and hooks for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Drop this into your `~/.claude` directory to get an opinionated, productivity-focused setup — from a single edit up to a full Linear-driven, issue-to-merge workflow.
+Reusable agents, skills, standards, rules, hooks, and mods for
+[Claude Code](https://docs.anthropic.com/en/docs/claude-code). Drop this into your `~/.claude` directory to get an
+opinionated, productivity-focused setup — from a single edit up to a full Linear-driven, issue-to-merge workflow.
 
-> **Not an engineer?** [Linear for stakeholders](linear-for-stakeholders.md) explains how the agents read your Linear board and how to influence what they work on next — labels, priority, cycles, and how to unblock a parked issue.
+> **Not an engineer?** [Linear for stakeholders](linear-for-stakeholders.md) explains how the agents read your Linear
+> board and how to influence what they work on next — labels, priority, cycles, and how to unblock a parked issue.
 >
-> **Want to set up your own project?** [Project setup](project-setup.md) takes a fresh Mac from nothing to a working setup — your GitHub repository, your Linear board, and this toolkit — in seven steps, most of which Claude does for you.
+> **Want to set up your own project?** [Project setup](project-setup.md) takes a fresh Mac from nothing to a working
+> setup — your GitHub repository, your Linear board, and this toolkit — in seven steps, most of which Claude does for
+> you.
 
 ## Why
 
 This started as a fix for one problem and grew into an opinionated operating system for agentic development.
 
-**The original problem — context rot.** LLMs degrade as their context fills with too much information. The fix is **agent delegation**: specialized agents (developer, debugger, reviewer, researcher) each get their own clean context while you stay the main thread, orchestrating from above. Each agent reports back a tight summary, keeping both the top-level and the agent contexts small and focused. Opus drives orchestration, implementation, and review; Sonnet handles research and writing. Since every current model holds instruction-following steady across a 1M-token window, the routing lever is now mostly **effort** rather than model tier — see the [agent table](#agents). For a deeper overview of this pattern, read [ClaudeLog: You Are the Main Thread](https://claudelog.com/mechanics/you-are-the-main-thread/).
+**The original problem — context rot.** LLMs degrade as their context fills with too much information. The fix is
+**agent delegation**: specialized agents (developer, debugger, reviewer, researcher) each get their own clean context
+while you stay the main thread, orchestrating from above. Each agent reports back a tight summary, keeping both the
+top-level and the agent contexts small and focused. Every agent pins its own model and effort, and effort is the main
+cost lever — see [Agents](#agents). For a deeper overview of this pattern, read
+[ClaudeLog: You Are the Main Thread](https://claudelog.com/mechanics/you-are-the-main-thread/).
 
 **What it became.** On top of that foundation, this repo is now a complete, mostly self-maintaining toolkit:
 
-- A **Linear-native issue lifecycle** — plan → start → review → finish → next — driven by slash-command skills that assign issues, cut branches, run an adversarial review-and-fix loop, then mark work Ready For Release.
-- **Worktree parallelism** so multiple issues (and multiple concurrent Claude sessions) run in isolation, with background **launchd daemons** that reap finished worktrees and drain deferred merges on their own.
-- **Safety rails and quality gates** baked in as hooks — destructive git commands blocked, Biome and markdownlint auto-fixing every edit.
-- **Codified standards and path-scoped rules** so every agent shares the same conventions for git, commenting, problem-solving, and language-specific style.
+- A **Linear-native issue lifecycle** — plan → start → review → finish → next — driven by slash-command skills that
+  assign issues, cut branches, run an adversarial review-and-fix loop, then mark work Ready For Release.
+- **Worktree parallelism** so multiple issues (and multiple concurrent Claude sessions) run in isolation, with
+  background **launchd daemons** that reap finished worktrees and drain deferred merges on their own.
+- **Safety rails and quality gates** — hooks that block destructive git commands and the shell idioms that fail
+  silently under zsh, and a `pnpm check` gate (lint, types, tests) before every commit.
+- **Codified standards and path-scoped rules** so every agent shares the same conventions for git, commenting,
+  problem-solving, and language-specific style.
 
 [How we use it](#how-we-use-it) below ties these together end to end.
 
 ## How we use it
 
-Top-down, in the order the work actually flows: research the idea, turn it into certified Linear issues, then ship the backlog with a fleet. The hands-on tiers below that — targeted `/auto`, `/full`, `/start`/`/finish` — are the same machinery driven one step at a time, for when a single issue needs your judgment mid-flight.
+Top-down, in the order the work actually flows: research the idea, turn it into certified Linear issues, then ship the
+backlog with a fleet. The hands-on tiers below that — targeted `/auto`, `/full`, `/start`/`/finish` — are the same
+machinery driven one step at a time, for when a single issue needs your judgment mid-flight.
 
 ### 1. Research & plan
 
 | Step | Command | Notes |
 | ---- | ------- | ----- |
-| Research | `/do research foo bar baz, write your analysis to doc/analysis-foo.md` | Delegates to research agents; lands an analysis doc you can review |
-| Plan | `Read @doc/analysis-foo.md and create an implementation plan as doc/plan-foo.md` | Use plan mode. Consider workstreams and agent teams unless single-threaded |
+| Research | `Use the research-lead agent to research foo bar baz; write the analysis to doc/analysis-foo.md` | Lands an analysis doc you can review |
+| Plan | `Read @doc/analysis-foo.md and create an implementation plan as doc/plan-foo.md` | Use plan mode. Split into parallel workstreams only where they are independent |
 
 ### 2. Seed & certify the backlog
 
@@ -38,17 +54,18 @@ Top-down, in the order the work actually flows: research the idea, turn it into 
 | ---- | ------- | ----- |
 | Linear setup | Optionally set `$LINEAR_TEAM` (single key or comma list, e.g. `PL,BF`) to pin the team scope | Unset = `/next` and `/spec` search every team in the workspace |
 | Create issues | `/prd @doc/plan-foo.md` | Review stages and accuracy before approving; approval creates the issues in Linear |
-| Triage | `/triage` | Reviews dependencies, identifies blockers, suggests priorities |
+| Triage | `/triage scan`, then `/triage apply` | Revalidates the pool against the code as it stands now — cancels what no longer applies, closes what shipped, marks duplicates, narrows partial ships, certifies by research where the evidence clears the bar. `scan` runs unattended and read-only; `apply` is the interactive session that writes |
 | Prioritize | Move stage 1 to "Planned", stage 2 to "Backlog" | |
 | Certify | `/spec` | Interviews you, rewrites the issue in the canonical spec shape, and adds the `specified` label — the certification gate [`/auto`](#autonomous-auto) requires. Interactive only; no args surfaces the top uncertified issues, including the Triage inbox |
 
 ### 3. Ship with a fleet
 
-The primary shipping mode: N parallel autonomous sessions draining the certified backlog as background agents in `claude agents`, bookended by prep and retro.
+The primary shipping mode: N parallel autonomous sessions draining the certified backlog as background agents in
+`claude agents`, bookended by prep and retro.
 
 | Step | Command | Notes |
 | ---- | ------- | ----- |
-| Prep | `/auto-prep` | Certification honesty audit (the `needs decision` / `solo` / `human` gates), family consolidation, `blocks` edges between file-colliding issues, and a recommended session count — interactive; run it before every launch |
+| Prep | `/auto-prep` | Certification honesty audit (the `needs decision` / `solo` / `human` gates), family consolidation, `blocks` edges only for prerequisites, same-method collisions and deliberate increments (file-level overlap is `related`), and a recommended session count — interactive; run it before every launch |
 | Forecast | `/fleet-forecast 12 hours` | Optional dry run of the drain — projected pick order as waves, when Planned burns down into Backlog, what the horizon can't reach, and what is stranded behind blockers the fleet can never ship. Read-only; an estimate, never a plan |
 | Launch | `/fleet-launch 3 10 hours` | Staggered background sessions. Count defaults to prep's persisted recommendation (an explicit count is your quota throttle); the duration winds the fleet down cleanly at the deadline. An `epic:<ID>` token — or the scope `/epic-prep` persisted — confines every session to one epic's graph (see [Scoping a fleet to one epic](#scoping-a-fleet-to-one-epic)) |
 | Sequence | `/fleet-sequence BF-1 BF-2 BF-3` | The targeted, serialized sibling: an explicit issue list shipped strictly one at a time onto one integration branch — each in its own background session, forked from its predecessor's merged code — with one PR onto the launch branch when the list completes (`merge` ships straight into the launch branch instead). The runner for `solo` work and for big issues that must land in order; never mid-fleet |
@@ -56,11 +73,16 @@ The primary shipping mode: N parallel autonomous sessions draining the certified
 | End early | `/fleet-stop` | Rationing quota or done for the day — ends the timer; in-flight issues finish; nothing is killed |
 | Post-mortem | `/fleet-retro` | Where the capacity went, what the run filed, what to fix before the next launch — its findings feed the next `/auto-prep` |
 
-Top-ups compose (`/fleet-launch 2 <remaining>` adds two sessions) — but every launch resets the shared deadline, so re-pass the remaining duration. What keeps N sessions honest is the label contract ([standards/issue-spec.md](standards/issue-spec.md)) plus worktree isolation and the serialized merge — see [Parallel safety](#parallel-safety).
+Top-ups compose (`/fleet-launch 2 <remaining>` adds two sessions) — but every launch resets the shared deadline, so
+re-pass the remaining duration. What keeps N sessions honest is the label contract
+([standards/issue-spec.md](standards/issue-spec.md)) plus worktree isolation and the serialized merge — see
+[Parallel safety](#parallel-safety).
 
 ### Scoping a fleet to one epic
 
-One epic, worked to completion by a fleet that sees nothing else. The same machinery as the table above with one scope threaded through it, and a different release shape (keeper decision 2026-09-11): the fleet merges into an **integration branch** as it goes, and the epic ships as **one PR** from that branch onto the branch it forked from.
+One epic, worked to completion by a fleet that sees nothing else. The same machinery as the table above with one scope
+threaded through it, and a different release shape: the fleet merges into an **integration branch** as it goes, and
+the epic ships as **one PR** from that branch onto the branch it forked from.
 
 | Step | Command | Notes |
 | ---- | ------- | ----- |
@@ -69,11 +91,18 @@ One epic, worked to completion by a fleet that sees nothing else. The same machi
 | Watch | `/fleet-status` | Adds the scope and branch, and a member burn-down: shipped · remaining (in flight) · added since prep. Membership is recomputed at every pick, so a child filed mid-run joins the pool and shows up here rather than silently widening the work |
 | Close | automatic | `mark-ready-for-release.sh` walks up from every released child: an `epic` whose children are all terminal moves to Ready for Release itself, recursively. Then `/epic-pr` opens the epic's PR from `epic/<id>` onto its base — resolving the branch, base and landed roster from what prep and launch recorded — and runs `/pr-update` on it |
 
-Membership is decided by `scripts/epic-graph.sh`: the epic, its transitive descendants, and the transitive blockers of any member — non-terminal only, cross-team included. Dependents are not members (the epic enables them; it does not need them), and neither are `related` partners; both are the boundary the prep reviews. The same scope token drives the hand tools — `/next epic:<ID>`, `fleet-forecast.py --root`, `fleet-blockers.sh --root` — and every one of them fails closed on an issue that is not an epic. Expect one or two lanes: members of one epic share its files and specs by construction, so they collide more than a team pool, and the `related` de-rank plus the merge gate carry what the count leaves.
+Membership is decided by `scripts/epic-graph.sh`: the epic, its transitive descendants, and the transitive blockers of
+any member — non-terminal only, cross-team included. Dependents are not members (the epic enables them; it does not
+need them), and neither are `related` partners; both are the boundary the prep reviews. The same scope token drives the
+hand tools — `/next epic:<ID>`, `fleet-forecast.py --root`, `fleet-blockers.sh --root` — and every one of them fails
+closed on an issue that is not an epic. Expect one or two lanes: members of one epic share its files and specs by
+construction, so they collide more than a team pool, and the `related` de-rank plus the merge gate carry what the count
+leaves.
 
 ### Stepping down: one loop, one issue, one command
 
-Every tier runs the same pipeline (`/start` → `/quality-review` → `/finish`); each step down trades autonomy for control.
+Every tier runs the same pipeline (`/start` → `/quality-review` → `/finish`); each step down trades autonomy for
+control.
 
 | Tier | Command | You decide | It decides |
 | ---- | ------- | ---------- | ---------- |
@@ -85,7 +114,8 @@ Every tier runs the same pipeline (`/start` → `/quality-review` → `/finish`)
 
 ### Parallel safety
 
-The `wt` token is what makes fan-out safe — it is how every fleet session runs, and the same mechanics protect a hand-driven fan-out:
+The `wt` token is what makes fan-out safe — it is how every fleet session runs, and the same mechanics protect a
+hand-driven fan-out:
 
 ```text
 agent 1:  /full wt PL-1
@@ -95,13 +125,27 @@ agent 3:  /full wt PL-3
 
 Each runs end to end independently, and the machinery keeps them from colliding:
 
-- **Isolation by worktree.** `/start wt` checks out the issue's branch in its own git worktree under `<repo>/.claude/worktrees/<issue>`, so every agent gets a private working tree and branch — edits, installs, and checkpoints never step on each other or on your main checkout.
-- **Serialized merge.** When each `/finish` lands, it advances the shared source branch under a per-repo lock ([scripts/with-repo-lock.py](scripts/with-repo-lock.py)): the worktree branch is first brought up to source's tip _inside its own worktree_ (any conflicts resolved there, never in the main checkout), then source moves by a clean `git merge --ff-only` or an atomic `git update-ref`. Concurrent finishes block briefly and merge in turn, so source is only ever advanced cleanly.
-- **Deferred, never forced.** A merge that can't advance right now — e.g. the main checkout is sitting on the shared branch with another session's WIP — is enqueued rather than failed: it leaves the worktree intact and a launchd drainer retries every ~15 min until it lands. Inspect with `/merge-queue`; conflicts are never resolved unattended.
-- **Self-cleanup.** Finished worktrees are reclaimed by the hourly reaper — check with `/reap-worktrees`. Aged `tmp/` scratch is reclaimed by a daily reaper that keeps the named handoff files other skills still read — check with `/reap-tmp`.
-- **Human alongside.** `/start interactive PL-4` claims an issue and sets up its worktree (opened in its own VS Code window), then hands off without planning or implementing — so you can work by hand in the same isolation while background agents keep shipping.
+- **Isolation by worktree.** `/start wt` checks out the issue's branch in its own git worktree under
+  `<repo>/.claude/worktrees/<issue>`, so every agent gets a private working tree and branch — edits, installs, and
+  checkpoints never step on each other or on your main checkout.
+- **Serialized merge.** When each `/finish` lands, it advances the shared source branch under a per-repo lock
+  ([scripts/with-repo-lock.py](scripts/with-repo-lock.py)): the worktree branch is first brought up to source's tip
+  _inside its own worktree_ (any conflicts resolved there, never in the main checkout), then source moves by a clean
+  `git merge --ff-only` or an atomic `git update-ref`. Concurrent finishes block briefly and merge in turn, so source is
+  only ever advanced cleanly.
+- **Deferred, never forced.** A merge that can't advance right now — e.g. the main checkout is sitting on the shared
+  branch with another session's WIP — is enqueued rather than failed: it leaves the worktree intact and a launchd
+  drainer retries every ~15 min until it lands. Inspect with `/merge-queue`; conflicts are never resolved unattended.
+- **Self-cleanup.** Finished worktrees are reclaimed by the hourly reaper — check with `/reap-worktrees`. Aged `tmp/`
+  scratch is reclaimed by a daily reaper that keeps the named handoff files other skills still read — check with
+  `/reap-tmp`.
+- **Human alongside.** `/start interactive PL-4` claims an issue and sets up its worktree (opened in its own VS Code
+  window), then hands off without planning or implementing — so you can work by hand in the same isolation while
+  background agents keep shipping.
 
-For heavy fan-out, keep your main checkout parked on a quiet branch (not the shared integration branch) so every merge advances source by a ref-only update and the queue rarely engages. The full merge protocol lives in [standards/git.md](standards/git.md).
+For heavy fan-out, keep your main checkout parked on a quiet branch (not the shared integration branch) so every merge
+advances source by a ref-only update and the queue rarely engages. The full merge protocol lives in
+[standards/git-worktrees.md](standards/git-worktrees.md).
 
 ### Standalone skills
 
@@ -112,26 +156,61 @@ Reach for these as needed — between loop steps or on their own:
 | `/checkpoint` | Mid-task — commits WIP and posts a progress update to Linear |
 | `/quality-review` | On demand — adversarial review + triage/fix loop until convergence (also auto-runs inside `/start`) |
 | `/next` | Starting a day or week — suggests the best next issue to pick up |
+| `/sentry` | Working a project's Sentry queue — ranks unresolved production issues, then files, archives, resolves, or merges each one, and keeps the `sentry`-labeled Linear issues placed to match |
 | `/update` | Start of day, and first thing to try when a tool is missing or a skill behaves like an older version — pulls the latest project code and `~/.claude`, then re-runs the setup script |
 
 ## Autonomous (`/auto`)
 
-`/auto` is the engine every fleet session runs — the pick-and-ship loop with the human taken out, or in targeted mode out of everything but the pick — and `/loop` is what keeps it running unattended. `/fleet-launch` dispatches N of these as background agents; this section is the single-session mechanics reference.
+`/auto` is the engine every fleet session runs — the pick-and-ship loop with the human taken out, or in targeted mode
+out of everything but the pick — and `/loop` is what keeps it running unattended. `/fleet-launch` dispatches N of these
+as background agents; this section is the single-session mechanics reference.
 
-- **`/auto`** ships **exactly one Linear issue per invocation**, end to end: finish any in-flight work, pick the best unblocked issue via `/next specified` (certified issues only), ship it via `/full auto wt`, record the outcome. Worktree mode is always on (so successive issues chain without stacking branches), and every underlying `auto` default chooses abort/preserve over guess — the worst acceptable outcome is "nothing happened and Linear says why," never "something wrong shipped." Invoking `/auto` **is** the run-scoped grant for the commits and pushes it makes (see [standards/git.md](standards/git.md)).
-- **`/auto BF-123`** is **targeted mode** — same run, your pick. It skips the `/next` pick and ships exactly that issue: still certified-only (the issue must carry the `specified` label — `/spec` it first if not, or drop to `/full wt BF-123` for an interactive run), still always-worktree, still the full unattended gauntlet (plan composed and posted to Linear with no approval pause, adversarial review, finish/merge, a Linear comment on failure). One-shot by nature — run it directly, not under `/loop`. This is the middle ground between driving `/full wt` by hand and letting the loop choose.
-- **`/loop /auto`** is the way you actually run it. `/loop` supplies the recurrence — its wakeup machinery re-invokes `/auto` for the next issue — while each `/auto` call stays a single, self-contained iteration. (Deliberately: in-prose "keep going" scaffolding is the documented failure mode of autonomous macros, so `/auto` leans on `/loop`'s reliable recurrence instead of inventing its own.) Iterations run back-to-back: `/auto` schedules its next wakeup at the 60s minimum, because the backlog is the work queue and there is nothing external to wait on — `/loop`'s 20–30 minute idle-tick default is for polling loops and would otherwise idle away hours between ships.
+- **`/auto`** ships **exactly one Linear issue per invocation**, end to end: finish any in-flight work, pick the best
+  unblocked issue via `/next specified` (certified issues only), ship it via `/full auto wt`, record the outcome.
+  Worktree mode is always on (so successive issues chain without stacking branches), and every underlying `auto`
+  default chooses abort/preserve over guess — the worst acceptable outcome is "nothing happened and Linear says why,"
+  never "something wrong shipped." Invoking `/auto` **is** the run-scoped grant for the commits and pushes it makes
+  (see [standards/git.md](standards/git.md)).
+- **`/auto BF-123`** is **targeted mode** — same run, your pick. It skips the `/next` pick and ships exactly that issue:
+  still certified-only (the issue must carry the `specified` label — `/spec` it first if not, or drop to
+  `/full wt BF-123` for an interactive run), still always-worktree, still the full unattended gauntlet (plan composed
+  and posted to Linear with no approval pause, adversarial review, finish/merge, a Linear comment on failure). One-shot
+  by nature — run it directly, not under `/loop`. This is the middle ground between driving `/full wt` by hand and
+  letting the loop choose.
+- **`/loop /auto`** is the way you actually run it. `/loop` supplies the recurrence — its wakeup machinery re-invokes
+  `/auto` for the next issue — while each `/auto` call stays a single, self-contained iteration. (Deliberately: in-prose
+  "keep going" scaffolding is the documented failure mode of autonomous macros, so `/auto` leans on `/loop`'s reliable
+  recurrence instead of inventing its own.) Iterations run back-to-back: `/auto` schedules its next wakeup at the 60s
+  minimum, because the backlog is the work queue and there is nothing external to wait on — `/loop`'s 20–30 minute
+  idle-tick default is for polling loops and would otherwise idle away hours between ships.
 
-**Launch it with `--model opus[1m] --effort xhigh`.** Not `opusplan` — that means "Opus in plan mode, Sonnet otherwise", and `/start auto` skips plan mode entirely, so an `opusplan` run executes end-to-end on Sonnet. `[1m]` because context accumulates across iterations.
+**Launch it with `--model opus[1m] --effort xhigh`.** Not `opusplan` — that means "Opus in plan mode, Sonnet
+otherwise", and `/start auto` skips plan mode entirely, so an `opusplan` run executes end-to-end on Sonnet. `[1m]`
+because context accumulates within an iteration.
 
-Point it at a seeded, certified (via `/prd` or `/spec`) backlog and walk away. It works the queue one issue at a time and **ends itself** — no runaway loop:
+Point it at a seeded, certified (via `/prd` or `/spec`) backlog and walk away. It works the queue one issue at a time
+and **ends itself** — no runaway loop:
 
-- **`NO-CANDIDATES`** — the backlog has no more certified, workable issues. Certify more via `/spec` (or seed via `/prd`), delete the run's `tmp/auto-state-<runKey>.json`, and re-invoke.
-- **`AUTO-HALTED`** — the circuit breaker tripped (two consecutive failures, likely systemic) or an environment halt (e.g. a dirty tree left by an issue that already failed to finish — dirt it can't attribute does not halt it). Each failing issue gets a Linear comment explaining why before the loop stops.
+- **`NO-CANDIDATES`** — the backlog has no more certified, workable issues. Certify more via `/spec` (or seed via
+  `/prd`), delete the run's `tmp/auto-state-<runKey>.json`, and re-invoke.
+- **`AUTO-HALTED`** — the circuit breaker tripped (two consecutive failures, likely systemic) or an environment halt
+  (e.g. a dirty tree left by an issue that already failed to finish — dirt it can't attribute does not halt it). Each
+  failing issue gets a Linear comment explaining why before the loop stops.
 
-`/loop /auto` never clears or compacts the session — the harness's automatic summarization keeps context in check as it grows (`/compact` and `/clear` are user commands the loop must never invoke). Because summarization can drop detail, the run's actual memory lives in `tmp/auto-state-<runKey>.json` (shipped / skipped / failed lists + the failure counter, keyed by the session's own id), not the conversation — so the run survives summarization across iterations, and the terminal halt stays sticky even under a fixed-interval `/loop 15m /auto`. A human starts a fresh run by deleting that file — or simply by starting a new session, whose fresh PID names a fresh file.
+The [loop-boundary mod](mods/loop-boundary/README.md) compacts the main conversation at every `/loop /auto` iteration
+boundary, so each iteration starts near the session's floor; growth inside an iteration is left to the harness's own
+summarization, and the loop itself never invokes `/compact` or `/clear`. The run's actual memory lives in
+`tmp/auto-state-<runKey>.json` (shipped / skipped / failed lists + the failure counter, keyed by the session's own id)
+and Linear, not the conversation — so the run survives compaction, and the terminal halt stays sticky even under a
+fixed-interval `/loop 15m /auto`. A human starts a fresh run by deleting that file — or simply by starting a new
+session, whose fresh id names a fresh file.
 
-**Parallel and stoppable.** Several `/loop /auto` sessions can drain the same repo concurrently: Linear claims keep their picks disjoint, every worktree is stamped with its owning session's identity (session id + harness PID — id-first, so `claude agents` fleets that share one root process still resolve correctly) so a live sibling's in-flight issue is never mistaken for an orphaned dead run (only a provably dead owner gets resumed), run state is per-session, and the per-repo lock serializes every git mutation. Stopping is scoped, too — telling a session "don't run another loop" ends the recurrence, while the in-flight issue still completes normally; parking work mid-issue takes explicit words.
+**Parallel and stoppable.** Several `/loop /auto` sessions can drain the same repo concurrently: Linear claims keep their
+picks disjoint, every worktree is stamped with its owning session's identity (session id + harness PID — id-first, so
+`claude agents` fleets that share one root process still resolve correctly) so a live sibling's in-flight issue is
+never mistaken for an orphaned dead run (only a provably dead owner gets resumed), run state is per-session, and the
+per-repo lock serializes every git mutation. Stopping is scoped, too — telling a session "don't run another loop" ends
+the recurrence, while the in-flight issue still completes normally; parking work mid-issue takes explicit words.
 
 ```text
    /loop /auto  ──  the autonomous driver: re-invokes /auto each iteration
@@ -157,141 +236,91 @@ Point it at a seeded, certified (via `/prd` or `/spec`) backlog and walk away. I
               AUTO-HALTED    (2 consecutive fails / env) ─┴─►  loop stops, awaits a human
 ```
 
-`/auto` accepts two optional tokens: `pr` opens a PR per issue instead of merging (use only when the queued issues are independent, since the source branch won't advance until PRs land), and a team scope (`BF`, or a comma list `PL,BF`) restricts the run to those teams' certified backlogs.
+`/auto` accepts two optional tokens: `pr` opens a PR per issue instead of merging (use only when the queued issues are
+independent, since the source branch won't advance until PRs land), and a team scope (`BF`, or a comma list `PL,BF`)
+restricts the run to those teams' certified backlogs.
 
 ## What's Included
 
 ### Agents
 
-Specialized personas the main thread delegates to — directly, or through skills like `/do`, `/start`, and `/quality-review`.
+Specialized personas the main thread delegates to — directly, or through skills like `/start` and `/quality-review`.
+Each file pins its own model and effort.
 
-| Agent | Role | Model |
-|-------|------|-------|
-| [architect](agents/architect.md) | Solution design, ADRs, technical recommendations | Opus · max |
-| [developer](agents/developer.md) | Code implementation from specifications | Opus · high |
-| [debugger](agents/debugger.md) | Root cause analysis through systematic evidence gathering | Opus · xhigh |
-| [quality-reviewer](agents/quality-reviewer.md) | Adversarial review — edge cases, contract violations, security | Opus · xhigh |
-| [quality-verifier](agents/quality-verifier.md) | Verification pass over a fix delta, and the `simple` tier's scoped review | Sonnet · high |
-| [research-lead](agents/research.md) | Multi-perspective research and synthesis | Sonnet · high |
-| [technical-writer](agents/technical-writer.md) | Concise documentation for completed features | Sonnet · low |
+- [architect](agents/architect.md) — solution design, ADRs, technical recommendations; `/quality-review`'s escalation
+  path
+- [developer](agents/developer.md) — code implementation from specifications
+- [debugger](agents/debugger.md) — root cause analysis through systematic evidence gathering
+- [quality-reviewer](agents/quality-reviewer.md) — adversarial review: edge cases, contract violations, security
+- [quality-verifier](agents/quality-verifier.md) — verification pass over a fix delta, and the `simple` tier's scoped
+  review
+- [research-lead](agents/research.md) — multi-perspective research and synthesis
+- [technical-writer](agents/technical-writer.md) — concise documentation for completed features
 
-Every agent pins both keys, so none inherits the session default. `max` is reserved for `architect`,
-which only runs as `/quality-review`'s escalation path; `xhigh` is the working default for coding and
-review. Effort is the primary cost lever — step `developer` down to `sonnet` · `xhigh` if the spend
-outweighs the completeness gain.
+The [spawn-policy mod](mods/spawn-policy/README.md) rewrites `developer` spawns to Sonnet and forces synchronous
+dispatch of `quality-reviewer`, `quality-verifier` and `developer` once `/auto` has run in the session or the spawn's
+permission mode is `auto`.
 
 ### Skills
 
-Automated multi-step workflows invoked by trigger phrases or slash commands.
-
-**Linear Integration:** ([see CLI](https://github.com/Finesssee/linear-cli))
-
-In workflow order — seed, certify, fleet, then the per-issue tiers and upkeep:
-
-| Skill | Description |
-|-------|-------------|
-| [linear](skills/linear/) | `linear-cli` quick-reference — the gotchas (anchored comments, dependency graph, parent-linked create) + helper scripts |
-| [linear-setup](skills/linear-setup/) | Bring a team's issue statuses, labels, and saved views to the house model (exported from `BF`) — `check` the gaps, `apply` them idempotently, `rename` Todo → Planned, re-`export` when BF changes |
-| [prd](skills/prd/) | Create agent-friendly tickets with PRDs and success criteria |
-| [spec](skills/spec/) | Groom and certify an issue into a `specified` spec — the certification gate `/auto` requires |
-| [triage](skills/triage/) | Analyze backlog for staleness, blockers, and priority suggestions |
-| [next](skills/next/) | Suggest best next issue using cycle, dependency, and triage signals |
-| [auto-prep](skills/auto-prep/) | Fleet prep — certification honesty audit (`needs decision` / `solo` / `human`), family consolidation, collision `blocks` edges, recommended session count |
-| [epic-prep](skills/epic-prep/) | Epic-scoped fleet prep — `/auto-prep` over one epic's graph, plus the `/spec` loop blockers-first, the boundary review, Planned promotion, the `epic/<id>` integration branch and its merged-base gate, a scoped recommendation (see [Scoping a fleet to one epic](#scoping-a-fleet-to-one-epic)) |
-| [fleet-forecast](skills/fleet-forecast/) | Read-only projection of what a fleet would ship over a horizon — pick order as waves, the Planned→Backlog crossover, stranded candidates |
-| [fleet-launch](skills/fleet-launch/) | Launch N parallel `/loop /auto` background sessions, staggered and deadline-bounded |
-| [fleet-sequence](skills/fleet-sequence/) | Ship an ordered issue list onto one integration branch, one background `/auto <ID>` session at a time, then one PR for the lot — the `solo` runner |
-| [epic-pr](skills/epic-pr/) | Open the one PR for an epic's integration branch once its fleet or sequence has landed — resolves the epic, branch, base and landed roster from what prep and launch recorded, pushes by ref, then `/pr-update` by number |
-| [fleet-stop](skills/fleet-stop/) | Wind a running fleet down early — in-flight issues finish, no new picks; nothing is killed |
-| [fleet-status](skills/fleet-status/) | Read-only mid-run readout — time remaining, per-session ledgers with liveness, in-flight issues, merges cross-checked against git, runway |
-| [fleet-retro](skills/fleet-retro/) | Post-mortem a finished fleet — capacity metrics, filed-issue audit, state reconciliation; feeds the next prep |
-| [auto](skills/auto/) | Autonomous backlog iteration — ships one issue per invocation; run continuously as `/loop /auto` (see [Autonomous](#autonomous-auto)) |
-| [full](skills/full/) | End-to-end macro: `/start` → `/quality-review` → `/finish`, gated on verdict |
-| [start](skills/start/) | Start a Linear issue — check blockers, assign, create branch, plan, execute, auto-review |
-| [checkpoint](skills/checkpoint/) | Save progress — commit WIP and post progress update to Linear |
-| [quality-review](skills/quality-review/) | Adversarial review + triage/fix loop until convergence (gates `pnpm check`); the `simple` label or token runs a lighter verifier-only tier that escalates fail-closed |
-| [finish](skills/finish/) | Finish an issue — read verdict, commit/push, mark Ready For Release |
-| [merge-queue](skills/merge-queue/) | Inspect and drain `/finish` merges that were deferred, then retried by the launchd drainer |
-| [reap-worktrees](skills/reap-worktrees/) | Inspect and reclaim leftover `/start wt` worktrees (PR/branch merged, or issue Done/Canceled) |
-| [reap-tmp](skills/reap-tmp/) | Inspect and reclaim aged `tmp/` scratch by name-based lane — never the handoff files other skills still read, never an unlisted directory |
-| [test-sweep](skills/test-sweep/) | Periodic audit of the test suites for cost and redundancy — ranks rspec and story files, proposes retire / consolidate / detag / hoist-ddl per candidate; `scan` is unattended and read-only, `apply` interactive under count, ledger and mutation gates |
-| [reflect](skills/reflect/) | Turn session friction into shared-config edits — auto-applies the safe ones, files the rest as Linear issues (scheduled surface is `/fleet-retro`'s batched `reflect fleet` step; `sweep` mode audits a project's config against its codebase) |
-| [keeper](skills/keeper/) | Interactive pickup for the config work autonomous runs cannot ship — uncommitted `~/.claude` edits, `keeper`-labeled issues, and contributor proposal PRs, adjudicated in one pass |
-
-**Development skills:**
-
-| Skill | Description |
-|-------|-------------|
-| [update](skills/update/) | Bring the machine current — pull the latest project code and `~/.claude`, then run the update script (the project's `.claude/update.sh`, or `~/.claude/update.sh`) |
-| [cswap](skills/cswap/) | Multi-account rotation on a machine running several subscriptions — every account's usage in one table (`quota`), the engine's recent decisions (`log`), a dry run of its next move (`next`), and the setup script (`setup`); says so and stops where cswap is not installed (see [Multi-account rotation](#multi-account-rotation-optional)) |
-| [pr-update](skills/pr-update/) | Generate PR titles and descriptions from actual code changes |
-| [exec-summary](skills/exec-summary/) | Slack-ready executive summary of a change — problem first, then the fix — delivered as rich text on the clipboard |
-| [dependency-updater](skills/dependency-updater/) | Orchestrate dependency updates with research and validation |
-| [deprecation-handler](skills/deprecation-handler/) | Migrate deprecated APIs with safe patterns |
-| [semver-advisor](skills/semver-advisor/) | Classify version changes as MAJOR/MINOR/PATCH |
-| [react-component-generator](skills/react-component-generator/) | Generate React components following project conventions |
-| [standardize-tooling](skills/standardize-tooling/) | Converge a TypeScript project onto house tooling — pnpm 12, Biome, tsdown, the standardized `check` suite; adaptive and idempotent |
-
-**External Skills (installed by `update.sh`):**
-
-| Skill | Source | Description |
-|-------|--------|-------------|
-| [agent-browser](skills/agent-browser/) | vercel-labs/agent-browser | Browser automation for AI agents |
-| [skill-creator](skills/skill-creator/) | vercel-labs/agent-browser | Guide for creating new skills |
-| [vercel-react-best-practices](skills/vercel-react-best-practices/) | vercel-labs/agent-skills | React/Next.js performance optimization |
-| [vercel-composition-patterns](skills/vercel-composition-patterns/) | vercel-labs/agent-skills | React composition patterns that scale |
+The harness lists every installed skill with its description at the start of each session; that listing is the
+catalog. `/skill-doctor` shows what each skill costs in context and how often it is used.
 
 ### Standards
 
-Universal rules governing agent behavior. [standards/README.md](standards/README.md) is the index and owns
-the per-standard summaries.
+Universal rules governing agent behavior. [standards/README.md](standards/README.md) is the index and owns the
+per-standard summaries.
 
 ### Rules
 
-Path-specific conventions applied automatically when editing matching files.
-
-| Rule | Applies To |
-|------|-----------|
-| [comments](rules/comments.md) | all files (`**/*`) — default to no comments; size to the reader; no provenance decoration |
-| [typescript](rules/typescript.md) | `**/*.ts`, `**/*.tsx` |
-| [react](rules/react.md) | `**/*.tsx`, `**/*.jsx` |
-| [markdown](rules/markdown.md) | `**/*.md`, `**/*.mdx` |
-| [package-manager](rules/package-manager.md) | `**/package.json`, lockfiles |
-| [env-vars](rules/env-vars.md) | `**/*.ts`, `**/*.tsx`, `**/*.mts` — required-env-var handling; `assertEnvVariable`, no silent defaults |
-| [biome](rules/biome.md) | `**/*.ts`, `**/*.tsx`, `**/*.js`, `**/*.jsx`, `**/*.mjs`, `**/*.cjs`, `**/*.json`, `**/*.jsonc` — Biome projects only, self-nullifies elsewhere |
+Path-scoped conventions in `rules/`, injected when Claude works on a file matching a rule's `paths:` frontmatter.
+[CLAUDE.md](CLAUDE.md) § Path-Specific Rules lists them.
 
 ### Hooks
 
-Automatic quality checks that run without manual invocation.
+Registered in `settings.json`; each has a sibling `*.test.sh` that `pnpm test` runs.
 
-| Hook | Trigger | What It Does |
-|------|---------|-------------|
-| [git-permissions](hooks/git-permissions.sh) | Before git commands | Blocks destructive operations (`reset --hard`/`--mixed`, `restore`/`checkout <file>`, `clean -f`, `--force`) |
-| [scratch-path-guard](hooks/scratch-path-guard.sh) | Before bash commands | Denies scratch writes to bare root paths and system `/tmp` (session scratchpads exempt), steering to project-relative `tmp/` — the model self-corrects instead of stalling an autonomous run on a dangerous-path prompt |
-| [full-continue](hooks/full-continue.sh) | On stop | Keeps `/full` going: re-dispatches `/finish` if the macro stalls at a passing review verdict or after `READY-FOR-FINISH` |
-| [auto-heartbeat](hooks/auto-heartbeat.sh) | On stop | Keeps a self-paced `/loop /auto` alive — blocks a turn that ended without arming the next wakeup, which otherwise kills the loop silently |
-| [auto-rewake](hooks/auto-rewake.sh) | On stop and on stop-failure, in the background (`asyncRewake`) | Wakes a self-paced `/loop /auto` session that went silent: an armed wakeup that never fired, or a turn a transient API error killed. Waits out the wakeup (or the retry delay), and wakes the session only if no turn followed |
-| [no-blind-sleep](hooks/no-blind-sleep.sh) | Before bash commands | Refuses a `sleep` wait that cannot end early; marker-polling loops with an exit condition still run |
-| [linear-create-state-guard](hooks/linear-create-state-guard.sh) | Before bash commands | Refuses a raw `linear-cli issues create` with no `--state` — it would land in the team default (Triage) and be invisible to `/next` and `/auto` forever |
-| [auto-deadline-gate](hooks/auto-deadline-gate.sh) | Before bash commands | Refuses a new `/auto` pick once the fleet deadline has passed, so a wind-down actually returns the machine |
-| [finish-flow-guard](hooks/finish-flow-guard.sh) | Before bash commands | Refuses PR mode in an unattended run whose invocation carried no `pr` token — in PR mode source never advances and `blocks` edges never release |
+- [git-permissions](hooks/git-permissions.sh) (before Bash) — blocks destructive git operations (`reset --hard`/`--mixed`,
+  `restore`/`checkout <file>`, `clean -f`, `--force`).
+- [scratch-path-guard](hooks/scratch-path-guard.sh) (before Bash, Write and Edit) — denies scratch writes to bare root
+  paths and system `/tmp` (session scratchpads exempt), steering them to project-relative `tmp/`.
+- [zsh-trap-guard](hooks/zsh-trap-guard.sh) (before Bash) — refuses the bash-only idioms that fail silently under the
+  zsh tool shell; [standards/shell.md](standards/shell.md) has the mechanics.
+- [no-blind-sleep](hooks/no-blind-sleep.sh) (before Bash) — refuses a `sleep` wait that cannot end early; marker polls
+  with an exit condition still run.
+- [linear-create-state-guard](hooks/linear-create-state-guard.sh) (before Bash) — refuses a `linear-cli issues create`
+  with no `--state`, which would land in Triage where `/next` and `/auto` never look.
+- [auto-deadline-gate](hooks/auto-deadline-gate.sh) (before Bash) — refuses a new `/auto` pick once the fleet deadline
+  has passed.
+- [finish-flow-guard](hooks/finish-flow-guard.sh) (before Bash) — refuses PR mode in an unattended run whose invocation
+  carried no `pr` token.
+- [full-continue](hooks/full-continue.sh) (on stop) — re-dispatches `/finish` when `/full` stalls at a passing review
+  verdict or after `READY-FOR-FINISH`.
+- [auto-heartbeat](hooks/auto-heartbeat.sh) (on stop) — blocks a self-paced `/loop /auto` turn that ended without arming
+  the next wakeup.
+- [auto-rewake](hooks/auto-rewake.sh) (on stop and stop-failure, `asyncRewake`) — wakes a `/loop /auto` session whose
+  armed wakeup never fired or whose turn a transient API error killed.
+
+No hook lints on edit: markdownlint (and Biome, in projects) run through `pnpm check`, the gate before every commit.
+
+### Mods
+
+Hooks-only plugins under `mods/` that act on the harness itself: per-phase effort, the spawn policy above, compaction at
+each `/loop /auto` iteration boundary, and rate-limit readings for the fleet gates. `update.sh` installs them user-wide;
+[mods/README.md](mods/README.md) owns the list, the kill switches, and the checks to run before committing one.
 
 ### Background daemons
 
-Local `launchd` agents installed by `update.sh` (macOS only) that keep the worktree and merge machinery tidy without any manual step.
+Local `launchd` agents installed by `update.sh` (macOS only) that keep the worktree and merge machinery tidy without any
+manual step.
 
 | Daemon | Cadence | What It Does |
 |--------|---------|-------------|
 | [merge-queue-drain](launchd/com.alienfast.merge-queue-drain.plist) | Every 15 min | Lands `/finish` merges that were deferred — e.g. main was busy with another session's WIP |
 | [worktree-reap](launchd/com.alienfast.worktree-reap.plist) | Hourly | Reclaims completed or abandoned `/start wt` worktrees |
-| [auto-stall-watch](launchd/com.alienfast.auto-stall-watch.plist) | Every 10 min | Surfaces a `/loop /auto` background session gone silent mid-iteration — the one silent-death shape no Stop hook can catch, since an API-killed turn fires none |
+| [tmp-reap](launchd/com.alienfast.tmp-reap.plist) | Daily | Ages `tmp/` scratch out by name-based lane, never the handoff files other skills still read (`/reap-tmp`) |
+| [auto-stall-watch](launchd/com.alienfast.auto-stall-watch.plist) | Every 10 min | Surfaces a `/loop /auto` background session gone silent mid-iteration — the backstop for the `auto-rewake` hook when that hook failed or never ran |
 | [cswap-auto](launchd/com.alienfast.cswap-auto.plist) | Continuous, opt-in | Keeps claude-swap's auto-switch engine running on a machine that rotates accounts. Installed by `scripts/cswap-setup.sh`, not `update.sh`; see [Multi-account rotation](#multi-account-rotation-optional) |
-
-### Commands
-
-| Command | Description |
-|---------|-------------|
-| [/do](commands/do.md) | Plan execution — breaks work into phases, delegates to specialized agents, validates each step |
 
 ## Setup
 
@@ -314,90 +343,91 @@ git checkout -b main origin/main
 git pull
 ```
 
-> **Note:** This supplements your user directory with reusable configurations — it does not overwrite personal settings or data. Always check before committing to ensure no local user data is included, and adjust `.gitignore` accordingly.
+> **Note:** This supplements your user directory with reusable configurations — it does not overwrite personal settings
+> or data. Always check before committing to ensure no local user data is included, and adjust `.gitignore`
+> accordingly.
 
 ### 3. Install skills and tools
 
-> **Prerequisites:** Homebrew, Node, pnpm, git, and Claude Code must already be installed — the script bootstraps everything else and fails fast if Homebrew is missing.
+> **Prerequisites:** Homebrew, Node, pnpm, git, and Claude Code must already be installed — the script bootstraps
+> everything else and fails fast if Homebrew is missing.
 
 ```sh
 ~/.claude/update.sh
 ```
 
-From then on, `/update` is the skill that does this — it pulls the latest project code and `~/.claude` first, then runs the script.
+From then on, `/update` is the skill that does this — it pulls the latest project code and `~/.claude` first, then runs
+the script.
 
-If the `~/.claude` checkout has drifted — it sits on a branch (a `/keeper` proposal, a PR checked out for review) or carries uncommitted edits — run this **outside Claude Code** (Git Bash on Windows, Terminal on macOS). It returns the checkout to the latest `main` without discarding anything (edits are committed on their branch, local-only `main` commits are kept under `backup/main-<stamp>`), runs `update.sh`, and proves the tooling works:
+If the `~/.claude` checkout has drifted — it sits on a branch (a `/keeper` proposal, a PR checked out for review) or
+carries uncommitted edits — run this **outside Claude Code** (Git Bash on Windows, Terminal on macOS). It returns the
+checkout to the latest `main` without discarding anything (edits are committed on their branch, local-only `main`
+commits are kept under `backup/main-<stamp>`), runs `update.sh`, and proves the tooling works:
 
 ```sh
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/alienfast/claude/main/scripts/sync-main.sh)"
 ```
 
-It has to run outside a session because the git-permissions hook refuses branch switches inside one — deliberately, since another session may own the working tree. The `bash -c` form matters: piped into `bash`, the script is read from stdin as it runs, and the skills installer inside `update.sh` reads stdin and swallows the rest of it.
+It has to run outside a session because the git-permissions hook refuses branch switches inside one — deliberately,
+since another session may own the working tree. The `bash -c` form matters: piped into `bash`, the script is read from
+stdin as it runs, and the skills installer inside `update.sh` reads stdin and swallows the rest of it.
 
 This installs:
 
 - The TypeScript LSP plugin
+- The [mods](#mods), as user-wide plugins
 - `gh` and `jq` via Homebrew (installed or upgraded), then runs `gh auth login` if you aren't already authenticated
-- pnpm brought up to the version this repo pins (`packageManager` in `package.json`, the same pin the projects carry), through whichever installer owns it — Corepack, Homebrew, the standalone installer, or npm
+- pnpm brought up to the version this repo pins (`packageManager` in `package.json`, the same pin the projects carry),
+  through whichever installer owns it — Corepack, Homebrew, the standalone installer, or npm
 - Vercel agent-browser and skill-creator
 - Vercel React best practices and composition patterns
 - `npm-check-updates` (`ncu`) as a pnpm global — required by the dependency-updater skill
-- Linear CLI via cargo (Finesssee — the Linear skills already ship with this repo), authenticating it if needed
-- launchd background daemons on macOS — the merge-queue drainer and worktree reaper
+- [Linear CLI](https://github.com/Finesssee/linear-cli) via cargo (the Linear skills already ship with this repo),
+  authenticating it if needed
+- launchd background daemons on macOS — the merge-queue drainer, the worktree and `tmp/` reapers, and the stall watch
 - Runs markdown linting
 
 ### 4. Configure MCP servers (optional)
 
-See [mcpServers.md](mcpServers.md) for _some_ available MCP server configurations. The current approach favors skills over MCP servers for context efficiency — most MCP servers have been removed in favor of CLI tools and skills.
-
-## Usage
-
-### The `/do` command
-
-Primary entry point for complex, multi-step work:
-
-```text
-/do I want to update Traefik. Search traefik documents, compare the version
-we are currently on, and what we might need to change to be up to date.
-Implement the changes.
-```
-
-```text
-/do this code was originally written for react 16. While some files have been
-updated for react 19, I want you to take a look at a comprehensive review of
-all react code, and implement the best practices for react 19.
-```
-
-### Automatic hooks
-
-No manual intervention needed — hooks run behind the scenes:
-
-- Destructive git commands are blocked before execution (`reset`, `restore`/`checkout <file>`, `clean -f`, `--force`)
-- Scratch writes to bare root paths or system `/tmp` are denied with redirect-to-`tmp/` guidance
-- Biome and markdownlint run after every file edit
-- On stop, `full-continue` keeps `/full` going — re-dispatching `/finish` if the macro stalls at a passing review verdict or after `READY-FOR-FINISH`
+See [mcpServers.md](mcpServers.md) for _some_ available MCP server configurations. The current approach favors skills
+over MCP servers for context efficiency — most MCP servers have been removed in favor of CLI tools and skills.
 
 ## Customization
 
 ### Adding skills
 
-Create a directory in `skills/` with a `SKILL.md` containing YAML frontmatter. See [skills/README.md](skills/README.md) for the full guide.
+Create a directory in `skills/` with a `SKILL.md` containing YAML frontmatter. See
+[skills/README.md](skills/README.md) for the full guide.
 
 ### Adding standards
 
-Add a markdown file to `standards/`. It will be referenced by agents automatically. See [standards/README.md](standards/README.md).
+Add a markdown file to `standards/` and index it in [standards/README.md](standards/README.md). Agents read a standard
+on demand when its domain comes up, so the index entry is how one gets found.
 
 ### Adding rules
 
-Add a markdown file to `rules/` and register the glob pattern in `CLAUDE.md` under "Path-Specific Rules."
+Add a markdown file to `rules/` with a `paths:` glob in its frontmatter; the frontmatter alone decides where the rule
+is injected.
 
-Scope the `paths:` glob to where the rule's principle actually applies: use `**/*` (plus `**/.*` and `**/.*/**` to also cover dotfiles and dot-directories like `.github/`) when the rule is language-agnostic — e.g. comments — and reserve a curated extension list for genuinely language-specific rules. A curated list silently exempts every file type it omits, and the gap stays invisible until a violation slips through an unlisted type (this is how the comment rule once missed a Dockerfile).
+Scope the glob to where the rule's principle actually applies: use `**/*` (plus `**/.*` and `**/.*/**` to also cover
+dotfiles and dot-directories like `.github/`) when the rule is language-agnostic — e.g. comments — and reserve a
+curated extension list for genuinely language-specific rules. A curated list silently exempts every file type it
+omits, and the gap stays invisible until a violation slips through an unlisted type.
 
 ## Multi-account rotation (optional)
 
-For a machine that runs more than one Claude subscription. Nothing in this repo installs or requires it: a single-account user skips this section, and `update.sh` is unchanged for them.
+For a machine that runs more than one Claude subscription. Nothing in this repo installs or requires it: a
+single-account user skips this section, and `update.sh` is unchanged for them.
 
-The switcher is [claude-swap](https://github.com/realiti4/claude-swap) (`cswap`), a third-party tool that swaps the Claude Code login in place, polls every account's 5-hour and 7-day windows, and moves the login before a limit is hit. It lives outside Claude Code because the switch has to: no mod hook can replace a credential, and `CLAUDE_CONFIG_DIR` is read at process start. What this repo adds is the policy, since cswap's defaults are wrong for us. Its default `best` strategy parks on the account with the most headroom, which is the quota with the longest to live, so weekly quota on the soon-to-reset accounts expires unused. [cswap-setup.sh](scripts/cswap-setup.sh) sets `consume-first` instead: drain the account whose weekly window resets soonest, move at 95% of the binding window, and return to it once its 5-hour window rolls over. The script's header explains why 95 and not higher, and which upstream issues would let the weekly line sit at 98.
+The switcher is [claude-swap](https://github.com/realiti4/claude-swap) (`cswap`), a third-party tool that swaps the
+Claude Code login in place, polls every account's 5-hour and 7-day windows, and moves the login before a limit is hit.
+It lives outside Claude Code because the switch has to: no mod hook can replace a credential, and `CLAUDE_CONFIG_DIR`
+is read at process start. What this repo adds is the policy, since cswap's defaults are wrong for us. Its default
+`best` strategy parks on the account with the most headroom, which is the quota with the longest to live, so weekly
+quota on the soon-to-reset accounts expires unused. [cswap-setup.sh](scripts/cswap-setup.sh) sets `consume-first`
+instead: drain the account whose weekly window resets soonest, move at 95% of the binding window, and return to it
+once its 5-hour window rolls over. The script's header explains why 95 and not higher, and which upstream issues would
+let the weekly line sit at 98.
 
 To try it, from a terminal rather than a Claude session (the account logins need a TTY):
 
@@ -405,7 +435,12 @@ To try it, from a terminal rather than a Claude session (the account logins need
 ~/.claude/scripts/cswap-setup.sh
 ```
 
-It installs cswap through `uv` where it is missing (the latest release; from then on `update.sh` upgrades it, only on a machine where it is installed), enrolls the current login, then loops: answer `y`, complete a `claude auth login` for the next account, and it is added, until you answer `n`. Never `/logout` between accounts; cswap backs the live login up before the next one replaces it. It then applies the policy, prints one dry-run tick so you can see the engine's decision, and loads a `launchd` agent that keeps `cswap auto` running. Every step is idempotent; re-run it with `--threshold` or `--strategy` to change the policy, and the engine restarts on the new values.
+It installs cswap through `uv` where it is missing (the latest release; from then on `update.sh` upgrades it, only on a
+machine where it is installed), enrolls the current login, then loops: answer `y`, complete a `claude auth login` for
+the next account, and it is added, until you answer `n`. Never `/logout` between accounts; cswap backs the live login
+up before the next one replaces it. It then applies the policy, prints one dry-run tick so you can see the engine's
+decision, and loads a `launchd` agent that keeps `cswap auto` running. Every step is idempotent; re-run it with
+`--threshold` or `--strategy` to change the policy, and the engine restarts on the new values.
 
 Day to day, in a session ([skill](skills/cswap/)):
 
@@ -417,11 +452,11 @@ Day to day, in a session ([skill](skills/cswap/)):
 /cswap setup      # the setup command to run in a terminal, or re-apply --threshold / --strategy without enrolling
 ```
 
-The `rate-limits` mod pins the active account and its 5-hour and weekly use under the prompt on a rotating machine, so a switch
-landing on a running session is visible. `/auto`'s fleet headroom gate ([fleet-headroom.sh](scripts/fleet-headroom.sh)) asks cswap
-before it parks a session: while another enrolled account is under the threshold with a fresh figure, the pick goes ahead and the
-engine moves the login when the active account fills; the gate parks only when no account has room or the engine is idle, and its
-line says which. From a terminal:
+The `rate-limits` mod pins the active account and its 5-hour and weekly use under the prompt on a rotating machine, so
+a switch landing on a running session is visible. `/auto`'s fleet headroom gate
+([fleet-headroom.sh](scripts/fleet-headroom.sh)) asks cswap before it parks a session: while another enrolled account
+is under the threshold with a fresh figure, the pick goes ahead and the engine moves the login when the active account
+fills; the gate parks only when no account has room or the engine is idle, and its line says which. From a terminal:
 
 ```sh
 cswap list                            # every account's usage and reset times
@@ -430,14 +465,21 @@ cswap auto --once --dry-run --json    # what the engine would do right now
 tail -f ~/.claude/logs/cswap-auto.log # one JSON event per poll, switch, quarantine or error
 ```
 
-`update.sh` refreshes the agent and upgrades cswap to the latest release only where the setup script installed it, restarting the engine onto the new code when the version moved, so run it with no fleet in flight; on any other machine it never installs cswap. The tool holds every enrolled account's refresh token and its 0.2x releases change the credential path often, so if a release breaks switching, `uv tool install --reinstall 'claude-swap==<last good>'` rolls it back until the next `update.sh`.
+`update.sh` refreshes the agent and upgrades cswap to the latest release only where the setup script installed it,
+restarting the engine onto the new code when the version moved, so run it with no fleet in flight; on any other machine
+it never installs cswap. The tool holds every enrolled account's refresh token and its 0.2x releases change the
+credential path often, so if a release breaks switching, `uv tool install --reinstall 'claude-swap==<last good>'` rolls
+it back until the next `update.sh`.
 
 Known edges while this is a trial:
 
-- The `rate-limits` mod records the active account's windows without naming the account; on a rotating machine, `fleet-launch`'s readout is whichever account the last session ran on.
-- cswap is a 0.2x release with an active issue list on its credential path. Its account backups live in the macOS Keychain; `cswap export` is plaintext by default.
+- The `rate-limits` mod records the active account's windows without naming the account; on a rotating machine,
+  `fleet-launch`'s readout is whichever account the last session ran on.
+- cswap is a 0.2x release with an active issue list on its credential path. Its account backups live in the macOS
+  Keychain; `cswap export` is plaintext by default.
 
-To remove: `launchctl bootout gui/$(id -u)/com.alienfast.cswap-auto`, then `uv tool uninstall claude-swap`. The Keychain backups stay until `cswap remove`.
+To remove: `launchctl bootout gui/$(id -u)/com.alienfast.cswap-auto`, then `uv tool uninstall claude-swap`. The
+Keychain backups stay until `cswap remove`.
 
 ## References
 

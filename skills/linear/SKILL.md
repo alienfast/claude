@@ -1,252 +1,110 @@
 ---
 name: linear
-description: Linear via linear-cli — MUST READ before running Linear commands, especially for reading comments or dependencies (the obvious commands silently miss both)
+description: Linear via linear-cli — MUST READ before running Linear commands, especially for reading comments or dependencies (the obvious commands silently miss both). Indexes 26 numbered gotchas (detail in references/).
 ---
 
-# Linear (linear-cli) — Quick Reference
+# Linear (linear-cli)
 
-Linear is driven by **nesszer `linear-cli`** (Rust; binary `linear-cli`, installed to `~/.cargo/bin`). This is a short reference for the **non-obvious** parts — for everything else use `linear-cli <cmd> --help`, `linear-cli common`, or `linear-cli agent`.
+Linear is driven by nesszer `linear-cli` (Rust; binary `linear-cli`, installed to `~/.cargo/bin`, which is not on a
+non-interactive PATH). This file indexes the non-obvious parts; for everything else use `linear-cli <cmd> --help`,
+`linear-cli common`, or `linear-cli agent`. Auth: `linear-cli auth oauth` (browser) or `LINEAR_API_KEY`; check with
+`linear-cli auth status`. The issue lifecycle itself is automated by the skills (`/start`, `/spec`, `/finish`, …).
 
-Auth: `linear-cli auth oauth` (browser) or `LINEAR_API_KEY`; check with `linear-cli auth status`. The full issue lifecycle is automated by the in-repo skills (`/start`, `/finish`, `/full`, `/checkpoint`, `/next`, `/quality-review`, `/prd`, `/spec`, `/triage`) — no install step.
+## Start here
 
-## ⚠️ Gotchas that bite (read these)
+```bash
+~/.claude/scripts/linear-context.sh PL-13                  # description, parent chain, deps, standalone AND anchored comments
+~/.claude/scripts/linear-deps-graph.sh PL-13 | --team PL   # dependency graph as {nodes, edges}
+linear-cli issues get PL-13 -o json --no-cache             # the bare issue object (.identifier, .state.name, .labels.nodes[])
+```
 
-1. **Anchored (inline) comments are invisible to the obvious commands.** A comment made by *highlighting text in the issue description* is stored on the description's `documentContent`, NOT on `issue.comments`. `linear-cli comments list <ID>` and `issues get` return only standalone comments and will report "no comments" while reviewer corrections sit on the description. **To read an issue with its full comment thread, use the digest:**
+Body text (a comment, a description) goes through `linear-post.sh` / `linear-stdin.sh` from a `tmp/` file, never
+through `<`, `cat |` or a heredoc — [standards/linear-workflow.md](../../standards/linear-workflow.md) § Passing File
+Content to Linear CLI owns that. Filing an issue follows [standards/linear-filing.md](../../standards/linear-filing.md);
+label meanings are [standards/issue-spec.md](../../standards/issue-spec.md); terminal states and claims are
+linear-workflow.md.
 
-   ```bash
-   ~/.claude/scripts/linear-context.sh PL-13          # markdown digest: desc + deps + standalone AND anchored comments
-   ```
+## Gotchas
 
-   Raw form (what the digest does): resolve the issue's `documentContent.id`, then
-   `comments(filter:{documentContent:{id:{eq:<that id>}}})` via `linear-cli api query`.
+Numbers are stable — other skills cite them. The line is the reminder; the named file is the rule.
 
-2. **No dependency commands or flags.** There is no `deps` command and no `search --has-blockers/--blocked-by/--has-circular-deps`. Get the graph as `{nodes, edges}` and filter with `jq`:
-
-   ```bash
-   ~/.claude/scripts/linear-deps-graph.sh PL-13        # local graph (issue + neighbors)
-   ~/.claude/scripts/linear-deps-graph.sh --team PL    # whole-team graph (active issues + the partners their edges name, in any state)
-   ```
-
-   Per-issue relations also exist directly: `linear-cli relations list <ID>`.
-
-3. **`issues create` has no `--parent` flag** — to set the parent at create time, pass its UUID as `parentId` in `--data` JSON (verified on 0.3.26; `--data` carries `description` too). For follow-ups use the helper anyway: it links via `relations parent` and **verifies** the link (a bare `--data` create doesn't), failing hard on an orphan:
-
-   ```bash
-   ~/.claude/scripts/linear-create-child.sh [--allow-planned] [--allow-unrouted] <parent|-> <team> <state|-> <title> <body-file> [label|-] [priority|-]
-   ```
-
-   The label slot must carry a routing label — `specified`, `needs decision`, `human` or `keeper` (`sentry` / `dependencies` from those two producers). A call without one is refused before anything is created unless it passes the leading `--allow-unrouted`, which only a caller that certifies in a later step of the same run does.
-
-4. **Unassign** = `linear-cli issues assign <ID>` with the user omitted.
-
-5. **Workflow states** = `linear-cli statuses list -t <TEAM>` (there is no `teams states`). Provisioning a team's states, labels, and views is `/linear-setup` (`skills/linear-setup/`), which applies the BF model idempotently — never hand-roll `workflowStateCreate`/`customViewCreate` calls.
-
-6. **Escape hatch — and its responses carry the `data` envelope.** Anything the dedicated commands can't do: `linear-cli api query`/`api mutate` run raw GraphQL against the Linear API (this is why we use linear-cli — the previous CLI had no such hatch). Unlike every dedicated command, these return the **raw GraphQL envelope**, so jq filters need a `.data.` prefix — `jq '.data.issues.nodes[]'`, not `.issues.nodes[]` (`linear-context.sh`, `linear-deps-graph.sh` and `next-candidates.sh` all do this). Copying the path straight out of your own query text is the trap, and it fails two ways: iterating the missing path errors loudly (`Cannot iterate over null`), but `length`, `//` defaults and most aggregations **succeed on `null`** — `jq '.issues.nodes | length'` prints `0` and exits **0**, no default required, so a summary line reads `TOTAL: 0` and a full pool is indistinguishable from an empty team.
-
-7. **Labels are typed, can be team-scoped, and `-l` REPLACES.** `labels list` and `labels create` default to `--type project` — pass `-t issue` for issue labels (a project label can't be attached to an issue; probe with `linear-cli labels list -t issue -o json`). `issues update -l` **sets the entire label set** (no add/remove subcommand) — to add one label without clobbering the rest, use `~/.claude/scripts/linear-add-label.sh <ID> <label>` (read-merge-set + verified attach); `issues list -l <name>` filters by label name. Issue labels can be **team-scoped**: attaching one to an issue in another team fails with GraphQL `labelIds for incorrect team`, and `labels create` has **no `--team` flag**, so it provisions workspace-level labels only (team-scoped ones must be created in the Linear UI). The `specified` certification label is deliberately workspace-level so it attaches across all teams (`standards/issue-spec.md`); `scripts/linear-file-improvement.sh` keeps a best-effort attach (exit 2 + WARN) for the day a conflicting team-scoped label appears.
-
-8. **`issues update` can report success without writing the field — and its success line names the ISSUE, never the field, in every output mode.** Exit code 0 and the
-    printed `+ Updated issue: <ID> <title>` are not confirmation: the mutation selects `issue { identifier title }` and nothing else, so `-o json`, `-q` and `--id-only`
-    cannot confirm either — they print less, not more. Measured on both fields it is used to write. `--state`: a follow-up `issues get --no-cache` still showing the old
-    state, even after retries and even when passing the state's UUID directly instead of its name. `--assignee`: on 2026-09-19 the command printed the success line at
-    exit 0 and left `assignee` null — confirmed by `issues get --no-cache` ten minutes later and independently by the issue's own Linear UI — while the identical
-    command re-run afterwards wrote it normally. Intermittent, which is what makes it dangerous: it survives every retry you run to reproduce it.
-
-    **For the assignee, use `issues assign <ID> me`.** `--help` calls it "a shortcut for update --assignee", and the difference it glosses over is the whole point: its
-    mutation selects `assignee { name }` and it prints the server's resulting value — `+ Assigned <ID> to <name>`, or `+ Unassigned <ID>` when the response carries no
-    assignee — so a write that did not land usually appears in the output instead of reading as success, though not always: the echo is evidence, not proof, on the
-    unassign direction. Measured 2026-09-25 (BF-2144), a bare `issues assign <ID>` printed `+ Unassigned <ID>` at exit 0 while two consecutive `issues get --no-cache`
-    reads still showed the assignee; the identical retry landed. A load-bearing assign or unassign therefore gets a `--no-cache` read-back regardless of what the echo
-    said. It cannot set state; pair it with a separate `-s` update. **Do not
-    reach for `issues start`**: it selects both fields but renders them as the *intended* values when the response is null (the assignee defaulted to `"me"`, the state
-    name computed locally), manufacturing a confirmation, and it picks whichever `started`-type state the API returns first — which on a team whose In Review is also
-    type `started` (`standards/linear-workflow.md`) need not be In Progress.
-
-    **For the state**, re-check with `--no-cache` and then fall back to the raw mutation (gotcha #6), trusting its own response over the wrapped command:
-    `linear-cli api mutate 'mutation($id: String!, $stateId: String!) { issueUpdate(id: $id, input: { stateId: $stateId }) { success issue { id identifier state { id name } } } }' --variable id=<issue-uuid> --variable stateId=<state-uuid>`
-    — its response includes the resulting `issue.state`, so you confirm without a separate `get`. `scripts/linear-set-state.sh` and `scripts/mark-ready-for-release.sh`
-    automate exactly this; `scripts/linear-claim.sh` does the assignee-and-state pair a claim needs, with the three outcomes below kept distinct.
-
-    **Where this bites hardest is a claim**, and a read-back is the only confirmation available. Verify `.assignee` on a fresh `issues get --no-cache` — the payload
-    exposes an assignee as `{name}` alone, no id and no email, so that is the field to compare, and on a viewer whose display name is not their email a naive
-    email comparison never matches. Never verify through `next-candidates.sh`'s `hidden as claimed by a person` note: its count excludes self-assignments, so your own
-    claim never moves it (`standards/linear-workflow.md` § A self-claim does not hide an issue — it promotes it). Keep three outcomes apart, because they route
-    differently: **confirmed landed**; **confirmed not landed** (a good read showing the old value — retryable, the write is idempotent); and **could not confirm** (the
-    read command itself failed — network, auth), which is not a failed claim and must not be reported as one.
-
-9. **`comments list` needs `-o json` — its table output is empty, and the JSON is a nested envelope.** The default table prints a header row and ZERO data rows for every issue (`| Author | Created | Body | ID |`, then `N comments`), so the bare command reads as "no comments" on an issue that has several — and `/start` Step 4 sends you here precisely for full standalone bodies, which the digest truncates to 140 chars. Always pass `-o json`; the payload is `{"comments":{"nodes":[{"body":…}]},"id","identifier","title"}`:
-
-   ```bash
-   linear-cli comments list <ID> -o json | jq -r '.comments.nodes[].body'
-   ```
-
-   Not `.[].body` — iterating the top level hits the `id`/`title` strings and errors with `Cannot index string with string`. Passing **multiple** IDs returns an ARRAY of those objects; use `-o ndjson` and keep the same per-line filter.
-
-10. **`relations add -r blocked-by` 400s in every published version through 0.3.27** — `IssueRelationType` has no `blockedBy` member (Linear models blocking as one *directed* `blocks`), and the CLI serializes the flag straight through. Fixed upstream on `master` (PR #37, 2026-07-18) but **unreleased**: crates.io `0.3.27` was published 2026-06-26, three weeks earlier ([#42](https://github.com/nesszer/linear-cli/issues/42)). Until a `0.3.28` ships, always express blocking as `relations add <BLOCKER> <BLOCKED> -r blocks`. `blocks`, `related` and `duplicate` all work — but `duplicate` additionally mutates the first argument's state, see gotcha #15.
-
-11. **`Argument Validation Error` means a malformed identifier reached the API — suspect your shell, not the CLI.** Linear returns this generic GraphQL error when an issue key is empty or isn't a key, so a batched loop that mangles its arguments looks exactly like a broken command. The usual cause is a bash idiom in **zsh**, which does not word-split unquoted *parameter* expansions: `for pair in "A B"; do set -- $pair` leaves the first positional parameter as `A B` and the second empty (bash gives `A` and `B`). The asymmetry that makes this easy to miss: an unquoted `$(…)` *at the point of expansion* does still split in zsh, so `for id in $(cmd)` iterates per word while `p=$(cmd); for id in $p` iterates once over the joined value. Before reporting a CLI bug, echo the arguments and retry one pair by hand.
-
-12. **`priority` is an integer whose lowest value ranks LAST.** Linear encodes `1` Urgent, `2` High, `3` Medium, `4` Low — and **`0` = No priority**, so a raw `.priority` read inverts if you treat it positionally ("P0 is top"). `scripts/next-candidates.sh` maps it explicitly (`priority_rank`: `Urgent(1)→1 … None(0)→5`), i.e. an unprioritized issue sorts *behind* every prioritized one; the full within-tier ordering is in [next/SKILL.md](../next/SKILL.md). When printing priorities for a human decision, print a **label**, never `P<n>`: that form reads like a severity scale running the other way, and a ranking judgment built on it is inverted. **The dedicated commands do not give you one** — `issues get`, `search issues` and `issues list` all carry the bare integer `priority` and no `priorityLabel` field (measured on 0.3.27), so `jq -r '.priorityLabel'` prints `null` for **every** issue, which reads as *No priority* and inverts the very judgment this gotcha exists to protect. `--fields priorityLabel` does not rescue it — an unknown field is dropped silently, returning `{}` at exit 0. **That null is structural, not a flap:** it is identical across repeated `--no-cache` reads, so do not misroute it to gotcha #8 (the write didn't take) or #17 (an eventually-consistent read) — the re-check and raw-mutation fallback those prescribe will only re-confirm a write that already landed. Three ways to get a label: map the integer yourself (`1` Urgent, `2` High, `3` Medium, `4` Low, `0`/absent No priority); read `scripts/next-candidates.sh`'s `priority_label`, which computes it client-side (rendering `3` as `Normal` and `0` as `None`); or ask the raw hatch, which **does** return it — `linear-cli api query 'query { issue(id: "BF-670") { priority priorityLabel } }' | jq -r '.data.issue.priorityLabel'` (note the `.data.` prefix, gotcha #6). **Do not add a `priorityLabel` read-back guard to `linear-create-child.sh`** (the only script that sets priority): unlike `--state`, `-p/--priority` takes on both `issues create` and `issues update`, so such a guard would fire on every run and retry a write that already succeeded.
-
-13. **Result shape varies by command — `search issues` and `issues list` return a BARE ARRAY (`.[]`).** There is no single envelope; take the filter from the command you ran, never from a sibling:
-
-    | Command | Top level | Filter |
-    |---|---|---|
-    | `search issues`, `issues list` | bare array | `.[]` |
-    | `issues get <ID>` | bare object (the issue itself) | `.identifier`, `.state.name`, `.labels.nodes[]` … |
-    | `comments list <ID>` | object wrapping a sub-collection | `.comments.nodes[]` (gotcha #9) |
-    | `relations list <ID>` | object wrapping several sub-collections | `.relations[]`, `.inverseRelations[]`, `.parent`, `.children[]` (no `.nodes`) |
-    | `api query`/`api mutate` | raw GraphQL envelope | `.data.<field>.nodes[]` (gotcha #6) |
-    | `statuses list -t <KEY>` | object wrapping a sub-collection | `.statuses[]` (no `.nodes`) |
-
-    Only a **sub-collection nested under a parent** carries `.nodes` — top-level results are unwrapped. (`statuses list` wraps without `.nodes` — `.statuses[]` — and its failure is the loud kind: `.[]` reaches the inner array so `select(.name==…)` dies with `Cannot index array with string ("name")`, exit 5.) Copying `.issues.nodes[]` from an `api query` onto `search issues` does **not** quietly return nothing: jq exits **5** with `Cannot index array with string ("issues")` on stderr, and a `// []` guard chain does not rescue it (`//` catches `null`, not a type error). That exit code is the check that matters for the dedup search `/quality-review` requires before filing — a genuinely empty search exits **0** with no output, so treat empty stdout as "no existing issue covers this" only once the command itself succeeded. **That loudness is specific to the bare-ARRAY rows.** On the bare-object `issues get` row a wrong filter is as silent as gotcha #6's: `.issue.description` — the natural guess, since no envelope is visible in the command — yields the string `null` at exit **0**, and so does a two-level `.issue.foo.bar`. Nothing distinguishes that from an issue whose description is genuinely empty, which is how a wrong path survives as a "defensive" fallback chain instead of being recognized and fixed. The issue object is unwrapped: read `.description`, `.identifier`, `.state.name` directly. That split runs *inside* the `issues get` object too: its scalars and single objects are bare (`.identifier`, `.description`, `.state.name`), while its collections are not (`.labels.nodes[]`, `.children.nodes[]`) — so `.labels[].name` fails with jq's `Cannot index array with string ("name")` at exit **5**, the same loud signature as the bare-array rows above. Do not carry that to those rows, though: `search issues` and `issues list` return *reduced* rows that omit `labels` entirely, so `.labels` there is `null` at exit **0** — the silent mode — and label filtering is `issues list -l <name>` (gotcha #7).
-
-    `relations list <ID>` is a second instance of the `statuses list` shape — an object whose sub-collections are bare arrays (`.relations[]`, never `.relations.nodes[]`) — but its failure is the SILENT kind rather than `statuses list`'s loud one. Because the top level is an **object**, a `type=="array"` guard — the natural shape for "did this return anything", and primed by `comments list`, which really does return an array when passed several IDs (gotcha #9) — falls through to the else branch for **every** issue at exit **0**, byte-identical to the answer a genuinely edge-less issue gives. There is no array variant to guard for: `relations list` takes exactly one ID, and a second is rejected outright (`error: unexpected argument`). Measured 2026-08-18 at a fleet retro: an edge audit over 10 filed issues reported 0 with edges and was believed, where a GraphQL cross-check found 6; re-measured on BF-871 (4 `relations` + 4 `inverseRelations` + a parent) and BF-1202 (2 + 3), both printing `(none)` under that guard, `cmp`-identical to edge-less BF-1225. Read `.relations[]` and `.inverseRelations[]` explicitly — and read **both**, since one `blocks` edge appears on the blocker as `.relations[]` and on the blocked issue as `.inverseRelations[]` — or ask the raw hatch (gotcha #6), which DOES carry `.nodes` because it is raw GraphQL: `relations { nodes { type relatedIssue { identifier } } } inverseRelations { nodes { type issue { identifier } } }`.
-
-    ```bash
-    linear-cli search issues "<terms>" -o json | jq -r '.[] | "\(.identifier) [\(.state.name)] \(.title)"'
-    ```
-
-14. **`search issues` matches a CONTIGUOUS PHRASE, not a set of words — so a multi-word query is almost always
-    zero hits, and it exits 0.** The query is matched as a substring of the title/description, in order. Words
-    that all appear but are not adjacent do **not** match. Verified against one issue whose title reads
-    `Security: client-supplied GraphQL scopes (rewhere) bypass row-level authorization on any list_field`:
-
-    | query | hits | why |
-    |---|---|---|
-    | `rewhere` | 2 | single token |
-    | `row-level authorization` | 1 | adjacent, in order |
-    | `client-supplied GraphQL scopes` | 1 | adjacent, in order |
-    | `scopes authorization` | **0** | both words present, not adjacent |
-    | `resolve_list scopes injection` | **0** | a description, not a substring |
-
-    This is the **dedup search `/quality-review` requires before filing**, and it fails in the worst possible
-    direction: an invented descriptive phrase returns empty with **exit 0** and no error, which is exactly the
-    signature of "no existing issue covers this." Gotcha #13's exit-code check does not catch it — the command
-    genuinely succeeded. It found nothing because nothing could have matched.
-
-    **So search single tokens only** — code identifiers, symbol/method/field names, `snake_case`, `camelCase`,
-    error strings — one per query, several queries. Never a phrase you composed to describe the defect. If a
-    multi-word query is unavoidable, it must be text you have *seen verbatim* in an existing title.
-
-    **Search the target FILE's basename too, and search it first when the defect is a flake, a fixture, or
-    anything else whose identifiers are descriptions rather than symbols.** Near-duplicates routinely share zero
-    identifier tokens — each filer names the mechanism their own way — while every one of them names the same
-    file, so the basename is the only invariant token available. Measured: `rack_logger_spec.rb:208`'s one
-    assertion was filed FOUR times across three fleets (BF-1014/1222/1252/1283) under four different mechanism
-    descriptions; the single token `rack_logger_spec` returns all four. Apply the same distinctive-vs-generic
-    split `/reflect`'s Step 6 dedup search uses: a distinctive basename (`rack_logger_spec`,
-    `next-candidates.sh`) is searchable as-is; a generic one (`prepopulate` → ~50 hits, `user.rb`, `index.ts`)
-    discriminates nothing — fall back to the symbol there.
-
-    Real cost of getting this wrong: BF-777 was filed Urgent against `ListHelper#resolve_list` after three
-    dedup searches — `resolve_list scopes injection`, `list_helper scopes`, `SQL injection anonymous` — all
-    multi-word, all structurally guaranteed to return nothing. BF-490 had described the same defect in the same
-    file for weeks and is returned by the single token `rewhere`.
-
-15. **`relations add A B -r duplicate` marks **A** as the duplicate, and Linear auto-transitions A into the `Duplicate` state.** The direction matches `blocks` — first argument is the subject, "A is a duplicate of B" as "A blocks B" — which `relations add --help` confirms only obliquely (`<FROM>` is "Source issue identifier"; `-r duplicate` is "Duplicate of another issue"). But unlike `blocks` and `related` it has a **side effect on issue state**, which the help text does not mention and the command output does not report. Get it backwards while working A and you silently move the issue you are working into a closed state — `Duplicate` is its own workflow-state *type*, alongside `canceled` and `completed`. **Nothing downstream reliably catches this:** `/finish`'s terminal-state check (Error Handling section) enumerates only `Ready For Release` and `Done`, so a `Duplicate` issue surfaces incidentally at best. Re-adding in the correct direction fixes the relation and clears the wrong issue's `Duplicate` state, but restores it to **`Backlog`**, not to whatever it was before — re-claim it explicitly (`issues update <ID> --assignee me --state "In Progress"`). Read the argument order as the sentence "A is a duplicate of B" before running it, and re-check the worked issue's state afterwards (`issues get <ID> --no-cache`). Observed on BF-662 (being worked, In Progress) against its duplicate BF-713.
-
-16. **Linear stores task-list marks as uppercase `- [X]`, whatever case you posted — so matching a CHECKED box case-sensitively silently does nothing.** Verified by round-trip: a description posted with ten lowercase `- [x]` reads back from `issues get -o json` as ten `- [X]`, zero lowercase. Writing either case is therefore harmless (Linear normalizes), and the check-off direction the skills prescribe is safe too — `/start` Step 8, `/checkpoint`, and `/finish` Step 4 all match the *unchecked* `- [ ]`, which has no case. The bite is the other direction: unchecking, counting, or verifying an already-checked box. `grep -c '^- \[x\]'` returns **0**, `sed 's/^- \[x\]/- [ ]/'` matches no line, and the resulting no-op update still prints the ordinary `+ Updated issue:` line at exit 0. A pre/post `diff` does not catch it either — both files are the byte-identical original, so "identical apart from the one mark" is vacuous. Match case-insensitively (`grep -ci`, `sed 's/^- \[[xX]\]/…/'`), and treat a checked-count of **zero** on a description you know has checked boxes as the tell that your pattern's case is wrong, not as "nothing to update". This comes up whenever a description must be byte-preserved while one box changes — the divergence workflow in `.claude/rules/planning.md`.
-
-17. **A label write is verified through the consumer, not through `issues get` — and its read-back ERROR is inconclusive.** Label reads are eventually consistent and flap in *both* directions across reads seconds apart. Observed on BF-856: `specified` alone, then both labels, then `specified` alone, then both, over ~20s — for a write that had landed on the first attempt. `~/.claude/scripts/linear-add-label.sh` verifies with its own re-read, so it inherits this: `ERROR: label set on <ID> may have been modified concurrently — expected […], found […], missing […]` (exit 2) means **could not confirm**, not **failed**. Callers that treat exit 2 as a hard failure will act on a write that succeeded — `/spec`'s error row reads it as "the spec landed but the issue is NOT certified" and stops the run.
-
-    **Do not retry the write on the strength of it.** `issues update -l` REPLACES the whole label set (gotcha #7), so a retry built from a stale read can drop a label another actor just added — the exact loss the helper's `--no-cache` reads were meant to prevent.
-
-    **This is not gotcha #8, and #8's remedy does not transfer.** There the *write* did not take and a `--no-cache` re-check plus raw-mutation fallback is right; here the write took and the *read* is what lies. `--no-cache` cannot help: `linear-cli`'s cache stores only teams, statuses, projects, users, labels and views (`linear-cli cache status`; on disk `~/Library/Application Support/linear-cli/cache/`) — there is **no issue cache**, so the staleness is server-side and re-reading settles nothing.
-
-    **Verify through whatever consumes the label.** For the pickup gates that is `~/.claude/scripts/next-candidates.sh`, which re-fetches every issue per invocation and answers the question that actually matters — is the label *effective* — rather than whether a string is present on one read. It hard-hides `needs decision`, `solo` and `keeper`, each with a trailing hidden-count note, so a count moving (BF-856: 12 → 13) plus the issue leaving the ranking is the proof; `specified` has no hidden count and is checked by ranking membership under `--label specified`. (It also gates ordering, not visibility, on `specified`+`reflection` together for tier 0 and on `security`/`bug` for class rank.) Counts are computed client-side by `jq` from that fresh fetch — the value is the consumer's semantics, not a fresher read path.
-
-    **Never run two label writes on the same issue concurrently — not even as parallel tool calls in one message.** `linear-add-label.sh` and `linear-remove-label.sh`
-    each read the set once, apply one change, and write the whole set back (gotcha #7), so two in flight start from the same original set and the last write wins.
-    Their verification cannot see it: each re-checks only the set *it* computed from its own read, never that nothing else changed — so the last writer always
-    confirms its own clobbering write, an earlier one exits 0 whenever its re-read lands first, and the exit-2 case reads as inconclusive above: no exit code
-    certifies a concurrent batch. Measured 2026-09-23: add `specified`, remove `needs decision`, remove `bug`, and add `simple`, issued in parallel on one issue,
-    all exited 0 and left `bug, needs decision, simple` — the certification dropped and both removals undone (an add makes one extra `labels list` call before
-    writing, so adds tend to write last). Issue one label write per message on a given issue, each after the previous returns, then confirm the end state through
-    the consumer as above. Writes to *different* issues share nothing to race on — the helpers never create labels — so parallelizing across issues is safe.
-
-18. **`comments create -b -` posts a literal `-` as the comment body — `issues comment --body -` is the form that reads stdin.** Only the help text distinguishes them: `issues comment`'s `-b` documents `Use "-" to read from stdin`; `comments create`'s `-b` does not, and 0.3.27's `create_comment` passes `--body` straight into the GraphQL `CommentCreateInput`. Passing `-` is therefore not an error — it posts a one-character comment and reports success (`+ Comment added to <ID>` … `Body: -`) at exit 0, so the corruption surfaces only if you read the body back. The `comments` family primes the mistake from both sides: gotcha #9 sends you there for reads, and `comments list`'s own *issue-ID* argument really does take `-` for stdin. Eventual consistency compounds it — a `comments list <ID>` taken immediately after can return an empty `nodes` array, which reads as "the create did nothing" and invites a retry that posts a second stray. Use `~/.claude/scripts/linear-post.sh comment <ID> <body-file>` (the helper `standards/linear-workflow.md` prescribes, which picks the right flag per kind), or the Command-map form `issues comment <ID> --body -`. Remove a stray with `comments delete <comment-uuid> --force` — without the flag it bails with `Delete requires --force flag` rather than prompting; the uuid comes from `comments list <ID> -o json`.
-
-19. **`search issues` rows carry `state` as `{name}` ONLY — there is no `state.type` — so a type-based terminal filter silently passes every row.** The Linear API does expose `WorkflowState.type` (`completed`, `canceled`, …), which makes `select(.state.type? != "completed")` the natural jq for dropping shipped work from a dedup or collision probe — but the search row is exactly `{id, identifier, priority, state: {name}, title}` (measured on 0.3.27; `issues list` rows add `assignee`/`project` but their `state` is `{name}`-only too, as is `issues get`'s), and jq yields `null` for a missing key at exit **0**, `?`-guarded or not, so the comparison is vacuously true for **every** row: Done and Canceled issues sail through and closed work reads as open — #13's silent mode (`labels` there) striking on the very field the open-vs-terminal judgment rests on. Filter by **name** — `select(.state.name | IN("Done","Canceled","Duplicate") | not)`, checking the team's actual state names with `statuses list -t <KEY>` (gotcha #5) when unsure — or ask the raw hatch (gotcha #6), which does return `state { type }`. The same reduction omits `description`, while #14's substring match runs over title *and* body — a hit can match on text the row does not show, so judge relevance with `issues get <ID>` on the surviving hits, never from the row alone.
-
-20. **An issue identifier written through the API stays literal text — auto-linking is a client-side editor input rule, and the API-side equivalent is a plain URL, not the identifier.** Linear stores rich text as a ProseMirror document in which a mention is its own `issueMention` node (`id`/`label`/`href`/`title`); typing `BF-932` in Linear's editor converts it via an input rule, but nothing converts it on the way in through `issues create -d`, `issues update --data`, `issues comment --body`, or `linear-post.sh`. **The fix is to emit the plain issue URL**, which Linear's markdown ingest does convert into a real mention chip (docs: "mentions can be created in Markdown by using the plain URL of the resource", e.g. `https://linear.app/yourworkspaceurl/issue/LIN-123/some-issue` → `@LIN-123`). Read the canonical slug-carrying URL rather than hand-building it: `linear-cli issues get <ID> -o json | jq -r '.url'`. A `[BF-932](<url>)`-wrapped link is what a mention serializes back **out** to, but only the bare URL is documented as converting on the way **in**. **For a durable reference prefer a relation** — `linear-cli relations add <A> <B> -r related` (see gotchas #10 and #15 for direction and the `duplicate` state side effect) — which renders with live status and survives renames; a stored mention `href` goes stale on retitle (BF-931's mention still carries BF-932's superseded slug).
-
-21. **`issues create` rejects `--title` and `--label` — and clap's "tip" for the first is actively wrong.** The command map below already shows the two flags that DO exist (title is POSITIONAL, description is `-d`/`--description`, `-` for stdin) but not the trap: guessing `--title` gets `tip: a similar argument exists: '--filter'` plus a `Usage:` line reading as though `--filter` were required for `create` — it is not, and `--filter` has nothing to do with `create`. The label flag is `--labels` (plural, short `-l`); `--label` errors the same way. There is no `--description-file` at all — pass the body inline or via stdin.
-
-    **On `issues create`/`update`, `-l/--labels` takes ONE label per occurrence — repeat the flag, never comma-join.** `--labels a,b,c` is parsed as a single label named `a,b,c` and dies with `Error: Label not found: a,b,c`, which names the joined string and so reads as *these labels do not exist* — sending you to `labels list` to check labels that are all present. Write `-l a -l b -l c`. Both take `labels: Vec<String>` with no clap `value_delimiter` (0.3.27 `src/commands/issues.rs`), and the error interpolates the unsplit string (`src/api.rs:319`). The comma is a natural guess because sibling subcommands in the same binary *do* split — `templates create -l`, `bulk`, and `webhooks` all set `value_delimiter = ','`, and `templates create --help` even reads "Repeat or comma-separate for multiple labels" — so `--help` on one command is no guide to another. **`issues list` is different in both directions**: its flag is singular `-l, --label <LABEL>` (a filter, one value), and repeating it is a hard error — `error: the argument '--label <LABEL>' cannot be used multiple times` — so the prescription here inverts there. On `update`, remember `-l` REPLACES the whole set (gotcha #7); a comma-join fails at label resolution rather than clobbering, but the repeat form is what you want either way. The worked example below passes a single label, so it does not exercise this.
-
-    **Always pass `--state` — an omitted state lands the issue in the team's DEFAULT state, which on a triage-enabled team is Triage, invisible to `/next` and `/auto` permanently with no warning anywhere** (measured 2026-08-15: three fleet follow-up filings stranded this way in one run). Unattended filings use `--state Backlog` (keeper ruling 2026-08-15: the human curates Planned) — or better, file through `~/.claude/scripts/linear-create-child.sh` (parent `-` for a standalone issue), which resolves a Backlog-preferring state itself and verifies everything it writes.
-
-    ```bash
-    linear-cli issues create --team BF "<TITLE>" --description - --state Backlog --labels specified < body.md
-    ```
-
-22. **Filtering `relations list` output on `blocks` drops every `blocked by` row — and the result reads as "no blockers".** The two relation types render as distinct
-    strings and `blocks` is not a substring of `blocked by`, so `linear-cli relations list <ID> | grep -E 'blocks|related'` returns only the *outgoing* edges, exits
-    0, and inverts the answer to the question the command is usually asked. Measured 2026-08-21: an issue printed one `blocks` and one `related` row under that
-    filter while carrying two `blocked by` rows that decided whether it was pickable at all — and one of its siblings matched only because its *title* contained
-    "duplicated". This is not the line-scoped-pipeline or wrapped-phrase trap `~/.claude/CLAUDE.md` documents: both tokens are on the line, and the term you grepped
-    simply does not subsume the sibling term it looks like it should. The table is a few rows — read it whole, or grep `blocked` when what you want is blockers.
-    Gotcha #13 covers the complementary jq failure on the same command (`.relations[]` and `.inverseRelations[]`, both needed, neither carrying `.nodes`).
-
-23. **Every `statuses list` call reads through `linear-cli`'s Statuses cache, so a workflow state added minutes ago is invisible — and the error blames the
-    team.** The cache covers statuses (gotcha #17), and no state-resolution call site opted out until this was measured. Symptom:
-    `mark-ready-for-release.sh` exits 1 with `ERROR: no Ready-For-Release state found for team '<KEY>'. Set it manually.` while the state exists and every
-    matcher handles it. Measured 2026-08-21 against a live team with a 24-minute-old cache: the cached path returned no output and the script exited 1,
-    `--no-cache` returned `Ready for Release`, and `linear-cli cache clear` fixed the cached path. It self-heals on expiry, which makes it intermittent and
-    easy to dismiss, and it appears only in the window right after someone changes a workflow state — exactly when these scripts matter most. Every state
-    resolution in `~/.claude/scripts` now passes `--no-cache` (`grep -rn 'statuses list' ~/.claude/scripts` is the current roster); keep it that way in any
-    new one, at the cost of one API round-trip on a path that already makes several.
-
-24. **In auto mode, a Linear write inside shell control flow gets denied by the permission classifier while the same write as one plain command runs.**
-    Measured 2026-09-04: three `relations remove <uuid>` calls in a `for` loop (with `set --` word-splitting) came back `Blocked by classifier`; each
-    re-issued as its own single-command Bash call printed `Relation removed`. The denial reads as a refusal of the write itself, and the natural
-    response is to stop and hand the commands to the user — retry once as a plain command first. Issue Linear writes one per Bash call (loops are fine
-    for reads) and confirm with a follow-up `relations list` / `issues get --no-cache`.
-
-25. **`issues list` returns 50 rows by default, silently — and `--count-only` counts that page, not the pool.** The default page size is 50 (hard-coded in `src/commands/issues.rs`; measured on 0.3.28): `issues list --team BF --state Backlog -o json | jq length` printed **50** against a 506-issue Backlog, the table footer read `50 issues`, and no output mode prints a more-results hint. `--count-only` — the natural flag for sizing a pool — inherits the cap and printed `50` for the same Backlog. The flags that fix it exist but `issues list --help` buries them among forty others (`linear-cli common` is where they are called out): **`--all`** fetches every page (1970 rows for the whole team, byte-equal to a paginated raw-hatch count), `--limit N` pages internally past the API's 250-per-page (`--limit 300` returns 300), and `--page-size`/`--after` are there for hand-paging. Pass `--all` on any pool-sized read — a whole Backlog, every issue carrying a label — and treat a result count landing exactly on 50 as truncation, never as the answer; the same tell applies to a one-shot raw query landing exactly on its `first:` cap (`/auto-prep`'s pool fetch documents that one and the `pageInfo` loop that fixes it — `next-candidates.sh` already runs it). Measured 2026-09-22: a report built from a bare `issues list` stated the uncertified Backlog at 50 when a paginated count put it in the hundreds.
-
-26. **A rate-limited answer is invisible behind `2>/dev/null` — linear-cli puts the whole error envelope on STDERR and leaves stdout empty.** Linear's window is per USER: 2,500 requests/hour on an API key (`X-RateLimit-Requests-Remaining` rides on every response; the complexity budget is never the constraint), shared by every session, script and launchd job on the machine. Spent, the API answers HTTP 400 with `extensions.code: "RATELIMITED"`, which `-o json` relays as a `{"code":4,"details":{"errors":[…]}}` envelope on stderr and table mode as `Error: HTTP 400 Bad Request: Rate limit exceeded. Only 2500 requests are allowed per 1 hour`. A capture that discards stderr reads that as an empty page or a missing issue, and a 2-second retry cannot help against an hourly bucket. Measured 2026-10-16: `next-candidates.sh` cost 376 requests per run — 360 of them one `query ancestor` call per Done ancestor of a Backlog issue, repeated before every pick by every session — so five fleet sessions spent the window in every hour with ten or more rankings, and the one visible symptom was a pick failing with `auth? network? rate limit?` and re-ranking a minute later. Capture stderr and grep it for `RATELIMITED` / `Rate limit exceeded`; on a hit, stop and wait for the window rather than retrying (the ranker exits 4 with that word, and /auto's transient-API rule covers it). Read the live meter for one request: `curl -s -D - -o /dev/null -H "Authorization: $key" -H 'Content-Type: application/json' --data '{"query":"{ viewer { id } }"}' https://api.linear.app/graphql | grep -i x-ratelimit`, with `$key` from the config file `linear-cli config show` names.
+1. **Anchored (inline) comments are invisible** to `comments list` and `issues get`; read the digest → `references/comments.md`
+2. **No dependency commands or flags** — graph via `linear-deps-graph.sh`, filter with jq → `references/relations.md`
+3. **`issues create` has no `--parent`** — `parentId` in `--data`, or `linear-create-child.sh`, which verifies the link → `references/create.md`
+4. **Unassign** = `issues assign <ID>` with the user omitted → `references/states.md`
+5. **Workflow states** = `statuses list -t <TEAM>`; provisioning is `/linear-setup`, never hand-rolled → `references/states.md`
+6. **`api query`/`api mutate` return the raw envelope** — jq paths start `.data.`; a wrong path's `length` is `0` at exit 0 → `references/json.md`
+7. **Labels are typed (`-t issue`), can be team-scoped, and `-l` REPLACES** — add with `linear-add-label.sh` → `references/labels.md`
+8. **`issues update` can report success without writing** — use `issues assign`, `linear-set-state.sh`, `linear-claim.sh`; read back `--no-cache` → `references/states.md`
+9. **`comments list` needs `-o json`** (the table is empty) and the body path is `.comments.nodes[].body` → `references/comments.md`
+10. **`-r blocked-by` 400s** — always `relations add <BLOCKER> <BLOCKED> -r blocks` → `references/relations.md`
+11. **`Argument Validation Error`** = a mangled identifier reached the API, usually zsh not word-splitting `$var` → `references/paging.md`
+12. **`priority`: `0` (none) ranks LAST**, and dedicated commands have no `priorityLabel` — print a label, never `P<n>` → `references/json.md`
+13. **Result shape varies by command** — `search issues`/`issues list` are a bare array, `issues get` a bare object, `relations list` has no `.nodes` → `references/json.md`
+14. **`search issues` matches a contiguous phrase** — single tokens only, the file basename first; a multi-word miss exits 0 → `references/create.md`
+15. **`relations add A B -r duplicate` closes A** (state `Duplicate`); re-adding the right way restores it to Backlog → `references/relations.md`
+16. **Checked task boxes read back as `- [X]`** — match case-insensitively → `references/create.md`
+17. **A label write is verified through its consumer**, not `issues get` (reads flap); exit 2 = unconfirmed; one write per issue at a time → `references/labels.md`
+18. **`comments create -b -` posts a literal `-`** — use `linear-post.sh comment` or `issues comment --body -` → `references/comments.md`
+19. **Rows carry `state` as `{name}` only** — filter terminal states by name, never `.state.type` → `references/states.md`
+20. **An issue id in a body stays plain text** — emit the issue URL, or better a `related` relation → `references/comments.md`
+21. **`issues create`: title is positional, `-l` once per label, ALWAYS `--state`** (the default lands in Triage) → `references/create.md`
+22. **`grep blocks` on `relations list` drops `blocked by` rows** — read the table whole → `references/relations.md`
+23. **`statuses list` is cached** — pass `--no-cache` in every state resolution → `references/states.md`
+24. **In auto mode a write inside shell control flow is classifier-denied** — one Linear write per Bash call → `references/paging.md`
+25. **`issues list` returns 50 rows by default**, `--count-only` included — pass `--all` on pool-sized reads → `references/paging.md`
+26. **A rate-limited answer is on STDERR with empty stdout** — never `2>/dev/null`; grep for `RATELIMITED` and wait → `references/paging.md`
 
 ## Command map
 
 ```bash
-# Issues (alias: i)
-linear-cli issues get <ID> [-o json]          # single issue (state is {name}; --comments adds STANDALONE comments only)
-linear-cli issues list --team <KEY> [--all | --limit N] [--state X] [--assignee me] [-l <label>] [-o json]   # 50 rows by default (gotcha #25)
-linear-cli issues create "<title>" --team <KEY> [--state X] [-d -]   # description via stdin with -d -
-linear-cli issues update <ID> [--state X] [--assignee me|<user>] [--priority N] [-l <label>]... [--data -]   # -l SETS the whole label set — to add, use linear-add-label.sh (gotcha #7)
-linear-cli issues assign <ID> [<user>]        # omit <user> to UNASSIGN
-linear-cli issues comment <ID> --body -       # add a comment (body via stdin)
-
-# Comments / relations / search / statuses
-linear-cli comments list <ID> -o json         # STANDALONE only (gotcha #1); -o json is REQUIRED — see gotcha #9
-linear-cli relations add <BLOCKER> <BLOCKED> -r blocks   # "A blocked by B" = relations add B A -r blocks (-r blocked-by 400s in every PUBLISHED version through 0.3.27 — see gotcha #10); also -r related|duplicate
-linear-cli relations remove <RELATION-UUID>              # takes the relation id (from relations list -o json), NOT the two issue keys
-linear-cli relations parent <CHILD> <PARENT>             # set parent after create (issues create has no --parent flag; or set parentId via --data)
-linear-cli search issues "<query>" [--filter 'state.name=Backlog']   # workspace-wide; NO --team flag (use `issues list --team` to scope)
-linear-cli statuses list -t <KEY>
-linear-cli labels list -t issue|project [-o json]        # -t is label TYPE, not team; defaults to project (gotcha #7)
-linear-cli labels create "<name>" -t issue [-c <hex>]    # create an ISSUE label; no --team flag (gotcha #7)
-linear-cli labels delete <LABEL-UUID> -t issue -f        # takes the label id (from labels list -o json), not the name; -f skips the confirm prompt
-
-# Projects / users / uploads
-linear-cli projects get|list|create ...
-linear-cli users list ; linear-cli whoami
-linear-cli uploads fetch "<uploads.linear.app URL>" -f <file>   # authenticated download
+linear-cli issues get <ID> [-o json] [--no-cache]                        # --comments adds STANDALONE comments only (#1)
+linear-cli issues list --team <KEY> [--all | --limit N] [--state X] [--assignee me] [-l <label>] [-o json]   # 50 rows by default (#25)
+linear-cli issues create "<title>" --team <KEY> --state X [-l <label>]... [-d -]   # title positional, -l repeated, -d - reads stdin (#21)
+linear-cli issues update <ID> [--state X] [--priority N] [-l <label>]... [--data -]   # -l SETS the whole set (#7); verify writes (#8)
+linear-cli issues assign <ID> [me|<user>]                                 # omit the user to unassign (#4)
+linear-cli issues comment <ID> --body -                                   # comment body via stdin (#18)
+linear-cli comments list <ID> -o json                                     # standalone only (#1); -o json required (#9)
+linear-cli relations list <ID> [-o json]                                  # .relations[] AND .inverseRelations[] (#13, #22)
+linear-cli relations add <BLOCKER> <BLOCKED> -r blocks|related|duplicate  # the first argument is the subject (#10, #15)
+linear-cli relations remove <RELATION-UUID>                               # the relation id from relations list -o json, not issue keys
+linear-cli relations parent <CHILD> <PARENT>                              # set a parent after create (#3)
+linear-cli search issues "<token>" [-o json]                              # workspace-wide, no --team; contiguous match (#14)
+linear-cli statuses list -t <KEY> --no-cache                              # (#5, #23)
+linear-cli labels list -t issue [-o json]                                 # -t is the label TYPE (#7)
+linear-cli labels create "<name>" -t issue [-c <hex>]                     # workspace-level only (#7)
+linear-cli labels delete <LABEL-UUID> -t issue -f                         # takes the label id, not the name
+linear-cli api query '<graphql>' | jq '.data…'                            # escape hatch (#6)
+linear-cli uploads fetch "<uploads.linear.app URL>" -f <file>             # authenticated download
 ```
 
-Output flags (agent-friendly): `-o json|ndjson`, `-q` (quiet), `--id-only`, `--compact`, `--fields <a,b>`.
+Output flags: `-o json|ndjson`, `-q`, `--id-only`, `--compact`, `--fields <a,b>` (an unknown field is dropped silently).
 
-## In-repo helper scripts
+## Helper scripts
 
-| Script | Purpose |
+All under `~/.claude/scripts/`. Each header carries the usage line, exit codes and contract; read it before calling.
+
+| Script | Does |
 |---|---|
-| `linear-context.sh <ID>` | Full issue digest **including anchored comments** (gotcha #1). |
-| `linear-deps-graph.sh <ID> \| --team <KEY>` | Dependency graph as `{nodes, edges}` (gotcha #2). |
-| `linear-create-child.sh [--allow-planned] [--allow-unrouted] <parent\|-> <team> <state\|-> <title> <body-file> [label\|-] [priority\|-]` | Parent-linked issue create — create → `relations parent` → verify (gotcha #3). A caller-passed `Planned` is refused without the leading `--allow-planned` (the human curates Planned; the flag marks a deliberate placement). A label slot with no routing label (`specified` / `needs decision` / `human` / `keeper`, or the producer labels `sentry` / `dependencies`) is refused the same way without the leading `--allow-unrouted`, which only a caller that certifies in a later step of the same run passes. Labels get the same normalized-identity healing as `linear-add-label.sh` (multi-word names keep their spacing; a near-miss heals to the canonical label rather than minting a twin — a `tr -d '[:space:]'` here once corrupted `needs decision` into a minted `needsdecision` that leaked BF-1243 past its park gate; ambiguous matches skip with exit 2). A label that does not exist at all is refused with exit 2, never minted — quality-review's `suggested` reply token, passed here as a label, minted one on 2026-08-19 that fourteen filings then carried in place of `specified`, unrouted; new labels are a `/linear-setup` decision. |
-| `linear-post.sh <comment\|description> <ID> <body-file>` | Post a comment or replace a description from a file. |
-| `linear-add-label.sh <ID> <label>` | Add one issue label without clobbering the rest (read-merge-set + verified attach; gotcha #7). A requested name that matches an existing label after normalization (case + space/`-`/`_`) heals to that label with a NOTE instead of minting a twin — a freehand `needsdecision` once minted a permanent near-miss that leaked its issue past `next-candidates.sh`'s `needs decision` park gate. Exit 2 + create-label pointer when genuinely missing/unattachable, or when several labels normalize to the request. |
-| `linear-remove-label.sh <ID> <label>` | Remove one issue label, preserving the rest (read-filter-set + verified; raw `issueUpdate labelIds: []` for the last-label case). Exit 0 on already-absent. |
-| `mark-ready-for-release.sh <ID>` | Move to Ready-For-Release **and unassign** — read-back-verified, with gotcha #8's raw-mutation fallback automated (exit 1 if the state provably never changed). Then walks UP the parent chain: a parent carrying `epic` whose every child is terminal (Done / Canceled / Duplicate / Ready for Release — not In Review) is moved the same verified way, recursively; keyed on children, never blockers; best-effort (keeper decision 2026-09-11). |
-| `epic-graph.sh [--ids] [--any-root] <EPIC-ID>` | An epic's working set as JSON — the epic, its transitive descendants, and the transitive blockers of any member (non-terminal, cross-team), plus terminal nodes, member-to-member edges, and a boundary report of outside dependents and outside `related` partners. Fails closed on a missing root, a root without `epic`, or any unreadable node. What `next-candidates.sh --root`, `fleet-status.sh`, `fleet-forecast.py --root`, and `fleet-blockers.sh --root` scope on. |
+| `linear-context.sh` | Markdown digest of an issue including anchored comments (#1). |
+| `linear-deps-graph.sh` | Dependency graph as `{nodes, edges}` for one issue or a whole team (#2). |
+| `linear-create-child.sh` | Create, link the parent, verify the link; refuses `Planned` and an unrouted label slot without the leading flags (#3, #21). |
+| `linear-post.sh` | Post a comment or replace a description from a file (#18). |
+| `linear-stdin.sh` | Pipe a file to any `linear-cli` command's stdin flag. |
+| `linear-add-label.sh` | Add one label without clobbering the rest; heals near-miss names, never mints (#7, #17). |
+| `linear-remove-label.sh` | Remove one label, preserving the rest (#7, #17). |
+| `linear-set-state.sh` | Verified state transition for one or many issues: update → `--no-cache` read-back → raw-mutation fallback (#8). |
+| `linear-claim.sh` | Assignee-and-state claim with a verdict on the first stdout line (`CLAIMED` / `NOT-CLAIMED` / `UNCONFIRMED`) (#8). |
+| `linear-file-improvement.sh` | File a `/reflect` improvement issue (`specified`+`reflection`, or `reflection`+`keeper` uncertified). |
+| `mark-ready-for-release.sh` | Move to Ready For Release and unassign, verified; then closes an `epic` parent whose every child is terminal (#8). |
+| `epic-graph.sh` | An epic's working set as JSON — members, blockers, terminal nodes, edges, and the boundary report. |
+
+## References
+
+- [references/comments.md](references/comments.md) — read before reading or writing comments or any body text (#1, #9, #18, #20)
+- [references/relations.md](references/relations.md) — read before reading or writing dependencies, duplicates or parents (#2, #10, #15, #22)
+- [references/labels.md](references/labels.md) — read before any label read or write (#7, #17)
+- [references/states.md](references/states.md) — read before writing a state or assignee, or filtering on state (#4, #5, #8, #19, #23)
+- [references/create.md](references/create.md) — read before `issues create`, a dedup search, or a description rewrite (#3, #14, #16, #21)
+- [references/paging.md](references/paging.md) — read before a pool-sized read or a loop, and when a call returns nothing (#11, #24, #25, #26)
+- [references/json.md](references/json.md) — read before writing a `jq` filter over any linear-cli output (#6, #12, #13)

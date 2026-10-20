@@ -1,6 +1,6 @@
 ---
 name: reap-worktrees
-description: Inspect and reclaim leftover /start wt worktrees. Shows which worktrees under .claude/worktrees/ are eligible for cleanup (PR merged, branch merged, or Linear issue Canceled/Done) and which are preserved (active or abandoned-for-resumption), and can reap the eligible ones now. Use when the user says 'reap worktrees', 'clean up worktrees', 'what worktrees are leftover', 'prune worktrees', or invokes /reap-worktrees.
+description: Inspect and reclaim leftover /start wt worktrees under .claude/worktrees/ — eligible when the PR or branch merged or the Linear issue is terminal, preserved when active or abandoned-for-resumption; `list` is the dry run, `reap` removes. Use when the user says 'reap worktrees', 'clean up worktrees', 'what worktrees are leftover', 'prune worktrees', or invokes /reap-worktrees.
 ---
 
 # Reap Worktrees
@@ -16,8 +16,8 @@ that nothing else reclaims:
 3. **A `/finish merge` whose cleanup failed** — [finish-merge.sh](../../scripts/finish-merge.sh) lands
    the merge, then `git worktree remove` refuses over an untracked or modified file it never forces past;
    it prints `CLEANUP-FAILED:` and leaves the worktree, its branch, and its `refs/finish-merge/…-orig` ref
-   behind (2026-10-07: eleven basefund issues, a tool-written `AGENTS.md` in each). Its branch tip is then
-   a sibling of the source branch, never an ancestor, which is why "merged" below is also decided by content.
+   behind (a tool-written untracked file is the usual blocker). Its branch tip is then a sibling of the source
+   branch, never an ancestor, which is why "merged" below is also decided by content.
 
 A local launchd job ([reap-worktrees-cron.sh](../../scripts/reap-worktrees-cron.sh) →
 `com.alienfast.worktree-reap`, hourly) runs the reaper automatically, mirroring the merge-queue drainer.
@@ -31,9 +31,8 @@ completion** — never on mere inactivity. A worktree is reaped iff **all** hold
 - **Provenance**: `/start wt` created it — the per-worktree `start.source-branch` stamp, or a loadable
   identity sidecar — or the user opted it in (`git -C <wt> config --worktree reap.managed true`). Every rule
   below assumes the `/start wt` lifecycle (one issue, one branch, merged once = done); a hand-made or
-  `EnterWorktree` worktree the user keeps merging from is "merged, clean, idle" between every round, and one
-  was reaped on exactly that shape (api-memo, 2026-09-08). An unstamped worktree is reported
-  `KEEP — unmanaged` and never touched.
+  `EnterWorktree` worktree the user keeps merging from is "merged, clean, idle" between every round, which is
+  exactly the shape that gets reaped. An unstamped worktree is reported `KEEP — unmanaged` and never touched.
 - **Not pinned**: `git -C <wt> config --worktree reap.keep true` keeps any worktree, stamped or not
   (`KEEP — pinned`); `--unset reap.keep` releases it. Only a queued merge outranks the pin.
 - **Completion evidence** (any one): its branch is merged into its source branch or the repo default —
@@ -52,16 +51,16 @@ completion** — never on mere inactivity. A worktree is reaped iff **all** hold
   comm — the same allowlist `wt-identity.sh` recognizes — so a leftover dev server never holds a worktree).
   This outranks every evidence rule: a session that runs `/finish merge` from inside the worktree and keeps
   working, or finishes one issue and plans the next in the same worktree, does no git ops for hours while
-  "merged" or "issue Done, zero commits" both read as done — three interactive sessions were reaped that
-  way in one week (BF-2074 twice on 2026-09-23, BF-2101 on 2026-09-24), each then TERMed by the sweep
-  below for sitting in the directory just removed. Without `lsof` the guard stands down for the pass (one
-  WARN in the log) and the index-mtime guard alone decides.
+  "merged" or "issue Done, zero commits" both read as done — an interactive session reaped that way is then
+  TERMed by the sweep below for sitting in the directory just removed. Without `lsof` the guard stands down
+  for the pass (one WARN in the log) and the index-mtime guard alone decides.
 - **Not live**: the worktree's index is stale (no git activity for `WORKTREE_REAP_GRACE_MIN` minutes,
   default 60), **and** the branch has commits beyond its recorded baseline — *or*, for a zero-commit
   branch, the completion evidence is something other than "merged". A zero-commit branch is trivially an
   ancestor of its source and trivially contained by content, so the merged test says nothing about it
-  (reaping on that alone destroyed a live just-forked worktree once — PL-459). A terminal Linear issue is independent of commit count and does
-  count, which is what reclaims a `/start wt` worktree whose issue was canceled before the first commit.
+  (reaping on that alone destroys a live just-forked worktree). A terminal Linear issue is independent of commit
+  count and does count, which is what reclaims a `/start wt` worktree whose issue was canceled before the first
+  commit.
   So is a **dead or released owning session** (`wt_owner_alive`, from the `/start` identity stamp): a
   zero-commit worktree whose session provably died, or that was released via
   [wt-disown.sh](../../scripts/wt-disown.sh), is abandoned no matter what its issue says, and would
@@ -101,20 +100,27 @@ notes itself and skips.
 `/start wt` stamps each worktree's tamper-evident identity into `<repo>/.claude/worktree-identity/wt-identity-<slug>.env`
 (the repo-level sidecar [wt-identity.sh](../../scripts/wt-identity.sh) reads when `/finish` checks for a
 hijack). The sidecar is a per-worktree artifact and ends with the worktree: `/finish merge`, recovery, and this
-reaper all delete it when they remove one. A worktree removed by hand leaves its sidecar behind, and nothing
-deleted any before 2026-10-07 (basefund held 1,025 against one live worktree), so each pass also sweeps the
-directory: a sidecar whose recorded worktree directory is gone **and** whose slug has no worktree at the
+reaper all delete it when they remove one. A worktree removed by hand leaves its sidecar behind, and left alone
+they accumulate by the thousand, so each pass also sweeps the directory: a sidecar whose recorded worktree
+directory is gone **and** whose slug has no worktree at the
 conventional path, older than the grace, is removed. `list` prints `STALE-IDENTITY <n> sidecar(s) …` and
 deletes nothing; `reap` prints `REAPED-IDENTITY <n> …`. Only `wt-identity-*.env` files are candidates — the
 directory's `.gitignore` and a recovery patch beside them are never touched.
+
+**Repairing a reaped or broken worktree means restoring it in place**, never a fresh `/start` setup and never a
+worktree for whichever issue the user is on now: recreate it at the same path, on the same branch and commit
+(`git worktree add <path> -b <branch> <sha>`), restore the per-worktree `start.*` config from the surviving sidecar,
+run the project's install, and pin it with `reap.keep true` if its issue reads Done. The user's editor and Claude
+session are rooted at that path, and one worktree is routinely reused across issues, so its slug is not the issue
+they are working.
 
 ## Merge leftovers
 
 `finish-merge.sh` keeps each worktree branch's original tip under `refs/finish-merge/<branch, slashes as
 dashes>-orig` and deletes that ref with the branch on a clean removal; a reap of a merged worktree deletes
 it too. A cleanup it could not make (flow 3 above) keeps the branch and the ref, and the hand removal of the
-directory that usually follows forgets both — on 2026-10-07 basefund held three such branches. Each pass
-therefore also sweeps **branch-only leftovers**: a local branch with an orig ref of its own and no worktree,
+directory that usually follows forgets both. Each pass therefore also sweeps **branch-only leftovers**: a local
+branch with an orig ref of its own and no worktree,
 merged — as an ancestor, or by content — into a ref that already carries its original tip (the default
 branch first, then whatever else contains it; never the branch's own remote copy, a branch checked out in a
 linked worktree, or a sibling leftover). `list` prints `STALE-BRANCH <branch> — merged into <ref> …` and
@@ -128,15 +134,14 @@ A `STRAY` verdict is a directory under `<repo>/.claude/worktrees/<name>` that gi
 has no `.git` entry, so `is_registered_worktree` rejects it. The common cause is a session whose ledger mods resolved
 their path to the worktree at session start and kept writing `tmp/effort-ledger-<session>.jsonl`,
 `tmp/loop-boundary-<session>.jsonl` and `tmp/spawn-policy-<session>.jsonl` after `/finish` removed the worktree; each
-write recreated the directory as a husk holding only those files. Since 2026-10-10 the three ledger mods resolve to
-the owning checkout, so a session started after that install leaves no husk; the two diagnostic probes still write
+write recreated the directory as a husk holding only those files. The three ledger mods resolve to the owning checkout,
+so only a session started under an older install leaves a husk; the two diagnostic probes still write
 session-cwd-relative and would, if enabled. The other cause is a partial removal (Windows locked files or long paths),
 which leaves real content behind.
 
 A husk is not inert. Every `[ -d <owner> ]` liveness test reads it as a live checkout: a project's stack-slot registry
-keeps the slot and its running docker stack, and this reaper's own dead-owner trigger saw nothing dead until it learned
-to require a `.git` entry. Measured 2026-10-19: two db+redis stacks whose worktrees were merged nine days earlier, each
-hourly pass printing their `STRAY` line to a log nobody reads.
+keeps the slot and its running docker stack for weeks after the merge, and this reaper's own dead-owner trigger sees
+nothing dead unless it requires a `.git` entry — while each hourly pass prints a `STRAY` line to a log nobody reads.
 
 So each pass also reclaims a **ledger-only** husk: every entry under it is a regular file directly under `tmp/` whose
 name the `/reap-tmp` ledger and probe lanes classify, the newest is older than the grace, and no live Claude session

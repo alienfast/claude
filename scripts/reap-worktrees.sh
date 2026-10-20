@@ -156,8 +156,8 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # Absolute common-git-dir for a repo — the lock key finish-merge.sh uses (its "Lock key" comment),
 # so holding it here makes a reap mutually exclusive with any in-flight /finish merge of the same repo.
 # --path-format=absolute returns git's own absolute form, identical from any worktree or the main
-# checkout, and avoids the MSYS `pwd -P` divergence the old `cd … && pwd -P` had (see standards/git.md
-# "Windows Git Bash: comparing paths").
+# checkout, and avoids the MSYS `pwd -P` divergence the old `cd … && pwd -P` had (see standards/git-windows.md
+# "Comparing paths").
 repo_key_for() {
   local repo="$1" key
   key=$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1

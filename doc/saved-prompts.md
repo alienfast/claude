@@ -1,15 +1,6 @@
-# Prompts that were useful and may be again
+# Saved prompts
 
-## update our own instructions
-
-```text
-/do our ~/.claude instructions grow over time, and sometimes there are redundancies or inefficiencies.  In addition, as claude models and tools like skills, agents, and commands grow in capability, and we want to be sure we are providing the optimal instruction set to achieve our goals.  We don't want to be overly prescriptive.
-
-Research the best practices for using claude code as of this month, December 2025.  Do a comprehensive review of our files.  Ask any questions needed.  Suggest any changes you think might be useful.
-
-Some repeated problems I am seeing:
-Specifically, I am seeing a pattern of suggested workarounds as an easy way out.  I have a strong preference to avoid workarounds.  I am not sure why it is a common suggestion, but I want to make some changes in this regard so we move the codebase forward.  Perhaps I am not providing clarity with the goal?  If so, I want future sessions to stop and ask me for more guidance.  Perhaps you are stuck and spending a lot of time researching but the research is not fruitful?  Perhaps I could give some direction if you ask me?
-```
+Prompts that were useful and may be again.
 
 ## big project+global update instructions
 

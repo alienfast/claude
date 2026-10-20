@@ -1,6 +1,6 @@
 ---
 name: auto-prep
-description: Prepare a team's certified backlog for a fleet of parallel /loop /auto sessions — audit `specified` labels for unattended-shippability (route human-gated issues by shape — `needs decision` for pending decisions, `human` for human-performed work — mark fleet-hostile ones `solo`, flag decision-gated ones, and re-audit `simple` labels in both directions), consolidate same-defect-family point fixes into class-scoped sweep issues, wire `blocks` edges only where a pair is a prerequisite, a same-method collision, or a deliberate increment (file-level overlap is `related`), validate through next-candidates.sh, audit the release scope (every unstarted Planned/Todo issue classified workable/needs-keeper-action/draining, blocker chains walked to their root causes, fan-out first — the keeper's personal unblock list leads the report) plus the second-order certified-Backlog fleet-drain edges, and recommend a parallel-session count. Use when the user says 'auto-prep', 'fleet prep', 'prep the backlog for auto', or before launching multiple /loop /auto sessions.
+description: Prepare a team's certified backlog for a fleet of parallel /loop /auto sessions — audit `specified` labels for unattended-shippability, consolidate defect families, wire collision edges, validate the ranking, list what the keeper must unblock, and recommend a session count. Use when the user says 'auto-prep', 'fleet prep', 'prep the backlog for auto', or before launching a fleet.
 argument-hint: "[team:KEY | KEY]"
 model: opus
 effort: xhigh
@@ -8,111 +8,128 @@ effort: xhigh
 
 # Auto-Prep — Certified-Pool Review Before a Parallel /auto Fleet
 
-`/next` observes exactly one dependency signal — Linear `blocks` relations — and `/auto` ships whatever carries the `specified` label. Before running many `/loop /auto` sessions in parallel, both signals must be honest: every certified issue genuinely unattended-shippable, and every prerequisite or same-method pair serialized while file-level overlap is marked `related`, so two sessions never edit one method concurrently and never idle on a file git can merge. This skill audits and repairs both, then sizes the fleet.
+`/next` observes one dependency signal — Linear `blocks` relations — and `/auto` ships whatever carries `specified`.
+Before many `/loop /auto` sessions run in parallel, both must be honest: every certified issue unattended-shippable,
+every prerequisite or same-method pair serialized, and file-level overlap marked `related`, so two sessions never edit one
+method concurrently and never idle on a file git can merge. This skill audits and repairs both, then sizes the fleet.
+[`/fleet-retro`](../fleet-retro/SKILL.md) is the bookend after the fleet.
 
-Read [skills/linear/SKILL.md](../linear/SKILL.md) first (gotchas: relations direction, label add/remove helpers, state-update verification). Interactive by design — the flags it raises are decisions for the user; never run it unattended.
+Read [skills/linear/SKILL.md](../linear/SKILL.md) first (relations direction, label helpers, state-update verification).
+Interactive by design — every flag is a decision for the user; never run it unattended.
 
-After the fleet finishes, [`/fleet-retro`](../fleet-retro/SKILL.md) is the bookend — it measures where the run's capacity went and audits what it filed, which is where this skill's next inputs come from.
-
-**Writes it may make** (all reversible, all reported): add/remove issue labels, add `blocks`/`duplicate` relations, post explanatory comments, adjust priority. It issues **no unconditional state write** — the `duplicate` relations it wires (Step 2's duplicate-filing cleanup, Step 3's family consolidation) land the absorbed issue in the team's duplicate-type state on their own, and the only state writes it may make are Step 3's read-back fallback for when that did not happen and Step 4's user-approved Backlog-blocker promotion (stage-inversion check); it never touches states otherwise, and never assignees.
+**Writes it may make** (all reversible, all reported): add/remove labels, add `blocks`/`duplicate` relations, post
+comments, adjust priority. No unconditional state write — a `duplicate` relation moves the absorbed issue into the
+duplicate-type state on its own; the only state writes are Step 3's read-back fallback and Step 4's approved promotion
+batch. Never assignees.
 
 ## Step 1: Resolve scope and fetch the pool
 
-Team scope: a `team:KEY` (or bare key) argument, else `$LINEAR_TEAM`, else error — fleet prep is a deliberate per-team act, never workspace-guessed. Multi-team fleets: run once per team.
-
-One paginated GraphQL fetch for everything (descriptions, labels, parents, relations both directions) across the team's unstarted workable states (Backlog/Planned/Todo — match `/next`'s `WORKABLE_STATES`).
-
-**Page it — `first:` is a hard cap and overflow is silent.** A one-shot query returns its cap and stops: no error, exit 0, `hasNextPage` simply unread, so a pool that has outgrown one page is indistinguishable from a complete one. 250 is the API maximum, so raising the number is not the fix. Measured on BF (2026-08-08): 266 workable-state issues, so a one-shot `first: 250` hid 16 — and the cut lands on whichever issues sort last (the query sets no `orderBy`), not on a random sample, so a whole tail of the backlog goes unaudited in Step 2, unwired in Step 3, and uncounted in Step 5's lane math. **Step 4 will not catch it**: `next-candidates.sh` paginates, so the ranking it prints is complete and reads as confirmation of a pool that was not.
+Team scope: a `team:KEY` (or bare key) argument, else `$LINEAR_TEAM`, else error — never workspace-guessed. Multi-team
+fleets: run once per team.
 
 ```bash
-q='query($team:String!,$after:String){issues(filter:{team:{key:{eq:$team}}, state:{name:{in:["Backlog","Planned","Todo"]}}}, first:250, after:$after){nodes{identifier title description priority labels{nodes{name}} state{name} parent{identifier state{name}} relations{nodes{type relatedIssue{identifier state{name}}}} inverseRelations{nodes{type issue{identifier state{name}}}}} pageInfo{hasNextPage endCursor}}}'
-pages=tmp/pool.pages; : >| "$pages"; after=''
-while :; do
-  if [ -z "$after" ]; then page=$(linear-cli api query -q -o json -v team=<KEY> "$q")
-  else page=$(linear-cli api query -q -o json -v team=<KEY> -v after="$after" "$q"); fi
-  [ -n "$page" ] || { echo "ERROR: issue fetch failed (auth? network?)" >&2; break; }
-  [ "$(printf '%s' "$page" | jq 'has("errors")')" = "true" ] && { printf '%s' "$page" | jq -c '.errors' >&2; break; }
-  printf '%s\n' "$(printf '%s' "$page" | jq -c '.data.issues.nodes // []')" >> "$pages"
-  has=$(printf '%s' "$page" | jq -r '.data.issues.pageInfo.hasNextPage // false')
-  after=$(printf '%s' "$page" | jq -r '.data.issues.pageInfo.endCursor // empty')
-  { [ "$has" = "true" ] && [ -n "$after" ]; } || break
-done
-jq -s 'add | {nodes: .}' "$pages" >| tmp/pool.json
-jq '.nodes | length' tmp/pool.json    # state the pool size in the report — a short fetch has no other tell
+~/.claude/scripts/auto-prep-pool.sh --team <KEY>      # paginated fetch → tmp/pool.json, prints the pool size
 ```
 
-Two traps this shape exists to avoid, both of which silently reproduce the bug:
+The script pages the fetch (`first:` is a hard API cap and overflow is silent), reads `hasNextPage` through the `data`
+envelope (linear gotcha #6), and accumulates pages on disk. State the pool size in the report — a short fetch has no other
+tell, and Step 4's ranking paginates on its own so it will not expose one.
 
-- **Read `hasNextPage` through the `data` envelope** — `.data.issues.pageInfo.hasNextPage` ([linear gotcha #6](../linear/SKILL.md)). The path copied straight out of the query text, `.issues.pageInfo.hasNextPage`, returns `null` at exit 0, and both `// false` and any shell truthiness test read that as "last page": the loop exits after page 1.
-- **Accumulate pages on disk, not in a shell variable.** Threading the growing array through `jq -n --argjson` each iteration hits `ARG_MAX` (~1MB on macOS), and a team's descriptions alone run several hundred KB — `next-candidates.sh` carries this same caveat at `fetch_team_issues`.
-
-This is the paginated idiom `next-candidates.sh`, `fleet-blockers.sh`, and `linear-deps-graph.sh` already run against this connection — copy one of them rather than re-deriving it.
-
-Split into the certified set (`specified` label) and the rest. Read every certified issue's description in full — the audit and the collision analysis both depend on body content, not titles.
+Split into the certified set (`specified`) and the rest. Read every certified description in full — the audit and the
+collision analysis depend on body content, not titles.
 
 ## Step 2: Certification honesty audit
 
-`specified` means "an unattended agent may pick this up and ship it" ([standards/issue-spec.md](../../standards/issue-spec.md)). Test every certified issue against that sentence and sort failures into four dispositions — then run item 5's tier audit over every certified issue, failures included:
+`specified` means "an unattended agent may pick this up and ship it" ([standards/issue-spec.md](../../standards/issue-spec.md),
+which owns every label below). Test each certified issue against that sentence, sort failures into the dispositions, then
+run item 5 over every certified issue, failures included.
 
-1. **Mark `needs decision`** — the body itself contradicts unattended shipping. Two tests, both mechanical:
-   - The text says so: "must not ship from an unattended run", "needs dedicated review", or equivalent present-tense claims about *this* issue's work. (Past-tense "was deferred from BF-X because too big for that unattended run" does NOT count — being its own issue with its own review cycle is exactly the remedy.)
-   - It requires capabilities no agent has: contacting a vendor/support rep, credentials or console access, a product/design decision with **no** testable success criteria (an "## Ask" body with no checkboxes).
+1. **Mark `needs decision`** — the body itself contradicts unattended shipping: a present-tense "must not ship from an
+   unattended run" about *this* issue (a past-tense "was deferred because too big" does not count), or capabilities no
+   agent has (a vendor rep, credentials or console access, a product decision with no testable criteria). Comment naming
+   the decision or access needed, then `~/.claude/scripts/linear-add-label.sh <ID> 'needs decision'`. The issue keeps
+   `specified` — gated, not wrong — and is hidden from every ranking until a human clears the label (directly or via
+   `/spec`). When the work is *itself* human-performed — outreach, a console only a person can drive, production data
+   remediation, sign-offs — apply `human` instead: permanent, and it refuses targeted `/auto <ID>` too. A body bundling an
+   agent-shippable slice with human acts takes neither label — flag it for `/spec` to split at the handoff.
+2. **Flag: decision-gated** — the first success criterion is a product/design decision but a conservative implementable
+   path exists. Keep the label, list it: the user decides now (best) or accepts the conservative option. A decision counts
+   only once it is in the description — route it through `/spec <ID>`; a comment does not unblock `/auto`.
+3. **Mark `solo`** — implementable unattended but fleet-hostile; the remedy is sequencing. Apply the label
+   (`linear-add-label.sh <ID> solo`; exit 2 → `linear-cli labels create "solo" -t issue`, retry once) and recommend a
+   targeted `/auto <ID>` or `/fleet-sequence` while the fleet is quiet. The label hides the issue from every ranking;
+   targeted runs still ship it. **It over-triggers, and a false positive parks a workable issue on the one serial
+   resource** — read `references/solo-qualification.md` before marking one. Exactly two grounds qualify, named in the
+   comment: (a) it changes the rules in-flight sessions already play by (merge drivers, the check graph, a shared CI gate,
+   a lockfile every worktree's install predates); (b) it collides so broadly that serialization does not scale (more than
+   a handful of Step 3 edges — put the count in the comment). A resolved generated artifact, a sweep confined to one file,
+   and a serial artifact the repo does not resolve are the false positives the reference walks through.
+4. **Pipeline label repair** — `/reflect` filings certify by provenance: ensure `specified` + `reflection`, plus `keeper`
+   when the proposal edits `~/.claude`. Duplicate filings of one proposal: keep one canonical,
+   `linear-cli relations add <dup> <canonical> -r duplicate`, cross-comment both.
+5. **`simple` audit — both directions** (§ The `simple` label: risk-low, no open decision; effort irrelevant below the
+   reviewability ceiling). Add it where the body qualifies; **remove** it (`linear-remove-label.sh <ID> simple`) where the
+   body no longer qualifies or a `security`, `human`, `needs decision`, or `epic` label has attached. Body-first; open code
+   only for issues near the top of the ranking, as one grep of the named file for a policy, lock, or transaction token
+   that would move the remedy across a contract. List adds and removes with reasons; apply what the user confirms.
 
-   Post a comment stating the specific decision or access needed, then apply the label: `~/.claude/scripts/linear-add-label.sh <ID> 'needs decision'`. The issue keeps `specified` — the spec is gated, not wrong (`standards/issue-spec.md`) — and `next-candidates.sh` hides it from every ranking until a human decides and clears the label (directly, or via `/spec <ID>`).
-
-   **When the capabilities test fires because the work is *itself* human-performed** — outreach, vendor contact, credentials-or-console-gated configuration (a web console only a person can drive is a human step, not a pending decision — the BF-858 miss), production data remediation, sign-offs, a roll-up a person owns — apply `human` instead (`~/.claude/scripts/linear-add-label.sh <ID> human`): that gate is permanent and refuses targeted `/auto <ID>` too, while `needs decision` advertises a pending decision that would return the issue to agents (`standards/issue-spec.md`). A body that *bundles* an agent-shippable slice with human acts takes neither label as the fix — flag it for `/spec` to split at the handoff, exactly the BF-856 shape (a fully-specified schema fused to a confirmation pass the plan itself called human-in-the-loop).
-2. **Flag: decision-gated** — the first success criterion is a product/design decision but a conservative implementable path exists (e.g. "apply the same filter the sibling uses"). Keep the label, list it in the report: the user either decides now (best) or accepts that an agent will pick the conservative option and record it. **A decision made now counts only once it is in the description** — route it through `/spec <ID>` so the answer lands in the body and the criterion is rewritten to prescribe it; a decision left in a comment does not unblock `/auto` ([standards/issue-spec.md](../../standards/issue-spec.md)).
-3. **Mark `solo`** — implementable unattended but fleet-hostile. The constraint is concurrency, not attendance: worktrees isolate the working tree, so the remedy is sequencing, not a human. Apply the label (`~/.claude/scripts/linear-add-label.sh <ID> solo`; exit 2 → `linear-cli labels create "solo" -t issue`, then retry once) and recommend a targeted `/auto <ID>` (or `/full <ID>`) while the fleet is quiet, first or last (a judgment, not a refusal — the tools coexist; `standards/issue-spec.md` § The `solo` label). The label hides the issue from every ranking so no fleet session can pick it, while targeted runs still ship it normally ([standards/issue-spec.md](../../standards/issue-spec.md)). A report-only flag would not survive the session that read it — this is the one disposition where the old advice ("don't hand-pick these") was addressed to a human who wasn't going to be there.
-
-   **This disposition over-triggers, and a false positive is expensive** — it pulls a workable issue out of the fleet pool and parks it on the one serial resource, the user. Qualify on exactly two grounds, and name which one in the comment:
-
-   - **(a) It changes the rules other in-flight sessions are already playing by.** Merge-driver or `.gitattributes` registration, the `pnpm check` / turbo task graph, a package's `test` script going from stub to real, a shared CI gate, a dependency or lockfile change every other worktree's install predates. The test is whether a session that started *before* this merged would behave differently after it — not whether the file sounds important.
-   - **(b) It collides so broadly that serialization does not scale.** A sweep across a directory where much of the certified pool lives. Make this quantitative: if wiring the Step 3 `blocks` edges would take more than a handful, one `solo` mark is the same guarantee for a fraction of the wiring — count the colliding issues and put the count in the comment. Below that threshold, wire the edges instead; that is what Step 3 is for.
-
-   **Not solo, however it sounds:**
-
-   - **Touching a generated artifact.** Regenerating codegen output is not a collision when the repo already resolves it — check `.gitattributes` for a `merge=ours` driver on those paths and CI for an unconditional regen before assuming otherwise. Under both, sibling sessions never conflict there and CI rebuilds the truth anyway. Changing the generation *pipeline or its gate* can still qualify under (a); emitting different *content* through an unchanged pipeline does not. A **serial** artifact the repo does not resolve — a migration journal with chained snapshots, a numbered changelog — is the case neither remedy fits: wiring edges puts every issue that touches it on one chain (BFP, 2026-09-04: nine schema-touching issues across three providers in a single line, the forecast chain-bound from hour 8 with two of three lanes idle), and `solo` takes them out of the fleet entirely. Surface the pipeline fix as a FOCUS-ROOT instead — a project rule that regenerates the artifact at merge plus a consistency check and a drift check in the gate (bfp-control-panel `doc/architecture-decisions.md` D14 is the worked case) — and once it lands drop the artifact-only edges, keeping the pairs that also share ordinary source files.
-   - **A class-scoped sweep confined to one file or type.** That is Step 3's serialization case by the same "same file → serialize" rule, and often already wired. Scope, not the word "sweep" or "audit," decides.
-   - **An ordinary schema or API change** whose only shared-file contact is the regenerated output above.
-4. **Pipeline label repair** — `/reflect` filings ("Auto-filed by /reflect…") certify by provenance: ensure `specified` + `reflection`, plus `keeper` when the proposal edits the shared `~/.claude` repo. Duplicate filings (same proposal from different sessions): keep one canonical, `linear-cli relations add <dup> <canonical> -r duplicate`, cross-comment both.
-
-5. **`simple` audit — both directions.** Test every certified issue against the `simple` semantics ([standards/issue-spec.md](../../standards/issue-spec.md) § The `simple` label: risk-low, no open decision; effort irrelevant below the reviewability ceiling). Add it (`~/.claude/scripts/linear-add-label.sh <ID> simple`) where the body qualifies and the label is absent; **remove** it (`~/.claude/scripts/linear-remove-label.sh <ID> simple`) where the body itself no longer qualifies or a `security`, `human`, `needs decision`, or `epic` label has since attached. The remove test is body-first, like every other disposition here; open code only for issues near the top of the ranking the fleet will actually pick this run, and only as one grep of the named file for a policy, lock, or transaction token that would move the remedy across a contract — never a per-issue code read across the pool. This is the backstop for every producer that labels at filing or grooming time, when the reading was fresh: descriptions go stale in both directions, and a stale `simple` costs one escalated review while a missing one costs a full-tier review on a one-line fix. Interactive like every flag here — list the adds and removes with the reason, and apply what the user confirms.
-
-While reading bodies, also catch cheap ranking wins: a flake fix or check-stabilizer that other sessions' quality gates depend on deserves a priority bump (it sorts within-tier by priority); `bug`/`security` labels missing from issues that plainly are one feed the class rank.
+While reading bodies, catch cheap ranking wins: a flake fix or check-stabilizer other sessions' gates depend on deserves a
+priority bump; `bug`/`security` labels missing from issues that plainly are one feed the class rank.
 
 ## Step 3: Consolidate families, then wire collision edges
 
-**Before wiring any edge, confirm the team has a completed-type state that `/finish` actually lands in.** `next-candidates.sh` clears a blocker only once its state's
-*type* is `completed` (or `canceled`), so an edge whose blocker ships into a `started` state never releases — the dependent stays hidden until a human transitions it
-by hand, and an unattended fleet idles the lane instead. Read the team's state types with
-`linear-cli statuses list -t <KEY> --no-cache -o json | jq -r '.statuses[] | "\(.name) \(.type)"'` and compare against where `/finish` lands
-(`mark-ready-for-release.sh` targets a Ready-For-Release-like state). When no completed-type landing state exists, still wire the edges — they are correct about the
-collision — but say so in the report and treat every chain as manual: the lane count stands, the release does not. Measured 2026-08-18 on a team whose landing state
-was then `In Review` (type `started`): three wired edges, three hand transitions mid-run, and one session drained ~2.3h before the deadline with work available
-behind an edge it could not see.
+**First confirm the team has a completed-type state that `/finish` lands in.** `next-candidates.sh` clears a blocker
+only once its state's *type* is `completed` or `canceled`, so an edge whose blocker ships into a `started` state never
+releases and the lane idles. Compare `linear-cli statuses list -t <KEY> --no-cache -o json | jq -r '.statuses[] |
+"\(.name) \(.type)"'` against where `mark-ready-for-release.sh` lands. With no such state, still wire the edges but say so
+and treat every chain as manual.
 
-From the descriptions' named files/components, build overlap groups. For each group, consolidation is the first disposition; serialization is the fallback.
+Build overlap groups from each certified issue's edit-bearing sections, subjects first and paths second:
 
-**A named file is not necessarily an edited file — classify each mention before it becomes an edge.** Descriptions cite paths for three reasons that are not collisions: as **precedent** ("the sibling half of this flow already locks — `email_verification.rb:11`"), as **explanation** of blast radius ("`useQuery.tsx` rethrows to the error boundary, so one missing row kills the page"), and as a **pattern to follow** ("following `spec/lib/bullet_spec.rb`'s `around`-block pattern"). The discriminator is which *section* the mention sits in, never how precise it is: Success Criteria / Requirements checkboxes and In Scope entries are what the issue will edit (`/start` Step 6 takes the checkboxes as its requirements, and [standards/issue-spec.md](../../standards/issue-spec.md)'s quality bar bans implementation-planning file lists from specs, with one exception — a spec whose *work* is site enumeration, where the census is the requirement and is written as greppable shapes anchored to a commit — so a path that survives certification inside a criterion is there because it names the work target, either as the edit or as the census itself), while prose in Problem, Notes, or a Boundaries rationale is a citation. **Line numbers prove the author read the code, not that they will change it** — `tenant.rb:72-77` quoted in a Problem to explain a symptom is a citation; a criterion naming a bare `debt_series/create.rb` is an edit. Keep a pair only where **both** sides edit; one-sided contact is not a collision, at most a `related` link when the mechanism is genuinely shared. The cost is asymmetric and silent: a false edge hides a workable issue from every ranking until its supposed blocker ships, and unlike the keeper / `needs decision` / `solo` gates there is no trailing note reporting it — a missed edge costs at most one merge conflict. On one BF run 5 of 27 computed edges were citation-only, including a three-issue N+1 cluster whose members all merely cited `config/application.rb` and `bullet_spec.rb` and so had no collision at all.
+```bash
+~/.claude/scripts/auto-prep-pool.sh --team <KEY> --collisions     # candidates → tmp/pool-collisions.json
+```
 
-**Paths are the weak signal; SUBJECTS are the strong one.** The same certification bar that makes a surviving path trustworthy also makes it rare — `issue-spec.md`'s quality bar bans file lists from specs, so a well-groomed pool names its work target as a *symbol* in prose (a class, policy, operation, mutation, or component) far more often than as a path. Measured on BF (2026-08-08): 35 of 62 workable candidates named no repo path in any edit-bearing section at all, and the run's two real collisions — one pair on `ObligationsTab`, one on `SecureClosingFormContent` — shared no literal path string anywhere in either description. So extract the CamelCase and namespaced identifiers from each issue's title and criteria, resolve each to the file(s) on disk (`find`/`grep`), and build the overlap groups on the *resolved* paths, running the path pass second rather than first. Resolution is what lands two issues naming one subject different ways in a single group; a symbol resolving to nothing means renamed or moved, not gone — re-locate it (`git log -S <symbol>`) before dropping it from the analysis.
+Its output is candidates to confirm, never edges to wire blind. Read `references/collision-classification.md` when
+confirming them — a named file is not an edited file, a subject takes the same edit-vs-citation test, same file is not
+same method; a false edge hides a workable issue from every ranking while a missed edge costs one merge conflict.
 
-**A subject takes the same edit-vs-citation test as a path — and the section rule does not apply it for you.** A pattern-to-follow citation sits perfectly happily inside a Success Criteria bullet, where the section discriminator reads it as an edit: on that same BF run, every path collision the section rule surfaced was a false positive of exactly that shape (two of them the `bullet_spec.rb` `around`-block example the paragraph above already names). So read the clause around each mention, symbol or path, before it becomes an edge — the asymmetric cost is unchanged, and a wider net without that test buys recall by manufacturing false edges.
+**Family consolidation (one decision per group, interactive).** When a group's issues are the same defect *class* with
+the same fix *shape* — one root cause across N sites — N point fixes cost N worktrees, ~2N reviews and N serialized merges
+for what one class-scoped sweep fixes at once. Propose the merge: absorb into the existing sweep issue, else promote the
+most complete point issue to canonical and widen it to the class. On approval: append each absorbed issue's Problem +
+Success Criteria as a checklist comment on the canonical (`linear-post.sh`), wire `linear-cli relations add <absorbed>
+<canonical> -r duplicate`, and remove `specified` from the absorbed issue — only once the canonical's **description**
+names the absorbed subject (the reference explains why a comment is not enough). The `duplicate` relation moves its first
+argument into the duplicate-type state with no history entry; read the state back and write it only if it did not land.
+An uncertified canonical takes the absorbed work out of the pool until groomed — flag it for `/spec` rather than
+certifying here. Same fix shape, never same file: two defects in one method are a serialization case, two in one file a
+`related` pair, and merging them builds the blast radius `solo` exists to keep out. Declined groups fall through to
+serialization.
 
-`~/.claude/scripts/auto-prep-pool.sh --team <KEY> --collisions` runs this extraction — edit-section split, path and symbol extraction, on-disk resolution, overlap grouping — and emits candidate pairs plus the skipped-issue list; treat its output as candidates to confirm with the clause-level read above, never edges to wire blind.
+Then wire **minimal chains** with `linear-cli relations add <BLOCKER> <BLOCKED> -r blocks`:
 
-**Family consolidation (one decision per group, interactive like every flag here).** When a group's issues are the same defect *class* with the same fix *shape* — the bodies name one root cause across N sites (N header-scoped policy predicates, N unscoped finds, N copies of a missing guard) — N point-fix issues cost N worktrees, roughly 2N reviewer dispatches, and N serialized merges for what one class-scoped sweep fixes in a fraction. Adversarial review generates exactly this shape when it pulls a defect-family thread: a fleet night can file point fixes *and* its own sweep issues (BF-623, BF-642) for the same families in different sessions. Propose the merge: absorb the point issues into the existing sweep/audit issue when one exists, else promote the most complete point issue to canonical and widen its scope to the class. On approval for a group: append each absorbed issue's Problem + Success Criteria as a checklist block on the canonical (comment via `~/.claude/scripts/linear-post.sh`), wire `linear-cli relations add <absorbed> <canonical> -r duplicate`, and remove `specified` from the absorbed issues — but only once the scope test below passes. **Adding the `duplicate` relation moves the first argument — the absorbed issue — into the team's duplicate-type state on its own**, leaving the canonical untouched (verified on BF: `Backlog` → `Duplicate` from the relation alone, with no state write and no `fromState`/`toState` history entry, so issue history will not show it). Read the state back and issue an explicit update only if it did not land there — the target is the team's duplicate-*type* state, whose name is team-configurable (`Duplicate` in BF and PL) and which a team may not have at all. **Before absorbing into a *certified* canonical, test the canonical's stated scope against the absorbed issue's subject.** The selection test is same fix *shape*, deliberately not same *file* — so the canonical's `### In Scope` and success criteria routinely do not reach the file, class, or predicate the absorbed issue names, and there "the absorbed criteria live on in the canonical" does not hold. `/start` Step 6 does read absorbed criteria out of the comment (it names this protocol by name, after BF-627), but the **description** is what the rest of the pipeline consumes: `/quality-review` sources its "Issue requirements" from `linear-cli issues get <ID>`, which returns the description and no standalone comments, and `/finish` checks off *description* checkboxes — so a criterion living only in a comment is shipped at the planner's discretion, verified by no reviewer, and checked off by nobody, while the absorbed issue sits de-certified in the duplicate state tracking nothing. Two dispositions, and the test picks between them: **scope reaches the subject** → absorb as above; **it does not** → either leave the two separate, wired `related` with a cross-comment and `specified` intact on both, or absorb and **flag the canonical for `/spec`** to widen its Boundaries and criteria into the description before the fleet picks it up — the same interview-grade judgment the uncertified-canonical branch below defers, and the reason not to edit a certified description here. **Never strip `specified` from the absorbed issue on the strength of a comment alone** — do it only once the canonical's description names its subject. Worked case: BF-874 (High, `security`+`bug`, subject `apps/api/app/policies/secure_entity_policy.rb`) was absorbed into BF-849, whose In Scope names only `disbursement_of_funds_policy.rb` and `disbursement_of_funds.rb`'s `participant_emails` and whose six criteria are all written against `DisbursementOfFundsPolicy`; `specified` came off BF-874 eleven seconds after the absorption comment, and BF-866's review re-found the same unguarded predicate and could only file the scope gap back as another comment. A canonical that is not itself certified (a Triage-filed sweep, say) takes the absorbed work out of the fleet pool until it is groomed — flag it for `/spec` in the report rather than certifying it here (widened-scope certification is an interview-grade judgment, not label repair). Declined groups fall through to serialization. The test is same *fix shape*, never same *file*: two different defects in one method are a serialization case below and two in one file are a `related` pair, and merging them would build exactly the fleet-hostile blast radius Step 2's `solo` disposition exists to keep out of fleets — when a proposed merge would cross that line, leave the group unconsolidated.
+- **`blocks` only for the three meanings — prerequisite, same method, deliberate increment** (`standards/issue-spec.md`
+  § Certification includes collision edges). Same file, same spec file, or same mechanism is `related`. Adjacent pairs
+  only (A→B, B→C, never a redundant A→C — `/next` requires all blockers terminal, so transitivity is free).
+- **Order each group against the edges it already carries, then re-check every pair.** The pool arrives pre-wired and
+  Step 1's relations carry the edges. Sort by existing reachability first, then the standard's direction rule
+  (semantic/work order, else the earlier issue blocks the newer), then higher priority and wider fan-out first — a serial
+  group's order is the run's tail. Then check every pair: adjacent-only wiring plus an existing edge can leave a pair
+  mutually unreachable, a live collision nothing downstream reports.
+- **Semantic order directs the edge:** mechanism before consumers, client display fixes before the server withholds the
+  data, code before its docs, small surgical fixes before the sweep that enumerates the area.
+- **Disjoint-overlap diamonds stay parallel:** A and C disjoint but both overlapping B → A→B and C→B, A ∥ C.
+- **Never chain through a Step 2-flagged issue** — it never ships unattended, so its dependents are stranded. Flagged
+  issues sit at chain *tails* only, save the one `human` head the standard allows (a production-readiness act whose
+  dependent is wrong without it; `fleet-blockers.sh` reports it as a `human` root).
+- **A `solo` blocker is a chain head or nothing.** It ships outside the fleet window, and blocker resolution reads state,
+  never labels, so a dependent behind it stays blocked all run. Wire it as a blocker only when you will run it in the
+  pre-fleet solo pass; otherwise leave it at a tail.
 
-Then wire **minimal chains** with `linear-cli relations add <BLOCKER> <BLOCKED> -r blocks` (blocker ships first):
-
-- **`blocks` only for the three meanings — prerequisite, same method, deliberate increment** (standards/issue-spec.md § Certification includes collision edges; keeper ruling 2026-09-11). A same-file, same-spec-file, or same-mechanism pair takes `related` instead: `next-candidates.sh` soft-de-ranks it while the partner is in flight and `/finish` gates the merged tree, so git reconciles the file. The same-method test needs the resolved subjects from the pass above — two issues naming one class or file are not yet a collision; two whose edits land in one region of a method body are — disjoint branches of a long multi-branch body merge mechanically and take `related`, while an edit at the top of the body that every branch runs under collides with each of them (keeper ruling 2026-09-11). Adjacent pairs only (A→B, B→C — never a redundant A→C; `/next` requires all blockers terminal, so transitivity is free). Same file alone serialized until 2026-09-11; on BF that day 57 of 222 certified issues sat behind a workable blocker while merge conflicts ran at 34 per 669 ships, every one resolved in-session.
-- **Order each group against the edges it already carries, then re-check every pair.** The pool arrives pre-wired — `/quality-review` files up to one dedup-adjacent edge per filed item (same-method sibling, both certified) plus intra-batch chains, and a prior prep adds more (one BF run started with 60) — and Step 1's `relations`/`inverseRelations` already carry them, so no extra fetch. Sort each group by existing reachability first, falling back to `standards/issue-spec.md`'s direction rule (semantic/work order where discernible, else the earlier/already-open issue blocks the newer), or a fresh sort buries a chain head at the tail (a priority-first sort did exactly that to an issue already blocking two others). Where neither existing edges nor semantic order decide, put higher priority and wider fan-out first — a serial group's internal order is the run's tail, and a filing-order chain that led with a Low config issue ahead of Medium pulls cost a full wave in the 2026-09-04 BFP forecast. Then check every pair in the group: adjacent-pairs-only wiring plus an existing edge makes a group *look* serialized while a pair sits mutually unreachable — that pair is a live collision, and nothing downstream reports it, since Step 4 confirms the edges you wired and never the ones you missed.
-- **Semantic order → direct the edge**: mechanism before consumers, client display fixes before the server withholds the data they render, code before the docs that describe it, small surgical fixes before the sweep that enumerates the area.
-- **Disjoint-overlap diamonds stay parallel**: if A and C are disjoint but both overlap B, wire A→B and C→B and leave A ∥ C.
-- **Never chain through a Step 2-flagged issue** — a `needs decision` or decision-gated blocker never ships unattended, so anything wired behind it is stranded. Flagged issues sit at chain *tails* only — save the one `human` head the standard allows (`standards/issue-spec.md` § Certification includes collision edges, the `human` carve-out): a production-readiness act whose dependent is *wrong* without it blocks that dependent deliberately, and `fleet-blockers.sh` reports it as a `human` root rather than this step unwiring it.
-- **A `solo` blocker is a chain head or nothing.** Unlike the flags above it does ship — just outside the fleet window — and blocker resolution reads the blocker's *state*, never its labels, so a dependent behind it stays blocked for the whole fleet run. Wire one as a blocker only when you will run it in the pre-fleet solo pass; otherwise leave it at a tail and let its dependents run free.
-
-Fleet safety rails that already exist and need no wiring: Linear is the claim registry (In Progress is invisible to `/next`), worktree creation is repo-locked, `/finish` merges serialize and re-gate the merged tree whenever source advanced under the issue (`finish-merge.sh` exit 5 — what lets `related` partners ship in parallel), and `/quality-review` wires same-batch filing collisions itself (BF-581), plus one dedup-adjacent edge per filed item against an open same-method sibling. This step covers what those can't see: the rest of the overlap across *previously filed* siblings.
+Rails that need no wiring: Linear is the claim registry (In Progress is invisible to `/next`), worktree creation is
+repo-locked, `/finish` merges serialize and re-gate the merged tree whenever source advanced (what lets `related` partners
+ship in parallel), and `/quality-review` wires its own same-batch collisions. This step covers *previously filed* siblings.
 
 ## Step 4: Validate through the real ranking
 
@@ -120,49 +137,78 @@ Fleet safety rails that already exist and need no wiring: Linear is the claim re
 ~/.claude/scripts/next-candidates.sh --team <KEY> --label specified --limit 30
 ```
 
-Confirm: tier-0 reflection filings lead; every Step 3 dependent is absent (blocked); de-labeled issues are gone; every issue marked `solo` is absent and accounted for by the trailing hidden-count note; `epic`-labeled issues absent with their own hidden-count note (never fleet-workable — the BF-504 shape; an epic closes itself when its last child releases, so it holds the gate only while a child is open); and the `PLANNED-HOLD` note's *need the keeper* entries read as the fleet's stopping point. To reconcile that count against what Step 2 marked, re-list with **`--label solo --include-blocked --limit 50`**.
+Confirm: tier-0 reflection filings lead; every Step 3 dependent is absent; de-labeled issues are gone; every `solo` issue
+is absent and accounted for by the trailing hidden-count note; `epic`-labeled issues absent with their own note (never
+fleet-workable — an epic closes itself when its last child releases); and the `PLANNED-HOLD` note's *need the keeper*
+entries read as the fleet's stopping point. Reconcile `solo` with `--label solo --include-blocked --limit 50`.
 
-**Pass `--limit` on every listing you reconcile or work from — the script's default is 3.** `next-candidates.sh` defaults `limit=3`, so a bare `--label 'needs decision' --include-blocked` prints three rows whatever the real count. It is not silent about it — a trailing `_N more workable candidate(s) available; pass --limit to see more._` carries the remainder — but that makes the reconciliation `3 + N` against the hidden-count note rather than the row count against it, and counting rows is the natural reading (a `grep -c` over the listing discards the remainder line outright). A label whose real count is at or under 3 matches by luck and never exposes the difference. Measured on BF: the bare needs-decision listing returned 3 rows plus "15 more" against a 19-issue note — i.e. 18 in workable states, the residual 1 being the state-span effect below. Note that "bare" here, in Step 5's launch checklist, and in the Report's `solo` running order all mean *without `--include-blocked`* — never without `--limit`.
+**Pass `--limit` on every listing you reconcile from — the default is 3**, with the remainder in a trailing `_N more …_`
+line a row count discards. **Reconcile against the listing, not the hidden-count note:** the blocker filter hides issues
+behind open blockers (`--include-blocked` restores them), and the notes span every state the fetch admits — `started`,
+`triage`, `duplicate` included — so a note exceeding the listing means parked, in-flight, or blocked siblings before it
+means a wiring fault. A blocker in the ship state still reading unresolved is a name mismatch against `TERMINAL_STATES`.
 
-Two independent causes make the numbers disagree, neither a bug. The blocker filter is one: a bare `--label solo` ranking still hides an issue behind an open blocker, which `--include-blocked` restores. The larger one is usually **state span** — the fetch excludes only the `completed` and `canceled` state *types*, and the hidden-count notes run over that unfiltered list, so a labeled issue in any other state the fetch admits is counted as hidden even though it was never workable and the `--label solo` listing correctly omits it. That is not just the `started` states (`In Progress`, `In Review`) — `triage` and `duplicate` survive too, and Step 3's own `duplicate` wiring moves absorbed issues into one of them. The `needs decision`, `human`, and keeper notes span the same states. **Reconcile against the listing, not the note** — and read a note that exceeds the listing as parked, in-flight, or blocked siblings before suspecting a wiring fault. If a blocker already in the team's ship state still reads as unresolved, suspect a state-name mismatch against the script's `TERMINAL_STATES` before suspecting the wiring.
-
-**Release-scope audit + fleet-drain blockers — what the keeper must do for the unstarted stage to drain.** Step 3's wiring rules keep *new* chains from running through flagged issues, but the pool arrives pre-wired. Run the tested implementation — do not re-derive the filters inline (a mistranscribed filter prints nothing at exit 0, which reads as "nothing blocks the fleet"); the `FOCUS:` and `FLEET-BLOCKED:` summary lines are the verdicts — branch on them, never on empty output:
+**Release-scope audit + fleet-drain blockers.** Run the tested implementation — never re-derive the filters inline (a
+mistranscribed filter prints nothing at exit 0, which reads as "nothing blocks the fleet") — and branch on the `FOCUS:`
+and `FLEET-BLOCKED:` summary lines, never on empty output:
 
 ```bash
 ~/.claude/scripts/fleet-blockers.sh --team <KEY>
 ```
 
-**Epic auto-close sweep — run it before reading FOCUS.** Since 2026-09-11 an epic closes itself: `mark-ready-for-release.sh` walks up from every released child and moves a parent carrying `epic` to Ready for Release once every child is terminal (Done / Canceled / Duplicate / Ready for Release — In Review keeps it open), recursively. Epics that were already complete before that walk existed still sit in the column, and the script's `CLOSE-SET:` line lists them — every fetched epic with at least one child and every child terminal. Run the batch with one approval, exactly like PROMOTE-SET: `~/.claude/scripts/linear-set-state.sh 'Ready for Release' <IDs>` (each write read-back-verified). A `CLOSE-SET: (none)` is the normal steady state. An epic whose children are still open needs nothing from the keeper beyond certifying them — its FOCUS-ACTION row now says so — and "close it when they release" is no longer a keeper task anywhere in this report.
+**Epic auto-close sweep — before reading FOCUS.** `mark-ready-for-release.sh` closes an epic itself once every child is
+terminal; the `CLOSE-SET:` line lists epics complete before that walk existed. Run the batch with one approval:
+`~/.claude/scripts/linear-set-state.sh 'Ready for Release' <IDs>`. `CLOSE-SET: (none)` is steady state.
 
-The output is two sections, and they are not equal. **FOCUS is the report's headline** — the user's stated priority is finishing the unstarted stage (Planned/Todo: the committed release scope, which stage-first ranking already drains first), and this section is their personal unblock list for it: every unstarted issue classified fleet-workable / needs-keeper-action / draining, with each blocked issue's chain walked transitively to its root causes and grouped by fan-out (`FOCUS-ROOT: <root> — <remedy> — unblocks <deps>`), widest first, so the top row is the highest-value keeper hour of the day. Present the rows grouped by remedy, each with what it releases and the released issues' priorities as its worth: decisions to make now (`needs decision` — route through `/spec <ID>`; a bare comment doesn't unblock `/auto`), uncertified scope to `/spec` — **excluding claimed issues**: an assignee other than the viewer is a person's claim (standards/linear-workflow.md — the same rule `next-candidates.sh` enforces at pick time, and `fleet-blockers.sh` now carries in its `claimed by <email>` rows), so a claimed issue is its owner's work whatever its certification state — report it in one line, never as a keeper action, and never recommend `/spec` on it (2026-08-15: the highest-value-hour line recommended four spec interviews on teammates' claimed High issues) — human-performed work to do or re-scope, `solo` roots for the pre-fleet quiet window, `stalled` in-flight roots to resume or release, **parked roots holding banked work** — a `needs decision`/`human` root whose preserved worktree carries verified commits gets its drift quantified (`git rev-list --count <branch>..<source>`) and a split-and-merge recommendation leading its row, since the gate usually covers only part of the work and the verified remainder ages while it waits (BF-858: 21 verified files went 4 → 91 commits behind in three days before the split banked them) — Triage roots to groom (grooming is triage acceptance — never promote around it with a bare state write), and **every Backlog member of a Planned blocking chain**, which is release scope by implication whatever its own labels — an issue is scoped by what it gates, not by the column it sits in or the gate parked on it. Promote the whole membership as one batch (`linear-cli issues update <ID> -s Planned`, one user approval for the set, each write verified per linear skill gotcha #8), and take the set from the FOCUS-ROOT rows rather than re-deriving it — the script's `ancestors()` walk already returns the full ancestry, intermediates included. The promotion is column hygiene, not what makes the fleet reach them: `next-candidates.sh` inherits the Planned stage for every Backlog issue that transitively blocks Planned/Todo work (standards/linear-workflow.md § Stage Priorities), so a chain wired between preps — a review filing, a hand promotion of the dependent alone — still ranks its Backlog members ahead of deferred Backlog work; the batch is what puts them in the keeper's Planned view and the `needs decision` × Planned grooming filter. Gate labels are orthogonal to the column and never hold a member back (keeper-settled 2026-08-13, second ruling): `needs decision`/`human` already hide an issue from every fleet ranking in ANY state, so promotion changes nothing about pickability — while the keeper's own grooming filter is that label × the Planned column, so a gated blocker left in Backlog is buried among the dozens of non-release-scoped issues wearing the same label (BF-553, the 2026-08-13 miss, sat among 17 others; its false justification was "promoting while parked would strand dependents" — the dependents are stranded by the unmade decision, not by the column). Promotion does not unpark a gated member: its FOCUS remedy line — decide, `/spec`, do the human step — still leads the report, and an uncertified member still surfaces as FOCUS-ACTION `/spec` work. The only state never promoted around is Triage, per the grooming-is-acceptance rule above. Both halves of the membership rule matter: an intermediate left in Backlog drops out of the keeper's Planned view the moment its own blocker ships (until 2026-08-28 the ranking also parked the Planned dependent behind a Backlog pick at that point — the inherited stage closes that half; the column still needs the batch), and a hand-rolled re-derivation is how that happens — on the 2026-08-13 BF run the rows named 21 members, a 'roots-only' recomputation promoted 12, and the 9 intermediates had to be found and promoted in a second pass after the keeper intervened. A root co-gated with siblings frees nothing alone (BF-838 freed 0 of its 9 dependents until BF-1044 and BF-844 joined it), one more reason the batch, not the row, is the unit of action. After promoting, re-run the Planned-tier collision pass — the batch just enlarged the set the fleet picks from concurrently. This chain-membership case is the **only** promotion this skill ever suggests: the unstarted stage is a curated release-scoping signal, and bulk-promoting Backlog issues that gate only Backlog work destroys it — the script never emits those rows (68 of the old audit's 71 BF rows were exactly that noise). **FLEET-BLOCKED is second-order** — certified Backlog candidates stranded behind blockers the fleet can never pick; it matters only after the FOCUS actions are exhausted, and is presented briefly and last. If the user declines a remedy, report the dependent as stranded for this run; if inspection shows the edge itself is stale, dropping the edge is the fix, not the promotion.
+**FOCUS is the report's headline** — the keeper's unblock list for the unstarted stage (Planned/Todo, the committed
+release scope that stage-first ranking drains first): every unstarted issue classified fleet-workable /
+needs-keeper-action / draining, each blocked issue's chain walked to its root causes and grouped by fan-out
+(`FOCUS-ROOT: <root> — <remedy> — unblocks <deps>`, widest first). Present the rows grouped by remedy, each with what it
+releases and the released issues' priorities as its worth:
+
+- `needs decision` → decide now, through `/spec <ID>` so the answer lands in the description.
+- Uncertified scope → `/spec`, **excluding claimed issues**: an assignee other than the viewer is a person's claim
+  (`standards/linear-workflow.md`; the script's `claimed by <email>` rows) — one line, never a keeper action.
+- `human` work → do or re-scope; `solo` roots → the pre-fleet quiet window; `stalled` in-flight roots → resume or release.
+- **Parked roots holding banked work** — a `needs decision`/`human` root whose preserved worktree carries verified
+  commits: quantify the drift (`git rev-list --count <branch>..<source>`) and lead its row with a split-and-merge
+  recommendation, since the gate usually covers part of the work and the verified remainder ages.
+- Triage roots → groom (grooming is triage acceptance; never promote around it with a bare state write).
+- **Every Backlog member of a Planned blocking chain** is release scope by implication whatever its labels — an issue is
+  scoped by what it gates, not by its column or the gate parked on it. Promote the whole membership as one batch
+  (`linear-cli issues update <ID> -s Planned`, one approval, each write verified per linear gotcha #8), taking the set
+  from the FOCUS-ROOT rows — the script's ancestry walk returns roots and intermediates; a hand re-derivation drops the
+  intermediates. Promotion is column hygiene, not what makes the fleet reach them (`next-candidates.sh` inherits the
+  Planned stage for Backlog issues that transitively block Planned work — `standards/linear-workflow.md` § Stage
+  Priorities); it puts them in the keeper's Planned view and grooming filter. Gate labels never hold a member back (they
+  already hide it from every ranking in any state), and promotion does not unpark it: its remedy row still leads. A root
+  co-gated with siblings frees nothing alone, so the batch is the unit. After promoting, re-run the Planned-tier collision
+  pass. This is the **only** promotion this skill suggests: Backlog issues gating only Backlog work stay put.
+
+**FLEET-BLOCKED is second-order** — certified Backlog candidates stranded behind blockers the fleet can never pick;
+present it briefly and last. A declined remedy → the dependent is stranded for this run; a stale edge → drop the edge,
+never promote around it.
 
 ## Step 5: Fleet size and launch checklist
 
-Count **lanes** from the Step 4 ranking, which already excludes both label gates — and, under the Planned gate (keeper ruling 2026-08-28, `standards/linear-workflow.md` § Stage Priorities), is the **Planned stage alone** until that column drains: Backlog candidates are withheld and never count as lanes while anything Planned remains, and a session beyond the Planned lanes idles at zero usage until a chain releases or the keeper acts. Lanes are the immediately-workable candidates minus the decision-gated flags, grouped by cluster (chain heads count once; independent standalones count individually). Recommend `min(lanes, 3)` parallel sessions; below 3 lanes, recommend the lane count and note when chains will release more work (each blocker's ship unblocks its dependent automatically).
+Count **lanes** from the Step 4 ranking, which already excludes both label gates and, under the Planned gate
+(`standards/linear-workflow.md` § Stage Priorities), is the **Planned stage alone** until that column drains: Backlog
+candidates never count as lanes while anything Planned remains, and a session beyond the Planned lanes idles until a
+chain releases or the keeper acts. Lanes are the immediately-workable candidates minus the decision-gated flags, grouped
+by cluster (chain heads count once; standalones individually). Recommend `min(lanes, 3)`; below 3 lanes, recommend the
+lane count and say when chains release more work.
 
-### The cap is 3, fixed — capacity is not a question to ask
+**The cap is 3 and capacity is not a question to ask** — [`/fleet-launch`](../fleet-launch/SKILL.md) § The count is
+settled at 3 owns the count, the 5h-window reason, the weekly-window rule and the headroom-probe rule. Say which other
+window consumers are expected (the operator's own session, an earlier fleet whose window has not rolled off) so the count
+is read against the whole account; a user-driven extra consumer never reduces the recommended count.
 
-**Keeper-settled 2026-08-10: concurrency is capped at 3, and this skill asks the user nothing about capacity.** The account meters a 5h burst window and a weekly window; only the first sizes a fleet, and its answer is already measured:
+State the binding term: "7 lanes available, capped to 3" says the backlog is not the constraint; a lane-bound "2 sessions"
+names the real lever (certify more work, or say when chains release it).
 
-- **The 5h burst window constrains CONCURRENCY.** Burn per window is `n x 5 x rate` — duration does not appear, so no deadline choice relieves it — and the bracket is settled: at opus/xhigh on this workload, **3 sessions run for any duration without reliably exhausting a 5h window, and 4 do not** (2026-08-06: n=4 cut off 4.9h into a 12h deadline; 2026-08-08: n=3 ran ~11.6h; 2026-08-09: n=3 ran a 12h deadline unthrottled). Saturating the window throttles every session at once — same wall-clock, less shipped, worktrees still held open — so the cap is a ceiling to respect, not a target to creep past.
-- **The bracket assumes the fleet is the window's ONLY consumer.** An interactive session the operator runs alongside the fleet draws on the same 5h burst budget, and so does an earlier fleet whose window has not yet rolled off — neither appears in `n x 5 x rate`, and both move the cutoff earlier. The failure is quiet and expensive rather than loud: sessions park *preemptively* at `/auto`'s one-issue reserve, so nothing crashes, no harness limit message is emitted, no stall group is detected, and the parked sessions present with the same stale-ledger signature as death. Measured 2026-08-21: three fleet sessions parked for the last ~3 hours of a 12-hour window with account-wide trailing-5h at 1,441,738 — inside the documented ceiling band — while the fleet's own burn was only 845,734 output tokens over 10.3 session-hours; the remainder came from one concurrent interactive session and an earlier fleet the same day, and three separate readings during the run mistook the parked sessions for dead ones. Say in the report which other consumers are expected, so the recommended count is read against the whole account rather than the fleet alone. **Keeper ruling 2026-08-29: a user-driven extra consumer never reduces the recommended count.** The operator's own session and an earlier fleet's window are disclosed, not sized against — parking at `/auto`'s reserve is the designed response to them, and shrinking `n` for a consumer the operator chose to run forfeits throughput for nothing.
-- **The weekly window is NOT a sizing input.** The keeper runs multiple accounts, so the weekly remaining on any one of them sizes nothing: rotation, not n or duration, is the lever, and `/fleet-launch` prints the active account's reading so the rotation happens before dispatch (2026-10-10: a 3-session 12h fleet launched on an account 5.75h from its weekly limit lost 52% of its session-hours). Do not ask for `/usage` readings, do not scale duration by weekly remaining, and do not read a `weekly` `limit_kind` in a past retro as a reason to shrink `n` — account rotation is the keeper's lever there, not fleet shape.
-
-A materially different workload voids the bracket — a different backlog's burn rate, a lower-tier model mix — and the signals to re-derive it are a `5-hour` `limit_kind` cutoff at n≤3 in a retro's `quota_stall_groups`, and — since 2026-10-13, in both directions — the Headroom verdict under a retro's `Window readings`: the account's own 5h meter at its peak reading, divided over the sessions active then, says how many sessions the window fits at that workload. One verdict is a bracket of one (the meter counts the operator's own sessions too, and the share assumes burn scales with the count); the same answer on consecutive unthrottled runs is the evidence. Until either appears, recommend 3 without discussion.
-
-**Record `rate` and `peak_5h_observed` in the persisted sizing block** as the MAX over the recent fleets in `tmp/fleet-metrics-history.jsonl`, never the latest retro alone:
-
-```bash
-jq -s 'map(select(.peak_5h_output_tokens)) | sort_by(.fleet_start) | .[-6:]
-       | max_by(.peak_5h_output_tokens)
-       | {rate: .output_tokens_per_session_hour_at_peak, peak5h: .peak_5h_output_tokens}' tmp/fleet-metrics-history.jsonl
-```
-
-Rows written since 2026-09-16 carry both fields; a history with none yet (`null` for both) falls back to the latest retro's `windows` block (`~/.claude/scripts/fleet-metrics.py --json | jq .windows`). The latest fleet is whatever it happened to be: on 2026-09-15 it was a starved run — 3 shipped in 36 session-hours, holding on the Planned gate — whose 552,991 peak became the next prep's `rate` of 36,866, and the fleet that ran on it burned 128,306 per session-hour, 3.5x the projection, while the previous healthy run had measured 98,127. A peak is a floor on the account's capacity only when the fleet was actually working, and the max over recent rows is what keeps a starved or throttled run from resetting it. Use `output_tokens_per_session_hour_at_peak`, never `output_tokens_per_session_hour_all_sessions` — the all-sessions mean pools idle and interactive sessions with fleet ones and lands roughly half the truth (measured 55.9k vs 84.9k on the same BF data). These feed the report's margin display and `/fleet-retro`'s projection audit, not a sizing decision. Rows written since 2026-10-13 also carry `peak_five_hour_pct` and `five_hour_fits_sessions` — the meter's own peak and the verdict's fit; take the latest row with a non-null fit, state it beside its `sessions` in the report ("the meter fit 4 at n=3 last run"), and persist it below so the retro can audit the projection against it.
-
-State the binding term in the report — lanes or the cap. "7 lanes available, capped to 3 by the 5h burst bracket" says the backlog is not the constraint; a bare lane-bound "2 sessions" names the real lever (certify more work, or say when chains release it).
-
-**Persist the recommendation** so `/fleet-launch` can pick it up without re-deriving the lane math (a count-less `/fleet-launch` reads exactly this file):
+**Persist the recommendation** in the project's main checkout — a count-less `/fleet-launch` reads exactly this file and
+warns when it is older than 24h. Read `references/sizing-block.md` to fill `rate`, `peak5h` and `fits` (the block
+`/fleet-retro` audits the projection against):
 
 ```bash
 jq -n --argjson sessions <N> --arg team <KEY> --argjson e "$(date +%s)" \
@@ -175,24 +221,41 @@ jq -n --argjson sessions <N> --arg team <KEY> --argjson e "$(date +%s)" \
   > tmp/fleet-recommendation.json
 ```
 
-Written in the project's main checkout (where the fleet sessions will run), not `~/.claude`. `fleet-launch.sh` warns when the file is older than 24h — a re-run of this skill refreshes it. The `sizing` block is what makes the recommendation auditable after the fact: `/fleet-retro` compares realized burn against the `rate` assumed here, so a projection that missed by 2x is visible rather than silently repeated next run.
-
 Launch checklist for the report:
 
 - `export LINEAR_TEAM=<KEY>` in every fleet session (else `/next` roams the workspace).
-- Project main checkout clean and parked off the integration branch (`git checkout --detach`) — keeps every merge on the ref-only path.
-- Run the `solo` issues via targeted `/auto <ID>` (or `/full <ID>`) before or after the fleet, not during. Two invocations split the plan: bare `--label solo` is the **workable-now** set (its blocker filter hides the rest), and the `--include-blocked` diff is the **blocked** set — workable ones are the pre-fleet knock-out candidates; blocked ones wait on their blockers regardless of the quiet window.
+- Project main checkout clean and parked off the integration branch (`git checkout --detach`) — every merge then takes
+  the ref-only path.
+- Run the `solo` issues via targeted `/auto <ID>` or `/fleet-sequence` before or after the fleet, not during. Bare
+  `--label solo` is the **workable-now** set; the `--include-blocked` diff is the **blocked** set, which waits on its
+  blockers regardless of the quiet window.
 - The decisions (Step 2 flags, `needs decision` issues) that would refill the pool once made.
-- **What will hold the Planned gate once the pickable Planned work ships** — the `PLANNED-HOLD` note's *need the keeper* entries from the Step 4 ranking (parked, uncertified, chains through such; an epic holds it only while a child is open — it closes itself when the last one releases, and Step 4's CLOSE-SET sweep has already cleared any that were complete). Each one left in the column idles the whole fleet at that point: the fleet will not spend on Backlog around it (keeper ruling 2026-08-28). Decide, `/spec`, or move it out of Planned deliberately before launch — or state in the report that the fleet is expected to idle after N issues (an epic fleet ends itself instead — `EPIC-DRAINED`, keeper ruling 2026-10-14 — so an `/epic-prep` report says it is expected to end after N).
-- **A fleet mints its own gate holders, so the forecast above is an upper bound.** Two mechanisms add Planned entries *during* a run: `/quality-review`'s filing recipe routes a severity-carrying (priority 1–2) or `security`-labeled deferred filing into `Planned` at birth (behind `--allow-planned`), optionally attaching `needs decision` after the create; and `/auto`'s park writes `-s Planned` unconditionally when it declines or abandons a pick (`needs decision` for a pending decision, `human` for a human-performed step), so even a pick taken out of Backlog lands in the column as a holder. **A column drained at launch can therefore re-close hours in** — clearing today's holders is necessary, not sufficient. Measured 2026-08-29 (BF): of the six issues holding the gate when the fleet drained, two arrived mid-run — one filed into Planned with `needs decision` + `security` about two hours in, one a parked pick — and both surviving sessions idled their whole tail, 28% of fleet capacity, with 141 certified Backlog candidates behind the gate. Report the projection as "idles after N issues *or sooner*", and treat a run whose reviews are likely to file Critical/High or `security` findings — a security sweep, a hardening batch — as one that will erode its own runway.
-- The Step 4 fleet-drain audit's remaining hits (`FLEET-BLOCKED` rows not remedied during prep) — each is a candidate the fleet will NOT reach tonight.
+- **What will hold the Planned gate once the pickable Planned work ships** — the `PLANNED-HOLD` note's *need the keeper*
+  entries. Each one left in the column idles the whole fleet at that point (it will not spend on Backlog around it).
+  Decide, `/spec`, or move it out of Planned before launch — or state that the fleet is expected to idle after N issues
+  (an epic fleet ends itself on `EPIC-DRAINED`, so `/epic-prep` says "expected to end after N").
+- **A fleet mints its own gate holders, so that projection is an upper bound.** The filing recipe
+  (`standards/linear-filing.md`) routes a priority 1–2 or `security` deferred filing into Planned at birth, and `/auto`'s
+  park writes `-s Planned` when it declines or abandons a pick, so a column drained at launch can re-close hours in.
+  Report "idles after N issues *or sooner*"; a security sweep or hardening batch erodes its own runway.
+- Remaining `FLEET-BLOCKED` rows — each a candidate the fleet will NOT reach this run.
 
 ## Report
 
-**Lead with the keeper's unblock list for the release scope** — Step 4's FOCUS rows, grouped by remedy and ranked by fan-out, each action paired with what it releases and the released issues' priorities as its worth. The first line of the report is the single highest-value action (e.g. "deciding BF-858 releases three P1s"). Anything unstarted-scoped that needs the keeper — decisions, certifications, human tasks, stalled resumes, pull-forward promotions — belongs in this list; nothing else outranks it. Then the launch line: recommended session count **and duration**, how to launch it (`/fleet-launch [count] [duration]` — count defaults to this run's persisted recommendation; an explicit count is the user's override), **which term bound it** (lanes, or the fixed 5h-burst cap of 3), and the projected burn per 5h window beside the observed peak so the margin is visible. Then the `solo` quiet-window plan, in two groups, each in running order — it is a work plan, not a warning: **workable now** (bare `next-candidates.sh --label solo` — no open blockers; what the keeper can knock out before launching the fleet) and **blocked** (the `--include-blocked` remainder, each annotated with the blocker it waits on and whether that blocker is itself in the workable-now group). **Everything Backlog-scoped comes last and stays brief** — the user reads it only after the release-scope actions are exhausted: changes made (consolidations as absorbed→canonical with the class named, edges as blocker→blocked with one-line rationale, label ops, priority bumps), decision-gated issues that gate only Backlog work, remaining FLEET-BLOCKED edges, and the validated top of the ranked pool. Backlog-*scoped* means gating nothing above Backlog: a Backlog-state issue on a Planned blocking chain is FOCUS material — it belongs in the promotion batch above, presented as required for the stage to drain, never as an 'optional pull-forward' (the 2026-08-13 run misfiled the entire promotion set to this tail and the keeper had to intervene twice). Every write is reversible — say so once.
+**Lead with the keeper's unblock list for the release scope** — Step 4's FOCUS rows grouped by remedy and ranked by
+fan-out, each action paired with what it releases and its worth; the first line is the single highest-value action.
+Everything unstarted-scoped that needs the keeper — decisions, certifications, human tasks, stalled resumes, the promotion
+batch (required for the stage to drain, never an optional pull-forward) — belongs here. Then the launch line: count **and
+duration**, `/fleet-launch [count] [duration]`, which term bound it, and the projected burn per 5h window beside the
+observed peak. Then the `solo` quiet-window plan in running order: **workable now**, then **blocked** (each with its
+blocker). **Everything Backlog-scoped comes last and stays brief**: changes made (consolidations as absorbed→canonical
+with the class named, edges as blocker→blocked with one-line rationale, label ops, priority bumps), decision-gated issues
+gating only Backlog work, remaining FLEET-BLOCKED edges, and the validated top of the ranked pool. Every write is
+reversible — say so once.
 
 ## Error Handling
 
 - No team resolvable → ask for one; never scan the workspace.
-- Zero certified candidates → report it and point at `/spec` (certify backlog) rather than inventing prep work.
-- A label/relation write failing mid-run leaves prior writes in place — report what landed and what didn't; all operations are idempotent to re-run.
+- Zero certified candidates → report it and point at `/spec` rather than inventing prep work.
+- A write failing mid-run leaves prior writes in place — report what landed and what didn't; every operation is
+  idempotent to re-run.

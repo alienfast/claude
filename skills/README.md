@@ -1,710 +1,138 @@
 # Claude Skills Directory
 
-This directory contains reusable Claude Skills that can be invoked during conversations to handle complex, multi-step workflows.
+Reusable skills: workflows Claude loads into the current conversation when a trigger phrase or `/name` invokes them.
+The harness lists every installed skill with its description at session start, and that listing is the catalog; run
+`/skill-doctor` to see what each one costs in context and how often it is used. This file is the guide to writing one.
 
-## Table of Contents
+## Skills, agents, and scripts
 
-- [Overview](#overview)
-- [When to Use Skills vs Commands](#when-to-use-skills-vs-commands)
-- [Skills in This Directory](#skills-in-this-directory)
-- [Creating New Skills](#creating-new-skills)
-- [Best Practices](#best-practices)
-- [Skill Scopes](#skill-scopes)
-- [Resources](#resources)
-
-## Overview
-
-**Claude Skills** are specialized prompts that extend Claude's capabilities for complex, domain-specific tasks. They provide structured workflows, decision frameworks, and best practices for recurring tasks.
-
-### How Skills Work
-
-Skills use a **progressive disclosure** model with three tiers of loading:
-
-1. **Tier 1 (Always Loaded)**: `SKILL.md` frontmatter (name and description) - always visible to Claude
-2. **Tier 2 (Loaded on Invocation)**: `SKILL.md` content - loaded when skill is invoked
-3. **Tier 3 (Loaded on Demand)**: Supporting files in `resources/`, `templates/`, `scripts/` - loaded only when referenced
-
-This approach keeps Claude's context efficient while providing deep expertise when needed.
-
-### How Skills Differ from Commands and Agents
-
-| Feature | Skills | Commands | Agents |
-|---------|--------|----------|--------|
-| **Purpose** | Multi-step workflows with decision logic | Simple task execution | Specialized personas for specific roles |
-| **Complexity** | High (orchestration, delegation) | Low to Medium (single operation) | Variable (focused expertise) |
-| **Invocation** | Skill tool or user trigger phrases | `/command` syntax | Explicit task delegation |
-| **Context** | Loaded progressively on demand | Expanded immediately | Available when invoked |
-| **Examples** | Dependency updates, PR generation | Code formatting, file operations | Research, architecture, implementation |
-
-## When to Use Skills vs Commands
-
-### Use a Skill When
-
-- Task requires multiple sequential or parallel steps
-- Need decision-making logic and branching workflows
-- Requires orchestration across multiple tools or agents
-- Benefits from progressive context loading (templates, resources)
-- Has clear quality gates and validation requirements
-- Will be reused across multiple projects
-
-**Example Scenarios**:
-
-- Comprehensive dependency updates with research, analysis, and validation
-- PR title/description generation with verification and formatting
-- Database migration workflows with rollback planning
-- Security audit processes with multiple validation steps
-
-### Use a Command When
-
-- Task is a single operation or simple sequence
-- No complex decision logic required
-- Doesn't need supporting resources or templates
-- Quick, focused action (formatting, cleanup, search)
-
-**Example Scenarios**:
-
-- Format code with specific linter
-- Run test suite
-- Search codebase for patterns
-- Generate simple boilerplate
-
-### Keep as a Command (Don't Convert to Skill)
-
-- Simple tool wrappers (e.g., `pnpm lint`)
-- Single-file operations
-- Tasks that don't benefit from progressive disclosure
-- Operations that work well as slash commands
+- A **skill** is a workflow that runs in the current context: steps, decisions, gates. It can delegate to agents and
+  call scripts.
+- An **agent** (`agents/*.md`) is a persona with its own context window that the main thread delegates to. Add one only
+  when a fresh context or a pinned model/effort adds material value.
+- A **script** carries machinery a skill would otherwise make the model re-type. See
+  [Policy in markdown, machinery in scripts](#policy-in-markdown-machinery-in-scripts).
 
 ### Claude-side tooling is a skill, not a package
 
-A tool whose only consumer is a Claude session belongs in `<project>/.claude/skills/<name>/` with its scripts under `scripts/`, in whatever language they were written (Python is the conventional choice, as in the bundled pdf/docx/xlsx skills). Keep it project-level and shared, never one person's; add an agent only where delegation adds material value; propose a `@repo/*` package, a CLI, or a product surface only when the user has named a product or deployment use. Ask about the use before proposing a structure — keeper ruling 2026-09-18, when a Python debt-service engine was about to become a TypeScript package with vitest tests because that is what the toolchain expects, and nobody had asked for anything deployable.
-
-## Skills in This Directory
-
-### dependency-updater
-
-**Version**: 1.2.0
-
-**Description**: Orchestrates comprehensive dependency updates by delegating research, impact analysis, code changes, and validation to specialized agents.
-
-**When Invoked**:
-
-- User requests "update dependencies"
-- User mentions "ncu" or "npm-check-updates"
-- User asks to "upgrade packages" or "bump versions"
-
-**Key Features**:
-
-- **Phase 0's two questions are the only interaction** — where to work (isolated worktree vs in place) and how to finish (`merge` vs `pr`). Everything after runs unattended; `--worktree`/`--in-place` and `--merge`/`--pr` skip even those
-- Files a tracking Linear issue every run, then builds the worktree via `start-wt-setup.sh` + `EnterWorktree` — deliberately NOT `/start … interactive`, whose halt is a terminal state that hands off to a human and opens an editor window
-- **Applies the whole update set at once, then fixes what the gate reports** — no per-package staging and no speculative impact analysis; the worktree makes a bad batch cheap to abandon
-- Delegation is selective: `general-purpose` for parallel research, `developer` for real migrations, `technical-writer` once at ship. `architect` and `quality-reviewer` are exception-only, never a routine pre-flight pass
-- Research depth follows semver — MAJOR full, MINOR skim, PATCH none, with the gate as the safety net for mis-tagged patches
-- Ships through `/quality-review auto` → `/finish merge|pr auto` (the verdict is required — `/finish auto` refuses to ship unreviewed), then removes its own worktree on the `pr` path (`merge` self-cleans)
-
-**Structure**:
-
-- Main workflow in `SKILL.md`
-- References `~/.claude/standards/semver.md` for version classification
-- Uses multiple agent types (research-subagent, architect, developer, quality-reviewer, technical-writer)
-
-### pr-update
-
-**Version**: 1.0.0
-
-**Description**: Generate or update GitHub Pull Request titles and descriptions based on actual code changes in the final state.
-
-**When Invoked**:
-
-- User says "update the PR"
-- User asks to "generate PR description"
-- User mentions "write PR title"
-- User requests "pull request summary"
-
-**Key Features**:
-
-- Analyzes git diff to determine actual changes (not just commit history)
-- Verifies features exist in final code state
-- Creates comprehensive, accurate PR documentation
-- Multiple templates for different PR types
-
-**Structure**:
-
-- Main workflow in `SKILL.md`
-- `resources/title-patterns.md` - PR title format examples
-- `resources/analysis-workflow.md` - Step-by-step verification examples
-- `templates/feature.md` - Feature addition template
-- `templates/bugfix.md` - Bug fix template
-- `templates/infrastructure.md` - Infrastructure change template
-- `scripts/verify-feature.sh` - Feature verification script
-- `scripts/analyze-pr.sh` - PR analysis automation
-
-### next
-
-**Description**: Suggest the best next issue to work on. Considers current cycle, dependency graph, triage status, and what's unblocked.
-
-**When Invoked**:
-
-- User says "what's next" or "next issue"
-- User invokes `/next`
-- Delegated from `/finish` after completing an issue
-
-**Key Features**:
-
-- 5-tier candidate ranking: certified reflection > assigned to you > newly unblocked > sibling of the just-completed issue > everything else workable
-- Within a tier: Planned/Todo drains fully before Backlog (Urgent included), then Urgent, then `security`/`bug`, then priority
-- Works standalone (fresh day/week) or post-finish (with just-completed context)
-- Respects triage decisions as highest-signal indicators
-- Analyzes transitive unblocking from dependency graph, not just direct blockers
-
-**Structure**:
-
-- Self-contained workflow in `SKILL.md`
-- Uses `linear-deps-graph.sh` for the dependency graph, an `api` active-cycle filter, and `linear-cli issues list`
-
-### auto-prep
-
-**Description**: Prepare a team's certified backlog for a fleet of parallel `/loop /auto` sessions — label honesty audit, collision-edge wiring, ranked-pool validation, fleet sizing.
-
-**When Invoked**:
-
-- User says "auto-prep", "fleet prep", or "prep the backlog for auto"
-- Before launching multiple parallel `/loop /auto` sessions
-
-**Key Features**:
-
-- Audits `specified` labels for unattended-shippability; de-labels or flags decision-gated, human-dependent, and run-attended/solo issues
-- Wires minimal `blocks` chains only for prerequisite, same-method, and deliberately-incremental pairs (the one hiding signal `/next` observes); file-level overlap becomes `related`, a soft de-rank while the partner is in flight
-- Repairs `/reflect` filing labels (`reflection`/`keeper`) and dedupes duplicate filings
-- Validates the result through `next-candidates.sh` and recommends a parallel-session count from the independent-lane analysis
-
-**Structure**:
-
-- Self-contained workflow in `SKILL.md`
-- Complements `/quality-review`'s same-batch collision wiring by covering overlap across previously filed siblings (beyond the single dedup-adjacent edge `/quality-review` wires per filed item)
-
-### epic-prep
-
-**Description**: Prepare one epic's graph for an epic-scoped fleet (`/fleet-launch epic:<ID>`) — `/auto-prep`'s audit run with `--root`, plus an inline `/spec` loop over uncertified members in dependency order, a boundary review of outside dependents and `related` partners, promotion of the whole graph to Planned, the epic integration branch, a hard gate that every resolved member's code is on that branch, and a scoped recommendation. The epic ships as one PR from the branch the fleet merges into as it goes (keeper decisions 2026-09-11).
-
-**When Invoked**:
-
-- User says "epic prep", "prep the epic", "prep BF-1826 for a fleet", or "fleet this epic"
-- Before `/fleet-launch epic:<ID>` — a bare `/fleet-launch` afterwards stops on the persisted scope and asks whether to launch it or go team-wide
-
-**Key Features**:
-
-- Membership from `~/.claude/scripts/epic-graph.sh`: the epic, its transitive descendants, and the transitive blockers of any member — non-terminal, cross-team; dependents and `related` partners are the boundary (include by re-parenting, default leave out)
-- Certifies uncertified members through `/spec` in topological order (blockers first), then runs `/auto-prep` Steps 2–5 by link with `next-candidates.sh --root` and `fleet-blockers.sh --root`, including the CLOSE-SET sweep
-- Creates `epic/<id>` from the same source `/start wt` resolves; refuses to proceed until every Ready-for-Release / In Review member's code is contained in it (the BF-1826 rename stack is the live case), merging failing heads through a temporary worktree on approval
-- Persists `scope`, `members`, `branch`, `base` in `tmp/fleet-recommendation.json`; starts the critical path first (Urgent on the chain, with approval) and sizes from `fleet-forecast.py`, capped at 3
-
-**Structure**:
-
-- Thin workflow in `SKILL.md` referencing `/auto-prep`'s steps; the mechanics live in `epic-graph.sh`, `next-candidates.sh --root`, `fleet-blockers.sh --root`, `linear-set-state.sh`, and `fleet-launch.sh`'s epic handling
-
-### fleet-launch
-
-**Description**: Launch a fleet of parallel `/loop /auto` sessions as background agents in `claude agents`, staggered so each session's first pick sees the previous one's claim, with an optional time budget that winds the fleet down cleanly. The middle bookend: `/auto-prep` → `/fleet-launch` → `/fleet-retro`. An `epic:<ID>` token scopes every session to one epic's graph (a scope `/epic-prep` persisted is confirmed with the user, never assumed; `team` launches team-wide over it) and steers every pick onto its integration branch through per-issue fork keys; the main checkout is never moved.
-
-**When Invoked**:
-
-- User says "launch the fleet", "spawn 5 auto loops", or "start the fleet for 10 hours"
-- After `/auto-prep` has groomed the backlog and recommended a session count
-
-**Key Features**:
-
-- Count defaults to the recommendation `/auto-prep` persists to `tmp/fleet-recommendation.json`; an explicit count is the user's quota throttle
-- Staggers dispatches on worktree appearance (the claim stamp), not a blind timer — the next session launches the moment the previous one's pick is excluded from ranking
-- A duration writes `tmp/fleet-deadline.json`; `/auto` checks it before each pick (never mid-issue), so at the deadline sessions finish in-flight work and end their loops with `NO-CANDIDATES`
-- Ending a running fleet early is `/fleet-stop` — a thin wrapper over the same script's `stop` form, which writes an already-passed deadline so in-flight work finishes and no new picks happen
-
-**Structure**:
-
-- All logic in `~/.claude/scripts/fleet-launch.sh`; `SKILL.md` dispatches and narrates
-- Deadline contract shared with `skills/auto/SKILL.md` Step 2's fleet-deadline gate
-
-### fleet-sequence
-
-**Description**: Ship an ordered list of certified issues onto one integration branch — strictly one at a time, each in its own background `claude --bg "/auto <ID>"` session, each forked from the branch's current tip and merged back by its own `/finish` — then open one PR from that branch onto the launch branch and run `/pr-update` on it. The targeted, serialized sibling of `/fleet-launch` and the runner for `solo` work; `merge` ships straight into the launch branch instead.
-
-**When Invoked**:
-
-- User says "run these in sequence", "ship BF-1 then BF-2 then BF-3", "sequential auto", or "solo batch"
-- Several `solo`-labeled (or order-dependent, oversized) issues are ready — a fleet may run alongside; its pickers never take a sequence's queued issues
-
-**Key Features**:
-
-- One detached runner walks the list: create `seq/<first-id>` from the launch branch, dispatch `/auto <ID>`, wait for the session's `tmp/auto-state-<id>.json` outcome, require the branch's tip to have moved (a deferred merge is waited on, bounded), push the branch; anything but `shipped` stops the sequence with the remaining issues untouched
-- Before every dispatch it sets a per-issue `start.<id>.wt-source-branch` key (unset once the session ends), so that issue's `/start wt` forks from the branch's advancing tip and `/finish merge` advances it ref-only — the main checkout is never moved, and a concurrent `/start wt` for any other issue is untouched
-- When the list completes, `scripts/integration-pr.sh` pushes and opens the PR with a roster body (bare IDs, no close keywords), then a last `/pr-update` child writes the real description; the base moving during the run costs one catch-up merge, reported when the PR opens
-- Why not a PR stack: GitHub stacks assume rebase-and-restack; this house merges only, so a moved base meant re-merging every level with its own CI run (September 2026)
-- The wait ends on the session's ledger outcome, not the registry — a session can sit busy for hours after shipping; a stale ledger from an earlier run is ignored by mtime
-- Sequences are discrete: the list decides which sequence a launch is — one sharing an issue with an earlier sequence resumes it, one sharing none is a new sequence with its own branch, marker, log and PR — and several may run at once, an issue belonging to one live sequence
-- `status` / `stop` forms (an optional issue ID picks the sequence); re-running the same list resumes, skipping what already shipped (a list whose every issue shipped repeats only the PR step) and adopting a session that outlived its runner instead of dispatching its issue twice; every key it set is unset on every exit; sessions are never killed
-
-**Structure**:
-
-- All logic in `~/.claude/scripts/fleet-sequence.sh` (PR opening shared with the epic fleet in `scripts/integration-pr.sh`); `SKILL.md` dispatches and narrates
-- One marker and log per sequence, keyed by the lowercased first ID of the list that created it: `tmp/fleet-sequence-<slug>.json`, `tmp/fleet-sequence-<slug>.log`; each child session is named `fleet-sequence <ID>` in `claude agents`, the closing one `fleet-sequence pr-update`
-
-### epic-pr
-
-**Description**: Open the one PR for an epic's integration branch once a scoped fleet or a sequence has landed its members. Resolves the epic from the argument, the checked-out `epic/*` branch, the fleet marker or the prep recommendation, the branch and base from what `/epic-prep` and `/fleet-launch` recorded, and the roster from the live graph split by what is on the branch; pushes the branch, opens the PR with a roster body, then runs `/pr-update` on it by number.
-
-**When Invoked**:
-
-- User says "epic pr", "open the epic PR", "the fleet is done, open the PR", or "PR for BF-123"
-- The post-fleet step `/epic-prep` and `/fleet-launch` name — the replacement for typing `integration-pr.sh <branch> <base> <member IDs...>` by hand
-
-**Key Features**:
-
-- Asks only what it cannot resolve: the epic when no branch, marker or recommendation names one (or several `epic/*` branches exist), and the base when nothing recorded it and the checkout sits on the integration branch
-- The roster is every graph member except the root, nested epics and Canceled/Duplicate members, ordered by when each landed on the branch; members with no commit on the branch are reported as not landed and left out, so a partial PR after a deadline is explicit
-- Invoking it is the grant to push that one branch and open its PR; it never merges, never moves the checkout, and never writes to Linear
-
-**Structure**:
-
-- Resolution in `~/.claude/scripts/epic-pr.sh` (dry-run first, then the real run hands off to `scripts/integration-pr.sh`); `SKILL.md` dispatches, asks and narrates
-- Regression suite `~/.claude/scripts/epic-pr.test.sh` (run by hand: `bash ~/.claude/scripts/epic-pr.test.sh`)
-
-### fleet-forecast
-
-**Description**: Estimate — explicitly not a plan — of what a fleet of parallel `/loop /auto` sessions would ship over a time horizon: simulates the certified backlog draining across N sessions as blockers resolve and unblock their dependents. Read-only; nothing is launched or written.
-
-**When Invoked**:
-
-- User says "fleet forecast", "what would a fleet run look like", "what order would issues run", "how many hours to burn the Planned issues"
-- Between `/auto-prep` (which grooms and sizes) and `/fleet-launch`, to see the projected drain's shape
-
-**Key Features**:
-
-- Greedy list-scheduling simulation: each free session picks the top-ranked available candidate (stage-first — Backlog only when nothing Planned/Todo is available), ships it after its estimated duration, and resolves its `blocks` edges; clean In Progress blockers are assumed to finish within one mean issue duration, and In Review blockers are already resolved (completed-in-substance, per `standards/linear-workflow.md` § Terminal States)
-- `STAGE` line answers "hours to burn Planned/Todo and when Backlog picks begin"; `POOL-DRAINED` shows certified runway shorter than the horizon; `STRANDED`/`UNREACHED` separate keeper-action gaps from capacity/horizon gaps
-- Hours-per-issue calibrated from `tmp/fleet-metrics-history.jsonl` (recent fleets' session-hours ÷ shipped), estimate-point weighted; sessions/horizon default from `tmp/fleet-recommendation.json`
-- Eligibility mirrors `fleet-blockers.sh` gate rules; wave-1 picks are cross-checked against `next-candidates.sh`, which stays the pick-time authority — divergence is narrated, never edited away
-
-**Structure**:
-
-- Workflow in `SKILL.md`; simulation in `~/.claude/scripts/fleet-forecast.py` (fixture-testable via `--fixture`; regression suite `fleet-forecast.test.sh`)
-- Routes stranded-blocker remedies to `/auto-prep`'s FOCUS audit rather than re-deriving them
-
-### fleet-retro
-
-**Description**: Post-mortem on a finished fleet of parallel `/loop /auto` sessions — measures where the capacity went, reconciles the shipped ledger, audits what the run filed, then applies the fixes you approve. The bookend to `/auto-prep`.
-
-**When Invoked**:
-
-- User says "fleet retro", "review the fleet run", "how did the fleet do", or "post-mortem the auto run"
-- After a fleet of parallel `/loop /auto` sessions finishes
-
-**Key Features**:
-
-- Measures every session through `scripts/fleet-metrics.py` on a fixed schema, so successive retros are comparable and drift is visible
-- Reads subagent transcripts, where permission blocks and stalls actually land — invisible to the parent session, which sees only a slow `Agent` call
-- Flags silent loop death (no `ScheduleWakeup`), unrecorded ships (Step 4 never ran), blind-sleep burn, classifier blocks, and shipped-without-a-commit
-- Audits the issues the run *filed* — duplicates from phrase-shaped dedup searches, `Triage` strandings, certification gaps
-- Distinguishes a compliance failure from a rule gap, and prefers a mechanical guard when prose has already lost
-
-**Structure**:
-
-- Workflow in `SKILL.md`; measurement in `~/.claude/scripts/fleet-metrics.py` (`--json` for machine use)
-- Routes the config-improvement half to `/reflect` rather than reimplementing its batching and filing
-
-### quality-review
-
-**Description**: Adversarial implementation review with triage and fix loop, tiered by role. Hard-gates on `pnpm check`, delegates initial discovery to the quality-reviewer agent (opus/xhigh) for categorized findings, then loops triage/fix/re-review — small fixes applied directly by the orchestrator, substantive ones via sonnet-tier developer dispatches, re-reviews and confirmations on the lighter quality-verifier agent — until convergence (no new substantive findings — prose-only and mechanical fixes do not block it; 5-cycle soft ceiling, extended once in auto mode when the findings trend is decreasing).
-
-**When Invoked**:
-
-- User says "review my work", "check this implementation", "adversarial review"
-- User invokes `/quality-review`
-- Delegated from `/start` after implementation completes
-
-**Key Features**:
-
-- Working Application Contract enforcement (`pnpm check` gate)
-- Categorized findings (Critical/High/Medium/Nice-to-Have/Approved)
-- Parallel domain-scoped reviewers for large changes
-- Mandatory re-review after every substantive fix, dispatched to the quality-verifier agent with the fix delta as an inline diff; converges when no new substantive findings surface — prose-only and mechanical findings from any cycle, the initial review included, are fixed directly by the orchestrator and verified by their own lanes without consuming a cycle (an all-prose/mechanical batch skips the re-review entirely), and after cycle 2 new Mediums are filed as deferred items instead of re-arming the loop (5-cycle soft ceiling)
-- Deferred-items triage (`fix-now` / `defer-as-issue` / `note-only`); auto-applies safe fixes, files ticket-worthy ones as sub-issues, records the rest as dropped
-- Standalone or delegated invocation; auto-detects scope from `git diff`
-- Optional Linear issue context for requirement-conformance checks
-
-**Structure**:
-
-- Self-contained workflow in `SKILL.md`
-- Delegates to `quality-reviewer` (initial review), `quality-verifier` (re-reviews and confirmations), and `developer` (substantive fixes, sonnet-tier) agents; mechanical and prose fixes are applied by the orchestrator directly
-- Uses `linear-cli issues get` for requirement context when an issue is resolvable
-
-### reflect
-
-**Description**: Continuous-improvement reflection on the just-finished session. Captures generalizable lessons (thrashing, silently-worked-around skills, repeated corrections) and reconciles config that has drifted from reality, then auto-applies the small/safe shared-config edits and proposes the larger ones — reusing `/quality-review`'s triage discipline under its own lane names (`apply-now` / `propose` / `drop`), pointed at the config layer.
-
-**When Invoked**:
-
-- Invoked by `/fleet-retro` as its batched `/reflect fleet` step — the only scheduled surface; otherwise manual
-- User says "reflect", "reflect on this session", "what did we learn"
-- User invokes `/reflect` (session) or `/reflect sweep [project-path]`
-
-**Key Features**:
-
-- Two directions: **Add** (new lesson → rule/note) and **Reconcile** (config contradicts reality → fix the stale line)
-- Three modes: **session** (reflect on this session in context), **sweep** (audit a project's `CLAUDE.md`/rules against the actual codebase + cross-file dedup; manual or scheduled), and **fleet** (batched reflection over a finished fleet run's evidence; invoked by `/fleet-retro`)
-- Targets **shared, team-visible config** (`CLAUDE.md` / `rules/` / `standards/` / skills); memory is never a destination
-- Adversarial verify gate drops anything not generalizable, already-covered, or that wouldn't have helped — "zero improvements" is a success
-- Auto-applies only additive/clarifying edits to the working tree; **commits only one scoped case** — project-scoped edits, check-gated and staged by name: inside a `/start wt` worktree so they ride the issue merge, or on the main checkout's source branch once that worktree is gone. User-level `~/.claude` edits are never committed; the explicit-commit step stays the review gate. Proposals auto-file as a Linear issue only unattended; interactively the user picks apply / file / drop per batch
-
-**Structure**:
-
-- Self-contained workflow in `SKILL.md` (routing table, triage gates, noise guard)
-- Delegates verification (session) and config-vs-codebase audit (sweep) to agents
-- Routes per `~/.claude/CLAUDE.md` "Where Knowledge Goes"; references `~/.claude/standards/problem-solving.md`
-
-### keeper
-
-**Description**: The keeper's interactive pickup for config work autonomous runs cannot ship — adjudicates both `/reflect` review queues in one pass: the uncommitted local `~/.claude` edits left for review, and every `keeper`-labeled Linear issue workspace-wide. Applies the fixes that hold up, returns recommendations for the rest, and commits and pushes the accepted set (the invocation is the skill-scoped grant — `standards/git.md` § Named exceptions).
-
-**When Invoked**:
-
-- User says "keeper", "process the keeper queue", "review the keeper batches", "what's waiting on me"
-- User invokes `/keeper`
-- Interactive-only — never from `/auto`, a fleet, or any unattended flow
-
-**Key Features**:
-
-- One adjudication standard for both queues: evidence scoped to what was measured, correct placement per the "Where Knowledge Goes" routing, no contradiction/duplication, house-style proportion, and a higher bar for anything that changes unattended `/auto` behavior
-- Three verdicts per item: apply / reject (with the recommendation that would make it acceptable) / needs-you (genuine trade-offs surface as questions, never guesses)
-- Partial batches apply immediately — accepted items ship now; an issue stays open only while items wait on the user, otherwise Done with a per-item verdict comment
-- Never reverts or stashes rejected local edits (multi-session safety); defers files whose shape reads as another session's mid-edit WIP
-- Project-repo targets are flagged for issue/PR routing, never edited cross-repo
-- Gates each item on its sibling regression suite and markdownlint before commit; one commit per keeper issue, one for accepted local edits
-
-**Structure**:
-
-- Self-contained workflow in `SKILL.md`
-- Uses the linear skill's raw-hatch label query (workspace-wide), `linear-context.sh` digests, and `linear-post.sh` for verdict comments
-- The bookend to `/reflect`: reflect files the queues, keeper drains them
-
-### standardize-tooling
-
-**Description**: Converge a TypeScript project's dev tooling onto the house conventions — pnpm 12 (supply-chain cooldown, allow-builds, `@alienfast` registry), Biome (no ESLint/Prettier), markdownlint-cli2, madge, the standardized parallel `check` suite, tsdown for libraries, and OIDC token-less `auto` releases for published packages — then gate on `pnpm check`. Adaptive and idempotent: detects current state and applies only the gaps.
-
-**When Invoked**:
-
-- User says "standardize tooling", "update tooling", or "apply house tooling conventions"
-- User asks to migrate a project to pnpm / Biome / tsdown, or off yarn/npm + ESLint/Prettier + tsup
-- User invokes `/standardize-tooling`
-
-**Key Features**:
-
-- Declares a target end-state and converges the delta — not a fixed-order recipe
-- `scripts/detect-state.sh` emits `KEY=value` gap signals (package manager, linter, bundler, single-vs-mono, registry, published)
-- Reads canonical configs **live** from `~/projects/basefund` (primary), `gltfjsx`, and `vite-plugin-i18next-loader` — never frozen snapshots, so it can't go stale
-- Adapts to single-package vs monorepo and public-npm vs private `@alienfast` GitHub Packages registry
-- Gates on `pnpm check`; lists manual follow-ups (npmjs Trusted Publisher, stale secret deletion) separately
-
-**Structure**:
-
-- Workflow in `SKILL.md`; `scripts/detect-state.sh` for state detection
-- `references/converge.md` — source-of-truth map + per-attribute apply steps and gotchas
-- `references/publishing.md` — tsdown, `auto`, and OIDC trusted publishing (loaded only when published)
-- Hands off full dependency refreshes to `/dependency-updater` and CLAUDE.md to `/init`
-
-## Creating New Skills
-
-### Directory Structure
-
-Each skill requires:
+A tool whose only consumer is a Claude session belongs in `<project>/.claude/skills/<name>/` with its scripts under
+`scripts/`, in whatever language they were written (Python is the conventional choice, as in the bundled pdf/docx/xlsx
+skills). Keep it project-level and shared, never one person's; add an agent only where delegation adds material value;
+propose a `@repo/*` package, a CLI, or a product surface only when the user has named a product or deployment use. Ask
+about the use before proposing a structure.
+
+## Creating a skill
+
+### Directory structure
 
 ```text
 skills/
   your-skill-name/
-    SKILL.md              # Required: Main skill definition
-    README.md             # Optional: User-facing documentation
-    resources/            # Optional: Reference materials
-    templates/            # Optional: Reusable templates
-    scripts/              # Optional: Helper scripts
+    SKILL.md          # required: frontmatter + the workflow
+    references/       # optional: rare-path detail, read on demand
+    templates/        # optional: output templates
+    scripts/          # optional: tested helper scripts
 ```
 
-### SKILL.md Frontmatter Requirements
-
-Every `SKILL.md` must start with YAML frontmatter:
+### Frontmatter
 
 ```yaml
 ---
 name: your-skill-name
-description: "What the skill does and when it's invoked. Include trigger phrases users might say."
-version: "1.0.0"  # Optional: most workflow skills in this repo omit it
-allowed-tools: ["Bash", "Read", "Write"]  # Optional: restrict available tools
+description: "Does X for Y. Use when the user says 'x', 'do x', or invokes /your-skill-name."
+argument-hint: "[mode] [ISSUE-ID]"  # optional: shown in the slash-command picker
+model: sonnet                       # optional: pin the model the skill runs on
+effort: high                        # optional: pin the effort
+allowed-tools: ["Bash", "Read"]     # optional: restrict the tools available
 ---
 ```
 
-**Frontmatter Fields**:
+- `name` (required): kebab-case, identical to the directory name. The harness registers it as the skill's `/name`
+  identity, so a title-case name shows up as `/Fleet Forecast` among `/fleet-*` siblings.
+- `description` (required): a trigger statement — see [Description](#description).
+- `version` (optional): most workflow skills here omit it.
 
-- `name` (required): kebab-case, identical to the directory name — the harness surfaces this field as the skill's `/name` identity, so a title-case name registers as `/Fleet Forecast` among `/fleet-*` siblings
-- `description` (required): What + when the skill is used, including trigger phrases
-- `version` (optional): Semantic version (1.0.0); most workflow skills in this repo omit it
-- `allowed-tools` (optional): Whitelist of tools this skill can use
+### Description
 
-### Naming Conventions
+The description is always in context and is the only thing the model sees when deciding whether to invoke the skill.
 
-**Skill Directory Names**:
-
-- Use kebab-case: `dependency-updater`, `pr-update`, `database-migration`
-- Prefer gerund form (action-oriented): `updating-dependencies`, `generating-prs`
-- Be specific and descriptive: `graphql-schema-updater` not `schema-tool`
-
-**Skill Names (in frontmatter)**:
-
-- Identical to the directory name, kebab-case — every skill in this directory does this, and the frontmatter `name` is what the harness registers as the invocation/display identity
-
-### Description Best Practices
-
-Write descriptions in **third person** that explain:
-
-1. **What** the skill does (capabilities)
-2. **When** it's invoked (trigger phrases and scenarios)
-
-**Good Examples**:
+- Write it as a trigger statement of at most about 400 characters, with the key use case first. The harness truncates
+  each listing entry at 1,536 characters, so text past that is never read.
+- Third person: **what** the skill does, then **when** — the phrases a user would actually say, and `/name`.
 
 ```yaml
-description: "Orchestrates comprehensive dependency updates by delegating research, impact analysis, code changes, and validation to specialized agents. Invoked when users request package updates, dependency updates, version bumps, or mention 'ncu' or npm-check-updates."
-```
+# Good
+description: "Generate or update GitHub PR titles and descriptions from the actual diff. Use when the user says 'open a PR', 'update the PR', or asks for a PR description."
 
-```yaml
-description: "Generate or update GitHub Pull Request titles and descriptions based on actual code changes in the final state. Use when the user mentions updating, generating, or writing PR descriptions, PR titles, pull request summaries, or says 'update the PR'."
-```
-
-**Poor Examples**:
-
-```yaml
-# Too vague
+# Too vague, no trigger, wrong voice
 description: "Updates dependencies"
-
-# Missing when/triggers
-description: "Handles package version management and updates"
-
-# First person (wrong voice)
+description: "Handles package version management"
 description: "I help you update your dependencies"
 ```
 
-### File Organization Patterns
+## House rules
 
-**resources/**: Reference materials loaded on demand
+### Progressive disclosure
 
-- Markdown files with detailed examples
-- Decision matrices and flowcharts
-- Best practices and anti-patterns
-- Example: `resources/title-patterns.md`, `resources/analysis-workflow.md`
+A skill pays for itself in three places: its description in every session, its body when invoked, and whatever
+supporting files it reads. Keep each tier as small as its job allows.
 
-**templates/**: Reusable output templates
+- **SKILL.md stays under 500 lines and about 20 KB.** After compaction the harness keeps only the first 5,000 tokens of
+  each invoked skill (25,000 across all of them), so put the invariants and the step list first. Detail that sits
+  below that cut is gone for the rest of a long session.
+- **Rare paths go in `references/<topic>.md`**, each named at the step that needs it: "Read `references/rollback.md`
+  when the merge fails." A pointer at the top of the file ("see references/ for details") loads nothing useful and
+  gets ignored.
+- **`@path` imports do not expand inside SKILL.md** — the literal `@references/x.md` text reaches the model. Point at
+  supporting files with an explicit Read instruction instead.
+- **The description is a trigger, not a manual.** Everything about how to run the skill belongs in the body.
 
-- Structured formats for generated content
-- Multiple variants for different scenarios
-- Example: `templates/feature.md`, `templates/bugfix.md`
+Example from [standardize-tooling](standardize-tooling/SKILL.md): the body declares the target end state and the
+convergence steps; the apply step points at `references/converge.md` for the source-of-truth map and per-attribute
+apply steps, and at `references/publishing.md` only when detection reports the package as published.
 
-**scripts/**: Helper automation scripts
+### Policy in markdown, machinery in scripts
 
-- Bash/Python scripts for verification or analysis
-- Should be referenced from main SKILL.md
-- Example: `scripts/verify-feature.sh`, `scripts/analyze-pr.sh`
+A skill's markdown carries decisions, routing, and prompts. Multi-line procedural bash belongs in a tested script —
+skill-local (`skills/pr-update/scripts/verify-feature.sh`, `skills/standardize-tooling/scripts/detect-state.sh`) or the
+shared `~/.claude/scripts/` — with a verdict-line stdout contract: the first line is the verdict and the skill branches
+on it (see `~/.claude/scripts/start-wt-verify.sh` — `VERIFIED`/`FAILED-*` — and `finish-merge.sh`). Inline bash the
+model must re-emit verbatim is a transcription-drift surface: more than a few lines, or any duplication across skills,
+means extract to a script. Scripts are not just length management.
 
-**Policy in markdown, machinery in scripts.** A skill's markdown carries decisions, routing, and prompts. Multi-line procedural bash belongs in a tested script — skill-local `scripts/` or the shared `~/.claude/scripts/` — with a verdict-line stdout contract: the first line is the verdict and the skill branches on it (see `~/.claude/scripts/start-wt-verify.sh` — `VERIFIED`/`FAILED-*` — and `finish-merge.sh`). Inline bash the model must re-emit verbatim is a transcription-drift surface: more than a few lines, or any duplication across skills, means extract to a script. Scripts are not just length management.
+### Never write a literal positional token in SKILL.md
 
-**README.md**: User-facing documentation (optional)
+The Skill tool substitutes the invocation arguments into every dollar-digit token of a SKILL.md body at load time —
+prose and fenced code alike; named variables such as `$BASE` are untouched. The file on disk stays correct, so the
+corruption is invisible to every grep and lint and exists only in what the model reads, and an argument-free invocation
+leaves the token literal and hides it. Anything that needs awk fields or shell positional parameters goes in
+`scripts/` and is called by path; prose about positional parameters says "the first positional parameter", never the
+token.
 
-- How to use the skill
-- Examples and common scenarios
-- Not loaded by Claude automatically
+### Quality gates and models
 
-## Best Practices
+- Define success criteria and the validation that proves them, plus what to do on failure.
+- Test on the model the skill will run on: an unpinned skill inherits the session's model, a `model: sonnet` pin has to
+  hold up on Sonnet, and Haiku suits only narrow classification (it does not support the `effort` parameter).
 
-### Keep SKILL.md Under 500 Lines
+## Scopes and precedence
 
-- Main workflow should be concise and scannable
-- Move detailed examples to `resources/`
-- Move templates to `templates/`
-- Move scripts to `scripts/`
-- Link to supporting files from main SKILL.md
+| Scope | Location | Use |
+| ----- | -------- | --- |
+| Managed | set by an organization's managed settings | policy-enforced skills |
+| User | `~/.claude/skills/` (this directory) | cross-project workflows |
+| Project | `<project>/.claude/skills/` | project-specific workflows, shared with the team |
+| Plugin | a plugin's `skills/` | invoked namespaced as `plugin:skill` |
 
-### Never Write a Literal Positional Token in SKILL.md
-
-The Skill tool substitutes the invocation arguments into every dollar-digit token of a SKILL.md body at load
-time — prose and fenced code alike; named variables such as `$BASE` are untouched. Measured 2026-09-08 on
-pr-update: invoked with `A1 B2 C3 D4 E5`, its inline awk sum of the first two fields rendered as `s+=B2+C3`,
-and under `update existing PR #485 …` as `s+=existing+PR`. The file on disk was correct throughout, so the
-corruption is invisible to every grep and lint and exists only in what the model reads; an unfilled token is
-left literal, so an argument-free invocation hides it. Anything that needs awk fields or shell positional
-parameters goes in `scripts/` and is called by path; prose about positional parameters says "the first
-positional parameter", never the token.
-
-### Use Progressive Disclosure
-
-Don't load everything upfront:
-
-- **Tier 1**: Frontmatter (name and description) - always visible
-- **Tier 2**: Main SKILL.md content - loaded on invocation
-- **Tier 3**: Supporting files - loaded only when referenced
-
-Example from pr-update:
-
-```markdown
-## PR Title Formats
-
-See [resources/title-patterns.md](resources/title-patterns.md) for comprehensive title format examples.
-
-Quick reference:
-- Infrastructure: "Enterprise [resource] with [key feature]"
-- Features: "Add [feature] with [benefit]"
-```
-
-### Test Across Models
-
-Skills should work with:
-
-- Opus (the default — orchestration, implementation, review)
-- Sonnet (research, writing, and any skill pinned to it)
-- Haiku (narrow classification skills only; it does not support the `effort` parameter)
-
-Test that your skill:
-
-- Provides clear instructions
-- Handles model limitations gracefully
-- Works with different context window sizes
-
-### Version Tracking
-
-Use semantic versioning:
-
-- **1.0.0**: Initial stable release
-- **1.1.0**: New features, backward compatible
-- **2.0.0**: Breaking changes to skill interface
-
-Update version when:
-
-- Changing skill behavior significantly
-- Modifying frontmatter structure
-- Adding/removing required steps
-- Changing invocation triggers
-
-### Documentation Standards
-
-- Use clear, imperative language
-- Provide concrete examples
-- Include verification steps
-- Document error handling
-- Link to external standards (e.g., `~/.claude/standards/semver.md`)
-
-### Quality Gates
-
-Every skill should define:
-
-- Success criteria (checklist format)
-- Validation requirements
-- Error handling procedures
-- Rollback plans (when applicable)
-
-Example from dependency-updater:
-
-```markdown
-## Quality Standards
-
-Each phase must meet:
-
-- ✅ All existing tests pass
-- ✅ No new linting violations
-- ✅ TypeScript compilation succeeds
-- ✅ Security vulnerabilities addressed
-- ✅ Breaking changes properly migrated
-```
-
-## Skill Scopes
-
-Skills can exist at three levels:
-
-### Personal Skills
-
-**Location**: `~/.claude/skills/`
-
-**Scope**: Available to you across all projects
-
-**Use Cases**:
-
-- Personal workflow preferences
-- Cross-project automation
-- Reusable patterns you use frequently
-
-**Examples**: dependency-updater, pr-update
-
-### Project Skills
-
-**Location**: `<project>/.claude/skills/`
-
-**Scope**: Available only within that project
-
-**Use Cases**:
-
-- Project-specific workflows
-- Domain-specific operations
-- Team-shared processes
-
-**Examples**: Project-specific deployment, custom test workflows
-
-### Plugin Skills
-
-**Location**: Claude Skills Marketplace
-
-**Scope**: Published, community-maintained skills
-
-**Use Cases**:
-
-- Industry-standard workflows
-- Popular framework integrations
-- Shared best practices
-
-**Examples**: (As marketplace develops in late 2025)
-
-### Precedence Rules
-
-When multiple skills have the same name:
-
-1. Project skills (`.claude/skills/`) - highest priority
-2. Personal skills (`~/.claude/skills/`)
-3. Plugin skills (marketplace) - lowest priority
+When two skills share a name, managed wins over user, and user wins over project. Plugin skills are namespaced, so they
+never collide with the others.
 
 ## Resources
 
-### Official Documentation
-
-- [Claude Skills Documentation](https://docs.anthropic.com/claude/docs/skills) - Official skill creation guide
-- [Claude Agent SDK](https://docs.anthropic.com/claude/docs/agent-sdk) - Technical reference
-- [Progressive Disclosure Best Practices](https://docs.anthropic.com/claude/docs/progressive-disclosure) - Context optimization
-
-### Example Skills
-
-- [dependency-updater](dependency-updater/SKILL.md) - Complex orchestration with agent delegation
-- [pr-update](pr-update/SKILL.md) - Git analysis with verification and templates
-
-### Related Standards
-
-Referenced by skills in this directory:
-
-- [~/.claude/standards/semver.md](../standards/semver.md) - Semantic version classification
-- [~/.claude/standards/git.md](../standards/git.md) - Git commit and PR conventions
-- [~/.claude/standards/agent-coordination.md](../standards/agent-coordination.md) - Cross-agent interface contracts, write-target exclusivity, background-agent recovery
-
-### Community Resources
-
-- [Claude Skills Marketplace](https://claude.com/skills) - Browse and share skills (coming late 2025)
-- [Skills Examples Repository](https://github.com/anthropics/claude-skills-examples) - Community examples
-- [Skills Best Practices Guide](https://docs.anthropic.com/claude/guides/skills-best-practices) - Advanced patterns
-
----
-
-**Need Help?**
-
-- Review existing skills in this directory for patterns
-- Check official documentation for latest features
-- Test your skill with different scenarios before committing
-- Version your skills to track changes over time
+- [Claude Code skills documentation](https://docs.anthropic.com/en/docs/claude-code/skills)
+- The `skill-creator` skill, installed by `update.sh`, for scaffolding a new skill
+- Local examples: [dependency-updater](dependency-updater/SKILL.md) (agent delegation),
+  [pr-update](pr-update/SKILL.md) (scripts and templates), [standardize-tooling](standardize-tooling/SKILL.md)
+  (references read on demand)
+- Standards skills lean on: [semver](../standards/semver.md), [git](../standards/git.md),
+  [agent-coordination](../standards/agent-coordination.md)

@@ -1,4 +1,11 @@
-# GitHub Actions Standards
+# CI Standards (GitHub Actions, CircleCI)
+
+## Trace a CI behavior to the builds that actually run it
+
+Finding a function in the CI tooling and a job that calls it says nothing about whether an ordinary PR build runs it,
+and concluding that a workflow never reaches it is the mirror error. Before claiming any CI behavior applies to a normal
+build, trace function → every job that calls it (including indirectly, through another CI function) → every workflow
+that lists each job → that workflow's `when:` gate → that job's `branches:` filter.
 
 ## SHA-Pinning Third-Party Actions
 

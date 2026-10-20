@@ -89,15 +89,17 @@ We will [specific action] by [approach].
 3. [Integration point]
 ```
 
-## Complexity Circuit Breakers
+## When to Stop and Ask
 
-STOP and request user confirmation when design involves:
+New abstractions, interfaces, cross-file and cross-package refactors, and schema or API changes are yours to design
+without confirmation (CLAUDE.md § Decisions and anti-patterns). Stop and return a question instead of a finished design only when:
 
-- > 3 files across multiple packages
-- New abstractions or interfaces
-- Core system modifications
-- External dependencies
-- Concurrent behavior changes
+- the root cause is still unclear after investigation
+- several valid designs carry significant trade-offs — lay them out with a recommendation
+- two attempts have already failed
+- the call is a business, security, or usability one
+
+Shape the question per [standards/problem-solving.md](../standards/problem-solving.md) § Complexity Response Pattern.
 
 ## Output Format
 

@@ -8,85 +8,75 @@ paths:
 
 ## Import extensions
 
-All relative imports carry the extension of the file they name — `.ts` / `.tsx`, not `.js`. The shared
-`@alienfast/tsconfig` bases enable this (`allowImportingTsExtensions: true`, alongside `noEmit`), and the
-build tooling (tsdown, native `tsc`) consumes the `.ts` form directly.
+All relative imports carry the extension of the file they name, `.ts` / `.tsx`, not `.js`. The shared
+`@alienfast/tsconfig` bases enable this (`allowImportingTsExtensions: true`, alongside `noEmit`), and the build tooling
+(tsdown, native `tsc`) consumes the `.ts` form directly.
 
 ```typescript
 import { UserService } from './services/user.ts'
 import type { User } from './types/user.ts'
 ```
 
-A project that does not set `allowImportingTsExtensions` — an older repo, or one emitting JS via `tsc` —
-needs the `.js` specifier instead. Check the tsconfig before converting a repo either way.
+A project that does not set `allowImportingTsExtensions` (an older repo, or one emitting JS via `tsc`) needs the `.js`
+specifier instead. Check the tsconfig before converting a repo either way.
 
 ## Import order
 
-1. Node.js built-ins
-2. External dependencies
-3. Internal modules (absolute imports)
-4. Relative imports
-
-Biome's `organizeImports` owns import order — it is on house-wide and sorts alphabetically by specifier,
-so don't hand-sort (type-only imports land wherever their specifier sorts, often first and interleaved).
+Biome's `organizeImports` owns import order (on house-wide, alphabetical by specifier), so don't hand-sort; type-only
+imports land wherever their specifier sorts.
 
 ## Type definitions
 
-`interface` for object shapes that may be extended and for public/extensible contracts; `type` for
-unions, intersections, primitives, and computed types.
+`interface` for object shapes that may be extended and for public contracts; `type` for unions, intersections,
+primitives and computed types. Public functions carry explicit return types; prefer a specific signature over `Function`.
 
 ## Escape hatches need a reason
 
-`any`, `@ts-ignore`, non-null `!`, and `as` casts are all ways of telling the compiler to stop
-checking. Reach for a type guard or an assertion function instead — validating external data is the
-case they exist for. When one is genuinely unavoidable, the justification goes in the code, and
-[Problem-Solving Standards](../standards/problem-solving.md) governs when it is allowed at all.
-
-Public functions carry explicit return types. Prefer a specific signature over the bare `Function`
-type.
+`any`, `@ts-ignore`, non-null `!` and `as` casts tell the compiler to stop checking. Reach for a type guard or an
+assertion function instead; validating external data is the case they exist for. When one is genuinely unavoidable, the
+justification goes in the code, and [Problem-Solving Standards](../standards/problem-solving.md) governs whether it is
+allowed at all.
 
 ## Adding a parameter: prefer required over optional-with-a-default
 
-When a new parameter *selects between behaviors* and you cannot name one value right for every existing
-call site — or would have to open them to find out — make it **required**. A default answers the question
-on behalf of every existing caller, and nothing flags the one it answers wrongly: omitting a defaulted
-parameter is not a type error under any TypeScript configuration (that is what optional means), and no
-Biome rule inspects call sites for inherited defaults — every parameter-adjacent rule it ships constrains
-the declaration site. The caller that should have changed keeps compiling, with the behavior you just
-decided was incorrect.
-
-Required makes `tsc` enumerate the call sites for you — the audit you would otherwise do by hand and could
-not prove complete. Fixing them all is the expected cost, not a reason to reach for the default; see
-[Technical Debt Prevention](../standards/technical-debt-prevention.md) § Breaking Changes Are Welcome.
-
-A default is right when the parameter is genuinely additive and holds for every existing caller *by
-construction* — an opt-in `signal`, a `dryRun` flag — not just for the callers you happened to open.
-
-Measured 2026-08-19: a halt-message selector shipped as `options?: { provenPerDraft?: boolean }` defaulting
-to `true`. That was right for the new call site and wrong for a pre-existing sibling passing a
-group-level predicate, which kept compiling and kept telling an operator to hand-void a draft only
-collectively implicated. It survived a full adversarial review cycle. Making the parameter required forced
-all four call sites to be read and answered — two `true`, two `false`.
+When a new parameter selects between behaviors and you cannot name one value right for every existing call site, make
+it required. A default answers for every existing caller and nothing flags the one it answers wrongly: omitting a
+defaulted parameter is not a type error, and no Biome rule inspects call sites for inherited defaults. Required makes
+`tsc` enumerate the call sites, the audit you would otherwise do by hand and could not prove complete; fixing them all is
+the expected cost ([Technical Debt Prevention](../standards/technical-debt-prevention.md) § Breaking Changes Are
+Welcome). A default is right only when the parameter is additive and holds for every existing caller by construction
+(an opt-in `signal`, a `dryRun` flag). A defaulted selector that was right for its new call site and wrong for a
+pre-existing sibling has survived a full review cycle; making it required is what forced every call site to be read.
 
 ## A structural parameter type does not prevent a wrong value
 
-Changing a parameter from `qty: number` to `arg: { qty: number }` does not stop a caller passing the wrong
-field. The excess-property check fires only on a **fresh object literal** checked against a target type —
-never on a variable — so both `f({ qty: x.otherField })` and `f(x)` (where `x` has `qty` plus other
-members) compile clean. Structural typing means "has these members", not "is the thing you meant": the
-wrapper relocates the mistake into `qty: x.otherField` rather than removing it.
+Changing `qty: number` to `arg: { qty: number }` does not stop a caller passing the wrong field: the excess-property
+check fires only on a fresh object literal, never on a variable, so `f({ qty: x.otherField })` and `f(x)` both compile.
+Two things help, neither a signature-only edit: brand the field at its source (`type Qty = number & { readonly __qty:
+unique symbol }`, which has to reach the producing type and is only as strong as the one cast that mints it), or remove
+the choice from the call site by taking the whole object and letting the callee reach for its own field. Before
+asserting that a type change makes a mistake impossible, write the mistake and run `tsc --noEmit` on it.
 
-Two things that do help, neither of them a signature-only edit:
+## Generated code
 
-- **Brand the field at its source.** `type Qty = number & { readonly __qty: unique symbol }` rejects
-  `f(x.otherField)`, but rejects `f(x.qty)` too until the *producing* type declares `qty: Qty` — so the
-  brand has to reach the domain type, and it is only ever as strong as the one cast that mints it
-  (`f(x.ordered as Qty)` compiles clean).
-- **Remove the choice from the call site** — take the whole object and let the callee reach for its own
-  field, leaving no field to select wrongly. A same-shaped sibling object still passes.
+- After a codegen run rewrites generated TypeScript, the IDE's language server still serves the old types until it
+  reloads, so `ide_diagnostics` on the next edit can describe the previous schema: phantom nullability errors, or silence
+  on a field that just became nullable. Re-reading your file fixes nothing; the project's type check
+  (`pnpm check-types`) is authoritative. Never silence one of these with `?.`, `!` or a guard.
+- Anything that must decorate generated output (a banner, an injected key) is emitted by a generator plugin, never by a
+  post-write hook: the generator compares plugin output against the file on disk and skips the write, hooks included,
+  when they match, so a hook neither fires on a current tree nor restores what someone strips.
 
-Before asserting that a type change makes a mistake impossible, write the mistake and run `tsc --noEmit`
-on it. Measured 2026-08-20, where a fix dispatch instructed that wrapping `outstanding: number` in an
-object would stop a bare `line.ordered` type-checking: after the change, both
-`assessStockRisk({ outstanding: line.ordered }, stock)` and `assessStockRisk(line, stock)` produced zero
-errors.
+## File organization
+
+- Directories are kebab-case; files are PascalCase for React components and camelCase for everything else. A directory
+  that exists to hold one named module takes that module's name.
+- A file is named after its primary export. A file whose primary export is a hook is `useX.ts` (`useX.tsx` if it renders
+  JSX); a provider or utility module that also exports a hook is named after the provider or the concept.
+- A directory earns its existence at three or more files or real sub-structure; a single file, or a component with its
+  one `.graphql`, lives in the parent. Strip prefixes the path already carries (`domains/debt/series/form/`, not
+  `domains/debt/series/debt-series-form/`).
+- No generic `components/` bucket inside a domain or package; organize by concept. A framework's own private-folder
+  convention (Next.js `_components/` under a route) is a scoping mechanism, not a bucket.
+- Variant components (`Add`/`Edit`/`Create` of one entity) share an extracted body; two files that differ only in
+  mutation wiring are one body not yet extracted.

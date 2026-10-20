@@ -22,6 +22,13 @@ never need a hand-edit:
 
 House style, not a lint rule: **close fences bare** — three backticks, never the language specifier repeated.
 
+## Scratch markdown goes in the repo-root `tmp/`
+
+`markdownlint-cli2` ignores are anchored to the config file's directory, so a `tmp/**` ignore excludes only the root
+`tmp/`; a nested `apps/*/tmp/` is still linted even when gitignored. Write scratch markdown to the repo-root `tmp/`
+(or ignore `**/tmp/**`). A red markdown check naming a `tmp/` path is a stray scratch file, not a defect in the change,
+and `git status` won't show it: delete it and re-run.
+
 ## Lint auto-fixes are already applied — don't reapply them by hand
 
 `markdownlint-cli2 --fix` (and any `check-markdown` script wrapping it) **modifies files in place**, so its

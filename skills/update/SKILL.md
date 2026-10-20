@@ -1,6 +1,6 @@
 ---
 name: update
-description: Bring this machine current — pull the latest project code and ~/.claude, then run the update script (the project's .claude/update.sh when it has one, ~/.claude/update.sh directly when it doesn't) to update Claude Code, skills, and the CLI tools. A start-of-day habit, and the first thing to try when a tool is missing or a skill behaves like an older version. Use when the user says 'update', 'update my setup', 'pull the latest', 'bring me up to date', or invokes /update.
+description: Bring this machine current — pull the latest project code and ~/.claude, then run the update script (the project's .claude/update.sh, else ~/.claude/update.sh) for Claude Code, skills and CLI tools. Start-of-day habit; first thing to try when a tool is missing or a skill behaves like an older version. Use when the user says 'update', 'update my setup', 'pull the latest', or invokes /update.
 ---
 
 # Update
@@ -47,21 +47,19 @@ From the repo root, prefer the project's own script when it has one:
 bash .claude/update.sh
 ```
 
-That script pulls `~/.claude`, runs the global `~/.claude/update.sh` — Claude Code itself, the plugin marketplaces, the
-skills, `gh` / `jq` / `linear-cli`, the launchd agents — and finishes with any project-specific work (usually a lint
-pass).
+That script runs the global `~/.claude/update.sh` — which first pulls `~/.claude` (`--ff-only`) and re-runs itself from
+the pulled version, then updates Claude Code, the plugin marketplaces and mods, the skills, `gh` / `jq` / `linear-cli` /
+`sentry`, and the launchd agents — and finishes with any project-specific work (usually tool checks and a lint pass). A
+refused `~/.claude` pull is reported as a warning and the run continues on the current checkout.
 
-**A project without `.claude/update.sh` is normal, not a failure — the global script must still run.** But the global
-script does not pull `~/.claude` itself; the project script is what does that, and skipping the pull would update the
-tools while leaving every skill and rule stale. So do the pull the project script would have done, then run the global
-script directly, and say that's the path you took:
+**A project without `.claude/update.sh` is normal, not a failure — the global script must still run**, and it does the
+`~/.claude` pull itself, so run it directly and say that's the path you took:
 
 ```bash
-git -C ~/.claude pull --ff-only
 bash ~/.claude/update.sh
 ```
 
-When the project *is* `~/.claude`, Step 1 already handled the pull — go straight to the script.
+When the project *is* `~/.claude`, Step 1 already handled the pull; the script's own pull is then a no-op.
 
 The script's sign-in steps (`gh auth login`, the Linear browser OAuth) are TTY-gated, and run from this tool there is no
 TTY — so it never stops to prompt. It prints a ⚠️ with the exact command and keeps going, which means **a run can end

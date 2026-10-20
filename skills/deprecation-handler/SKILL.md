@@ -1,6 +1,6 @@
 ---
 name: "Deprecation Handler"
-description: "Handles deprecated APIs, types, and modules by applying safe migration patterns. Use when encountering deprecation warnings, migrating from deprecated code, updating dependencies with breaking changes, or modernizing legacy code to use current APIs."
+description: "Migrate deprecated APIs, types and modules to current ones with safe patterns — detect, assess, plan, replace, validate. Use when encountering deprecation warnings, modifying files with deprecated code, upgrading dependencies with breaking changes, or modernizing legacy code."
 version: "1.1.0"
 model: sonnet
 effort: medium

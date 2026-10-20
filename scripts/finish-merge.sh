@@ -101,8 +101,8 @@ if [ "$_FINISH_MERGE_LOCK_PID" != "$$" ] && [ -z "${_WITH_REPO_LOCK_HELD:-}" ]; 
   # Lock key: git's own absolute form of the common dir. --path-format=absolute yields the SAME string
   # from any linked worktree or the main checkout, so /start, /finish merge, and reap serialize on ONE
   # key. It also sidesteps the MSYS `pwd -P` divergence the old `cd … && pwd -P` had — a worktree can
-  # resolve to a /tmp-style mount alias while the main checkout resolves to /c/… (see standards/git.md
-  # "Windows Git Bash: comparing paths"); with-repo-lock.py's realpath papered over that, but deriving
+  # resolve to a /tmp-style mount alias while the main checkout resolves to /c/… (see standards/git-windows.md
+  # "Comparing paths"); with-repo-lock.py's realpath papered over that, but deriving
   # a canonical key removes the reliance on that accident.
   repo_key=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || {
     echo "ERROR: finish-merge.sh: not inside a git repository (cwd: $PWD)" >&2

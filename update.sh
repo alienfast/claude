@@ -6,6 +6,26 @@ set -e
 source "$HOME/.claude/lib/lint.sh"
 source "$HOME/.claude/lib/pnpm.sh"
 
+# Pull ~/.claude first and re-run this script from the pulled version, so the rest of the run uses current tooling.
+# A refused pull (dirty tree, local commits, unrelated history) is reported and the run continues on this checkout.
+claude_repo="$HOME/.claude"
+if [ "${1:-}" != "--pulled" ]; then
+  expected_origin="https://github.com/alienfast/claude"
+  current_origin=$(git -C "$claude_repo" remote get-url origin 2>/dev/null || echo "")
+  if [ ! -d "$claude_repo/.git" ] || { [ "$current_origin" != "$expected_origin" ] && [ "$current_origin" != "${expected_origin}.git" ]; }; then
+    echo ""
+    echo "  ❌ ~/.claude is not a clone of $expected_origin (origin: ${current_origin:-none})."
+    echo "     Follow the setup instructions at $expected_origin"
+    exit 1
+  fi
+  if git -C "$claude_repo" rev-parse --verify -q origin/main >/dev/null \
+     && git -C "$claude_repo" merge-base HEAD origin/main >/dev/null 2>&1 \
+     && git -C "$claude_repo" pull --ff-only; then
+    exec "$0" --pulled
+  fi
+  echo "  ⚠️  ~/.claude pull did not fast-forward (dirty tree, local commits, or unrelated history); continuing with this checkout."
+fi
+
 # OS detection drives the package-manager branches below. Git Bash / MSYS2 on Windows reports
 # OSTYPE=msys (uname → MINGW64_NT / MSYS_NT); macOS is darwin*. macOS installs system tools via
 # Homebrew; Windows has no brew, so there we install what the cross-platform managers (cargo, pnpm,
@@ -267,7 +287,6 @@ agent-browser install || {
 pnpm dlx skills add vercel-labs/agent-browser \
   -g \
   --skill agent-browser \
-  --skill skill-creator \
   $AI_AGENTS \
   -y
 
@@ -408,6 +427,24 @@ if ! command -v linear-cli >/dev/null 2>&1; then
   exit 1
 fi
 echo "  ✓ $(linear-cli --version 2>/dev/null | head -1)"
+
+# Sentry CLI — the agentic `sentry` (https://cli.sentry.dev) the /sentry skill drives. Distinct from the legacy
+# sentry-cli v2 (@sentry/cli on npm, used by release steps). --no-agent-skills: Sentry's bundled agent skills would
+# compete with the house skills in the session listing. Non-fatal: a project without Sentry never needs it.
+echo ""
+echo "Installing Sentry CLI (cli.sentry.dev)..."
+find_sentry() {
+  command -v sentry 2>/dev/null && return 0
+  for d in "$HOME/.local/bin" "$HOME/bin" "$HOME/.sentry/bin"; do
+    [ -x "$d/sentry" ] && { echo "$d/sentry"; return 0; }
+  done
+  return 1
+}
+if SENTRY_BIN="$(find_sentry)"; then
+  "$SENTRY_BIN" cli upgrade --no-agent-skills || echo "  ⚠️  sentry upgrade failed (non-fatal, continuing)"
+else
+  curl -fsS https://cli.sentry.dev/install | bash -s -- --no-agent-skills || echo "  ⚠️  sentry install failed (non-fatal, continuing)"
+fi
 
 # 4. Persist ~/.cargo/bin on PATH for future shells (so skills that call linear-cli
 #    directly resolve it). Idempotent — skip if the rc already references cargo.

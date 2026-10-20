@@ -5,110 +5,100 @@ description: Finish a Linear issue — check off requirements, add completion co
 
 # Finish Issue
 
-Automates the post-completion workflow for a Linear issue using the `linear-cli` CLI. The mechanical steps (worktree-mode detection, issue-ID resolution, Linear posts, git commit and the opt-in push) are delegated to scripts in `~/.claude/scripts/`; this skill is the orchestrator + LLM-judgment surface (reading the description, composing the completion comment).
+Post-completion workflow for a Linear issue. Scripts in `~/.claude/scripts/` do the mechanical work (mode detection,
+issue-ID resolution, Linear posts, commit, merge); this skill orchestrates them and supplies the judgment — reading the
+description, composing the completion comment, gating the release on the review verdict.
 
 ## Arguments
 
-- Issue identifier (e.g., `PL-12`) — optional, auto-detected from branch/commit
-- `push` — optional, pushes the branch after the commit. **The default is no push**: the commit stays local and the closing message names the push. `pr` implies `push` (a PR needs the branch on origin); `merge` refuses it (the worktree branch is deleted on merge — Step 7). `no push` / `don't push` / `skip push` restate the default and change nothing.
-- `merge` — only meaningful inside a `/start wt` worktree. **Default when in a worktree.** Merge the worktree branch back into its recorded source branch, then remove the worktree.
-- `pr` — open a pull request for the current branch (works from **any** branch). Inside a `/start wt` worktree the base is the recorded source branch and the worktree is left in place; otherwise the base is the repo's GitHub default branch (in-place — no worktree touched). Optionally apply labels with `with label X` / `label X, Y`. The issue stays `In Progress` (the PR is open, not yet shipped).
+- Issue identifier (e.g. `PL-12`) — optional; detected from the branch or the latest commit subject.
+- `push` — push the branch after the commit. **The default is no push**: the commit stays local and the closing message
+  names the push. `pr` implies `push`; `merge` refuses it (the worktree branch is deleted on merge). `no push` /
+  `don't push` / `skip push` restate the default and change nothing.
+- `merge` — only inside a `/start wt` worktree, where it is **the default**: merge the worktree branch into its recorded
+  source branch, then remove the worktree.
+- `pr` — open a pull request for the current branch, from **any** branch. In a worktree the base is the recorded source
+  branch and the worktree stays; otherwise the base is the repo's GitHub default branch and no worktree is touched.
+  Labels: `with label X` / `label X, Y`. The issue moves to Ready For Release once the PR is open.
+- `auto` — autonomous mode (case-insensitive, position-agnostic): every prompt below resolves to its conservative default
+  — abort rather than override, proceed-without rather than create; each prompt site states its default. The token and
+  its `/full auto` pass-through: `skills/full/SKILL.md` § Auto mode. The `/auto` invocation is the commit/push grant:
+  `standards/git.md` § Commit and Push Authorization.
 
-- `auto` — optional token (case-insensitive, position-agnostic). **Autonomous mode**: every user prompt in this skill resolves to its conservative default instead of asking — abort rather than override, proceed-without rather than create. Each prompt site below documents its auto default inline. Passed through by `/full auto` for the `/auto` loop; the `/auto` invocation is the commit/push grant (see standards/git.md).
-
-Examples: `/finish`, `/finish PL-12`, `/finish push`, `/finish PL-12 push`, `/finish merge`, `/finish auto PL-12 merge`, `/finish pr PL-12`, `/finish pr with label pr-deploy`
+Examples: `/finish`, `/finish PL-12`, `/finish push`, `/finish merge`, `/finish auto PL-12 merge`, `/finish pr PL-12`,
+`/finish pr with label pr-deploy`
 
 ## Invariant
 
-**`pnpm check` must pass before committing or pushing code.** Check failures are always CRITICAL — never "pre-existing", never "out of scope", never deferred. Fix them before proceeding. Turborepo caching makes repeated runs cheap.
+**`pnpm check` must pass before anything is committed or pushed.** A check failure is always CRITICAL — never
+pre-existing, never out of scope, never deferred. Fix it first.
 
 ## Workflow
 
-### Preflight: Exit Plan Mode If Active
+### Preflight: exit plan mode if active
 
-If the session is in plan mode when `/finish` is invoked, call `ExitPlanMode` **before any other step**. Every step from Step 0 onward needs Bash, Write, or Edit — all blocked in plan mode — so `finish-detect-mode.sh` would fail on its first call otherwise.
+If plan mode is active at skill entry, call `ExitPlanMode` before anything else (every step needs Bash, Write or Edit)
+with a one-line plan naming what `/finish` will do — inline a user-typed issue token only when it matches
+`^[A-Z]+-[0-9]+$`, uppercased; otherwise write `the current branch's issue`. Never call it when plan mode is off (it
+raises a spurious approval prompt); if the indicator is ambiguous, try Step 0 and return here only when
+`finish-detect-mode.sh` is blocked by plan mode.
 
-**Detection.** Use the harness's plan-mode indicator visible at skill entry (the same signal that was gating tool calls just before this skill loaded). If that indicator is ambiguous or unavailable, attempt Step 0; if `finish-detect-mode.sh` fails with a plan-mode block, return here, call `ExitPlanMode`, then retry Step 0. Do NOT speculatively call `ExitPlanMode` when plan mode is not active — it raises a spurious approval prompt the user must dismiss.
-
-**Plan body.** Pass a one-line plan summarizing what `/finish` is about to do for the resolved issue. There is nothing to design — `/finish` is a fixed mechanical workflow — but `ExitPlanMode` is the only way to leave plan mode and it requires a plan body. For the `<ISSUE-ID>` substitution: only inline a user-supplied token if it matches `^[A-Z]+-[0-9]+$` (case-insensitive, uppercase it before substituting); otherwise use `the current branch's issue`. This keeps malformed tokens (e.g., `PL13`, stray `merge`/`pr` keywords) out of the plan body and out of any rejection-terminator that echoes the same value.
-
-- Approved by the user: proceed to Step 0.
-- Rejected by the user: proceed to the rejection terminator below.
-- Tool-error / harness failure (not a user rejection — the tool itself returns an error, or the harness reports `ExitPlanMode` failed for a non-user-cancel reason): surface the error verbatim and stop with `BLOCKED-ON-REVIEW: <ISSUE-ID or "current branch"> — ExitPlanMode failed: <first line of error>. No state change.` Do NOT continue to Step 0; plan mode is still active and Step 0 will compound the failure.
-
-**On user rejection** via the approval UI, treat as an abort and stop with:
-
-```text
-BLOCKED-ON-REVIEW: <ISSUE-ID or "current branch"> — user rejected /finish at the plan-mode preflight. No state change.
-```
-
-Do not retry, do not re-prompt, do not run any subsequent step. **Skip this preflight only when plan mode is NOT active** — `/finish` is normally invoked from a non-plan session after `/start` or manual development, in which case this section is a no-op.
+- Approved → Step 0.
+- Rejected → stop, no retry, no re-prompt: `BLOCKED-ON-REVIEW: <ISSUE-ID or "current branch"> — user rejected /finish at the plan-mode preflight. No state change.`
+- Tool or harness error → surface it verbatim and stop: `BLOCKED-ON-REVIEW: <ISSUE-ID or "current branch"> — ExitPlanMode failed: <first line of error>. No state change.`
 
 ### Step 0: Detect Worktree Mode
 
-Normalize the user's args before calling the script:
+Normalize the user's args first:
 
-- Look for the `auto` token (case-insensitive, position-agnostic) — it selects autonomous mode for this skill's prompt sites and is NOT passed to the script (its arg contract is `merge|pr|--push` only).
-- Look for `merge` and `pr` tokens (case-insensitive, position-agnostic) — pass through whichever is present (if both, the script errors). **The token you were dispatched with is authoritative — never substitute the other flow.** Receiving `merge` and then running `finish-detect-mode.sh pr` is a real, repeated defect (measured 2026-08-20: an unattended issue shipped as a PR that way, the reasoning being that recent issues in the repo had shipped as PRs); if the token looks wrong for this repo, say so and STOP rather than switching.
-- Look for the `push` token — translate to `--push` for the script. The `no push` / `don't push` / `skip push` variants restate the default: accept them and pass nothing.
-- Look for label requests (`with label X`, `label X, Y`, `--label X`) — collect them into a list and **carry it forward to Step 9** (pr mode only). Labels are NOT passed to the script — its arg contract is `merge|pr|--push` only. **If labels were requested but the resolved `ACTION` is not `pr`** (i.e., `merge` or the standard flow), labels have no PR to attach to — warn the user once (`Labels apply only to /finish pr; ignoring: <list>.`) rather than silently dropping them.
+- `auto` → selects this skill's prompt defaults; not passed to the script (its contract is `merge|pr|--push`).
+- `merge` / `pr` → pass through whichever is present (both → the script errors). **The token you were dispatched with is
+  authoritative — never substitute the other flow** because recent issues in this repo shipped the other way; if it
+  looks wrong for this repo, say so and stop.
+- `push` → `--push`. The `no push` variants restate the default: pass nothing.
+- Labels (`with label X`, `label X, Y`, `--label X`) → collect and carry to Step 9 (`pr` only); never passed to the
+  script. Requested labels with a non-`pr` `ACTION` → warn once, `Labels apply only to /finish pr; ignoring: <list>.`
 
 ```bash
 ~/.claude/scripts/finish-detect-mode.sh [merge|pr] [--push]
 ```
 
-The script probes worktree state, validates incompatible argument combinations, and emits these `KEY=value` lines on stdout: `ACTION`, `SOURCE_BRANCH`, `WORKTREE_BRANCH`, `WT_DIR`, `REPO_ROOT`, `PUSH` (`1` under the `push` token or `pr`, else `0`), plus `CORRUPTION` and `IDENTITY_SOURCE` (and, only on exit 4, `CORRUPTION_REASON` / `CORRUPTION_OWNER_IS_ME` / `EXPECTED_BRANCH` / `EXPECTED_BASELINE` / `EXPECTED_SOURCE_BRANCH` — see exit 4 above and Step 0.5). **Read those values and carry them forward** — Step 9 substitutes them into bash commands as literal strings (each Bash tool call is a fresh shell).
+It probes worktree state, validates argument combinations, and prints `KEY=value` lines: `ACTION`, `SOURCE_BRANCH`,
+`WORKTREE_BRANCH`, `WT_DIR`, `REPO_ROOT`, `PUSH` (`1` under `push` or `pr`), `CORRUPTION`, `IDENTITY_SOURCE`, and on
+exit 4 `CORRUPTION_REASON` / `CORRUPTION_OWNER_IS_ME` / `EXPECTED_BRANCH` / `EXPECTED_BASELINE` /
+`EXPECTED_SOURCE_BRANCH`. **Carry the values forward** — later steps substitute them as literal strings (each Bash call
+is a fresh shell).
 
-**Exit codes:**
+Exit codes:
 
-- 1 — incompatible args (`merge` + `pr`, or `merge` + `push` — the implicit worktree `merge` included). Surface the error and stop.
-- 2 — `merge` requested outside a `/start wt` worktree. Surface and stop. (`pr` is **not** rejected here — it works from any branch; see below.)
-- 4 — **worktree identity mismatch.** The worktree no longer matches the identity `/start` stamped (branch swapped, HEAD reset off its stamped baseline, `start.source-branch` config wiped, or — `lineage-clobbered` / `lineage-unauditable` — committed work dropped by a same-lineage rewrite the ancestry check cannot see, or a drop window the preservation audit cannot certify; the clobbered case lists the dropped commits on stderr) while the immune identity sidecar still proves it's a `/start wt` worktree. Two causes look identical to the ancestry check: a parallel-session hijack (the PL-454/PL-460 failure mode) or this session's own un-restamped history rewrite (the BF-505 failure mode) — `CORRUPTION_OWNER_IS_ME=1` marks the latter as likely, but is never proof (a foreign reset while the owner is live reads the same). The script emits `CORRUPTION=1`, `CORRUPTION_REASON`, `CORRUPTION_OWNER_IS_ME`, `IDENTITY_SOURCE`, and `EXPECTED_BRANCH` / `EXPECTED_BASELINE` / `EXPECTED_SOURCE_BRANCH` alongside the usual context. **Do NOT run the normal flow** — merging an unverified tree is the exact risk the stamp exists to stop. Jump straight to **Step 0.5**, carrying those values forward.
+- 1 — incompatible args (`merge` + `pr`, or `merge` + `push`, the implicit worktree `merge` included). Surface and stop.
+- 2 — `merge` outside a `/start wt` worktree. Surface and stop. (`pr` works from any branch.)
+- 4 — **worktree identity mismatch.** The worktree does not match the identity `/start` stamped (branch swapped, HEAD
+  reset off its baseline, source-branch config wiped, or `lineage-clobbered` / `lineage-unauditable` — committed work
+  dropped by a same-lineage rewrite) while the identity sidecar still proves it is a `/start wt` worktree. A parallel
+  session's hijack and this session's own un-restamped rewrite look identical; `CORRUPTION_OWNER_IS_ME=1` marks the
+  latter as likely, never as proven. **Do not run the normal flow** — merging an unverified tree is the risk the stamp
+  exists to stop. Go to Step 0.5.
 
-When `SOURCE_BRANCH` is set (we're in a worktree), the script defaults `ACTION` to `merge`; `/finish pr` is the way to opt into the PR flow with `base = SOURCE_BRANCH`. Outside a worktree, `pr` is allowed (it emits `ACTION=pr` with an empty `SOURCE_BRANCH`, and Step 9 targets the repo's default branch), while `merge` is rejected (exit 2).
+`SOURCE_BRANCH` set (a worktree) → `ACTION` defaults to `merge`, and `pr` opts into the PR flow with
+`base = SOURCE_BRANCH`. Outside a worktree `pr` emits `ACTION=pr` with an empty `SOURCE_BRANCH` and `merge` exits 2.
+Both empty → the standard flow.
 
-**Register isolation for a standalone background `/finish` (worktree mode only).** When `SOURCE_BRANCH` is set, Step 9 writes into `<WT_DIR>` — the merge-commit message, and any conflict-resolution edits. In the `/full` flow `/start` Step 0 already entered the worktree via `EnterWorktree`, so those Write-tool edits land under the guard (this is what the "editable even under bgIsolation" lines in Step 9 rely on). But a **standalone** `/finish merge` in a **background session** — the manual-recovery path, or a user who backgrounds `/finish` — never ran `/start`, so the worktree is unregistered and those edits would be guard-blocked. If this session did not enter the worktree, register it here at Step 0 — Steps 5, 7, and 9 all Write-tool-write into `<WT_DIR>` (`tmp/linear-description`, `tmp/finish-commit`, the merge-commit message): `cd '<REPO_ROOT>'` first **only if** cwd is currently inside the worktree (to avoid the same-cwd refusal), then `EnterWorktree(path=<WT_DIR>)` — which registers isolation and switches cwd to the worktree. **Never** disable the guard (`worktree.bgIsolation: "none"`) or edit settings to weaken it; if a worktree Write is still blocked, STOP and surface rather than ship a partial merge.
-
-If both `SOURCE_BRANCH` and `ACTION` are empty, this is the standard `/finish` flow.
+**Register isolation for a standalone `/finish merge` in a background session.** Steps 5, 7 and 9 write into `<WT_DIR>`
+with the Write tool. Under `/full`, `/start` Step 0 entered the worktree via `EnterWorktree`, so those writes land under
+the guard; a standalone background `/finish` never ran `/start`, so without registration they are guard-blocked. If this
+session has not entered the worktree: `cd '<REPO_ROOT>'` first **only if** cwd is inside the worktree (the same-cwd
+refusal), then `EnterWorktree(path=<WT_DIR>)`. **Never** weaken the guard (`worktree.bgIsolation: "none"`, a settings
+edit); a still-blocked worktree write is a stop, never a partial merge. The guard: `standards/git-worktrees.md`
+§ Worktree-isolated sessions.
 
 ### Step 0.5: Worktree Corruption Recovery (only when `finish-detect-mode.sh` exits 4)
 
-The worktree's identity no longer verifies. Either a parallel `/start wt` session reset it out from under us (PL-454/PL-460, ~8 `/full wt` in parallel), or this session's own deliberate history rewrite detached the stamp without a restamp (BF-505). For the hijack case the intended work is typically uncommitted edits that survived the reset, recoverable by `finish-recover.sh`: it salvages that work to a patch, re-forks a fresh branch off the **current** source tip, re-applies, gates on `pnpm check`, commits, and merges.
-
-**Posture: detect-and-stop with ONE confirmation.** Recovery infers which-files-are-mine heuristically when the branch was reset, so never run it unattended. **Auto mode:** do not ask, do not recover, do not restamp — stop immediately with `BLOCKED-ON-RECOVERY: <ISSUE-ID> — worktree identity mismatch (<CORRUPTION_REASON>); recovery requires a human. Worktree preserved at <WT_DIR>.` (The sanctioned restamp belongs at rewrite time in the session that performed the rewrite — `wt-restamp.sh` run at finish time on a mismatch would self-authorize exactly the signal a live-owner hijack forges.)
-
-1. **Surface the mismatch** from Step 0's output: `CORRUPTION_REASON`, `CORRUPTION_OWNER_IS_ME`, `IDENTITY_SOURCE`, `EXPECTED_BRANCH` vs the current `WORKTREE_BRANCH`, `EXPECTED_BASELINE`, `EXPECTED_SOURCE_BRANCH`. State plainly what recovery will do (salvage → fresh `.claude/worktrees/<id>-recovered` off `EXPECTED_SOURCE_BRANCH` → re-apply → `pnpm check` → commit → merge → retire the corrupted worktree).
-
-2. **Self-rewrite fast path (interactive only).** When `CORRUPTION_OWNER_IS_ME=1`, `CORRUPTION_REASON=baseline-detached`, and `EXPECTED_BRANCH` matches `WORKTREE_BRANCH`, the likely cause is a deliberate rebase/reset by this session or its user — confirm that with them, and on confirmation run `~/.claude/scripts/wt-restamp.sh '<WT_DIR>'` and re-run Step 0's detection. **What licenses continuing is the RE-RUN reporting `CORRUPTION=0`** — the restamp's own exit 0 is necessary but not sufficient, so never skip the re-run or read its verdict off the restamp. On a clean re-run, continue the **normal** flow — no recovery, no salvage; the tree was never foreign-touched. If the restamp exits **non-zero** (2, 3, 4, 5, or an undocumented code), or the re-run still reports `CORRUPTION=1`, fall through to the recovery question below, surfacing the script's stderr verbatim. **Exit 5** specifically means the rewrite dropped commits the branch used to carry (the script lists them) — a foreign reset and a deliberate drop look identical here, so only after the user explicitly confirms those drops were intentional may the fast path re-run once as `~/.claude/scripts/wt-restamp.sh --acknowledge-lost '<WT_DIR>'`. Never pass that flag unprompted, and never in auto mode.
-
-   **`lineage-clobbered` with `CORRUPTION_OWNER_IS_ME=1` takes the same fast path via `--acknowledge-lost` — and the audit can fire on an orphaned MERGE alone.** The preservation audit checks content and reachability separately: `git cherry` compares patch-ids and never sees a merge commit, so `git rev-list --merges` is the only check that can. Measured: `git commit --amend` on a merge leaves `cherry` reporting nothing and `rev-list --merges` reporting the pre-amend merge, with the two trees identical — `WTID_AUDIT_LOST` empty, `WTID_AUDIT_LOST_MERGES` not. Read the two stderr headings separately (`commits … HEAD no longer contains:` vs `merge commits no longer reachable:`) and tell the user which fired and what it lists. Only after they explicitly confirm the drops were deliberate, run `~/.claude/scripts/wt-restamp.sh --acknowledge-lost '<WT_DIR>'` and re-run Step 0's detection — the RE-RUN reporting `CORRUPTION=0` licenses continuing, exactly as above; never unprompted, never in auto mode. Exit 3 means the restamp could not match a session id (owner attribution falls back to harness-pid equality when an id is missing on either side; the restamp never does): fall through to the recovery question, which for this reason must carry the flatten warning in item 3.
-
-   **Never carry `wt-restamp.sh` into a handoff.** Ownership is proven by session-id equality alone, so it refuses every caller that is not the stamped owning session (exit 3, `cannot prove this is the owning session`) — a human at a terminal presents no session id at all and can never clear it. A blocked message is by definition read by someone else, so naming restamp in one sends its reader to a command that cannot run. Route to the recovery question in item 3 instead.
-
-3. **Ask the user (single message, then wait):**
-
-   > Worktree for `<ISSUE-ID>` no longer matches its stamped identity (`<CORRUPTION_REASON>`; owner-is-me=`<CORRUPTION_OWNER_IS_ME>`). Recover automatically? Reply `yes` to run `finish-recover.sh`, or `abort` to stop and inspect manually.
-
-   **When `CORRUPTION_REASON` is `lineage-clobbered`, the question must say what `yes` costs.** `finish-recover.sh` salvages by flattening the branch to one `git diff <fork>` patch replayed as ONE commit on a fresh fork, so every merge commit and its message is destroyed — a real loss when the audit's only drops are orphaned merges whose tree HEAD already carries (history is broken; the tree is not). Add the listed drops to the question, state that `yes` flattens them away and that `abort` leaves the worktree for a human to repair reachability by hand, and on `abort` carry those SHAs in the `BLOCKED-ON-RECOVERY` line. **Never merge with `_WT_SKIP_IDENTITY_CHECK=1` instead.** It has been done once, and the landed tree even matched a prior read-only `git merge-tree` prediction — which is exactly what makes it look safe. That variable is recovery-internal — `finish-merge.sh` honours it only because recovery re-invokes the merge on a freshly stamped worktree — and it switches off `wt_identity_verify` along with the audit, demands no ownership proof, and re-opens the detect→merge window a parallel session can hijack across, the reason `finish-merge.sh` re-runs both checks at all. It is strictly weaker than the `--acknowledge-lost` path it would stand in for. (`_FM_SKIP_OURS_GUARD` is a different kind of skip: the guard it bypasses has already printed exactly what the bypass discards; nothing enumerates what this one gives up.)
-
-   On `abort`: stop with `BLOCKED-ON-RECOVERY: <ISSUE-ID> — worktree identity mismatch (<CORRUPTION_REASON>); recovery declined. Worktree preserved at <WT_DIR>.` No state change. Do not run any further step.
-
-4. **On `yes`:** Write the work-commit message (must contain the issue ID, e.g. `PL-13: <summary>`) to `<REPO_ROOT>/tmp/finish-commit-<issue-id-lowercased>.md`. **In a worktree-isolated session the guard blocks this `REPO_ROOT` write** — write it via the shell (heredoc / `printf` redirect), not the Write tool: it is gitignored, run-scoped bookkeeping owned by this workflow (the same pattern as `/auto`'s state file), and never a reason to touch `worktree.bgIsolation`. Then run from the MAIN checkout:
-
-   ```bash
-   cd '<REPO_ROOT from Step 0>'
-   ~/.claude/scripts/finish-recover.sh '<WT_DIR>' '<EXPECTED_BASELINE>' '<EXPECTED_SOURCE_BRANCH>' '<EXPECTED_BRANCH>' '<REPO_ROOT>/tmp/finish-commit-<issue-id-lowercased>.md'
-   ```
-
-   Route on `finish-recover.sh`'s exit code (it prints `RECOVER_DIFF_STRATEGY=<strategy>` on stderr — quote it in the closing line):
-
-   - **0** — recovered + merged. The merge owns the Ready-For-Release transition (as in Step 9 exit-0): run `~/.claude/scripts/mark-ready-for-release.sh <ISSUE-ID>`, then emit `SHIPPED-MERGE: <ISSUE-ID> — worktree identity mismatch recovered; work salvaged (<strategy>), re-forked off <EXPECTED_SOURCE_BRANCH>, merged, Ready For Release.` Terminal. When the `RECOVERED:` line ends with a `CLEANUP-FAILED` note, the recovered worktree stayed on disk at `.claude/worktrees/<id>-recovered`: apply Step 9's `CLEANUP-FAILED:` handling to it — the follow-up Notes comment, and `recovered worktree NOT removed (CLEANUP-FAILED: <blocking paths>; see the completion comment)` appended to the tag.
-   - **2** — conflict applying/merging in `.claude/worktrees/<id>-recovered`. Resolve there (read the conflicted files listed on stderr, fix, `git -C '.claude/worktrees/<id>-recovered' add <files>`, `pnpm check`), then **re-run the same `finish-recover.sh` line** (it resumes the recovered worktree). If genuinely unresolvable, emit `BLOCKED-ON-RECOVERY: <ISSUE-ID> — recovery conflict in .claude/worktrees/<id>-recovered; resolve and re-run finish-recover.sh.`
-   - **3** — merge deferred to the queue (transient). Emit `DEFERRED-MERGE: <ISSUE-ID> — recovered work queued (<reason>); will retry automatically. Check with /merge-queue.` (The drainer marks Ready For Release when it lands.)
-   - **4** — `pnpm check` failed in the recovered worktree. Emit `BLOCKED-ON-RECOVERY: <ISSUE-ID> — pnpm check failed in the recovered worktree; fix in .claude/worktrees/<id>-recovered and re-run finish-recover.sh.`
-   - **1** — setup failure (source branch gone, nothing salvageable, or the identity stamp on the recovered worktree failed). Surface the script's stderr and emit `BLOCKED-ON-RECOVERY: <ISSUE-ID> — recovery setup failed: <first stderr line>. Inspect <WT_DIR> manually.` **If the failure was the identity stamp**, the salvage already succeeded: the work is committed on the recovery branch in `.claude/worktrees/<id>-recovered` (not `<WT_DIR>`, which is the corrupted original and holds nothing new), and the script resumes from that committed state — say so, point at the recovered worktree, and **re-run the same `finish-recover.sh` line** once the cause is cleared (a concurrent config writer, or a read-only `.git`).
-
-Step 0.5 is terminal for the recovery case — do NOT continue to Steps 1–9. (The work being recovered is the same code `/quality-review` already passed in `/start`, so no separate verdict gate runs here; the user's `yes` is the gate.) The one exception is item 2's self-rewrite fast path: a successful restamp re-verified by a clean Step 0 re-run exits Step 0.5 entirely and continues the normal flow from Step 1 — nothing was recovered, so every normal gate (including Step 1.5's verdict read and Step 8) still applies.
+Read `references/corruption-recovery.md` now and follow it. It is terminal — a recovered merge ends on `SHIPPED-MERGE`,
+a declined or failed recovery on `BLOCKED-ON-RECOVERY` — except its self-rewrite fast path, where a clean Step 0 re-run
+(`CORRUPTION=0`) re-enters the normal flow at Step 1 with every gate intact. **Auto mode:** do not ask, recover or
+restamp — stop with `BLOCKED-ON-RECOVERY: <ISSUE-ID> — worktree identity mismatch (<CORRUPTION_REASON>); recovery
+requires a human. Worktree preserved at <WT_DIR>.`
 
 ### Step 1: Identify the Issue
 
@@ -116,13 +106,19 @@ Step 0.5 is terminal for the recovery case — do NOT continue to Steps 1–9. (
 ~/.claude/scripts/detect-issue-id.sh [--input <USER-SUPPLIED-ID>]
 ```
 
-The script tries `--input` → current branch → latest commit subject, in that order. Pass `--input` only when the user typed an explicit ID (e.g., `/finish PL-12`). On exit 1, ask the user for the identifier explicitly.
+Tries `--input` → current branch → latest commit subject. Pass `--input` only when the user typed an explicit ID. On
+exit 1, ask the user for the identifier (auto mode: Error Handling).
 
-**Cross-worktree sanity check (standard-flow only).** After the issue ID is resolved, if the standard flow was detected in Step 0 (`ACTION` empty — no worktree config and no explicit `pr`) but the issue's branch exists in a known linked worktree of this repo (`git worktree list` shows a path whose basename or branch contains `<issue-id-lowercased>`, e.g., `pl-13`), warn the user before continuing:
+**Cross-worktree sanity check (standard flow only).** When `ACTION` is empty but the issue's branch lives in a linked
+worktree of this repo (`git worktree list` shows a path whose basename or branch contains `<issue-id-lowercased>`), the
+user has probably run `/finish` from the main checkout while the work sits in a `/start wt` worktree, which would commit
+on the wrong branch. Ask, and continue only on an explicit `yes`:
 
 > Issue `<ISSUE-ID>` appears to live in worktree `<path>`. Are you running `/finish` from the wrong cwd? Reply `yes` to proceed here anyway, or `abort` and `cd` into the worktree first.
 
-Continue only on explicit `yes`. **Auto mode:** never proceed here — stop with `BLOCKED-ON-REVIEW: <ISSUE-ID> — issue appears to live in worktree <path>; wrong cwd for an unattended /finish. No state change.` This catches the case where `/start wt` created a worktree, the user opened a fresh terminal in the main checkout, and ran `/finish PL-13` from there — which would otherwise commit on the wrong branch. Skip the check entirely when Step 0 detected a worktree (in which case `SOURCE_BRANCH` is set and we're already in the right place), when `ACTION` is `pr` (an explicit `/finish pr` is a deliberate choice to open a PR for the current branch — never a wrong-cwd accident), or when no issue ID was resolved (nothing to check against).
+**Auto mode:** stop with `BLOCKED-ON-REVIEW: <ISSUE-ID> — issue appears to live in worktree <path>; wrong cwd for an
+unattended /finish. No state change.` Skip the check when Step 0 detected a worktree (`SOURCE_BRANCH` set), when
+`ACTION` is `pr` (an explicit choice, never a wrong-cwd accident), or when no ID resolved.
 
 ### Step 1.5: Read Quality-Review Verdict + Sub-issues
 
@@ -130,20 +126,24 @@ Continue only on explicit `yes`. **Auto mode:** never proceed here — stop with
 ~/.claude/scripts/finish-read-verdict.sh PL-12
 ```
 
-Emits seven `KEY=value` lines: `VERDICT_FILE`, `VERDICT`, `CYCLES`, `SUB_ISSUES`, `SUB_ISSUES_ERROR`, `VERDICT_STALE`, `VERDICT_STALE_REASON`. **Read those values and carry them forward** — Step 4 embeds them in the completion comment, Step 8 gates the `Ready For Release` transition on `VERDICT` and `VERDICT_STALE`.
+Emits `VERDICT_FILE`, `VERDICT`, `CYCLES`, `SUB_ISSUES`, `SUB_ISSUES_ERROR`, `VERDICT_STALE`, `VERDICT_STALE_REASON`.
+Carry them forward: Step 4 embeds them in the completion comment; Step 8 gates on `VERDICT` and `VERDICT_STALE`. The
+file is `/quality-review`'s persisted verdict block (schema and publish route: `skills/quality-review/SKILL.md`
+§ Output); this skill only reads it.
 
-`VERDICT` is one of:
-
-- `passed-clean` / `passed-after-fixes` — `/quality-review` converged cleanly. Step 8 proceeds without prompting.
-- `terminated-with-open-items` / `escalated-to-architect` — non-passing. Step 8 hard-refuses by default (override prompt; see Step 8).
-- `malformed` — verdict file exists but cannot be parsed (no `Verdict:` line, the line contains the pipe-separated schema example, or the value is not one of the four recognized enums). Step 8 hard-refuses; the user clearly ran `/quality-review` but the handoff is broken, so silently passing the gate would defeat the safety check.
-- `none-found` — no verdict file exists at either the current worktree's `tmp/` or the main checkout's `tmp/`. `/quality-review` was either never run for this issue or was run from a different repo. Step 8 hard-refuses by default (override prompt; see Step 8).
-
-`SUB_ISSUES` is the parent issue's **current `children` array from Linear** — i.e., every sub-issue that exists under this parent right now, not necessarily ones filed by this `/quality-review` run. Step 4 surfaces this list as context (labeled accordingly), not as a "filed this run" claim.
-
-`SUB_ISSUES_ERROR` is populated only if `linear-cli issues get` failed (CLI unauthenticated, missing issue, network blip). Step 1.5 does NOT abort on this — `linear-cli auth oauth` is offered in Step 2's error handling if needed, and the rest of `/finish` can proceed without sub-issue context. Surface the warning text in chat once when populated.
-
-`VERDICT_STALE=1` means the verdict file's mtime predates HEAD's commit time — additional commits landed AFTER `/quality-review` ran, so the verdict does not reflect current code. Step 8 escalates passing-but-stale to refuse-with-override (same shape as `malformed`), preventing the gate from sailing through on an out-of-date verdict. The `VERDICT_STALE_REASON` field carries diagnostic text for the override prompt.
+- `VERDICT`: `passed-clean` / `passed-after-fixes` (converged; Step 8 proceeds unless stale);
+  `terminated-with-open-items` / `escalated-to-architect` (non-passing; Step 8 refuses with an override prompt);
+  `malformed` (a file exists with no recognized verdict — no `Verdict:` line, the pipe-separated schema example, or a
+  value outside the four enums; Step 8 refuses, since the handoff is broken and passing silently would defeat the
+  gate); `none-found` (no file at the worktree's or the main checkout's `tmp/` — the review never ran for this issue, or
+  ran from another repo; Step 8 refuses with an override prompt).
+- `SUB_ISSUES`: the parent's **current `children` array in Linear** — every sub-issue under it now, not only ones this
+  review filed; Step 4 labels it so.
+- `SUB_ISSUES_ERROR`: set only when `linear-cli issues get` failed. Surface it once and continue — the rest of `/finish`
+  does not need sub-issue context, and auth is handled in Step 2's error path.
+- `VERDICT_STALE=1`: the file's mtime predates HEAD's commit time, so commits landed after the review and the verdict
+  does not describe current code. Step 8 treats a stale pass as refuse-with-override; `VERDICT_STALE_REASON` carries the
+  diagnostic for the prompt.
 
 ### Step 2: Get Issue Details
 
@@ -151,11 +151,7 @@ Emits seven `KEY=value` lines: `VERDICT_FILE`, `VERDICT`, `CYCLES`, `SUB_ISSUES`
 linear-cli issues get PL-12
 ```
 
-Read the description carefully. Note:
-
-- Requirement checkboxes (`- [ ]` items)
-- Success criteria checkboxes
-- Any "Nice to Have" vs "Must Have" distinctions
+Read the description: requirement checkboxes (`- [ ]`), success criteria, Must Have versus Nice to Have.
 
 ### Step 3: Read Current Description as JSON
 
@@ -163,11 +159,11 @@ Read the description carefully. Note:
 linear-cli issues get PL-12 --output json
 ```
 
-Identify each `- [ ]` checkbox and decide which were completed this session. Don't post anything yet — Step 5 sends the updated description and the completion comment together.
+Decide which `- [ ]` items this session completed. Post nothing yet — Step 5 sends description and comment together.
 
 ### Step 4: Generate Completion Comment
 
-Write a markdown comment summarizing the work. **Every `<...>` token below is a substitution site — replace each one with the resolved value before posting; never emit a literal `<placeholder>` to Linear.** Template:
+**Every `<...>` token is a substitution site — resolve it before posting; never send a literal placeholder to Linear.**
 
 ```markdown
 ## Implementation Complete
@@ -175,7 +171,7 @@ Write a markdown comment summarizing the work. **Every `<...>` token below is a 
 Branch: `<actual branch name>`
 
 ### What was done
-- Bullet points of key changes (files created/modified, features implemented)
+- Key changes (files created/modified, features implemented)
 
 ### Design decisions
 - Key technical choices and why they were made
@@ -184,56 +180,78 @@ Branch: `<actual branch name>`
 - What was verified (type checks, tests, dev server, etc.)
 
 ### Adversarial review
-- Verdict: <VERDICT value from Step 1.5> (cycles: <CYCLES value from Step 1.5>)
-- Sub-issues (current children of this issue): <comma-list of SUB_ISSUES from Step 1.5, or the bare word `none` (no quotes) when empty>
-- Open items: <text extracted from VERDICT_FILE's Open items: section, only when VERDICT=terminated-with-open-items, escalated-to-architect, or malformed>
+- Verdict: <VERDICT> (cycles: <CYCLES>)
+- Sub-issues (current children of this issue): <comma-list of SUB_ISSUES, or the bare word `none` when empty>
+- Open items: <text from VERDICT_FILE's Open items: section — only when VERDICT is terminated-with-open-items, escalated-to-architect or malformed>
 
 ### Notes
-- Any unchecked items with explanation of why
-- Any follow-up work identified
+- Unchecked items with the reason
+- Follow-up work identified
 ```
 
-Omit sections that have no content (e.g., skip "Notes" if everything was completed). Omit the **Adversarial review** section entirely when `VERDICT=none-found` (no `/quality-review` ran). When the verdict is passing, drop the `Open items` bullet but keep the other two.
+Omit sections with no content. Omit **Adversarial review** entirely when `VERDICT=none-found`; on a passing verdict drop
+the `Open items` bullet and keep the other two.
 
-**Reconcile the plan's filing promises before posting.** Re-read this issue's plan comment and any checkpoint comments for promised filings — "a follow-up will be filed", an out-of-scope census "recorded, not skipped", work explicitly named for later. Every such promise must resolve to an issue ID named in this comment, or be filed now (via `/quality-review` Step 6 sub-step 6's recipe, search-before-filing included) before the comment posts. A promise without an ID is a silent leak: nothing downstream ever re-reads the plan, so an unfiled promise vanishes with the session (measured on BF-894: the plan's out-of-scope census promised a follow-up covering four surfaces; BF-1171/BF-1172 covered two, and `ApprovalSignerAccessLoader` + `Types::Tenant#incoming`/`#outgoing` were silently dropped, surfacing only at a later keeper audit).
+**Reconcile filing promises before posting.** Re-read this issue's plan and checkpoint comments for promised filings
+("a follow-up will be filed", an out-of-scope census "recorded, not skipped", work named for later). Each resolves to an
+issue ID named in this comment, or is filed now through `standards/linear-filing.md` — nothing downstream re-reads the
+plan, so an unfiled promise vanishes with the session. The same recipe governs every other filing this run makes, the
+post-merge ones included (a flake record a project convention asks for, say): nothing frames those, which is exactly when
+a bare, unlabeled create duplicates something already filed. Search first, file through the standard, end on a routing
+label.
 
-**The same recipe governs every other filing this skill's run makes, the ones after the merge included** — most often a record a project convention asks for, such as the flake a merged-tree gate re-ran past (Step 7). That filing arrives when the run feels finished, with no skill step framing it, which is exactly when it gets a bare create and a `-` in the label slot: BF-2033 was filed that way minutes after its two recipe-filed siblings came out `specified`, as the third unlabeled copy of a defect already filed twice. Search first, file through the recipe, and end on a routing label (`standards/issue-spec.md` § An agent filing never lands unrouted).
+**A production-readiness act recorded only in Notes is an unfiled promise.** The spec's `### Out of Scope` may name a
+human act the shipped code needs in production — an operator-set secret or env var, a vendor-console setting, a webhook
+or DNS registration. Notes is a record, not a tracker: no ranking or triage pass re-reads a shipped issue's comment, and
+Step 8 gates on the verdict alone, so the issue ships either way. Resolve any such act to an issue ID named here, or
+file it now through the same recipe: label `human` (`standards/issue-spec.md` § The `human` label; keep `specified` when
+the body meets the bar), `Backlog` (this run may be unattended), the release it gates named in the body, and wired by
+what each issue does without the act — `related` to one that merely goes dark (this issue, whose spec required the clean
+degradation), `blocks` toward any unshipped dependent whose behavior is wrong without it. When the act is performed
+**on** what this issue ships (a hand-deploy of its stack, a verification on an environment running its code) the
+direction reverses: this issue `blocks` the `human` tail. Never `blocks` toward a dark dependent — a `human` issue never
+ships unattended, so that edge strands it for nothing. Unlike the Nice to Have rule below, which declines an
+opportunity, this is a prerequisite the release scope has to carry.
 
-**A production-readiness step recorded only in Notes is an unfiled promise.** The reconciliation two paragraphs above catches promises the *plan* made; this catches the ones the *spec* made — a `### Out of Scope` exclusion naming a human act the shipped code needs before it works in production (an operator-set secret or env var, a vendor-console setting, a webhook or DNS registration). Notes is a record, not a tracker: no ranking or triage pass re-reads a shipped issue's completion comment (`next-candidates.sh` counts `Ready For Release` terminal; `/triage` scans only triage/backlog/unstarted states), and Step 8 gates on the review verdict alone — so the issue ships either way. BF-2034 and its dependent BF-1794 both reached Ready For Release while the production path answered `FAILED` for every caller. Before posting, re-read the description's `### Out of Scope` for any such act and either resolve it to an issue ID named in this comment, or file it now through the same recipe — labeled `human` (`standards/issue-spec.md` § The `human` label; keep `specified` when the body meets the bar), `Backlog` since this skill's run may be unattended, naming in the body the release it gates, and wired to the issues whose feature it gates by what each does without the act (§ Certification includes collision edges, the `human` carve-out): `related` to one that merely goes dark — this issue, whose spec required the clean degradation — and `blocks` toward any unshipped dependent whose behavior is wrong without it (a dialog promising what the act enables; BF-2126 shipped such a promise two days after BF-2292 was wired `related`). When the act is instead performed on what this issue ships — a hand-deploy of its stack, a verification on an environment running its code — the direction reverses: this issue `blocks` the `human` tail (the reverse carve-out, keeper ruling 2026-10-08), since the person's act waits on the code and not the other way round. Never `blocks` toward a dark dependent: a `human` issue never ships unattended and blocker resolution reads state rather than labels, so that edge would strand it for nothing. Afterwards only a `human`-scoped `next-candidates.sh` listing surfaces it — `/auto-prep`'s release-scope audit walks the unstarted stage and a `related` edge inherits none, so the audit sees it once a human promotes it to Planned. Distinct from the Nice to Have rule below, which declines an *opportunity*: this is a prerequisite the shipped code depends on, so the release scope has to carry it.
-
-**An unimplemented `### Nice to Have` requirement: one line in Notes, and stop — it never files, never blocks, never carries forward.** The tier means target of opportunity (`standards/issue-spec.md`, the spec-template section): implement one only when it fell out easily from the work in hand; declining the opportunity is the normal outcome and creates no obligation. Do not file a follow-up — not even when a dependency gates it: a gated opportunity is simply not opportune, and filing it is feature creep — an optional brainstorm line converted into tracked work nobody prioritized (BF-1182, canceled at keeper review: a skipped notify-others line filed `human` behind a Customer.io dependency on BF-1123's precedent — but BF-1123 gates a **Must Have**, and the analogy fails on the tier). For this tier specifically, this overrides the reconciliation rule above: a plan comment that promised a follow-up for a Nice to Have was wrong to promise (`/start`'s planning rule forbids it), and the correction is the Notes line recording the decline — never the filing the promise asked for. The only path by which a skipped Nice to Have becomes work is a human promoting it into `### Must Have` through `/spec`.
+**An unimplemented `### Nice to Have`: one line in Notes, and stop.** It never files, never blocks, never carries
+forward — not when a dependency gates it (a gated opportunity is simply not opportune), and not when the plan promised a
+follow-up for it (the promise was wrong; the Notes line recording the decline is the correction). The only path from a
+skipped Nice to Have to tracked work is a human promoting it to `### Must Have` through `/spec`.
 
 ### Step 5: Post Description Update + Completion Comment
 
-Write both files:
+Write both files, then post them in one call:
 
-1. `tmp/linear-description-<issue-id-lowercased>.md` (e.g., `tmp/linear-description-pl-12.md`) — full description with `- [ ]` flipped to `- [x]` for completed items. Preserve everything else exactly.
-2. `tmp/linear-comment-<issue-id-lowercased>.md` (e.g., `tmp/linear-comment-pl-12.md`) — completion-comment body from Step 4.
-
-Then post both in one call:
+1. `tmp/linear-description-<issue-id-lowercased>.md` — the full description with completed `- [ ]` flipped to `- [x]`,
+   everything else preserved exactly.
+2. `tmp/linear-comment-<issue-id-lowercased>.md` — the Step 4 comment body.
 
 ```bash
 ~/.claude/scripts/finish-post-update.sh PL-12 tmp/linear-description-pl-12.md tmp/linear-comment-pl-12.md
 ```
 
-Exit codes: 1 (validation — missing/empty files), 2 (Linear API failure).
+Exit codes: 1 (validation — missing or empty files), 2 (Linear API failure).
 
 ### Step 6: Verify Check Passes
-
-Run `pnpm check` as a hard gate before committing:
 
 ```bash
 pnpm check
 ```
 
-If it **fails**: this is CRITICAL. Do not commit or push. Fix the failures first, then re-run until it passes. **Auto mode:** bound to **2** fix delegations; if still red, stop with `BLOCKED-ON-REVIEW: <ISSUE-ID> — pnpm check failing at /finish gate after 2 unattended fix attempts. Nothing committed.`
-
-If it **passes**: proceed to commit.
+A failure is CRITICAL: do not commit or push; fix and re-run until green. **Auto mode:** at most **2** fix delegations;
+still red → stop with `BLOCKED-ON-REVIEW: <ISSUE-ID> — pnpm check failing at /finish gate after 2 unattended fix
+attempts. Nothing committed.`
 
 ### Step 7: Git Commit (push is opt-in)
 
-1. Stage relevant files by name (`git add <files>`). Never `git add -A` / `git add .` (per CLAUDE.md). **Derive the list from a fresh `git status --short` run now, at commit time — never from a file list captured earlier in the session.** Review-fix cycles routinely touch files beyond the original implementation set; staging from a stale list ships a commit whose halves don't match (local `pnpm check` passes on the working tree while the committed tree fails CI's type check). After staging, confirm `git status --short` shows no remaining unstaged *tracked* modifications that belong to this issue.
-2. Write the commit message to `tmp/finish-commit-<issue-id-lowercased>.md` (e.g., `tmp/finish-commit-pl-13.md`). The issue ID **must** appear in the message (the script enforces it for Linear auto-linking). **Only `<ISSUE-ID>` may follow a Linear close keyword** — Linear scans commit messages as well as PR titles and bodies, so a body sentence like "follow-up to PL-14" is safe while "fixes PL-14" moves PL-14 on merge; see [`standards/git.md`](../../standards/git.md) § Linear auto-close keywords for the keyword set and the safe forms. This bites hardest unattended, where the commit body is the only prose an `/auto` run writes:
+1. Stage files by name — never `git add -A` / `git add .`. **Derive the list from a fresh `git status --short` now**,
+   never from a list captured earlier: review-fix cycles touch files beyond the original set, and a stale list ships a
+   commit whose halves don't match (the working tree passes `pnpm check`, the committed tree fails CI). Confirm no
+   unstaged tracked modification belonging to this issue remains.
+2. Write the message to `tmp/finish-commit-<issue-id-lowercased>.md`. The issue ID **must** appear (the script enforces
+   it for Linear auto-linking), and **only `<ISSUE-ID>` may follow a close keyword** — Linear scans commit messages too,
+   so "fixes PL-14" in the body moves PL-14 on merge while "follow-up to PL-14" is safe
+   ([`standards/git.md`](../../standards/git.md) § Linear auto-close keywords).
 
    ```text
    PL-13: <short imperative summary>
@@ -241,268 +259,241 @@ If it **passes**: proceed to commit.
    <optional body explaining the why>
    ```
 
-3. Run the commit script:
+3. Commit:
 
-```bash
-~/.claude/scripts/finish-commit.sh PL-13 tmp/finish-commit-pl-13.md [--push]
-```
+   ```bash
+   ~/.claude/scripts/finish-commit.sh PL-13 tmp/finish-commit-pl-13.md [--push]
+   ```
 
-**Pass `--push` only when Step 0 emitted `PUSH=1`.** The default is no push (keeper ruling 2026-10-19): the commit stays local, and a human — or a later, separate grant — pushes it. `PUSH=1` means the user typed `push`, or `ACTION=pr`, where the script sets it because a PR needs the branch on origin. `ACTION=merge` never pushes, and Step 0 refuses `merge` + `push`: the temp branch is about to be merged into source and deleted locally, so pushing it would pollute origin with abandoned branches. The merge commit reaches origin only when the source branch is pushed, and this skill never pushes it (keeper ruling 2026-08-16): by default that push is a human's, so origin lags Linear until the keeper pushes. A project that sets `AUTO_PUSH_MAIN=lazy` in its committed `.claude/settings.json` (BFP — keeper ruling 2026-09-19) hands that push to `/auto`, which makes it through `~/.claude/scripts/auto-push-main.sh` at exactly two moments, a deploy-gated pick and its deadline wind-down, and still never per merge: every push is a CI build, and batching is the point.
+**Pass `--push` only when Step 0 emitted `PUSH=1`** (the user typed `push`, or `ACTION=pr`). Otherwise the commit stays
+local and a human, or a later separate grant, pushes it. `ACTION=merge` never pushes (Step 0 refuses `merge` + `push`):
+the temp branch is deleted on merge, and the merge commit reaches origin only when the source branch is pushed, which
+this skill never does — a human pushes it, or a project that sets `AUTO_PUSH_MAIN=lazy` in its committed
+`.claude/settings.json` hands it to `/auto`'s `auto-push-main.sh` (at a deploy-gated pick and at deadline wind-down,
+never per merge: every push is a CI build). The grant: `standards/git.md` § Commit and Push Authorization.
 
-The script handles all three states: pre-staged changes (commit, then push only under `--push`), already-committed-but-ahead (push under `--push`, otherwise a reminder naming the push), already-synced (no-op). If staging is missing for an unstaged-only state, it errors with exit 2 — go back and `git add` the files.
+The script handles pre-staged changes (commit, then push only under `--push`), already-committed-but-ahead (push under
+`--push`, otherwise a reminder naming the push) and already-synced (no-op). Unstaged-only → exit 2: go back and
+`git add`. In the standard flow with `PUSH=0`, the `RELEASED:` line says the commit is local and names the push
+(`git push` from `<WORKTREE_BRANCH>`), so nobody reads the tag as "on origin" — `Ready For Release` describes the
+commit, as it does for an unpushed merge.
 
-**In the standard flow (`ACTION` empty) with `PUSH=0`, say so at the end.** The `RELEASED:` summary states that the commit is local and names the push (`git push` from `<WORKTREE_BRANCH>`), so nobody reads the tag as "on origin" — `Ready For Release` describes the commit, exactly as it does for an unpushed merge.
+### Step 8: Verdict Gate and Ready For Release
 
-### Step 8: Mark Issue as Ready For Release
+**Every `<...>` token in a prompt or comment body is a substitution site**, as in Step 4.
 
-**When `ACTION == "pr"`, Step 8 runs the verdict gate only; the Ready-For-Release transition belongs to Step 9, after `gh pr create` succeeds** — the same `mark-ready-for-release.sh` call the merge path makes. Keeper ruling 2026-09-11: an open PR is work waiting for its release, and Ready For Release is that state; `In Review` is a human-review request and never a ship's landing state. The PR merging later changes nothing in Linear.
+**Who performs the transition** — whoever completes the lifecycle, so Linear never shows `Ready For Release` for
+unmerged code:
 
-**Auto mode — the gate below never prompts.** Every refuse-with-override branch (`VERDICT_STALE=1`, `terminated-with-open-items`, `escalated-to-architect`, `malformed`, `none-found`) resolves to `abort`: emit that branch's `abort` terminator (`BLOCKED-ON-REVIEW: ... — <reason>, auto mode refused the override. No state change.`) and stop. Never override, never re-run unattended. **`none-found` keeps its own abort terminator** — unattended, "no review artifact" means unreviewed code, which never ships (`BLOCKED-ON-REVIEW: <ISSUE-ID> — no /quality-review artifact; unattended runs never ship unreviewed. Run /quality-review then /finish manually.`). The failing tag is `/auto`'s signal to count a failure and surface the issue to a human.
+- `ACTION` empty (standard flow): Step 8 runs `linear-cli issues update <ISSUE-ID> --state "Ready For Release"` itself.
+- `ACTION=merge`: Step 8 is the **gate only**. Step 9 runs `~/.claude/scripts/mark-ready-for-release.sh` after
+  `finish-merge.sh` exits 0, and the launchd drainer runs the same script when it lands a deferred merge — a deferred
+  issue stays **In Progress**, which is the truth.
+- `ACTION=pr`: gate only, likewise. Step 9 transitions after `gh pr create` succeeds — an open PR is work waiting for
+  its release; `In Review` is a human-review request, never a ship's landing state.
 
-In all other cases (no worktree, or `ACTION == "merge"`), gate the transition on the `VERDICT` from Step 1.5. **Every `<...>` token in the prompt and comment bodies below is a substitution site** — replace each with the resolved value before emitting; never write a literal `<placeholder>` to chat or to Linear. The Step 4 substitution rule applies here too.
+"Proceed" below means: standard flow → run the update; `merge` / `pr` → go to Step 9 without touching Linear state.
+Discriminate on `ACTION`, not `SOURCE_BRANCH` — a non-worktree `pr` has an empty `SOURCE_BRANCH` and still reaches
+Step 9.
 
-**Who performs the `Ready For Release` transition (read before any branch below).** The transition belongs to whoever *completes the lifecycle*, so Linear never shows `Ready For Release` for code that is not yet merged:
+**The gate**, on Step 1.5's values:
 
-- **Standard flow (`ACTION` empty):** Step 8 runs `linear-cli issues update --state "Ready For Release"` inline (the commands in the branches below) — there is no merge to wait for.
-- **`ACTION == "merge"`:** Step 8 runs the verdict **gate only** (the proceed / abort / override decisions below) and does **NOT** run `linear-cli issues update`. The merge owns the transition: Step 9 runs it via `~/.claude/scripts/mark-ready-for-release.sh <ISSUE-ID>` **only after `finish-merge.sh` exits 0** (the merge actually landed), and the launchd drainer runs the same script when it lands an async deferral. So wherever a branch below says "proceed with the state update", in `merge` mode that means **proceed to Step 9 without changing Linear state** — the gate passed; the merge (now, or later via the queue) transitions it. On a deferred merge (exit 3) the issue therefore stays **In Progress**, which is the truth: it is not released until it is merged. **Override-comment wording in merge mode:** the override comments in the branches below — posted when the user accepts a stale/failing verdict — still post here at gate time, but in `merge` mode they must record *authorization*, not a completed transition. Replace the literal `marked Ready For Release` in any such comment body with `authorized Ready For Release (the merge applies it when it lands)` — otherwise the comment re-tells the very lie this ordering exists to prevent (asserting a release state while the code is unmerged and the issue is still In Progress). The standard flow (`ACTION` empty) keeps `marked Ready For Release` — there the state really is changed here.
-- **`ACTION == "pr"`:** Step 8 is skipped entirely (handled above).
+- `passed-clean` / `passed-after-fixes` with `VERDICT_STALE=0` → proceed. Standard flow:
 
-**Step 8 termination contract — applies to ALL branches below.** Per `standards/lifecycle-tags.md`, every terminal path of `/finish` Step 8 ends with exactly one tagged final line. (The Preflight has its own independent terminator — `BLOCKED-ON-REVIEW` on plan-mode rejection or `ExitPlanMode` tool failure — and never reaches Step 8.) Mechanical mapping (do not skip):
+  ```bash
+  linear-cli issues update PL-12 --state "Ready For Release"
+  ```
 
-- A branch that completed `linear-cli issues update --state "Ready For Release"` AND `ACTION` from Step 0 is empty (standard flow, no Step 9 to follow) → emit `RELEASED: <ISSUE-ID> — <one-line summary>` as the last LLM-authored line.
-- A branch that passed the verdict gate AND `ACTION == "merge"` → do NOT change Linear state and do NOT emit a tag here (per "Who performs the transition" above, merge mode defers the state update). Step 9 owns BOTH the Ready-For-Release transition (after the merge lands) and the terminal line (`SHIPPED-MERGE:` on a completed merge, or `DEFERRED-MERGE:` when `finish-merge.sh` exits 3 and the merge is queued — the issue stays In Progress until it lands). (`ACTION == "pr"` never reaches a state update — Step 8 is skipped for it — so it isn't in these bullets; Step 9 owns `SHIPPED-PR:`. Discriminate on `ACTION`, not `SOURCE_BRANCH`: a non-worktree `pr` has an empty `SOURCE_BRANCH` yet still flows to Step 9.)
-- A branch that exited via the user picking `abort` at the gate prompt → emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — <one-line reason>` as the last LLM-authored line. State was NOT changed. (`re-run` never exits — it dispatches and resumes; see the block below.)
-- **A branch where `linear-cli issues update` itself failed** (API error, auth dropped mid-session, team's terminal state name differs from `Ready For Release`) → see the **State-update failure** section below for the recovery + terminator rule. **This bullet supersedes bullets 1 and 2 whenever the state update doesn't succeed** — never emit `RELEASED:` on a failed update.
+  On success end on `RELEASED:` (§ Terminal tags); never emit it when the update failed — see below.
 
-The per-branch instructions below indicate which terminator each branch uses; trust the contract above for the literal tag wording.
+- Anything else — a stale pass, `terminated-with-open-items`, `escalated-to-architect`, `malformed`, `none-found`, or an
+  unrecognized value (treat as `malformed`) → **refuse with override.** Read `references/verdict-overrides.md` now: each
+  branch's prompt, the override-comment wording and its merge/pr-mode variant, the `re-run` procedure (it dispatches
+  `/quality-review` and resumes at Step 1.5 — never a stop), and the `abort` terminators. **Auto mode:** never prompt,
+  override or re-run — emit that branch's `abort` terminator with `auto mode refused the override` as the reason and
+  stop; `none-found` keeps its own line,
+  `BLOCKED-ON-REVIEW: <ISSUE-ID> — no /quality-review artifact; unattended runs never ship unreviewed. Run /quality-review then /finish manually.`
+  The failing tag is `/auto`'s signal to count a failure and surface the issue to a human.
 
-**`re-run` dispatches the review — it is never a stop (applies to every gate prompt below).** Each prompt offers `re-run` as "invoke `/quality-review`", and the reply means exactly that: the user asked this session to run the review, not to be told to run it themselves (measured 2026-08-27: a session answered the none-found prompt's recommended "Run /quality-review first" and got a stop instructing it to run the review by hand). On `re-run`:
+**State-update failure (standard flow only).** If `linear-cli issues update` exits non-zero:
 
-1. Invoke `/quality-review <ISSUE-ID>` via the Skill tool and let it run to completion.
-2. Resume at Step 1.5 — run `finish-read-verdict.sh` again and carry the fresh `VERDICT`/`VERDICT_STALE`/`SUB_ISSUES` forward. Do NOT repeat Steps 2–5: the description update and completion comment already posted.
-3. Re-run Steps 6–7 — the review's fix loop may have left uncommitted edits (`/quality-review` holds no commit grant), and `finish-commit.sh` no-ops when the tree is already synced. The same `--push` gate applies: pass it only when Step 0 emitted `PUSH=1`. Reading the verdict before committing the fix delta mirrors the normal Step 1.5 → Step 7 ordering, so the carried `VERDICT_STALE=0` stays honest.
-4. Post a short comment with the fresh verdict via `~/.claude/scripts/linear-post.sh` (reuse Step 4's Adversarial-review section shape) — the completion comment posted before this review ran, so its verdict line is stale, or omitted entirely on the `none-found` path.
-5. Re-enter this gate on the fresh values. A `re-run` reply has no terminator of its own — the resumed gate (or Step 9) ends the flow, and a still-non-passing fresh verdict simply prompts again.
+1. On a "no such state" rejection, probe `linear-cli statuses list -t <TEAM>` (team key = the ID prefix) and pick the
+   first state matching `/^ready[ _-]?for[ _-]?(release|deploy|ship)$/i` — an exact match, never a prefix (it must not
+   latch onto `Ready For Review`), and never a bare `Ready`, too ambiguous to route into (rename it to
+   `Ready For Release` to use it). Retry with the matched name; success → `RELEASED:`.
+2. No match, or the retry fails → surface the error and end on `BLOCKED-ON-REVIEW: <ISSUE-ID> — linear-cli issues update
+   failed: <reason>. State NOT changed; this issue remains In Progress.`, with `<reason>` distilled to one line (the
+   first informative line of a multi-line error) so the agents-list parser reads the tag. Do not continue to Step 9.
 
-Auto mode never reaches this block — every refuse-with-override branch resolves to `abort` unattended (above).
+`merge` and `pr` run no update here; `mark-ready-for-release.sh` carries the same fallback.
 
-**State-update failure recovery (applies to every branch that attempts `linear-cli issues update --state "Ready For Release"`).** If the call exits non-zero:
+### Step 9: Finalization (`merge` or `pr` only)
 
-1. Inspect the error. If it's a "no such state" rejection (the team uses a different terminal state name), apply this probe-and-match fallback — analogous to `/start` Step 8.5's CANCELED/ABANDONED fallback and `/quality-review` sub-step 6's fallback:
-   - Derive the team key from the issue ID prefix (e.g., `PL-13` → team `PL`). Then probe: `linear-cli statuses list -t PL`.
-   - Pick the first state whose name matches `/^ready[ _-]?for[ _-]?(release|deploy|ship)$/i` (exact match — NOT a prefix match — to avoid latching onto `Ready For Review`; the `[ _-]?` separator class matches `Ready For Release`, `Ready_For_Release`, `Ready-For-Release`, `ReadyForRelease`).
-   - If found, retry `linear-cli issues update <ISSUE-ID> --state "<matched-name>"`. If it succeeds, emit the standard-flow terminator `RELEASED:`. **This whole recovery applies only to the standard flow** (`ACTION` empty) — per "Who performs the transition" above, `ACTION == "merge"` does not run `linear-cli issues update` in Step 8 at all, so there is no Step-8 update to recover here; the merge owns the transition (Step 9 / the drainer via `mark-ready-for-release.sh`, which carries this same fallback).
-   - If no match, OR if the retry also fails, fall through to step 2.
-   - **Note on bare `Ready`:** the regex deliberately requires `Ready For <release|deploy|ship>` and does NOT match a bare `Ready` state. A team's `Ready` state is too ambiguous (could mean ready-for-review, ready-for-QA, etc.) to auto-route into — the issue falls through to step 2's BLOCKED-ON-REVIEW. To use bare `Ready` as a release state, rename it to `Ready For Release` or add canonical config.
-2. Surface the error to the user and emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — linear-cli issues update failed: <reason>. State NOT changed; this issue remains In Progress.` as the terminator. **Distill `<reason>` to a single line**: if the CLI returned a multi-line error (stack trace, JSON error body), take the first informative line (typically the error message) and drop the rest — the tag must fit on one line so the agents-list parser picks it up correctly. Do NOT silently emit `RELEASED:` (it would lie about the state) and do NOT continue to Step 9 (worktree flow can't ship an issue whose state didn't transition).
+Skip when `ACTION` is empty — the standard flow ended at Step 8. `merge` always has a worktree (`SOURCE_BRANCH` set);
+`pr` runs with or without one. **Step 9 is terminal:** after the closing message, `/finish` runs no further bash.
+Whether the *session* ends is the Nesting rule in `standards/lifecycle-tags.md`: standalone or under a bare `/full`,
+stop; under `/auto`, the tag ends `/finish` and control returns to `/auto` Step 4 in the same turn — ending the turn on
+the tag kills a self-paced loop, since no wakeup is armed. That scoping covers every tag `/finish` emits in auto mode,
+`BLOCKED-ON-REVIEW` aborts included. Substitute Step 0's values into the commands below as literal strings.
 
-- **`passed-clean` / `passed-after-fixes`** — proceed, BUT first check `VERDICT_STALE`:
-  - `VERDICT_STALE=0` → proceed with the state update:
+#### `ACTION=merge`
 
-    ```bash
-    linear-cli issues update PL-12 --state "Ready For Release"
-    ```
+`finish-merge.sh` brings the worktree branch up to source's tip **inside the worktree** (private to this session, so no
+lock, and conflicts are resolved there, never in the main checkout) and then advances source without ever merging in
+the main checkout, leaving it mid-merge, or switching its HEAD — the mechanism, its self-serialization, which blocks
+are transient, and the posture for high-concurrency runs are `standards/git-worktrees.md` § `/finish merge` between
+worktrees. The common case (one commit ahead, source unmoved) lands as a single `PL-XXX: <summary>` line with no merge
+commit; when source moved, a merge commit is created and the script stops (exit 5) so the **merged** tree is gated
+before it lands — Step 7's `pnpm check` proved this branch alone, and `related` siblings ship in parallel on the strength
+of this gate.
 
-    **Terminator:** `RELEASED:` (non-worktree) or none (worktree; Step 9 emits).
-
-  - `VERDICT_STALE=1` → **refuse with override.** The verdict says "passing" but was produced before the latest commits — it may not reflect current code. Prompt the user:
-
-    > Quality-review verdict is `<VERDICT>` but is **stale**: `<VERDICT_STALE_REASON>`. Additional commits landed after `/quality-review` ran, so the verdict may not reflect current code.
-    >
-    > Mark `Ready For Release` anyway? Reply `yes` to override (the prior verdict was passing and you've verified the new commits don't introduce findings), `re-run` to invoke `/quality-review` and produce a fresh verdict for current HEAD, or `abort` to stop here.
-
-    On `yes`: proceed with the state update AND post an override comment: `Override: marked Ready For Release on stale verdict <VERDICT> (additional commits since /quality-review ran). User-acknowledged.` **Terminator:** `RELEASED:` (non-worktree) or none (worktree).
-    On `re-run`: dispatch `/quality-review <ISSUE-ID>` and resume per **`re-run` dispatches the review** above. No terminator — the resumed gate ends the flow.
-    On `abort`: stop with no state change. **Terminator:** `BLOCKED-ON-REVIEW: <ISSUE-ID> — stale verdict, user aborted at /finish gate. No state change.`
-
-- **`terminated-with-open-items` / `escalated-to-architect`** — **refuse by default.** The implementation has known unresolved findings per `/quality-review`. Before composing the prompt, `Read` the file at `VERDICT_FILE` and extract the `Open items:` line (and any continuation lines, if `Open items:` is followed by an indented bullet list). Substitute that text into the prompt below — never emit the literal placeholder `<open items list from VERDICT_FILE>`. **If `VERDICT_STALE=1`, prepend a staleness note to the prompt** so the user knows the open-items list may not reflect current code (recent commits may have resolved some). Then prompt the user (single message, wait for reply):
-
-  > Quality-review verdict is `<VERDICT>` with open items:
-  >
-  > `<text extracted from VERDICT_FILE's Open items: section>`
-  >
-  > [If `VERDICT_STALE=1`, include: `Note: the verdict is stale — <VERDICT_STALE_REASON>. The open items above may have already been resolved by the more recent commits.`]
-  >
-  > Mark `Ready For Release` anyway? Reply `yes` to override, `re-run` to invoke `/quality-review` and try to converge, or `abort` to stop here.
-
-  On `yes`: proceed with the state update AND post an additional Linear comment recording the override — body: `Override: marked Ready For Release despite verdict <VERDICT>. Open items at override time: <list>. User-acknowledged.` (If `VERDICT_STALE=1`, append: ` Verdict was stale; user explicitly accepted the risk of overriding without a fresh /quality-review.`) Use `~/.claude/scripts/linear-post.sh` to post. **Terminator:** `RELEASED:` (non-worktree) or none (worktree).
-  On `re-run`: dispatch `/quality-review <ISSUE-ID>` and resume per **`re-run` dispatches the review** above. Do not change state now. No terminator — the resumed gate ends the flow.
-  On `abort`: stop with no state change and no further output. **Terminator:** `BLOCKED-ON-REVIEW: <ISSUE-ID> — verdict <VERDICT>, user aborted at /finish gate. No state change.`
-
-- **`malformed`** — verdict file exists at `VERDICT_FILE` but cannot be parsed (no `Verdict:` line, or value is the pipe-separated schema example, or value is not one of the four recognized enums). **Refuse with the same prompt as the non-passing path above**, but with this preamble instead of the open-items list:
-
-  > Quality-review verdict file exists at `<VERDICT_FILE>` but is malformed (no recognized verdict value). The user clearly ran /quality-review, but the handoff is broken — silently marking Ready For Release would defeat the safety check.
-  >
-  > Mark `Ready For Release` anyway? Reply `yes` to override (consider inspecting the file first), `re-run` to invoke `/quality-review` and produce a fresh artifact, or `abort` to stop here.
-
-  Same response handling as the non-passing path: `yes` posts an override comment (body: `Override: marked Ready For Release despite malformed /quality-review verdict file. User-acknowledged.` — do NOT include `VERDICT_FILE`'s absolute path in the comment body, since Linear comments are not necessarily private and the path leaks the user's home directory and project layout); `re-run` dispatches and resumes per the shared block; `abort` stops. **Terminators:** `yes` → `RELEASED:` (non-worktree) or none (worktree); `re-run` → none (the resumed gate ends the flow); `abort` → `BLOCKED-ON-REVIEW: <ISSUE-ID> — malformed verdict, user aborted at /finish gate. No state change.`
-
-- **`none-found`** — no verdict file located: `/quality-review` never ran for this issue (or ran from a different repo). **Refuse with the same prompt as the non-passing path above**, but with this preamble instead of the open-items list:
-
-  > No /quality-review artifact found for `<ISSUE-ID>` — the implementation has not been adversarially reviewed.
-  >
-  > Mark `Ready For Release` anyway? Reply `yes` to override and ship unreviewed, `re-run` to invoke `/quality-review` and produce a verdict, or `abort` to stop here.
-
-  Same response handling as the non-passing path: `yes` posts an override comment (body: `Override: marked Ready For Release with no /quality-review artifact — shipped unreviewed. User-acknowledged.`); `re-run` dispatches and resumes per the shared block; `abort` stops. An issue finished before this gate existed is the legitimate `yes` case. **Terminators:** `yes` → `RELEASED:` (non-worktree) or none (worktree); `re-run` → none (the resumed gate ends the flow); `abort` → `BLOCKED-ON-REVIEW: <ISSUE-ID> — no /quality-review artifact, user aborted at /finish gate. No state change.`
-
-- **Any other value** (defense in depth — shouldn't happen since the script normalizes everything else to `malformed`) → treat as `malformed`. Do NOT proceed silently. **Terminators:** same as `malformed`.
-
-### Step 9: Finalization (only when `ACTION` is `merge` or `pr`)
-
-Runs only when `ACTION` is `merge` or `pr`. Skip entirely when `ACTION` is empty (the standard flow ended at Step 8). `merge` always implies a worktree (`SOURCE_BRANCH` set); `pr` runs with or without one.
-
-**Step 9 is the terminal step of `/finish`** — for all modes. After the merge (or `gh pr create`) completes, present the closing message; `/finish` runs no further bash commands. Whether it also ends the *session* depends on who invoked it (the Nesting rule in `standards/lifecycle-tags.md`): standalone or under a bare `/full`, stop after the closing message. Under an enclosing `/auto` loop, the tag ends `/finish`, not the turn — control returns to `/auto` Step 4 in this same turn (record the outcome, emit `AUTO-CONTINUE`, schedule the wakeup). Ending the turn on the tag under self-paced `/loop /auto` kills the loop: no wakeup is armed, so the session dies at its moment of success (the observed BF-701 stall). The same scoping applies to every terminal tag `/finish` emits in auto mode, `BLOCKED-ON-REVIEW` aborts included — under `/auto`, a terminal tag is `/auto`'s input, never the turn's end.
-
-**Emit the tag bare.** The `SHIPPED-MERGE` / `DEFERRED-MERGE` / `SHIPPED-PR` closing messages below are shown inside ` ```text ` blocks for readability, but the tag you actually emit must be the **bare, non-empty last line of the message that carries it** — no fence around it, nothing after it in that message. A trailing closing ` ``` ` reads as a summary close and defeats the `full-continue.sh` handoff hook (see `standards/lifecycle-tags.md`). The hook anchors on the last line of each message, not of the whole turn, so `/auto` Step 4's output in subsequent messages does not defeat it — end the tag's message on the tag, then continue if `/auto` requires it.
-
-Substitute the values captured from Step 0 (`SOURCE_BRANCH`, `WORKTREE_BRANCH`, `WT_DIR`, `REPO_ROOT`) into the bash commands below as literal strings.
-
-**If `ACTION == "merge"`:**
-
-The script brings the worktree branch up to source's tip **inside the worktree** (where this session can edit even under bgIsolation — because it entered the worktree via `EnterWorktree`: `/start` Step 0 in the `/full` flow, or Step 0's standalone-registration note here — and where no lock is needed because the worktree is private to this session), then **advances source to it** — by `git merge --ff-only` when the main checkout is on source, or by an atomic ref update (`git update-ref`, compare-and-swap) when it's on another branch. Either way the advance never merges in the main checkout, never leaves it mid-merge, and never switches its HEAD. The common case — worktree branch one commit ahead, source unmoved — collapses to a single `PL-XXX: <summary>` line in `git log` with no merge commit. Only when source moved during the worktree's life is a merge commit created (with the prepared one-line `Merge PL-XXX` subject, avoiding the verbose default boilerplate); any conflicts from that are resolved **in the worktree**, never the main checkout. Conflicting or not, the script stops right after that merge (exit 5) so the **merged** tree is gated before it lands — Step 7's `pnpm check` proved this branch on its own, and `related` siblings ship in parallel on the strength of this gate (keeper ruling 2026-09-11). This is what makes the merge safe to run concurrently and from a background session.
-
-1. **Write the merge-commit message** to `<WT_DIR>/tmp/git-merge-msg-<issue-id-lowercased>.md` (e.g., `<WT_DIR>/tmp/git-merge-msg-pl-13.md`; substitute the actual `WT_DIR` value from Step 0). Use the `Write` tool — it requires an absolute path. A single line is all that's needed; it's only used in the rare divergent-merge case (or during conflict resolution), and the issue ID is what Linear auto-links on. Keep it to the bare `Merge <ISSUE-ID>` subject: Linear scans commit messages too, so any *other* issue ID added here behind a close keyword moves that issue when the merge lands ([`standards/git.md`](../../standards/git.md) § Linear auto-close keywords):
+1. **Write the merge-commit message** to `<WT_DIR>/tmp/git-merge-msg-<issue-id-lowercased>.md` with the `Write` tool
+   (absolute path). It is used only in the divergent-merge case and during conflict resolution; keep it to the bare
+   subject — any other issue ID behind a close keyword here moves that issue when the merge lands
+   ([`standards/git.md`](../../standards/git.md) § Linear auto-close keywords):
 
    ```text
    Merge PL-13
    ```
 
-2. **Run the merge in a single Bash tool call** — `cd` to the main checkout (the script removes the worktree on success, so cwd must not be inside it), then call `finish-merge.sh`:
+2. **Run the merge in a single Bash call** — `cd` to the main checkout first (the script removes the worktree on
+   success, so cwd must not be inside it):
 
    ```bash
    cd '<REPO_ROOT from Step 0>'
    ~/.claude/scripts/finish-merge.sh '<WT_DIR>' '<SOURCE_BRANCH>' '<WORKTREE_BRANCH>' '<WT_DIR>/tmp/git-merge-msg-pl-13.md'
    ```
 
-   The script self-serializes against other `/finish merge` sessions targeting the same parent repo. If another session holds the merge slot, the Bash call will print `[finish-queue] waiting for <REPO_ROOT> ...` on stderr and block until its turn — surface that output to the user as-is and wait. The lock is released by the OS when the script exits (success, error, or crash); no manual cleanup is needed.
+   `[finish-queue] waiting for …` on stderr means another session holds the merge slot: surface it and wait. The OS
+   releases the lock when the script exits, however it exits.
 
-**Exit codes:**
+**Exit 0 — the merge landed; now perform the transition Step 8 deferred:**
 
-- **0 (success)** — the merge landed, so **now** perform the Ready-For-Release transition that Step 8 deferred (the merge owns it):
+1. **Release the worktree registration first.** With the worktree removed, this session's isolation root (registered by
+   `EnterWorktree` at `/start` Step 0, or at Step 0 here) points at a deleted directory and cwd has reset to
+   `<REPO_ROOT>`, so the guard would refuse the next Bash command with an instruction that cannot be followed (re-run
+   from `<WT_DIR>`). Call `ExitWorktree(action: "keep")` **unconditionally** — it releases the registration, returns the
+   session to `<REPO_ROOT>`, removes nothing, and is a no-op without a registration, so it is right in the
+   `CLEANUP-FAILED:` sub-case too. Afterwards a background session's Write-tool edits outside a worktree are refused;
+   nothing here needs one, and `/auto` Step 4's state write goes through the shell.
+2. Run `~/.claude/scripts/mark-ready-for-release.sh <ISSUE-ID>` (same team-state fallback as Step 8). Exit 0 → the
+   closing message. Non-zero → the merge succeeded but Linear did not update: do **not** undo the merge; surface the
+   error and end on
+   `SHIPPED-MERGE: <ISSUE-ID> — <WORKTREE_BRANCH> merged into <SOURCE_BRANCH>, worktree removed, but Linear state update FAILED: <reason>. Mark Ready For Release manually.`
+   — still `SHIPPED-MERGE`, since the code shipped (with a `CLEANUP-FAILED:` line, sub-step 3's wording replaces
+   `worktree removed` here too).
+3. **A `CLEANUP-FAILED:` line on stdout means the merge landed and the worktree stayed** — `git worktree remove` refused
+   over untracked or modified files, and the script never forces, since a blocking file can be work this session forgot
+   to commit. The issue still ships (sub-step 2 and the `SHIPPED-MERGE` tag stand, so `/auto` records a ship), but exit 0
+   alone carries the leftover nowhere, so put it where a human reads:
+   - a follow-up `### Notes` comment naming the worktree path, the blocking paths and the remedy line the script
+     printed — write the body to `<REPO_ROOT>/tmp/linear-cleanup-<issue-id-lowercased>.md` via the shell (heredoc or
+     `printf`; the registration was just released, so a Write-tool edit under `<REPO_ROOT>` is guard-blocked in a
+     background session), then `~/.claude/scripts/linear-post.sh comment <ISSUE-ID> <that path>`;
+   - the tag: replace `worktree removed` with
+     `worktree NOT removed (CLEANUP-FAILED: <blocking paths>; see the completion comment)`, so `/auto`'s ledger line
+     carries the leftover.
 
-  1. **Release the worktree registration first.** When `finish-merge.sh` reports the worktree removed, this session's harness-level isolation root — registered by `EnterWorktree` at `/start` Step 0, or by Step 0's standalone-registration note here — points at a directory that no longer exists, and the shell's cwd has been reset to `<REPO_ROOT>`. The isolation guard then refuses the next Bash command, `mark-ready-for-release.sh` included ("this command's working directory resolved to the shared checkout … Re-run the command from `<WT_DIR>`") — an instruction that cannot be followed, because the merge deleted `<WT_DIR>`. Call `ExitWorktree(action: "keep")`: it releases the registration and returns the session to `<REPO_ROOT>`, removes nothing (`keep` never deletes, and this tool never removes a `path`-entered worktree), and is a documented no-op when no registration is active — so call it unconditionally, including in the exit-0 sub-case where the script prints `CLEANUP-FAILED:` and the worktree is still on disk (sub-step 3 carries that line forward). After it, a background session's Write-tool edits outside a worktree are refused ("hasn't isolated its changes yet"); nothing in this step needs one, and `/auto` Step 4's state write already goes through the shell.
-  2. Run `~/.claude/scripts/mark-ready-for-release.sh <ISSUE-ID>` — moves the issue to Ready For Release with the same team-state fallback Step 8 documents.
-     - **Exit 0** → proceed to the closing message below.
-     - **Non-zero** → the merge succeeded but the Linear update failed. Do **NOT** undo the merge. Surface the script's error and emit, as the terminal line, `SHIPPED-MERGE: <ISSUE-ID> — <WORKTREE_BRANCH> merged into <SOURCE_BRANCH>, worktree removed, but Linear state update FAILED: <reason>. Mark Ready For Release manually.` (still `SHIPPED-MERGE` — the code shipped; only the bookkeeping needs a manual touch; with a `CLEANUP-FAILED:` line in the output, sub-step 3's wording replaces `worktree removed` here too). Then stop.
-  3. **A `CLEANUP-FAILED:` line in the script's stdout means the merge landed and the worktree did not go.** `git worktree remove` refused over untracked or modified files, and the script never passes `--force` — a blocking file can be real work this session forgot to commit. The issue still ships: sub-step 2's transition and the `SHIPPED-MERGE` tag both stand, so `/auto` records a ship. What changes is that the leftover has to reach the two places a human reads, because exit 0 alone carried it nowhere (2026-10-07: eleven issues shipped this way, with the worktree, branch, and `refs/finish-merge` ref of each left behind and named in no ledger, comment, or report):
-     - **Continue the completion comment's Notes with a follow-up comment.** Write a body headed `### Notes` to `<REPO_ROOT>/tmp/linear-cleanup-<issue-id-lowercased>.md` via the shell (heredoc / `printf` redirect — the worktree registration was just released, so a Write-tool edit under `<REPO_ROOT>` is guard-blocked in a background session, exactly as Step 0.5's commit-message file) naming the worktree path, the blocking paths the script listed, and the remedy line it printed, then post it: `~/.claude/scripts/linear-post.sh comment <ISSUE-ID> <REPO_ROOT>/tmp/linear-cleanup-<issue-id-lowercased>.md`.
-     - **Say it in the tag.** Replace `worktree removed` in the closing message below with `worktree NOT removed (CLEANUP-FAILED: <blocking paths>; see the completion comment)` — same tag, so the `/auto` ledger line carries the leftover.
-     - **Do not clear it yourself.** No deleting the blocking paths, no `--force`, no re-run: judging whether a stray file is scratch or forgotten work is the human's call, and the hourly reaper reports the worktree as merged-but-dirty with the same remedy on every pass until it is cleared (`skills/reap-worktrees/SKILL.md`). Interactively, surface the blocking paths and ask once.
-  4. On success, surface the merge output and present the closing message, ending that message on the tagged line (per `standards/lifecycle-tags.md`). The first line is standalone-only — under `/auto`, omit it (the session is not done; the loop continues) and proceed to `/auto` Step 4 after the tag:
+   Do not clear it yourself — no deleting the blocking paths, no `--force`, no re-run: scratch or forgotten work is the
+   human's call, and the hourly reaper reports the worktree as merged-but-dirty until it is cleared
+   (`skills/reap-worktrees/SKILL.md`). Interactively, surface the paths and ask once.
+4. Surface the merge output and emit the `SHIPPED-MERGE` closing message (§ Terminal tags). Standalone: stop. Under
+   `/auto`: continue with `/auto` Step 4.
 
-     ```text
-     This agent-view session is done — close it and dispatch a new session for the next issue.
+**Other exit codes** — read `references/merge-exit-codes.md` for the full handler of each:
 
-     SHIPPED-MERGE: <ISSUE-ID> — <WORKTREE_BRANCH> merged into <SOURCE_BRANCH>, worktree removed, Ready For Release.
-     ```
+- **1** — hard precondition failure (source branch missing, worktree gone or on the wrong branch, uncommitted tracked
+  changes, merge unverifiable). Surface and stop on `BLOCKED-ON-REVIEW: <ISSUE-ID> — <reason from the script>.
+  <recovery>.`; attempt no recovery.
+- **3** — transient block. The script has already self-enqueued the merge; the drainer lands it and marks Ready For
+  Release, and the issue stays In Progress meanwhile. Do nothing else: emit the `DEFERRED-MERGE` closing message.
+- **2** — the worktree needs work in place: `GENERATED-DISCARD:` (a `merge=ours` driver dropped source's generated
+  hunks — measure the dropped delta before regenerating anything) or `CONFLICT:` / `RESUME:` (resolve in the worktree
+  with `Edit`, gate, commit, re-invoke).
+- **5** — `MERGED-SOURCE:`, the merged-tree gate. `pnpm check` from `<WT_DIR>`; green → re-invoke the same line (it
+  finalizes, or returns 5 or 2 again if source moved meanwhile); red → the reference's exit-5 handler.
 
-  No further bash commands. Standalone: stop here. Under `/auto`: continue with `/auto` Step 4.
+#### `ACTION=pr`
 
-- **1 (hard precondition failure)** — surface the script's output and stop. Don't attempt recovery; these are genuine setup problems the user must resolve (source branch missing, worktree gone or on the wrong branch, worktree mid-unrelated-operation or with uncommitted tracked changes, or the merge couldn't be verified). The terminal tagged line is `BLOCKED-ON-REVIEW: <ISSUE-ID> — <reason from the script>. <recovery>.` Do not run further bash commands. (Transient blocks — dirty/on-source main checkout, source checked out elsewhere, main mid-operation, contention — are **exit 3**, not 1; see below.)
+The branch is already on origin (Step 7 pushed under `PUSH=1`). Resolve the base: `SOURCE_BRANCH` when set (a
+`/start wt` worktree), otherwise the repo's default branch:
 
-- **3 (transient block — deferred to the merge queue)** — the merge can't advance the source branch *right now* but will succeed later untouched (the main checkout is on the source branch with uncommitted changes to files this merge changes — edits elsewhere ride along, since the fast-forward carries them — the source branch is checked out in another worktree, the main checkout is mid-operation, or the source branch is under continuous contention). The script has **already self-enqueued** the merge to the local queue (`scripts/merge-queue.sh`); a launchd drainer retries until it lands, and **the drainer marks the issue Ready For Release when it does**. The worktree is intact and the issue **remains In Progress** — Step 8 deliberately did NOT mark it Ready For Release (the merge owns that transition, and the merge hasn't landed). That is the honest state: it is not released until it is merged. So there is **nothing more to do** here — do **not** retry, commit, mark the issue Ready For Release, or touch any other session's changes. Surface the script's `DEFERRED:` output and present the terminal tagged line (substitute the script's reason):
+```bash
+gh repo view --json defaultBranchRef -q .defaultBranchRef.name
+```
 
-  ```text
-  Merge deferred — it'll retry automatically once the blocker clears. Inspect any time with /merge-queue.
+If that fails (no GitHub remote, `gh` unauthenticated) there is nowhere to open the PR — never guess a base; stop on
+`BLOCKED-ON-REVIEW: <ISSUE-ID> — cannot resolve PR base (<first error line>). Branch pushed; open the PR manually.` The
+default branch is the base by design even when the branch forked elsewhere; the user retargets in GitHub if needed.
 
-  DEFERRED-MERGE: <ISSUE-ID> — merge queued (<reason>); will retry automatically. Check with /merge-queue.
-  ```
+Then read `references/pr-mode.md` and follow it: label verification, title and body from the diff, `gh pr create`,
+`mark-ready-for-release.sh`, and the `SHIPPED-PR` closing message.
 
-  No further bash commands. Standalone: stop here. Under `/auto`: continue with `/auto` Step 4 (`DEFERRED-MERGE` is a shipped outcome there).
+## Terminal tags
 
-- **2 (worktree needs work before the merge can land — act in the worktree)** — two shapes, distinguished by the script's stderr tag.
+Every terminal path of `/finish` ends on exactly one tagged line (`standards/lifecycle-tags.md` owns the vocabulary).
+Emit it **bare**: the closing messages below sit in fences for readability, but the real tag is the last non-empty line
+of the message that carries it, with no fence around it and nothing after it — the `full-continue.sh` hook anchors on
+that line (of each message, not of the turn, so `/auto` Step 4's later output does not defeat it). Each closing
+message's leading sentence is standalone-only; under `/auto` omit it and continue with `/auto` Step 4 after the tag.
+`re-run` at the Step 8 gate has no tag — it dispatches and resumes — and a failed state update never emits `RELEASED:`.
 
-  `GENERATED-DISCARD:` — a `merge=ours` driver on generated file(s) kept the worktree branch's copy and silently dropped `<SOURCE_BRANCH>`'s hunks. The merge is **already committed** — there are no conflict markers and no `MERGE_HEAD`, so do NOT `merge --abort`. The script's stderr names one `(merge <sha>, <path>)` pair per discard.
+| Tag | Emitted at | Line |
+| --- | --- | --- |
+| `RELEASED` | Step 8, standard flow, after a successful state update | `RELEASED: <ISSUE-ID> — <one-line summary>`; with `PUSH=0` the summary says the commit is local and names the push |
+| `SHIPPED-MERGE` | Step 9, merge exit 0 (also a successful corruption recovery) | closing message below |
+| `DEFERRED-MERGE` | Step 9, merge exit 3 | closing message below |
+| `SHIPPED-PR` | Step 9, after `gh pr create` and the transition | closing messages below |
+| `BLOCKED-ON-REVIEW` | preflight; Step 1; Step 6; Step 8 `abort` or failed update; Step 9 stops; every auto-mode conservative stop | `BLOCKED-ON-REVIEW: <ISSUE-ID> — <one-line reason>`; state unchanged |
+| `BLOCKED-ON-RECOVERY` | Step 0.5 | `BLOCKED-ON-RECOVERY: <ISSUE-ID> — worktree identity mismatch (<CORRUPTION_REASON>); <declined, or the failure>. Worktree preserved at <WT_DIR>.` |
 
-  **Measure what was actually dropped before regenerating anything — one pair, two commands.** The discarded content is the source side's delta since that merge's base, so read exactly that:
+```text
+This agent-view session is done — close it and dispatch a new session for the next issue.
 
-  ```bash
-  git -C '<WT_DIR>' merge-base '<sha>^1' '<sha>^2'
-  git -C '<WT_DIR>' diff <that-base> '<sha>^2' -- '<path>'
-  ```
+SHIPPED-MERGE: <ISSUE-ID> — <WORKTREE_BRANCH> merged into <SOURCE_BRANCH>, worktree removed, Ready For Release.
+```
 
-  Do **not** substitute a diff of `<SOURCE_BRANCH>`'s current copy against the merged one. It is wrong in both directions: source keeps moving, so later siblings' hunks show up as apparent losses (measured on one such case — 41 lines of noise, including a 28-line unrelated `create_table`, against a true delta of one line); and it goes clean on a source-side **deletion** the merge kept, since a `remove_column`'s hunks are all removals, so "source has nothing the merged copy lacks" is true while the merged dump still declares a dropped column. The guard also fires only when the two tips' blobs already differ, so that diff is never empty and never self-interpreting.
+```text
+Merge deferred — it'll retry automatically once the blocker clears. Inspect any time with /merge-queue.
 
-  - **Every hunk is a version/serial line the merged copy already carries at a higher value** (a schema dump's `version:`, a generated timestamp) → nothing of substance was discarded. Quote the diff as the justification, run `pnpm check` from `<WT_DIR>` (the merged-tree gate — a discard exit pre-empts the script's own exit-5 stop; red routes exactly as exit 5 below), and finalize by re-running the Step 2 line with `_FM_SKIP_OURS_GUARD=1` — **in auto mode too**: this override is backed by a measurement rather than an assertion, which is what distinguishes it from the verdict-gate overrides Step 8 refuses unattended. The usual cause is a sibling landing a data-only migration during the worktree's life — no DDL, so the only trace it can leave in a schema dump is the version line.
-  - **Anything else** — any added, removed, or changed structural line — is a real loss. Regenerate the listed artifacts in the worktree from the merged sources (the project's documented schema/codegen regeneration), run `pnpm check` from `<WT_DIR>` (the merged-tree gate; red routes exactly as exit 5 below), then `git -C '<WT_DIR>' add <files> && git -C '<WT_DIR>' commit -m 'Regenerate merged artifacts'` and re-invoke the same Step 2 line. **Auto mode:** if the project documents no regeneration command, do not guess — stop with `BLOCKED-ON-REVIEW: <ISSUE-ID> — merge=ours driver dropped <SOURCE_BRANCH>'s generated hunks (<files>); regeneration needs a human. Worktree preserved.`
+DEFERRED-MERGE: <ISSUE-ID> — merge queued (<reason>); will retry automatically. Check with /merge-queue.
+```
 
-  **A regeneration that changes nothing is a satisfied remedy, not a spent one — and for a schema dump it is not evidence either.** "Nothing left to commit" means the merged tree already regenerates to what it carries, so return to the measurement above and finalize on it; reporting the remedy as exhausted strands a fully-shipped issue on a question with a checkable answer. Do not read the byte-identical result as proof of no loss: a dump regenerated from a database initialized from the committed dump reproduces it by construction, and a migration numbered at or below the dump's recorded version is never pending, so it cannot contribute regardless (Rails stamps those applied via `assume_migrated_upto_version`; a project rule doc may document the same latch defeating its `version:`-vs-newest-migration check). The dropped-delta diff is the independent check.
+Worktree PR (`SOURCE_BRANCH` set — the worktree stays until the PR merges, and the tag names the cleanup once):
 
-  `CONFLICT:` (or `RESUME:`) — the script merged `<SOURCE_BRANCH>` into the worktree branch **inside `<WT_DIR>`** and hit conflicts. The main checkout is untouched and clean; the conflict lives in the worktree, which this session **owns** (edits there are permitted even under bgIsolation once it has entered the worktree via `EnterWorktree` — see Step 0) and which is **private** (no lock needed — do **not** wrap these in `with-repo-lock.py`). Conflicted files are listed on the script's stderr as worktree-relative paths.
+```text
+This agent-view session is done. The worktree stays in place until the PR merges.
 
-  1. For each conflicted file: read it from `<WT_DIR>/<path>`, understand both sides of the conflict, apply the resolution **with the `Edit` tool on the conflicted file** — marker by marker, or the whole file when one side wins outright. When one side clearly subsumes the other (e.g., the worktree branch removed code the source side modified), take the subsuming side. Do not take a side with `git checkout --ours`/`--theirs`, `git restore`, or a shell overwrite (`git show <ref>:<path> >| <path>`, `cp`): the hook allows the first two only on paths git lists as unmerged, and in an unattended run every one of them is adjudicated by the auto-mode classifier, which reads an overwrite of source files mid-merge as dangerous and denies it, while file edits inside the entered worktree never reach it (measured 2026-09-29, BF-2201: a resolution the evidence had already settled was abandoned after a hook denial and then a classifier denial, and the same four files went through `Edit` minutes later unopposed). A classifier denial of one of those shortcuts is a denial of the shortcut, not of this step — switch to `Edit` and continue; it is not a `BLOCKED-ON-REVIEW`. Ask the user only when the right answer is genuinely ambiguous. **Auto mode:** when genuinely ambiguous, do not guess — run `git -C '<WT_DIR>' merge --abort` and stop with `BLOCKED-ON-REVIEW: <ISSUE-ID> — merge conflict needs a human (<files>). Worktree preserved.`
-  2. `git -C '<WT_DIR>' add <resolved-files>`
-  3. Run `pnpm check` from `<WT_DIR>` — must be green before committing. If it fails: the conflict resolution introduced a regression. Per the Working Application Contract, do **not** commit and do **not** re-invoke. Surface the failing output to the user; let them decide between fixing the resolution further, aborting the merge (`git -C '<WT_DIR>' merge --abort`), or escalating to architect. The mid-merge state is preserved in the worktree for inspection. **Auto mode:** do not wait for a decision — run `git -C '<WT_DIR>' merge --abort` and stop with `BLOCKED-ON-REVIEW: <ISSUE-ID> — conflict resolution broke pnpm check; merge aborted, worktree preserved for a human.`
-  4. `git -C '<WT_DIR>' commit -F '<WT_DIR>/tmp/git-merge-msg-<issue-id-lowercased>.md'` — reuse the prepared merge-commit message (e.g., `<WT_DIR>/tmp/git-merge-msg-pl-13.md`).
-  5. **Re-invoke the same Step 2 `finish-merge.sh` line.** It re-acquires the lock and fast-forwards the main checkout, then removes the worktree and branch. If source advanced during your resolution, it re-merges the new delta — which may return **5** (gate the newly merged tree — the exit-5 bullet below) or **2 again** with a fresh conflict on that delta; if so, **repeat steps 1–5**. This is expected under concurrent `/finish merge` sessions and converges (each round reconciles only the latest source delta).
-  6. Present the closing message above once the re-invocation exits 0.
+SHIPPED-PR: <ISSUE-ID> — PR opened (base=<BASE>, head=<WORKTREE_BRANCH>), labels: <list|none>, issue Ready For Release. After merge, run `git worktree remove .claude/worktrees/<issue-id-lowercased>` from the main checkout.
+```
 
-- **5 (source merged — gate the merged tree, then re-invoke)** — `MERGED-SOURCE:` — `<SOURCE_BRANCH>` had advanced during the worktree's life and the script merged it into the worktree branch **inside `<WT_DIR>`** without conflicts, then stopped before advancing source (lock released; main checkout untouched). Step 7's `pnpm check` ran on the pre-merge tree, and a clean textual merge can still break the combination — two edits to one method body, a rename landing beside a new caller — so this is the **merged-tree gate** (keeper ruling 2026-09-11): it is what lets `related` siblings ship in parallel without a `blocks` edge (standards/issue-spec.md § Certification includes collision edges).
+Plain-branch PR (`SOURCE_BRANCH` empty — nothing to clean up):
 
-  1. Run `pnpm check` from `<WT_DIR>`.
-  2. **Green** → re-invoke the same Step 2 `finish-merge.sh` line. The re-run finds the worktree branch already containing source and finalizes — or returns **5** or **2** again if source advanced meanwhile; repeat.
-  3. **Red** → the merge, not this issue's own change, broke the tree. Fix it in the worktree and commit (Step 7's bounds apply — **auto mode:** at most **2** fix delegations), then re-invoke. Still red → **auto mode:** stop with `BLOCKED-ON-REVIEW: <ISSUE-ID> — merged tree fails pnpm check after merging <SOURCE_BRANCH>; worktree preserved.` Interactive: surface the failing output and let the user decide. Never finalize around a red gate and never revert the merge commit — the source delta must land together with this issue's.
+```text
+This agent-view session is done. The PR is open against <BASE> — review and merge it there.
 
-**If `ACTION == "pr"`:**
-
-The branch was pushed in Step 7 (`pr` implies push — Step 0 emits `PUSH=1` for it). Open a PR for the current branch — this works whether or not we're in a worktree.
-
-1. **Resolve the base branch:**
-   - `SOURCE_BRANCH` is set (we're in a `/start wt` worktree) → base = `SOURCE_BRANCH`.
-   - `SOURCE_BRANCH` is empty (plain-branch PR) → base = the repo's GitHub default branch:
-
-     ```bash
-     gh repo view --json defaultBranchRef -q .defaultBranchRef.name
-     ```
-
-     If this fails (no GitHub remote, `gh` unauthenticated), surface the error and stop with the terminator `BLOCKED-ON-REVIEW: <ISSUE-ID> — cannot resolve PR base (<first error line>). Branch pushed; open the PR manually.` — there's nowhere to open the PR. Don't guess a base. The base is the default branch by design even when the branch was forked off another branch; the user can retarget the PR in GitHub if it should land elsewhere.
-
-2. **Verify any requested labels exist** (only if Step 0 collected labels). Check each label with an exact-equality `jq` filter (a substring like `deploy` must NOT match an existing `pr-deploy`) — the command prints the label name if it exists and nothing if it doesn't:
-
-   ```bash
-   gh label list --limit 200 --json name -q '.[].name | select(. == "<label>")'
-   ```
-
-   If a requested label is missing (empty output), do NOT silently drop it. Surface it and ask the user: proceed without that label / create it (`gh label create '<label>'`) / abort. Apply only labels that exist (or that the user just created). **Auto mode:** proceed without the missing label; note the omission in the closing message.
-
-3. **Generate the PR title and body from the actual diff** — do NOT use `--fill` (it only echoes the commit message). Before writing the body, apply [`standards/git.md`](../../standards/git.md) § Linear auto-close keywords: only `<ISSUE-ID>` may follow a close keyword; every other issue ID — deferred follow-ups, next-in-sequence references, siblings you mention in passing — is written bare or behind a non-closing keyword, or merging this PR silently closes an issue nobody worked on. Apply the `pr-update` skill's methodology directly: read [`~/.claude/skills/pr-update/SKILL.md`](../pr-update/SKILL.md) and follow its Analysis Process (§2–6), PR Title Formats, and Description Structure. **Skip pr-update's own base-resolution** (its §2 `if [[ -n "$pr_info" ]]; … BASE=…` prologue) and substitute the `<BASE>` you already resolved in sub-step 1 wherever its commands reference `$BASE` — in a worktree that base is `SOURCE_BRANCH`, **not** the default branch, and letting pr-update re-resolve `$BASE` would diff the worktree PR against the wrong base. This is a **by-reference** use of that methodology — read its sections and apply them here — **not** a `Skill`-tool dispatch of `pr-update`: `/finish` must stay the authority over the base, labels, and the terminal `SHIPPED-PR` tag, and must not trigger `pr-update`'s own interactive PR-state prompts. The branch is already pushed (Step 7), so no push here. (pr-update's own empty-`$BASE` guard lives in the §2 prologue you're skipping; sub-step 1 above is the backstop for this path — it already stops if it cannot resolve a base, so the substituted `<BASE>` is non-empty by the time you reach here.)
-
-4. **Write the body** to `<WT_DIR>/tmp/pr-body-<issue-id-lowercased>.md` (worktree mode) or `<REPO_ROOT>/tmp/pr-body-<issue-id-lowercased>.md` (in-place) using the **Write** tool (it requires an absolute path) — the same pattern as the merge-commit message file in the `merge` branch above.
-
-5. **Create the PR** — pass `--base` explicitly, the generated title, the body file, and one `--label` per verified label:
-
-   ```bash
-   gh pr create --base '<BASE>' --head '<WORKTREE_BRANCH>' --title '<generated title>' --body-file '<path from step 4>' [--label '<label>' ...]
-   ```
-
-After the PR is created, run `~/.claude/scripts/mark-ready-for-release.sh <ISSUE-ID>` (the PR is the ship; keeper ruling 2026-09-11 — never `In Review`, which is a human-review request), then present the closing message, ending that message on the tagged line (per `standards/lifecycle-tags.md`). Both templates' leading `This agent-view session is done.` sentence is standalone-only — under `/auto`, drop that sentence, keep the rest of the line, and continue with `/auto` Step 4 after the tag. Substitute the actual resolved `<BASE>`, branch, and label list (or the bare word `none` when no labels were applied). The message branches on whether a worktree is involved:
-
-- **`SOURCE_BRANCH` set (worktree PR)** — leave the worktree in place; it's the lifecycle boundary. The leading sentence and the tagged line should NOT duplicate the cleanup hint:
-
-  ```text
-  This agent-view session is done. The worktree stays in place until the PR merges.
-
-  SHIPPED-PR: <ISSUE-ID> — PR opened (base=<BASE>, head=<WORKTREE_BRANCH>), labels: <list|none>, issue Ready For Release. After merge, run `git worktree remove .claude/worktrees/<issue-id-lowercased>` from the main checkout.
-  ```
-
-  After the PR merges, the user removes the worktree manually from the main repo checkout:
-
-  ```bash
-  # cd to the main repo checkout (parent of .claude/worktrees/), then:
-  git worktree remove .claude/worktrees/<issue-id-lowercased>
-  ```
-
-- **`SOURCE_BRANCH` empty (plain-branch PR)** — there is no worktree to clean up; omit the worktree hint entirely:
-
-  ```text
-  This agent-view session is done. The PR is open against <BASE> — review and merge it there.
-
-  SHIPPED-PR: <ISSUE-ID> — PR opened (base=<BASE>, head=<WORKTREE_BRANCH>), labels: <list|none>, issue Ready For Release. Review/merge the PR.
-  ```
+SHIPPED-PR: <ISSUE-ID> — PR opened (base=<BASE>, head=<WORKTREE_BRANCH>), labels: <list|none>, issue Ready For Release. Review/merge the PR.
+```
 
 ## Error Handling
 
-- If the issue is already Ready For Release or Done, warn the user and ask if they want to proceed (add comment only). Auto mode: do not re-finish a terminal issue — stop with `BLOCKED-ON-REVIEW: <ISSUE-ID> — already <state>; nothing to finish.`
-- If there are no uncommitted changes, Step 7 is a no-op — the script reports the branch's state against upstream — and the rest of the flow still runs
-- If `linear-cli` is not authenticated, prompt: `linear-cli auth oauth` (auto mode: do not prompt — stop with `BLOCKED-ON-REVIEW: <ISSUE-ID or "current branch"> — linear-cli unauthenticated. Nothing committed, no state change.`)
-- If the issue identifier can't be found, ask the user explicitly (auto mode: stop with `BLOCKED-ON-REVIEW: current branch — no issue ID resolvable. No state change.`)
+- Issue already Ready For Release or Done: warn and ask whether to proceed (comment only). Auto mode: stop with
+  `BLOCKED-ON-REVIEW: <ISSUE-ID> — already <state>; nothing to finish.`
+- No uncommitted changes: Step 7 is a no-op (the script reports the branch's state against upstream); the rest runs.
+- `linear-cli` unauthenticated: prompt `linear-cli auth oauth`. Auto mode: stop with
+  `BLOCKED-ON-REVIEW: <ISSUE-ID or "current branch"> — linear-cli unauthenticated. Nothing committed, no state change.`
+- No issue ID resolvable: ask the user. Auto mode: stop with
+  `BLOCKED-ON-REVIEW: current branch — no issue ID resolvable. No state change.`
+
+## References
+
+Read each at the step that names it; none is loaded otherwise.
+
+- [`references/corruption-recovery.md`](references/corruption-recovery.md) — Step 0.5, when `finish-detect-mode.sh`
+  exits 4: surfacing the mismatch, the self-rewrite restamp fast path, the recovery question, `finish-recover.sh` exits.
+- [`references/verdict-overrides.md`](references/verdict-overrides.md) — Step 8, when the verdict is not a fresh pass:
+  per-branch prompts, override comments, the `re-run` dispatch, terminators.
+- [`references/merge-exit-codes.md`](references/merge-exit-codes.md) — Step 9 merge, when `finish-merge.sh` exits 1, 2,
+  3 or 5: `GENERATED-DISCARD:` measurement, conflict resolution, the merged-tree gate.
+- [`references/pr-mode.md`](references/pr-mode.md) — Step 9 `pr`, once the base resolves: labels, title and body from the
+  diff, `gh pr create`, the transition, the closing message.

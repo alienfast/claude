@@ -1,96 +1,200 @@
 ---
 name: fleet-launch
-description: Launch a fleet of parallel /loop /auto sessions as background agents in `claude agents`, staggered so each session's first pick sees the previous session's claim, with an optional time budget that winds the fleet down cleanly (in-flight issues finish; no new picks). Count defaults to /auto-prep's persisted recommendation; an explicit count is the quota throttle. An `epic:<ID>` token scopes every session to one epic's graph (a scope /epic-prep persisted is confirmed with the user, never assumed; `team` launches team-wide over it) and, when prep recorded an integration branch, steers every pick onto it through per-issue fork keys so the epic ships as one PR — the main checkout is never moved. A `backlog` token lets sessions fall through to Backlog once nothing Planned/Todo is pickable — the opt-in for a day with spare usage. Ending a running fleet early is /fleet-stop, not this skill. Use when the user says 'fleet launch', 'launch the fleet', 'spawn N auto loops', 'start 5 loops for 10 hours', 'fleet epic', 'launch the epic fleet', 'work the epic with a fleet', 'fleet BF-1826', or invokes /fleet-launch.
+description: Launch a fleet of parallel /loop /auto sessions as `claude agents` background sessions, staggered, with an optional time budget; the count defaults to /auto-prep's recommendation. `epic:<ID>` scopes the fleet to one epic's integration branch; `backlog` opens the Backlog fallback. Use when the user says 'fleet launch', 'launch the fleet', 'spawn N auto loops', 'fleet epic', or invokes /fleet-launch.
 ---
 
 # Fleet Launch
 
-The middle bookend of the fleet workflow: `/auto-prep` (groom + recommend a count) → **`/fleet-launch`** (dispatch) → `/fleet-retro` (post-mortem). All logic lives in [scripts/fleet-launch.sh](../../scripts/fleet-launch.sh); this skill dispatches to it and narrates the result.
+The middle bookend of the fleet workflow: `/auto-prep` (groom + recommend a count) → **`/fleet-launch`** (dispatch) →
+`/fleet-retro` (post-mortem). All logic lives in [scripts/fleet-launch.sh](../../scripts/fleet-launch.sh); this skill
+dispatches to it and narrates. Each session is a `claude --bg "/loop /auto"` background agent in `claude agents`.
+Dispatches are staggered on a new worktree under `.claude/worktrees/` (the stamp `/auto`'s live-owner probe excludes from
+the next pick), so sessions never race for the same first issue, capped at 180s per wait.
 
-Each session is a `claude --bg "/loop /auto"` background agent — they land in the user's `claude agents` view, not in new terminals. Dispatches are staggered on a local signal (a new worktree under `.claude/worktrees/` — the stamp `/auto` Step 2's live-owner probe excludes from the next pick) so sessions never race each other for the same first issue, capped at 180s per wait.
-
-This skill does NOT run `/auto-prep` (its solo/decision-gated advice needs human eyes before a launch) and does NOT run `/fleet-retro` (run it after the fleet quiesces — and before the next launch: launching is what expires the prior run's ledgers, see below). It assumes prep already happened; if `tmp/fleet-recommendation.json` is missing and no count was given, the script says so and stops.
+This skill runs neither `/auto-prep` (its advice needs human eyes) nor `/fleet-retro` (run it after the fleet quiesces
+and before the next launch — launching expires the prior run's ledgers).
 
 ## Arguments
 
 `/fleet-launch [count] [duration] [epic:<ID> | team] [backlog] [stale-ok]`
 
-- **(none)** — launch the count `/auto-prep` (or `/epic-prep`) persisted to `tmp/fleet-recommendation.json`, no deadline: loops run until the certified backlog drains (`NO-CANDIDATES`) — or, while a Planned issue the fleet cannot ship holds the gate, hold on `PLANNED-HOLD` instead (`/fleet-stop` ends such a fleet; an epic fleet ends itself on `EPIC-DRAINED` once only keeper-gated members remain — below). A recommendation carrying `scope` (an `/epic-prep`) does **not** launch scoped on its own: the script stops with `SCOPE-CONFIRM` (exit 3) before dispatching or writing anything, and this skill asks — **Scope confirmation** below.
-- `<count>` (e.g. `/fleet-launch 5`) — launch exactly that many sessions — that many MORE when a fleet is already running, not a target total. This is the user's override: auto-prep recommends `min(lanes, 3)` (3 is the settled 5h-burst concurrency cap), and an explicit count overrides it in either direction. The count is the FIRST token when given.
-- `<duration>` (e.g. `/fleet-launch 5 10 hours`, `/fleet-launch 90m`) — also give the marker a deadline (`deadline_epoch`; the marker itself is written on every launch). Each session's `/auto` checks it **before picking new work, never mid-issue**: at the deadline every session finishes its in-flight issue, then ends its loop with `NO-CANDIDATES: fleet deadline reached`. Accepted forms: `10h`, `10 hours`, `90m`, `45 minutes`.
-- `epic:<ID>` (e.g. `/fleet-launch epic:BF-1826`, `/fleet-launch 2 8h epic:BF-1826`) — scope every session to that epic's graph: the dispatched prompt becomes `/loop /auto epic:<ID>`, so each pick runs `next-candidates.sh --root <ID>` and sees the epic's members and nothing else (membership is live — recomputed at every pick — so a child filed mid-run joins the pool). An explicit token overrides the recommendation's `scope`, and it is the only way an inherited scope launches — the token is the confirmation, so a typed `epic:<ID>` is never asked about. Validated **fail-closed** through `scripts/epic-graph.sh` before anything is dispatched or written: a missing issue or one without the `epic` label refuses the launch outright — a fleet scoped to a bad epic would latch `drained` against an empty pool. There is no separate fleet-epic skill; this token is the epic fleet.
-- `team` (e.g. `/fleet-launch team`, `/fleet-launch 2 8h team`) — launch team-wide even though the recommendation carries a `scope`. The count still defaults from the file, with a WARN that `/epic-prep` sized it for the epic — pass a count, or re-run `/auto-prep` for a team-wide sizing. Mutually exclusive with `epic:<ID>`.
-- `backlog` (e.g. `/fleet-launch 3 10h backlog`, `/fleet-launch 2 8h epic:BF-1826 backlog`) — the dispatched prompt gains ` backlog` (`/loop /auto backlog`), so each pick runs `next-candidates.sh --backlog-fallback`: a session with nothing Planned/Todo pickable takes Backlog instead of idling on `PLANNED-HOLD`. Planned/Todo stays strictly first at every pick, so a Planned issue that releases mid-run is the next pick. This is the keeper's opt-in for a day with spare usage (keeper ruling 2026-10-01; the default stays the gate — `standards/linear-workflow.md` § Stage Priorities), and it changes the spending policy only: `/auto`'s headroom gate still parks near the 5h ceiling. The marker records `backlog: true` so `/fleet-status` counts the runway the same way and `/fleet-retro` can attribute Backlog ships to the fallback. A session's mode is fixed at its launch — to open the fallback on a fleet already idling, top up with `/fleet-launch <n> <remaining duration> backlog`: the holding sessions idle free until the deadline while the new ones take Backlog. Composes with `epic:<ID>` and `team`.
-- `stale-ok` — launch even though `~/.claude` is behind `origin/main` in a file the sessions load, with a one-line `WARN`. Without it that state stops the launch with `TOOLING-STALE` (exit 4) — **Tooling confirmation** below. Composes with every other token.
+- **(none)** — launch the persisted count, no deadline: loops run until the certified backlog drains (`NO-CANDIDATES`),
+  or hold on `PLANNED-HOLD` while a Planned issue the fleet cannot ship holds the gate (`/fleet-stop` ends such a fleet;
+  an epic fleet ends itself on `EPIC-DRAINED`). A recommendation carrying `scope` never launches scoped on its own: the
+  script stops with `SCOPE-CONFIRM` (exit 3) and this skill asks. No count and no file → the script says so and stops.
+- `<count>` — exactly that many sessions — that many MORE when a fleet is already running. The user's override of the
+  recommendation in either direction; the FIRST token when given.
+- `<duration>` (`10h`, `10 hours`, `90m`, `45 minutes`) — give the marker a `deadline_epoch`. Each session's `/auto`
+  checks it before picking new work, never mid-issue: at the deadline every session finishes its in-flight issue, then
+  ends with `NO-CANDIDATES: fleet deadline reached`.
+- `epic:<ID>` — scope every session to that epic's graph: the prompt becomes `/loop /auto epic:<ID>`, so each pick runs
+  `next-candidates.sh --root <ID>` against live membership. The token overrides the recommendation's `scope` and is the
+  only way an inherited scope launches — a typed token is never asked about. Validated fail-closed through
+  `scripts/epic-graph.sh` before anything is dispatched or written: a missing issue or one without the `epic` label
+  refuses the launch.
+- `team` — launch team-wide although the recommendation carries a `scope`; the count still defaults from the file, with a
+  WARN that `/epic-prep` sized it for the epic. Mutually exclusive with `epic:<ID>`.
+- `backlog` — the prompt gains ` backlog` (`next-candidates.sh --backlog-fallback`): a session with nothing Planned/Todo
+  pickable takes Backlog instead of idling on `PLANNED-HOLD`; Planned/Todo stays strictly first at every pick. The opt-in
+  for a day with spare usage (the gate is the default — `standards/linear-workflow.md` § Stage Priorities); it changes
+  spending policy only, the headroom gate still parks near the 5h ceiling. Recorded as `backlog: true` in the marker. A
+  session's mode is fixed at launch — open the fallback on an idling fleet with `/fleet-launch <n> <remaining duration>
+  backlog`. Composes with `epic:<ID>` and `team`.
+- `stale-ok` — launch although `~/.claude` is behind `origin/main` in a file the sessions load, with a one-line `WARN`.
+  Without it that state stops the launch with `TOOLING-STALE` (exit 4). Composes with every other token.
 
-Ending a running fleet early is [`/fleet-stop`](../fleet-stop/SKILL.md), not a form of this skill. Check the current picture any time with [`/fleet-status`](../fleet-status/SKILL.md).
+Ending a running fleet early is [`/fleet-stop`](../fleet-stop/SKILL.md); the picture any time is
+[`/fleet-status`](../fleet-status/SKILL.md).
 
 ### Epic-scoped launch — the integration branch
 
-Keeper decision 2026-09-11: **an epic ships as one PR, merged into as you go.** `/epic-prep <ID>` creates an integration branch from the same source `/start wt` would resolve (`start.wt-source-branch` when set, else the checkout's current branch — so `main` with no other context, or whatever long-running branch the checkout sits on) and records `scope`, `members` (the prep-time membership, the burn-down baseline `/fleet-status` reads), `branch`, and `base` in `tmp/fleet-recommendation.json`. When the recommendation's scope is the one launching, the script:
+An epic ships as one PR, merged into as you go. `/epic-prep <ID>` creates the integration branch from the same source
+`/start wt` would resolve (`start.wt-source-branch` when set, else the checkout's branch) and records `scope`, `members`
+(the burn-down baseline `/fleet-status` reads), `branch`, and `base` in `tmp/fleet-recommendation.json`. When that scope
+launches, the script verifies the branch exists locally and that `start.wt-source-branch` is unset or already names it
+(another value means another epic fleet's posture is in effect: refuse), **leaves the main checkout exactly where it is**
+— no detach, no checkout-wide key — and records `scope`, `members`, `branch`, and `base` in the marker.
 
-1. verifies the branch exists locally and that `start.wt-source-branch` is unset or already names it (a different value means another epic fleet's posture is in effect: refuse);
-2. **leaves the main checkout exactly where it is** (keeper ruling 2026-09-23) — no detach, no checkout-wide `start.wt-source-branch`. The steering is per pick: each session's `/auto` runs `~/.claude/scripts/auto-fork-key.sh set <ISSUE-ID> <EPIC-ID>` before every `/full auto wt` dispatch, which points the per-issue `start.<id>.wt-source-branch` key at the marker's branch — the same key `/fleet-sequence`'s runner uses, which `scripts/start-wt-setup.sh` resolves ahead of the checkout's own branch, and `start-wt-create.sh` forks from the branch's ref. So every fleet pick forks from the branch and every `/finish merge` advances it ref-only, while the human keeps working on whatever branch the checkout sits on, and their own interactive `/start wt` — for an epic member included — still forks from that branch. (Until 2026-09-23 the script detached the checkout at the branch and set the checkout-wide key; that posture took the checkout away for the fleet's duration and steered the human's starts onto the epic branch too — the 2026-09-23 BF-1826 launch moved a `monday` checkout out from under its keeper mid-work.) A checkout that is ON the integration branch launches with a `WARN`: merges then fast-forward its tree (and defer to the merge queue while it is dirty) — check out the base to keep it clear;
-3. records `scope`, `members`, `branch`, and `base` in the marker alongside the session set.
+Steering is per pick: each session's `/auto` runs `~/.claude/scripts/auto-fork-key.sh set <ISSUE-ID> <EPIC-ID>` before
+every `/full auto wt` dispatch, pointing the per-issue `start.<id>.wt-source-branch` key at the marker's branch (the
+script's header documents the key). Every fleet pick forks from the branch and every `/finish merge` advances it ref-only,
+while the human's own `/start wt` still forks from the checkout's branch. A checkout ON the integration branch launches
+with a `WARN`: merges then fast-forward its tree and defer to the merge queue while it is dirty — check out the base.
 
-Work in the main checkout as usual while the fleet runs — on the base, on any other branch, or in a `/start wt` of your own. After the fleet: `/epic-pr` opens the epic's PR from `branch` onto `base` — it resolves the branch, base and landed roster from this launch's marker and the prep's recommendation, pushes the branch and opens the PR with a roster body through `integration-pr.sh` (the same script `/fleet-sequence` ends with), then runs `/pr-update` on the PR by number, so the checkout never moves. Sessions clear the fork keys of members that shipped; `git config --get-regexp 'wt-source-branch'` lists any left by failed members (kept on purpose, so a resume still lands on the epic) — unset them once those issues are resolved. The script prints the PR steps at launch.
-
-A token whose epic has no prepared branch (no recommendation, or one for a different epic) still launches — the human typed it — but on the checkout's own branch, with a WARN naming `/epic-prep <ID>` as the way to prepare one. `FLEET_PROMPT` still overrides the prompt; an override that drops the scope is warned about, not corrected.
+After the fleet, [`/epic-pr`](../epic-pr/SKILL.md) opens the PR from `branch` onto `base`. Sessions clear the fork keys
+of shipped members; `git config --get-regexp 'wt-source-branch'` lists any left by failed members (kept so a resume still
+lands on the epic) — unset them once those issues are resolved. A token whose epic has no prepared branch launches on the
+checkout's own branch with a WARN naming `/epic-prep <ID>`. `FLEET_PROMPT` still overrides the prompt; an override that
+drops the scope is warned about, not corrected.
 
 ## Behavior
 
-Run from the project the fleet should work on (sessions inherit the cwd — the script resolves the main checkout itself, so a worktree cwd is fine):
+Run from the project the fleet should work on (a worktree cwd is fine):
 
 ```bash
 ~/.claude/scripts/fleet-launch.sh 5 10 hours
 ```
 
-Surface the script's output: the deadline (if any), each dispatch line, each claim-landed/timeout line, and the closing `claude agents` pointer. A claim-wait timeout is a WARN, not a failure — the session may be in preflight, resuming a dead worktree, or the pool may have drained mid-launch.
+Surface the script's output: the deadline (if any), each dispatch line, each claim-landed/timeout line, and the closing
+`claude agents` pointer. A claim-wait timeout is a WARN, not a failure — the session may be in preflight, resuming a
+dead worktree, or the pool may have drained mid-launch.
 
 ### Scope confirmation — an inherited epic scope is asked about, never assumed
 
-When the script exits 3 with `SCOPE-CONFIRM` — a launch without a scope token while `tmp/fleet-recommendation.json` carries a `scope` — nothing was dispatched or written. Measure the epic before asking: `~/.claude/scripts/next-candidates.sh --root <ID> --label specified` from the main checkout, and put its answer in the question — how many members are workable now, and what holds the rest (blocked, `needs decision`). Then ask (AskUserQuestion) with three options: launch scoped to epic `<ID>` (recommended while workable members remain), launch team-wide, or cancel. Re-run the same script line with the chosen token appended — `epic:<ID>` or `team` — keeping the count and duration; on cancel, stop and say the recommendation is unchanged. A typed `epic:<ID>` never asks: the token is the decision.
+On `SCOPE-CONFIRM` (exit 3) nothing was dispatched or written. Measure the epic first —
+`~/.claude/scripts/next-candidates.sh --root <ID> --label specified` from the main checkout — and put the answer in the
+question: how many members are workable now, what holds the rest. Ask (AskUserQuestion) with three options: launch scoped
+to epic `<ID>` (recommended while workable members remain), launch team-wide, or cancel. Re-run the same script line with
+`epic:<ID>` or `team` appended, keeping count and duration; on cancel, say the recommendation is unchanged. The stop exists
+because a scope inherited silently from a days-old prep drains the epic and ends while the team pool still has work.
 
-Why the stop exists (2026-09-29): a bare `/fleet-launch` four days after an `/epic-prep` inherited `BF-1826` unnoticed. The fleet drained the epic's two workable members within the hour and ended `drained` while the team-wide certified pool had plenty, and the operator had expected a team fleet. The count already carried a staleness WARN past 24h; the scope carried nothing, and the only way to launch team-wide over the file was an environment-variable prompt override.
-
-**An epic fleet ends itself once only keeper-gated members remain** (keeper ruling 2026-10-14). The root epic sits in Planned until its last child releases, and `/epic-prep` promotes `human`, `needs decision` and uncertified members beside it, so once the workable members ship nothing in the scope can release without the keeper: `next-candidates.sh --root <ID>` then returns the drained headline with an `_EPIC-DRAINED: …_` note, and every session ends on `NO-CANDIDATES` as soon as no member is in flight — the deadline is an upper bound, not the expected end, so a typed duration past the recommendation's `duration_h` costs nothing. Until 2026-10-13 the sessions held on `PLANNED-HOLD` instead: an 11h launch against an 8h recommendation shipped last at 8h02m, then held 11.7 session-hours to the deadline. A scope whose remaining members are workable but withheld behind the gate keeps holding — the keeper can release those by acting — and a team fleet always holds.
+**An epic fleet ends itself once only keeper-gated members remain.** `/epic-prep` promotes `human`, `needs decision` and
+uncertified members beside the root, so once the workable members ship nothing in the scope can release without the
+keeper: `next-candidates.sh --root <ID>` returns the drained headline with an `_EPIC-DRAINED: …_` note and every session
+ends on `NO-CANDIDATES` as soon as no member is in flight — the deadline is an upper bound, not the expected end. A scope
+whose remaining members are workable but withheld behind the gate keeps holding, and a team fleet always holds.
 
 ### Tooling confirmation — stale ~/.claude is asked about, never launched on
 
-Every session runs the hooks, skills, rules and scripts in `~/.claude`, and nothing updates that checkout while the fleet runs, so the script checks that checkout before it writes or dispatches anything: [scripts/claude-freshness.sh](../../scripts/claude-freshness.sh) fetches `origin main` (bounded at ~10 s) and counts what the checkout is missing. Current is silent. Behind only in files no session loads (READMEs, `doc/`, tests, lint tooling), or a fetch that failed or timed out, is one `NOTE:` line and the launch proceeds — an offline launch is never blocked.
+Every session runs the hooks, skills, rules and scripts in `~/.claude`, and nothing updates that checkout while the fleet
+runs, so [scripts/claude-freshness.sh](../../scripts/claude-freshness.sh) fetches `origin main` (bounded at ~10 s) before
+anything is written or dispatched. Current is silent; behind only in files no session loads, or a failed fetch, is one
+`NOTE:` line and the launch proceeds — an offline launch is never blocked.
 
-When the script exits 4 with `TOOLING-STALE` — behind in a session-loaded file, up to 8 of those commits listed — nothing was dispatched or written. Relay the listed commits, then ask (AskUserQuestion) with three options: run `/update`, then re-launch (recommended); launch anyway on this tooling with `stale-ok`; or cancel. Re-run the same script line, keeping the count, duration and tokens — with `stale-ok` appended for the second option. Sessions started after the update load the new hooks. When the output ends `the ~/.claude pull will refuse (…) — run /keeper first`, a local edit or local commit would stop `/update`'s `--ff-only` pull, so say that `/keeper` comes first and that `/update` alone will not clear it.
+On `TOOLING-STALE` (exit 4 — behind in a session-loaded file, up to 8 commits listed) nothing was dispatched or written.
+Relay the commits, then ask (AskUserQuestion): run `/update`, then re-launch (recommended); launch anyway with
+`stale-ok`; or cancel. Re-run the same script line with the tokens kept. When the output ends `the ~/.claude pull will
+refuse (…) — run /keeper first`, a local edit or commit would stop `/update`'s `--ff-only` pull: say `/keeper` comes
+first.
 
 ### The count is settled at 3 — no capacity readings at dispatch
 
-**Keeper-settled 2026-08-10: do not ask for `/usage` readings at launch, and do not write `tmp/fleet-quota-launch.json` — that calibration apparatus is retired.** The two allowance windows resolve so:
+**Concurrency is capped at 3. Ask for no `/usage` readings and write no calibration file at launch.** The account
+meters a 5h burst window and a weekly window, and they resolve so:
 
-- **5h burst → concurrency, and the bracket is measured:** **n=4 exhausted the allowance 4.9h into a 12h deadline** (2026-08-06) while **n=3 lasted ~11.6h** (2026-08-08) and **ran a 12h deadline unthrottled** (2026-08-09). Only 3 sessions can run for any duration without reliably exhausting a 5h window; the script warns above 3, and an explicit count remains the user's override. The bracket was measured on the BF backlog at opus/xhigh — a materially different workload voids it, **and the 500k autocompact cap was exactly such a change**: leaner contexts iterate faster, so post-cap sessions burn ~118k output tokens/session-hour at peak (vs the 85–102k the bracket was measured on), and the 2026-08-17 x3 @500k run saturated its 5h window 5h07m after launch — n=3 now runs at ~102% of the refill rate (1.57–1.74M output per 5h observed at the cutoffs). Since 2026-10-13 the account's own meter settles this per run: `/fleet-retro`'s Headroom verdict names how many sessions the 5h window fit at the peak reading.
-- **Weekly → not a sizing input:** the keeper runs multiple accounts, so weekly-remaining sizes neither n nor duration; the lever is rotating to an account with room before launch. It still bounds a run launched on an account without enough of its week left — 2026-10-10: a 3-session 12h fleet hit `weekly` 5.75h in and lost 18.75 of its 36 session-hours (52%), the fourth fleet launched in six days — so the script prints the active account's `seven_day` reading: `Weekly (seven_day): <pct>% used, resets <time>, measured <age> ago`, read from `~/.claude/local/rate-limits.json`, which the `rate-limits` mod rewrites on every measurement that carries a reading (last writer wins, so the line reads whichever account the latest session on this machine ran on). It is never silent — `Rate limits: no reading (<why>)` when the file or the mod is missing, `Weekly: no reading (<why>)` when the reading carries no `seven_day` window — and never blocks: it warns on stderr at 70% used when the reset falls after the deadline or the launch has none, and prints a note instead when the reset falls inside the run. 70 is an unmeasured starting threshold. The `Burst (five_hour):` line above it reads the same file and warns past 80% used (`fleet-headroom.sh`'s reserve): every session would park at its first pick until the reset, so launch after it or accept the park; a reset within 15 minutes, or one already passed, is a note instead. The launch/close quota-bracket readings existed to calibrate the allowance; multi-account rotation replaced them.
+- **The 5h burst window constrains concurrency, and 3 is the measured answer.** Burn per window is `n × 5 × rate` —
+  duration never appears, so no deadline choice relieves it — and at opus/xhigh on this workload 3 sessions run for any
+  duration without reliably exhausting a window while 4 do not. Saturating the window throttles every session at once
+  (same wall-clock, less shipped, worktrees still held), so the cap is a ceiling to respect, not a target to creep past.
+  The script warns above 3; an explicit count remains the user's override. A materially different workload (another
+  backlog's burn rate, a lower-tier model mix) voids the bracket, and the account's own meter re-measures it per run:
+  `/fleet-retro`'s Headroom verdict says how many sessions the window fit at the peak reading, and the same answer on
+  consecutive unthrottled runs is the evidence to move the count.
+- **The weekly window is not a sizing input.** The keeper runs multiple accounts, so weekly-remaining sizes neither `n`
+  nor duration — rotating to an account with room before launch is the lever. The script prints the active account's
+  `Weekly (seven_day)` reading from `~/.claude/local/rate-limits.json` (the `rate-limits` mod's snapshot, last writer
+  wins), never silently (`… no reading (<why>)`) and never blocking: a warning at 70% used when the reset falls after the
+  deadline, a note when it falls inside the run. The `Burst (five_hour)` line warns past 80% used — every session would
+  park at its first pick until the reset; a reset within 15 minutes, or already passed, is a note.
+- **Runs longer than ~5h ride the ceiling deliberately; the protection is `/auto`'s headroom gate, not a smaller `n`.**
+  Sessions probe `scripts/fleet-headroom.sh` at every pick and park with a wakeup pending when the account's 5h reading is
+  within the reserve of full (on a cswap-rotating machine, only when no other account has room), so the fleet grazes the
+  limit between issues instead of dying mid-issue (`hooks/auto-rewake.sh` recovers a mid-issue kill, but the killed turn's
+  work is redone). The operator's own interactive session and an earlier fleet whose window has not rolled off draw on the
+  same window outside the burn arithmetic: disclose them when choosing a duration, never as a reason to shrink `n` —
+  parking is the designed response. Staggering does not substitute: saturation is a steady-state rate deficit, so a
+  stagger only delays the first cutoff by its own length. If the gate is ever suspect, the zero-code fallback for an
+  unattended long run is `n=2`, which never saturates.
+- **A cutoff is attributed from the harness message, never inferred from the stall's shape** — the limits leave an
+  identical synchronized-silence fingerprint. `/fleet-retro`'s `quota_stall_groups[].limit_kind` names it: `5-hour` at
+  n≤3 re-opens the bracket; `weekly` means rotate accounts, not shrink the fleet; `session` IS the 5h window under
+  another name (resets on exact 5h boundaries) and routes as `5-hour`.
 
-**Unattended runs longer than ~5h (the overnight shape) ride the ceiling deliberately — the protection is `/auto`'s fleet headroom gate, not a smaller n.** Sessions probe `scripts/fleet-headroom.sh` at every pick and PARK with a wakeup pending when the account's 5h window reading is within the reserve of full (on a machine rotating accounts through cswap, only when no other account has room — the gate asks cswap first), so the fleet grazes the limit between issues (self-recovering — the wakeup fires after the reset) instead of being killed mid-issue (`hooks/auto-rewake.sh` now recovers a mid-issue kill by retrying every 900s for up to six hours, but the killed turn's work is redone and the fleet stops until the reset; before that hook, 2026-08-17 lost 25.2 session-hours past the reset plus ~2 keeper-hours draining half-done work the next morning). **The operator's own interactive work is one of those consumers** — a session worked alongside the fleet draws on the same 5h window, as does an earlier fleet whose window has not rolled off, and neither is in the burn arithmetic. Measured 2026-08-21: n=3 parked for the last ~3 hours of a 12h deadline at 1.44M account-wide trailing-5h against 845,734 of fleet-only burn. The gate handled it correctly — the sessions parked and resumed, nothing was lost — but the run finished short, so count the other consumers when choosing a duration — never as a reason to shrink `n` (keeper ruling 2026-08-29: a user-driven extra consumer does not reduce the count; parking is the designed response). Staggering the launch does NOT substitute: saturation is a steady-state rate deficit (~355k/h burn vs ~348k/h refill at n=3), so a stagger only delays the first cutoff by its own length. If the gate is ever suspect, the zero-code fallback for an unattended long run is **n=2** (~237k/h — never saturates); n=3 with the gate otherwise dominates it on throughput.
-
-If a future run IS cut off, `/fleet-retro`'s `quota_stall_groups[].limit_kind` names which allowance bound — read from the harness message, never inferred from the stall's shape, because the limits leave an identical synchronized-silence fingerprint. A **`5-hour`** cutoff at n≤3 re-opens the bracket; a **`weekly`** cutoff means rotate accounts, not shrink the fleet; and a **`session`** cutoff IS the 5h window under another name — measured 2026-08-14 and again 2026-08-17 (resets on exact 5h boundaries, refuses every session then making a request), so route it exactly as `5-hour`. The retro's `Window readings` line carries the meter's own peak for the run; nothing is recorded by hand.
-
-Model/permission defaults follow `/auto`'s unattended-run prerequisites (`--model 'opus[1m]' --effort xhigh --permission-mode auto` — `auto`, not `acceptEdits`, because acceptEdits only auto-accepts file edits and the first gated Bash command would stall a background session at an unanswerable prompt). No `--autocompact` is added: since 2026-10-09 the `loop-boundary` mod compacts each session to one boundary message when an iteration's turn ends with an outcome line, so every iteration starts at the session floor and cross-iteration accumulation — the cost the retired `--autocompact 500000` cap answered from 2026-08-15 (91% of the 2026-08-13/14 fleets' billable volume above 200k context; the cap's own history, including the 300k mid-review orbit, is in doc/compacting-investigation.md) — never builds. The launch therefore refuses, exit 5, on a machine where `loop-boundary@alienfast-claude` is not installed and enabled (`scripts/mod-enabled.sh`; the message names the fix), unless an explicit `--autocompact` after `--` supplies a cap of its own, which downgrades the refusal to a WARN. **Never restart/resume a deep fleet session** — recover in-flight issues in fresh targeted sessions (`/auto BF-XXX` re-enters the existing worktree). Watch `fleet-metrics.py`'s context-size distribution, its **Boundary compactions** line and the review-churn gauges before restoring a cap by override; anything after `--` passes through to `claude --bg` and overrides the defaults. `FLEET_PROMPT` overrides the dispatched prompt — e.g. `FLEET_PROMPT='/loop /auto BF'` to team-scope the run.
+Model/permission defaults follow `/auto`'s unattended-run prerequisites (`--model 'opus[1m]' --effort xhigh
+--permission-mode auto` — `auto`, not `acceptEdits`, which stalls a background session at the first gated Bash prompt).
+No `--autocompact`: the `loop-boundary` mod compacts each session to one boundary message when an iteration ends with an
+outcome line, so every iteration starts at the session floor (`mods/loop-boundary/README.md`); the launch refuses, exit 5,
+where `loop-boundary@alienfast-claude` is not enabled (`scripts/mod-enabled.sh`), unless an explicit `--autocompact` after
+`--` supplies a cap, which downgrades the refusal to a WARN. **Never restart or resume a deep fleet session** — recover
+in-flight issues in fresh targeted sessions (`/auto BF-XXX` re-enters the existing worktree). Anything after `--` passes
+through to `claude --bg`; `FLEET_PROMPT` overrides the dispatched prompt.
 
 ### Ledger expiry — prior runs' state files are cleared at launch
 
-Per-session ledgers (`tmp/auto-state-*.json`) deliberately persist after a fleet ends so the operator and `/fleet-retro` can examine them; a new launch is where they expire. The script deletes the **dead** ones — absent from `claude agents --json`, or listed there as ended (state `done`/`failed`/`stopped`, or the row `claude stop` leaves behind: state unchanged, `status` and `pid` gone, measured 2026-10-04 — the shape `hooks/auto-rewake.sh` produces when it retires a drained session at its loop end); the ledger's recorded pid cannot answer this, since in a daemon-backed fleet it is the daemon's own and outlives every fleet — before dispatching, and reports what it cleared — so `/fleet-status` shows only the current fleet, and so a run you still want measured must be retro'd **before** relaunching. Ledgers of still-running sessions are kept; a kept **loop** ledger pulls the marker's `launch_epoch` back to its mtime and its session is carried into `fleet_sessions`, so a top-up launch never hides a running sibling from `/fleet-status`, while a kept single-run ledger (`mode: single` — a targeted or one-shot `/auto`) does neither, because it is not a fleet member. Without a registry nothing is cleared and every ledger is kept.
+Per-session ledgers (`tmp/auto-state-*.json`, shape in `skills/auto/SKILL.md` Step 4) persist after a fleet ends so the
+operator and `/fleet-retro` can read them; a launch is where they expire. Before dispatching, the script deletes the
+**dead** ones — absent from `claude agents --json`, or listed as ended (state `done`/`failed`/`stopped`, or the row
+`claude stop` leaves with `status` and `pid` gone) — and reports what it cleared, so `/fleet-status` shows only the current
+fleet and a run you still want measured must be retro'd **before** relaunching. The ledger's recorded pid cannot answer
+liveness: in a daemon-backed fleet it is the daemon's own. Ledgers of still-running sessions are kept; a kept **loop**
+ledger pulls the marker's `launch_epoch` back to its mtime and carries its session into `fleet_sessions`, so a top-up never
+hides a running sibling; a kept single-run ledger (`mode: single`) does neither. Without a registry nothing is cleared.
 
 ## The deadline contract (shared with /auto)
 
-- Marker: `<main-checkout>/tmp/fleet-deadline.json` — written on **every** launch as `{fleet_sessions, count, launch_epoch}`, plus `{deadline_epoch, deadline}` when the launch carried a duration, plus `{scope, members}` (and `{branch, base}` when prep recorded an integration branch) when it was epic-scoped, plus `{backlog: true}` when the launch carried the `backlog` token, plus `{retiring: [keys]}` when a top-up carried sessions out of a marker that was already winding down (its `deadline_epoch` passed, or `stopped: true`). A retiring session stays in `fleet_sessions` but `hooks/auto-deadline-gate.sh` treats the deadline as passed for it whatever the new `deadline_epoch` says, so it finishes its in-flight issue and stops (a marker whose deadline is still ahead, or that has none, retires nobody; a retired session stays retired through later top-ups). The launch also prints how many non-retiring carried sessions plus the new count will run and WARNs above the cap of 3 above, and WARNs when a non-retiring carried session's ledger `backlog` differs from the launch's. `fleet_sessions` is the session set — the short id each `claude --bg` prints (`backgrounded · <id>`), recorded per dispatch and carried forward across a top-up — and is what `/fleet-status` and `/fleet-retro` scope by; `launch_epoch` is the scoping fallback for a marker that predates the set (`launch_epoch` is the anchor; `stopped: true` added by [`/fleet-stop`](../fleet-stop/SKILL.md), which preserves the other fields and never moves a deadline that has already passed — the marker is then left untouched).
-- `/auto` reads it at Step 2 (after preflight, before the pick), so in-flight work always completes and targeted `/auto <ISSUE-ID>` ignores it by construction.
-- Sessions never delete the marker (siblings still mid-issue must see it); `fleet-launch.sh` rewrites the marker on every launch, so a no-duration launch never inherits a dead fleet's deadline — which also means a top-up launch resets or erases a running fleet's deadline: re-pass the remaining duration when adding sessions.
+- Marker: `<main-checkout>/tmp/fleet-deadline.json`, written on **every** launch as `{fleet_sessions, count,
+  launch_epoch}`, plus `{deadline_epoch, deadline}` when the launch carried a duration, plus `{scope, members}` (and
+  `{branch, base}` when prep recorded an integration branch) when epic-scoped, plus `{backlog: true}` under the `backlog`
+  token, plus `{retiring: [keys]}` when a top-up carried sessions out of a marker already winding down (deadline passed,
+  or `stopped: true`). A retiring session stays in `fleet_sessions` but `hooks/auto-deadline-gate.sh` treats the deadline
+  as passed for it whatever the new `deadline_epoch` says, so it finishes its in-flight issue and stops, and stays retired
+  through later top-ups. The launch prints how many carried plus new sessions will run, WARNs above the cap of 3, and
+  WARNs when a carried session's ledger `backlog` differs from the launch's.
+- `fleet_sessions` is the session set — the short id each `claude --bg` prints (`backgrounded · <id>`), recorded per
+  dispatch and carried across top-ups — and is what `/fleet-status` and `/fleet-retro` scope by; `launch_epoch` is the
+  scoping fallback for a marker without the set.
+- `/auto` reads the marker at Step 2 (after preflight, before the pick), so in-flight work always completes, and
+  targeted `/auto <ISSUE-ID>` ignores it by construction.
+- [`/fleet-stop`](../fleet-stop/SKILL.md) adds `stopped: true`, preserving the other fields, and never moves a deadline
+  that has already passed.
+- Sessions never delete the marker (siblings still mid-issue must see it). `fleet-launch.sh` rewrites it on every
+  launch, so a no-duration launch never inherits a dead fleet's deadline — and a top-up resets or erases a running
+  fleet's deadline: re-pass the remaining duration when adding sessions.
 
 ## Error Handling
 
-- Not in a git repo, or `claude`/`jq` missing → the script errors before dispatching anything; relay it.
-- A dispatch failure stops further launches but leaves already-launched sessions running — say how many made it and point at `claude agents`.
-- No count and no `tmp/fleet-recommendation.json` → run `/auto-prep` (or pass a count). A recommendation older than 24h gets a staleness WARN — offer to re-run `/auto-prep`.
-- `SCOPE-CONFIRM` (exit 3) is not an error: run **Scope confirmation** above and re-launch with the chosen token.
-- `TOOLING-STALE` (exit 4) is not an error either: run **Tooling confirmation** above.
-- An `epic:` scope that refused (not found, or no `epic` label), a recorded integration branch that no longer exists, or a checkout-wide `start.wt-source-branch` naming some other branch (a manually parked checkout) → the script exits 1 before dispatching or writing anything; relay the message. The remedy is `/epic-prep <ID>` (or unsetting that config once its work is done), never a retry without the scope. A checkout-wide key naming the same branch is only noted.
-- **Host health under a long fleet (macOS):** a fleet's file churn (~26M fsevents ids a day at n=3, measured 2026-09-21) can pin `fseventsd` at a full core around the clock, and the cause is not the worktrees or `node_modules`: Apple's `corecaptured` (launched thousands of times a day by Wi-Fi and Bluetooth diagnostics) replays the FSEvents history from a purge marker that only advances on an actual cache purge, which never happens with free disk. Diagnose with `sudo sample fseventsd 5` and read the busy `client.<pid>` thread's name; check the size of `/System/Volumes/Data/.fseventsd` second. The only relief is clearing that directory's **contents** — never the directory itself, which fseventsd does not recreate and runs logless without — immediately before a reboot; `launchctl` cannot stop the service under SIP.
-- A `/fleet-sequence` running alongside is not a refusal (2026-09-21): the launch proceeds with a `NOTE:` naming it, its queued issues are hidden from this fleet's picks (`next-candidates.sh`), and its child sessions' ledgers survive the prior-run ledger expiry. Relay the note.
+- Not in a git repo, or `claude`/`jq` missing → the script errors before dispatching; relay it.
+- A dispatch failure stops further launches but leaves launched sessions running — say how many made it and point at
+  `claude agents`.
+- No count and no `tmp/fleet-recommendation.json` → run `/auto-prep` (or pass a count). A recommendation older than 24h
+  gets a staleness WARN — offer to re-run `/auto-prep`.
+- `SCOPE-CONFIRM` (exit 3) and `TOOLING-STALE` (exit 4) are not errors: run the confirmation above and re-launch.
+- An `epic:` scope that refused, a recorded integration branch that no longer exists, or a checkout-wide
+  `start.wt-source-branch` naming some other branch → exit 1 before dispatching or writing; relay it. The remedy is
+  `/epic-prep <ID>` (or unsetting that config once its work is done), never a retry without the scope.
+- **Host health under a long fleet (macOS):** file churn can pin `fseventsd` at a full core when Apple's `corecaptured`
+  replays the FSEvents history. Diagnose with `sudo sample fseventsd 5` and the size of
+  `/System/Volumes/Data/.fseventsd`; the relief is clearing that directory's **contents** — never the directory itself —
+  immediately before a reboot.
+- A `/fleet-sequence` running alongside is not a refusal: the launch proceeds with a `NOTE:` naming it, its queued
+  issues are hidden from this fleet's picks, and its child sessions' ledgers survive the ledger expiry. Relay the note.

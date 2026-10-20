@@ -1,6 +1,6 @@
 ---
 name: "react-component-generator"
-description: "Generates React components following established conventions. Use when creating new React components, hooks, or when refactoring existing components to match standards."
+description: "Generate React components and hooks that follow the codebase's conventions (React 19+, TypeScript, performance patterns). Use when creating a new React component or hook, or refactoring an existing component to match standards."
 version: "1.0.0"
 ---
 
@@ -513,6 +513,7 @@ After generating a component:
 
 For detailed rationale and advanced patterns, refer to:
 
-- `/Users/kross/.claude/standards/react.md` - Complete React standards
+- [rules/react.md](../../rules/react.md) — the React rules this skill applies
+- [resources/quick-reference.md](resources/quick-reference.md) — copy-paste templates for the common component shapes
 - Project-specific component examples in the codebase
 - React 19 documentation for latest features

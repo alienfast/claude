@@ -57,12 +57,12 @@ Stop when diminishing returns are reached - when you're no longer finding new re
 **Priority Order**:
 
 1. **Web research**:
-   - `web_search` for discovering sources
-   - `web_fetch` for complete webpage content
+   - `WebSearch` for discovering sources
+   - `WebFetch` for complete webpage content
    - Always fetch full pages, don't rely only on snippets
 
 2. **Codebase tools** (when researching code):
-   - Grep, Glob, Read for local codebase search
+   - Search with the Bash tool (`grep`, `find`) and read files with `Read`
    - MCP servers for documentation (if available)
 
 **Tool Usage Guidelines**:

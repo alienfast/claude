@@ -212,7 +212,7 @@ while IFS= read -r segment; do
   [[ "$segment" =~ ^git[[:space:]] ]] || continue
 
   # Peel git's global options: every rule below anchors on `^git <subcommand>`, so `-C <path>` (the
-  # form standards/git.md prescribes in worktree sessions), `-c k=v`, `--git-dir`, `--work-tree` and
+  # form standards/git-worktrees.md prescribes in worktree sessions), `-c k=v`, `--git-dir`, `--work-tree` and
   # the flag-only globals hid the subcommand from all of them. Measured 2026-09-09: a runaway heredoc
   # ran `git -C "$REPO" reset -q --hard; git -C "$REPO" clean -qfd; git -C "$REPO" branch -q -D ...`
   # against ~/.claude itself, and none of the three was blocked.

@@ -72,7 +72,6 @@ For Architecture Decision Records, reference the format in architect.md agent.
 - NEVER document unimplemented features
 - NEVER add marketing language
 - NEVER write "comprehensive" docs
-- NEVER create docs unless asked
 
 ## ALWAYS Do These
 

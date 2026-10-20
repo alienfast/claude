@@ -234,7 +234,7 @@ mkdir -p .claude/worktrees
 # the slot — surface that to the user and wait; it is not a hang.
 # Lock key: git's absolute common dir — identical from any worktree or the main checkout, so this
 # serializes on the SAME key /finish merge and reap use. --path-format=absolute avoids the MSYS `pwd -P`
-# format divergence (see standards/git.md "Windows Git Bash: comparing paths").
+# format divergence (see standards/git-windows.md "Comparing paths").
 repo_key=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || {
   echo "ERROR: not inside a git repository (cwd: $PWD)" >&2
   exit 1

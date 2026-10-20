@@ -1,165 +1,145 @@
 # Agent Coordination Patterns
 
-Tool selection and ordering, parallel file reads, search parallelization, retry logic, and context
-management are handled without instruction. Specify coordination only where the model cannot infer the
-constraint from the task: real dependencies between delegations, shared write targets, quality gates
-that must hold before the next phase starts. Everything below is one of those cases.
+Tool selection and ordering, parallel file reads, search parallelization, retry logic, and context management are
+handled without instruction. Specify coordination only where the model cannot infer the constraint from the task: real
+dependencies between delegations, shared write targets, quality gates that must hold before the next phase starts.
+Everything below is one of those cases.
 
-Delegate work that is genuinely independent and large enough to justify a fresh context. Delegation
-multiplies cost on small tasks, and a subagent spawned to double-check another agent's reasoning
-usually adds spend without adding signal — see [CLAUDE.md](../CLAUDE.md) "Delegation".
+## Background-agent completion reports
+
+`run_in_background` is a parameter of the `Agent` tool. Subagents start in the background by default and deliver their
+report in a completion notification; `run_in_background: false` blocks and returns the report as the tool result. When
+the next step consumes the result (a review, a fix batch, an implementation), dispatch synchronously: there is nothing
+to wait for. When it does not, leave the dispatch backgrounded and end the turn; the harness re-invokes you when it
+finishes, and status probes meanwhile only burn context. When a notification arrives without a usable report, verify the
+claimed output independently (read the diff, run the relevant checks), which is the orchestrator's job regardless, and
+resume the agent with `SendMessage` and its id only if a question remains; never re-run the work on the strength of the
+agent's own summary. A background shell task's stdout is read from the output file path its notification names;
+`TaskOutput` is deprecated.
+
+The enabled `spawn-policy` mod (`mods/spawn-policy/README.md`) applies the review tiers mechanically once the `auto`
+skill has expanded or the spawn's permission mode is `auto`: it rewrites the `developer` agent's model to sonnet (the
+verifier's to sonnet, the reviewer's to opus) and forces synchronous dispatch for main-loop spawns of
+`quality-reviewer`, `quality-verifier` and `developer`. An orchestrator should expect those dispatches to block and
+return whatever it passed for `run_in_background`; the ledger is `tmp/spawn-policy-<sessionId>.jsonl`.
 
 ## Cross-agent interface contracts
 
-When two parallel agents build opposite sides of an interface (IPC command, HTTP endpoint, event/message shape), the pinned contract MUST be an exact
-literal example of the wire payload — every wrapper key, every field name, and a concrete typed value — plus the receiving signature. Never pin a prose
-type signature: each side resolves its ambiguity differently, and each side's mocked unit tests then encode its own assumption as green.
-Example: pin `{ "args": { "gameId": 13 } }` → `fn motion_start(args: MotionStartArgs)`, not "motion_start({ gameId: number })".
+When two parallel agents build opposite sides of an interface (IPC command, HTTP endpoint, event or message shape), the
+pinned contract MUST be an exact literal example of the wire payload, every wrapper key, every field name, and a concrete
+typed value, plus the receiving signature. Never pin a prose type signature: each side resolves its ambiguity
+differently, and each side's mocked unit tests then encode its own assumption as green. Pin
+`{ "args": { "gameId": 13 } }` → `fn motion_start(args: MotionStartArgs)`, not "motion_start({ gameId: number })".
 
 ## Write-target exclusivity
 
-Before dispatching a parallel batch, enumerate every file each delegation might write — not just its stated primary target, but any file a prompt merely *mentions* as
-optional, bonus, or "consider also" work. An optional mention is still a write-target claim: the delegate may act on it. If two delegations in the same parallel batch
-can write the same file, the batch has a latent lost-update hazard — one agent's `Read` may precede the other's `Write` landing, so a later Edit/Write based on a stale
-read silently clobbers the earlier one, with no error and no merge conflict. Landing correctly is possible but is luck, not safety by construction: it depends on the
-two agents' actual read/write timing, which the orchestrator does not control.
+Before dispatching a parallel batch, enumerate every file each delegation might write, including any file a prompt
+merely *mentions* as optional or "consider also" work: the delegate may act on it. If two delegations in one batch can
+write the same file, the batch has a lost-update hazard: one agent's `Read` may precede the other's `Write`, so a later
+Edit based on a stale read clobbers the earlier one with no error and no merge conflict. Landing correctly is luck, not
+safety by construction. Resolve it by scoping the optional mention out of the delegation that does not own the file,
+making the two sequential, or bundling both pieces into one delegation.
 
-Before dispatch, confirm no two delegations in the batch share a write target. If they do:
+**Read-only delegations are not exempt.** A reviewer's revert-based probe (edit a line out, run the tests, restore by
+file copy) makes it a transient writer, and the resulting failures read as real defects. Tell each parallel read-only
+agent in one tree that a red run or an unexpected diff may be a sibling's in-flight probe, to be re-checked before it is
+reported and never attributed to a named session (`skills/quality-review/SKILL.md` § Step 3 carries the sentence).
 
-- Scope the optional/bonus mention out of the delegation that doesn't exclusively own the file, or
-- Make the two delegations sequential instead of parallel, or
-- Bundle both pieces of work into a single delegation.
+**Write-capable delegates in one tree fail each other's exit gate.** Every `developer` runs the project check before it
+reports, and a whole-tree check reads a sibling's half-written files as errors, so the second delegate's gate reddens on
+files it never touched and "if it fails, fix it" aims it at files outside its write scope. Every write-capable dispatch
+in a parallel batch therefore carries: *"Other delegates are editing this same tree. A red confined to files outside
+your write scope is a sibling mid-edit: re-run the check once; if it stays red only there, report the files and the
+errors as a sibling-in-flight red and stop. Never edit those files, and do not poll the tree to settle. Your own files
+must still check clean."* Report-and-stop rather than poll, because the orchestrator owes the settled-tree check
+regardless (§ Long-running commands below) and routes any red it finds to the delegate that owns the files.
 
-**Read-only delegations are not exempt.** A reviewer's prompt names no write targets, so the enumeration above returns empty for it — yet a revert-based probe (edit a
-line out, run the tests, restore by file copy) makes it a transient writer anyway, and the resulting failures read as real defects. Parallel read-only agents in one
-tree need the mitigation from the observer's side: tell each that a red run or an unexpected diff may be a sibling's in-flight probe, to be re-checked before it is
-reported and never attributed to a named session (`skills/quality-review/SKILL.md` § Step 3 carries the dispatch sentence).
-
-**Write-capable delegates in one tree fail each other's exit gate.** The read-only paragraph above warns siblings about transient probes; parallel write
-delegates need the mirror warning about each other's *real* edits. Every `developer` runs the project check before it reports (`/start` Step 8's contract
-text; `agents/developer.md` RULE 0), and a whole-tree check — any type-check is one — reads a sibling's half-written files as errors, so the second
-delegate's gate reddens on files it never touched. Where the project also serializes the check per checkout (basefund's `check-locked.sh`) the runs
-queue and the wait lengthens, but the red does not depend on that. The contract's "if it fails, fix it" then aims the delegate at files outside its write
-scope — the lost-update hazard above, reached through the gate instead of the prompt. So every write-capable dispatch in a parallel batch carries: *"Other
-delegates are editing this same tree. A red confined to files outside your write scope is a sibling mid-edit: re-run the check once; if it stays red only
-there, report the files and the errors as a sibling-in-flight red and stop — never edit those files, and do not poll the tree to settle. Your own files
-must still check clean."* Report-and-stop rather than polling because the orchestrator owes the settled-tree check regardless (`/start` Step 8 "Verify
-results by running `pnpm check`"; § Long-running commands below already assigns verification there) and routes any red it finds to the delegate that owns
-the files (Step 8 item 4). Measured 2026-09-28: the second of two parallel `developer`s dispatched into one worktree failed its first `pnpm check` on four
-type errors, all in the other's `OrgDomainsCard*.stories.tsx`; pre-warned ad hoc by the orchestrator, it wrote a polling script and re-ran `check-types`
-until green. Nothing in the prescribed dispatch text carried that warning.
-
-**The orchestrator is a writer too.** The enumeration above pairs delegations against each other; the third pair is the orchestrator against its own
-in-flight agent. A dispatch launches asynchronously and the orchestrator keeps the turn, so an edit it makes lands in a tree the agent is reading live —
-while the prompt the agent was handed (an inline diff, a quoted file, a precomputed snapshot passed by path) still shows the old text. The agent then
-reports against neither: it may confirm text you have already replaced, or flag as a mismatch something you fixed a minute earlier. That mismatch is not
-itself a finding and costs a round-trip to adjudicate — but the replacement is un-reviewed code the agent is reading anyway, so a defect in it is a real
-finding at its real severity. The window is easy to walk into because the wait is exactly when re-reading your own just-landed edits turns one up: in
-BF-1056 a comment correction landed on a policy file 2m19s into a 10m44s `quality-verifier` re-review, and the verifier spent a report paragraph
-reconciling the tree against the diff it was given.
-
-Writing to `tmp/`, the tracker, or files no dispatch named is free. Hold the files the dispatch named — every file in a supplied delta, whether inlined
-or passed by path — until it returns. If an edit genuinely cannot wait, state it in the next dispatch rather than leaving the agent to discover it.
+**The orchestrator is a writer too.** A backgrounded dispatch keeps the turn, so an edit the orchestrator makes lands in
+a tree the agent is reading live while the prompt it was handed (an inline diff, a quoted file, a snapshot passed by
+path) still shows the old text. The agent then confirms text already replaced, or flags as a mismatch something fixed a
+minute earlier, and the replacement is un-reviewed code anyway. Writing to `tmp/`, the tracker, or files no dispatch
+named is free. Hold the files the dispatch named, every file in a supplied delta, until it returns; if an edit cannot
+wait, state it in the next dispatch.
 
 ## Parallel delegations falsify each other's comments
 
-Write-target exclusivity above resolves parallel hazards by making file sets *disjoint*. For comments, disjoint is not sufficient. A delegate writes comments true of
-the tree it can see; when a sibling delegation is concurrently changing the behaviour one of those comments asserts, the comment lands false — and nothing catches it.
-A comment cannot fail a type check, nothing prompts the delegate to re-read the sibling's files, and each delegate's own `pnpm check` passes. This is specific to
-*parallel* dispatch: a sequential delegation reads the landed state. `rules/comments.md` § Empirical claims does not cover it either — a delegate that checks the
-machine first still ships a false comment, because the falsification happens after the check.
+Disjoint file sets are not sufficient for comments. A delegate writes comments true of the tree it can see; when a
+sibling is concurrently changing the behaviour a comment asserts, the comment lands false and nothing catches it: a
+comment cannot fail a type check, nothing prompts the delegate to re-read the sibling's files, and each delegate's own
+check passes. Specific to *parallel* dispatch; a sequential delegation reads the landed state, and a delegate that checks
+the machine first (`rules/comments.md`) still ships a false comment because the falsification happens after the check.
 
-So when one change is split across concurrent delegations, sweep the delta's comments before review: for every comment asserting how something behaves, ask whether a
-sibling changed that behaviour. The highest-risk shape is a comment explaining *why* a defensive branch exists ("X can still be `""` because the write seam does Y")
-when the sibling's job was to change Y — the rationale inverts while the code stays correct, so a reviewer sees working code and reads past the comment. Do not expect
-the review loop to find these: `/quality-review` bars a comment-accuracy audit as a new re-review lens, so the class is caught only if the initial reviewer happens to
-look. Measured 2026-08-20 on a change split into a reviewer-UI half and a data-layer half over disjoint files: the data half falsified two of the UI half's comments —
-a new module's docblock documented a `?? null` write seam the sibling had already changed to a trimmed `|| null`, and another stated the change "didn't backfill
-existing rows" while the sibling was adding the backfill migration. Both passed `pnpm check` and reached an adversarial reviewer.
+So when one change is split across concurrent delegations, sweep the delta's comments before review: for every comment
+asserting how something behaves, ask whether a sibling changed that behaviour. The highest-risk shape is a comment
+explaining *why* a defensive branch exists when the sibling's job was to change that very seam: the rationale inverts
+while the code stays correct, so a reviewer sees working code and reads past the comment. `/quality-review` bars a
+comment-accuracy audit as a new re-review lens, so the class is caught only here.
 
 ## Prohibitions in a delegation prompt
 
 Two different things get written as "do NOT do X", and only one is safe as a blanket ban.
 
-A **scope** prohibition bounds what this dispatch may touch — `/quality-review`'s "do NOT extract a new shared abstraction to deduplicate them" is the canonical one.
-Those are legitimately categorical, and they are safe *because* they ship with a release valve: the fix-dispatch scope escape hatch, where a delegate that needs the
-excluded work stops and reports, and the orchestrator routes it. Keep writing them.
+A **scope** prohibition bounds what this dispatch may touch (`/quality-review`'s "do NOT extract a new shared
+abstraction to deduplicate them"). Those are legitimately categorical because they ship with a release valve: a delegate
+that needs the excluded work stops and reports, and the orchestrator routes it.
 
-A **correctness** prohibition — "X won't work here" — is different, and a blanket ban is how it fails. Name the specific SHAPE that fails and why, and say what a
-passing version looks like. A delegate cannot tell "this kind of X is useless here" from "no X", and will comply with the broader reading; when the right answer is a
-*different* X, the brief has foreclosed it and nothing surfaces that until review. The escape hatch does not rescue this — it fires when a fix needs MORE than the
-dispatch allows, and a delegate that can comply by doing *less* never trips it.
-
-The check before shipping such a line: **can you name what a passing version looks like?** If yes, name it. If no, do not prohibit at all — state the goal and let the
-delegate choose the shape.
-
-Measured 2026-08-20: a planning critique correctly established that extracting a *label-formatting* helper (`x.a ?? x.b`) would be useless coverage — the defect was
-which object got passed, never the coalesce. The brief turned that into "**Do NOT** extract a label-formatting helper as the test seam." The delegate complied.
-Adversarial review then graded a HIGH — nothing bound the operator-visible label to the id actually sent, proven by mutation (a literal wrong id at the send call left
-all 4312 tests green) — and its fix was a helper returning *both* the id and the label from one row: an extraction, inside the banned category. The orchestrator had to
-reverse its own instruction in the fix dispatch. Stating the goal instead — "the label and the id actually sent must be provably the same row; a formatting-only
-helper does not achieve that" — bans the useless shape and leaves the working one reachable.
+A **correctness** prohibition ("X won't work here") fails as a blanket ban. Name the specific SHAPE that fails and why,
+and say what a passing version looks like. A delegate cannot tell "this kind of X is useless here" from "no X" and
+complies with the broader reading; when the right answer is a *different* X, the brief has foreclosed it, and the escape
+hatch does not fire because a delegate that can comply by doing *less* never trips it. The check before shipping such a
+line: can you name what a passing version looks like? If yes, name it. If no, state the goal and let the delegate choose
+the shape. A ban on "a label-formatting helper as the test seam" forecloses the helper that returns both the id and the
+label from one row; "the label and the id actually sent must be provably the same row; a formatting-only helper does not
+achieve that" bans the useless shape and leaves the working one reachable.
 
 ## Long-running commands in delegations
 
-If a delegated task includes a multi-minute command (Rust/C++ compile, installer build, dev-server smoke test), tell the agent explicitly to run it
-synchronously with a long Bash timeout (up to 600000ms) — or, if backgrounded, to poll its output file within the same turn. A subagent that ends its
-turn "waiting for a background task/Monitor" does not self-resume — the orchestrator must notice the stall and re-message it, which stalls the whole run.
+If a delegated task includes a multi-minute command (a compile, an installer build, a dev-server smoke test), tell the
+agent explicitly to run it synchronously with a long Bash timeout (up to 600000ms), or, if backgrounded, to poll its
+output file within the same turn. A subagent that ends its turn "waiting for a background task" does not self-resume;
+the orchestrator must notice the stall and re-message it.
 
-**Past 600000ms there is no synchronous option, so don't delegate the command at all.** That is the Bash tool's ceiling, and exceeding it does not fail — the harness
-moves the command to the background and returns a task ID, so "run it in the foreground" silently becomes the backgrounded case above, leaving only the fragile
-poll-in-turn path. An agent told to run a suite longer than the ceiling strands whichever way it is instructed, returning no report mid-task. Keep the full test
-suite, the long build, and the end-to-end run in the orchestrator, which handles background completion notifications normally; delegate the edit and give the agent
-only the targeted checks that bound its own work (a single spec file, a type check). Say which in the dispatch — an agent told to "verify" reaches for the most
-complete check available. (`/start` Step 8 already assigns verification to the orchestrator, and its Step 5 rule 1 says the same for suites outside `pnpm check`.)
+**Past 600000ms there is no synchronous option, so don't delegate the command at all.** Exceeding the Bash ceiling does
+not fail: the harness backgrounds the command and returns a task ID, so "run it in the foreground" silently becomes the
+backgrounded case, and the agent strands either way. Keep the full test suite, the long build and the end-to-end run in
+the orchestrator, which handles completion notifications normally; delegate the edit and give the agent only the
+targeted checks that bound its own work (a single spec file, a type check), and say which, since an agent told to
+"verify" reaches for the most complete check available.
 
-**A stranded delegation leaves its command still running.** Before re-messaging or re-dispatching, confirm the original process is gone (`pgrep -f`) — otherwise the
-retry runs concurrently with it, and two runs against one set of test databases, one dev-server port, or one lock produce failures that read as real defects but are
-pure contention.
-
-## Background-agent completion reports
-
-A background agent's completion often surfaces as a bare idle notification — the substantive report may arrive late, separately, or not at all. When delegating to background agents:
-
-- Instruct the agent in its prompt that its final action must be to SendMessage its completion report to the orchestrator ("main") — do not rely on the idle notification to carry findings. A named teammate's turn-final text is silently discarded, not delivered — an agent that "returns" its report as plain text has delivered nothing, and goes idle believing it replied.
-- On an idle notification with no report, recover by task type — **not** with `TaskOutput`, which is deprecated ("Deprecated `TaskOutput` tool in favor of using `Read` on the background task's output file path"). For a **background shell** task, `Read` the output file path carried in the tool result and the `<task-notification>`: it is plain stdout/stderr and is the supported replacement. For a **subagent** (`local_agent`) there is no pull path at all — the tool description directs you to the `Agent` tool result, which a *backgrounded* dispatch does not have (its result was `Async agent launched successfully …`), and explicitly says NOT to `Read` the `.output` file, because that path is a symlink to the full JSONL conversation transcript and will overflow the context window. So the only route is the ping: `SendMessage` the agent's id once and ask for the report itself. **Treat a confident non-report as failure exactly like silence** — an agent replying "my report already stands" is describing its own transcript, which you cannot see and which was never delivered; do not accept it, and do not re-run the work on the strength of it. After one ping, stop pulling and independently verify the claimed output (read the diff, re-run the relevant tests/checks) — that verification is the orchestrator's job regardless, and in the observed case it was what actually closed the stall, turning a missing report into a verification task rather than a redo.
-- Never end a turn passively "waiting" after an idle notification has arrived — it is the only push signal the harness sends for that agent, so nothing further will wake the session. Recover actively within the turn: one ping, then independent verification.
-- **Before** a notification arrives, the opposite applies: end the turn rather than filling it with no-op tool calls. Something always wakes the session — an unnamed one-shot dispatch returns its report in a completion notification (the omit-`name` bullet below), and a named agent that dies silently still produces the idle notification the bullet above is written for — so repeated status probes (re-running `git status`, re-grepping a log still being written) buy nothing and burn context while the agent works. The rule above is scoped to the *post*-notification case, where the push signal has already been spent; it is not licence to poll while work is still in flight. Narrating what you're waiting on in prose is free; a tool call that only says it is not. Under self-paced `/loop`, ending the turn still means re-arming whatever long fallback heartbeat the skill prescribes — the agent's task notification is the real wake signal, but polling is not a substitute for the timer either.
-- For small verification tasks, prefer synchronous delegation (`run_in_background: false`) — the report returns directly as the tool result, avoiding the loss window entirely. **The parameter is feature-flagged on `Agent`, so this is conditional**: where the tool does not expose it, every dispatch backgrounds no matter what you pass, and the bullet above — end the turn, let the completion notification wake you — is the normal path rather than the fallback. Key off the tool result (`Async agent launched successfully …` in place of the report), never the schema, which cannot discriminate: one harness context omits the parameter precisely *because* only synchronous subagents are supported, so absence means the opposite there. Passing it where the schema omits it is silently accepted despite `additionalProperties: false` and has no effect, but it does not corrupt the census: `scripts/fleet-metrics.py` censuses at result time, and a typed `false` alongside an `Async agent launched successfully` result lands in the **`ignored`** bucket — the per-dispatch signal that this session ran on a harness without `run_in_background`, surfaced in the report as `<n> ignored (run_in_background absent on harness)`. The one place typed intent is trusted is `_census_dispatch_typed`, the fallback for dispatches whose result cannot testify (errored or dangling), where `false` does count as sync — so an errored dispatch carrying the parameter is the only shape that misreports.
-- **Omit `name` for one-shot dispatches you need back this turn** (adversarial review, exploration, planning). Passing `name` makes the agent an addressable, resumable teammate — its termination can surface as a bare idle notification with no recoverable findings, and pinging an already-terminated named agent does not recover the content (the remedy above doesn't rescue this case). Reserve `name` exclusively for agents you deliberately intend to resume across multiple conversation turns; unnamed one-shot Agent calls reliably return findings via the standard background-task pattern (an `output_file` plus a completion notification).
+**A stranded delegation leaves its command still running.** Before re-messaging or re-dispatching, confirm the original
+process is gone (`pgrep -f`); otherwise two runs against one set of test databases, one dev-server port or one lock
+produce failures that read as real defects but are contention.
 
 ## A write-capable delegation that dies mid-task leaves an unknown tree
 
-A `developer`/`debugger` delegation can terminate early — API error (`Connection closed mid-response`), timeout, session limit — after making an arbitrary number of
-edits. Whatever partial output the harness recovers is narration, not a filesystem record: `/start` Step 8 already holds that "a delegate's success report is not
-evidence its writes landed in the right tree," and a dead delegate's report is weaker still.
+A `developer` / `debugger` delegation can terminate early (an API error, a timeout, a session limit) after an arbitrary
+number of edits, and whatever partial output the harness recovers is narration, not a filesystem record. Establish the
+actual state before resuming or re-dispatching: `git status --porcelain` for what changed, and the project's check gate
+for whether it still builds. Then route:
 
-So establish the actual state before resuming or re-dispatching: `git status --porcelain` for what changed, and the project's check gate for whether it still builds.
-Then route on what you find:
+- **Nothing changed** → resume the same agent via `SendMessage` with the id from its spawn result; its context is intact,
+  and re-dispatching would re-buy the reading it already paid for.
+- **Partial work, gate green** → resume, or re-dispatch scoped to only what remains, telling the delegate what is
+  already on disk.
+- **Partial work, gate red** → restore green first; within `/start` and `/quality-review` the Working Application
+  Contract makes that non-negotiable.
 
-- **Nothing changed** → resume the same agent via `SendMessage`, addressed by the `agentId` from its spawn result (both `/start` and `/quality-review` mandate
-  *unnamed* dispatch, so there is no name to address). Its context is intact, and re-dispatching would re-buy the reading it already paid for.
-- **Partial work, gate green** → resume, or re-dispatch scoped to only what remains — telling the delegate explicitly what is already on disk.
-- **Partial work, gate red** → restore green first; within `/start`/`/quality-review` the Working Application Contract makes that non-negotiable.
-
-**Never re-dispatch the original prompt verbatim against a partially-edited tree.** It was composed for a clean one, so the delegate double-applies or conflicts with
-work already there — silently, since neither outcome errors. This is the trap in `/auto`'s "transient API error → retry" policy: retrying the iteration is right, but
-the retry has to start from the tree's real state, not the state the original dispatch assumed. `/start`'s idempotence covers the issue and the worktree, never a
-half-applied delegation's edits.
+**Never re-dispatch the original prompt verbatim against a partially-edited tree.** It was composed for a clean one, so
+the delegate double-applies or conflicts with work already there, silently. This is the trap in `/auto`'s
+"transient API error → retry" policy: retrying is right, but the retry starts from the tree's real state. `/start`'s
+idempotence covers the issue and the worktree, never a half-applied delegation's edits.
 
 ## `file:line` citations lifted from a subagent's report
 
-A subagent that quotes source back to you does not carry the source's line numbering with it. Persist a long report and Read it back and the numbers
-you see are the **report's** — `cat -n` over the report file, not over the file it quotes. Inline, there are no line numbers at all beyond whatever the
-agent asserted. Either way a citation taken from the report is unanchored, and it fails in the way that survives review: a real file and a plausible range.
-
-**Before a `file:line` goes into anything durable** — a Linear comment, a dispatch prompt, a commit message, a PR description — confirm it against the
-file itself (`grep -n`, or a Read of that range). One call. Citing loosely inside your own reasoning is fine; the rule is about what you write down for
-someone else. (In a *code* comment, don't cite a line number at all — it moves; see `rules/comments.md`.)
-
-In BF-617 an orchestrator relayed `tenant_paying_agent_access_spec.rb:271-278` into a Linear plan comment and a `developer` dispatch. 271 was where the
-report quoted that example; the file is 171 lines, so the cited range does not exist. The delegate caught it after the comment was already posted.
+A subagent that quotes source does not carry the source's line numbering with it: a persisted report read back shows
+the **report's** numbers, and an inline report has none beyond what the agent asserted. A citation taken from it is
+unanchored and fails in the way that survives review: a real file and a plausible range. Before a `file:line` goes into
+anything durable (a Linear comment, a dispatch prompt, a commit message, a PR description), confirm it against the file
+itself with `grep -n` or a Read of that range. In a *code* comment, cite no line number at all (`rules/comments.md`).
 
 ## Measure from the transcript before optimizing
 
-When asked to optimize agent/skill/workflow latency, extract a measured timeline from the session transcript first — `~/.claude/projects/<project-slug>/<session-uuid>.jsonl` timestamps every event. Compute tool-call execution durations vs inter-event gaps (model-turn time) and attribute the wall-clock before proposing fixes: cost-profile intuition routinely misattributes it (e.g. blaming environment setup when the time went to a serial subagent or a long reasoning turn).
+When asked to optimize agent, skill or workflow latency, extract a measured timeline from the session transcript first:
+`~/.claude/projects/<project-slug>/<session-uuid>.jsonl` timestamps every event. Compute tool-call durations against
+inter-event gaps (model-turn time) and attribute the wall-clock before proposing fixes; intuition routinely blames
+environment setup when the time went to a serial subagent or a long reasoning turn.

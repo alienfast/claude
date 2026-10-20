@@ -1,6 +1,6 @@
 ---
 name: cswap
-description: Multi-account rotation through claude-swap (cswap) on a machine that runs several Claude subscriptions. `quota` (default) shows every account's 5-hour, weekly and Fable usage in one table with the age of each figure, then only the conditions that need action; `log` says what the auto-switch engine did last and why it is holding; `next` shows the move it would make right now, as a dry run; `setup` points at scripts/cswap-setup.sh or re-applies its policy flags. Needs cswap on this machine — on a single-account machine it says so and stops. Use when the user says 'cswap', 'cswap quota', 'usage across my accounts', 'which account am I on', 'why hasn't cswap switched', 'what would cswap do', or invokes /cswap.
+description: Multi-account rotation through claude-swap (cswap). `quota` (default) tabulates every account's 5-hour, weekly and Fable usage with each figure's age and what needs action; `log` says what the auto-switch engine did and why it holds; `next` dry-runs its next move; `setup` points at the setup script. Use when the user says 'cswap', 'usage across my accounts', 'which account am I on', 'why hasn't cswap switched', or invokes /cswap.
 ---
 
 # cswap

@@ -68,8 +68,8 @@ set -uo pipefail
 # on Git Bash has no -o at all, so the fixtures cannot be expressed there: PR #9 measured wt-disown at 81–139 passing
 # across four identical runs, and here the worktree-create step died at exit 143 while wt-restamp ran past 20 minutes.
 # One counted SKIP the runner can see, rather than a per-case gate that leaves an unstable remainder — the same code is
-# verified on macOS/Linux. FORCE_POSIX_SUITES=1 runs it anyway while working on Windows liveness. standards/git.md
-# § Windows Git Bash: native tools behind the shell.
+# verified on macOS/Linux. FORCE_POSIX_SUITES=1 runs it anyway while working on Windows liveness. standards/git-windows.md
+# § Native tools behind the shell.
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*) [ -n "${FORCE_POSIX_SUITES:-}" ] || { echo "SKIP  $(basename "$0"): POSIX process liveness (ps -o) is unavailable on Git Bash — 0 passed, 0 failed, 1 skipped"; exit 0; } ;;
 esac

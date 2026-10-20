@@ -1,6 +1,6 @@
 ---
 name: Semantic Version Advisor
-description: Advises on semantic version bumps and classifies version changes according to semver rules. Use when determining version numbers, analyzing dependency updates, or classifying version changes as MAJOR, MINOR, or PATCH.
+description: Classify a version change as MAJOR, MINOR or PATCH and advise on the bump a release needs; research depth, security and tooling rules live in standards/semver.md. Use when determining version numbers, analyzing dependency updates, or classifying version changes.
 version: 1.1.0
 model: haiku
 allowed-tools:
@@ -174,25 +174,11 @@ Return highest level encountered
 
 ## Common Pitfalls
 
-### ❌ Misclassifying Range Notation
-
-**Wrong**: `^7.1.5 → ^7.1.6` = "Major" because of the caret
-**Right**: `^7.1.5 → ^7.1.6` = PATCH (ignore the `^`, compare numbers)
-
-### ❌ Assuming Package Importance
-
-**Wrong**: Core package changed → must be MAJOR
-**Right**: Classify by version numbers, not package importance
-
-### ❌ Ignoring Reset Rules
-
-**Wrong**: `1.5.3 → 2.1.0` for MAJOR bump
-**Right**: `1.5.3 → 2.0.0` for MAJOR bump (reset MINOR and PATCH)
-
-### ❌ Security Assumptions
-
-**Wrong**: Security fix → must be PATCH
-**Right**: Security fixes can be any level (breaking fix = MAJOR)
+- Range prefixes and package importance: classify against the resolved versions, never the `^`/`~` prefix or the
+  package's name (`~/.claude/standards/semver.md` § Research depth is set by the classification).
+- Reset rules: `1.5.3 → 2.0.0` for a MAJOR bump, never `1.5.3 → 2.1.0`; lower segments reset to 0.
+- Security: a fix can land at any level, and a PATCH never skips the advisory check (`~/.claude/standards/semver.md`
+  § Security cuts across the classification).
 
 ## Pre-release Versions
 
@@ -221,65 +207,13 @@ Return highest level encountered
 
 ## Research Depth by Type
 
-### MAJOR Version Changes
+The classification sets the research depth; the table is in `~/.claude/standards/semver.md` § Research depth is set by
+the classification, with the security and changed-defaults checks that cut across it.
 
-**Required Research**:
+## Tools
 
-- Full changelog review
-- Breaking change analysis
-- Migration guide review
-- API compatibility check
-- Test coverage verification
-
-**Time Investment**: High (30-60 minutes)
-
-### MINOR Version Changes
-
-**Required Research**:
-
-- Feature overview
-- Deprecated API checks
-- New dependency review
-- High-level compatibility check
-
-**Time Investment**: Medium (10-20 minutes)
-
-### PATCH Version Changes
-
-**Required Research**:
-
-- Security advisory check only
-- Skip detailed changelog review
-
-**Time Investment**: Low (2-5 minutes)
-
-## Integration with Other Tools
-
-### NPM/pnpm Commands
-
-```bash
-# View outdated packages with version info
-npm outdated
-
-# Machine-readable upgrade information
-npx ncu --jsonUpgraded
-
-# pnpm version check
-pnpm outdated
-```
-
-### Semver Utility Commands
-
-```bash
-# Classify version difference
-semver diff 1.2.3 1.3.0  # Output: "minor"
-
-# Compare versions
-semver gt 1.3.0 1.2.3    # Output: true
-
-# Check range satisfaction
-semver satisfies 1.2.4 "^1.2.3"  # Output: true
-```
+`pnpm outdated`, `ncu --jsonUpgraded`, `pnpm dlx semver diff <a> <b>` and `pnpm dlx semver satisfies <v> "<range>"`
+(no global `semver` on this machine): `~/.claude/standards/semver.md` § Tools.
 
 ## Advisory Templates
 

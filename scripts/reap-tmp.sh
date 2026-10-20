@@ -155,13 +155,13 @@ classify() {
   esac
   if [ "$kind" = d ]; then
     case "$rel" in
-      qr-fix-base-*|qr-probe-*|screenshots|triage-markers|triage-apply-bodies|pool-pages-*|epic-merge|proposal-*)
+      qr-fix-base-*|qr-probe-*|screenshots|triage-markers|triage-apply-bodies|pool-pages-*|epic-merge|proposal-*|pr-claude)
                                        echo "scratch-dir scratch-dir"; return ;;
       *)                               echo "unknown unknown-dir"; return ;;
     esac
   fi
   case "$rel" in
-    linear-*.md|spec-*.md|*-comment-*.md|prd-description.md|sub-issue-description.md|sentry-*.md|epic-boundary.md|simple-escalation-*.md|triage-*.md|pr-body-*.md|integration-pr-body.md|exec-summary-*|description.md|finish-commit-*.md|git-merge-msg-*.md|verdict-body-*.md|.qr-verdict-*|linear-img.png)
+    linear-*.md|linear-filing-*.id|spec-*.md|*-comment-*.md|prd-description.md|sub-issue-description.md|sentry-*.md|epic-boundary.md|simple-escalation-*.md|triage-*.md|pr-body-*.md|integration-pr-body.md|exec-summary-*|description.md|finish-commit-*.md|git-merge-msg-*.md|verdict-body-*.md|.qr-verdict-*|linear-img.png)
                                        echo "scratch staging-body" ;;
     qr-fix-delta-*.diff|qr-simple-delta-*.diff|qr-expected-hashes.txt|quality-review-nth-*.md|deferred-*|reflect-improvement-*|wt.diff)
                                        echo "scratch review-working" ;;

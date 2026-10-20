@@ -1,429 +1,222 @@
 # Git Standards
 
+Commits and pushes need an explicit grant; destructive commands are hook-blocked and unrecoverable. Worktree-isolated
+sessions (the shell-shape guard, the merge protocol, the worktree lifecycle): [git-worktrees.md](git-worktrees.md).
+Windows Git Bash: [git-windows.md](git-windows.md).
+
 ## Commit Messages and PR Descriptions
 
 ### `[skip ci]` / `[ci skip]`
 
-CI providers skip a build when the **HEAD commit of a push** carries the token — CircleCI and GitHub Actions both match it anywhere in that commit's subject or body; earlier commits in the same push trigger nothing, so the token on the top commit silently un-tests everything beneath it. That one fact shapes every rule below.
+CI skips a build when the **HEAD commit of a push** carries the token anywhere in its subject or body, so the token on
+the top commit un-tests every commit beneath it.
 
-**A docs-only push carries the token by default.** A CI run over a Markdown change verifies nothing, so when everything the push will carry is documentation, end the subject with `[skip ci]` — the same placement the release bot's own commits use. Docs-only is decided **by path, over the whole push range**, never by reading the diff:
-
-```bash
-git diff --name-only --cached origin/<branch>   # every path on which the pushed tip and the commit about to be made differ
-```
-
-Every listed path must end in `.md` or `.mdx`; one other extension means a normal commit. `--cached` against the remote-tracking branch is what makes this the push range rather than this commit's diff — it covers the unpushed commits below *and* the staged change in one answer — so run it at the pre-commit moment, when both are settled. Spell the branch name out: `$(git branch --show-current)` is refused in worktree-isolated sessions (below). A branch with no `origin/` counterpart yet gets no token — CI has never seen any of it — and announces itself: the command dies with `fatal: ambiguous argument 'origin/<branch>': unknown revision`, which is also what a branch recreated after its remote twin was deleted on merge looks like. A stale remote-tracking ref only widens the range, so an unfetched branch fails toward running CI. In a repo with no CI the token is inert, so the rule applies everywhere without first checking what the repo runs.
-
-**Only Markdown qualifies — not comments, not config.** A comment-only edit inside a code file is not cheaply verifiable, and many comments are instructions to the very tools a skipped run would have exercised: `# shellcheck disable=`, `// biome-ignore`, `# rubocop:disable`, `// @ts-ignore`, Ruby's `# frozen_string_literal: true`. A change to CI or tooling config — `.circleci/`, `.github/`, a lockfile, `package.json` — is what CI most needs to run on. Both take a normal commit.
-
-**Never let it head a push to the default branch.** Merge commits are the convention (squash+merge is retired), so a branch commit's message never becomes main's HEAD and branch-commit `[skip ci]` cannot suppress main CI. The residual hazards are committing directly to main and fast-forwarding a branch onto main — both put the token-bearing commit at main's HEAD and silently skip its CI. The one sanctioned case is release automation's own commits: the version-bump and changelog commits CI pushes to main after a release carry the token on purpose, so a release cannot trigger itself. Nothing a person or a session commits qualifies.
-
-Where a GitHub Actions check is **required** for merge, a skipped run leaves that check pending and blocks the PR (GitHub's documented behavior), so on such a branch the push that will be merged must not carry the token, docs-only or not.
-
-Because the token matches in the body too, write it literally only when you mean it — prose like "originally committed with [skip ci]" arms the skip.
+- **A docs-only push carries the token by default**, at the end of the subject. Docs-only is decided by path over the
+  whole push range, never by reading the diff: every path in `git diff --name-only --cached origin/<branch>` must end
+  in `.md` or `.mdx` (spell the branch out; `$(…)` is refused in worktree-isolated sessions). A branch with no `origin/`
+  counterpart dies with `unknown revision` and gets no token. The token is inert where there is no CI.
+- **Only Markdown qualifies.** Comments in code files are often directives to the tools a skipped run would exercise,
+  and CI or tooling config (`.circleci/`, `.github/`, a lockfile, `package.json`) is what CI most needs to run on.
+- **Never let it head a push to the default branch.** Merge commits are the convention, so a branch commit's message
+  never becomes main's HEAD; the hazards are committing directly to main and fast-forwarding a branch onto it. Only
+  release automation's own version-bump and changelog commits carry the token to main.
+- Where a GitHub Actions check is **required** for merge, a skipped run leaves it pending and blocks the PR, so the push
+  that will be merged must not carry the token, docs-only or not.
+- The token matches in the body too: write it literally only when you mean it.
 
 ### Commit Message Guidelines
 
-- Lead with the scope, then the summary: `<scope>: <summary>` — `keeper: <ID> — <summary>`, `docs(config): <summary> (via /reflect)`, `checkpoint: <summary> [<ID>]`. Skill-generated commits already follow this and are the bulk of the history.
-- Keep the subject to roughly 72 characters where it fits, and don't contort it to hit a number — a noun phrase naming what changed beats a truncated imperative. (Nothing enforces a limit; the old "under 50, imperative mood" rule matched neither the skills nor the history.)
-- Separate subject from body with blank line
-- Focus on what and why, not how
-- **One concern per commit — a subject that cannot represent the commit is the tell.** When the subject can only cover the change by naming two things, or by going vague enough to cover both (`chore: updates`, `fix: various`), the commit is wrong and the fix is to split it, not to reword it. The subject is what `git log --oneline`, `git blame`, and every future search actually surface, so work its subject does not name is work nobody finds. Measured here: a 283-line rewrite of `skills/dependency-updater/SKILL.md` shipped under `fix(hooks): heredoc bodies and quoted text are data, not commands` and was only recoverable via `git log -- <path>`.
-
-  **The unit is the concern, not the file or the finding — do not split a coherent change into pieces.** One honest subject covering thirty files is one commit and should stay one: a config sweep, a rename across a package, a fix and its test. Splitting per-file, per-finding, or per-agent-batch produces a log that is harder to read than the bundled commit was, and it makes a revert a multi-commit operation. Ask only whether a reader looking for one half would be surprised to find the other; if not, it is one concern however many files it touches.
-- **The bundling trap is a blocked commit.** A hook, a check, or a precondition refuses the commit; you fix the blocker; now the blocker's fix and the original work are staged together — with the blocker freshest in mind and most likely to win the subject. Commit the unblocking fix by itself first, then the original work. This is the ordinary way unrelated changes end up in one commit, and it never presents itself as a decision to bundle.
+- `<scope>: <summary>`: `keeper: <ID> — <summary>`, `docs(config): <summary> (via /reflect)`, `checkpoint: <summary> [<ID>]`.
+  Roughly 72 characters where it fits; a noun phrase naming what changed beats a truncated imperative. Blank line before
+  the body; what and why, not how.
+- **One concern per commit; a subject that cannot represent the commit is the tell.** A subject that must name two things
+  or go vague (`chore: updates`) means split the commit: work the subject does not name is work nobody finds in
+  `git log --oneline` or `git blame`. The unit is the concern, not the file or the finding: one honest subject covering
+  thirty files is one commit, and splitting per file or per finding makes a revert a multi-commit operation.
+- **The bundling trap is a blocked commit.** A hook refuses the commit, you fix the blocker, and both are now staged
+  together with the blocker most likely to win the subject. Commit the unblocking fix by itself first.
 
 ### Linear auto-close keywords
 
-**Only the issue being shipped may sit behind a close keyword. Every other issue ID in a commit message, PR title, or PR description is referenced bare.**
-
-Linear's GitHub integration — not GitHub's own closing keywords, which only close GitHub `#N` issues and cannot touch Linear state — scans **commit messages, PR
-titles, and PR descriptions** for `<keyword> <ISSUE-ID>` and, on merge, moves that issue to the team's merge state. Commit messages are the surface most easily
-forgotten and the one an unattended `/auto` run always writes, merge-commit subjects included. The closing set is bigger than the familiar three:
-`close/closes/closed/closing`, `fix/fixes/fixed/fixing`, `resolve/resolves/resolved/resolving`, `complete/completes/completed/completing`, and
-`implement/implements/implemented/implementing`. **The match is positional, not grammatical** — it fires on a close verb adjacent to an ID regardless of what the
-sentence means, including when the word is a noun.
-
-This is silent in both directions: nothing in the PR flow warns, and the state change is visible only in Linear. Measured 2026-08-20: a shipped PR's body said *"Next
-in sequence: `<NEXT>` (…, which also closes `<THIRD>`'s archive gap)"* — a forward reference describing what a *future* issue would do — and moved `<THIRD>` to Done
-with all three success criteria unchecked and nothing in the repo implementing them. A second PR's *"this mirrors the fix `<OTHER>` shipped"* — `fix` as a noun —
-linked the wrong PR to `<OTHER>`; it was already Done, so that one only cost a bad link.
-
-It is structural rather than a one-off: across the 25 most recent merged PRs on that repo, 22 mentioned at least one sibling issue ID (median ~3, max 12), because
-`/quality-review` files deferred items as follow-up issues and `/finish` Step 4's template asks for follow-up work.
-
-Safe forms, verified on a negative control — five sibling IDs mentioned bare, zero linked, zero moved, while only the two behind a close verb were:
-
-- **Bare ID** — `the gap <ID> describes`, `supersedes <ID>`, `see <ID>`. No link, no state change.
-- **Non-closing keyword** — `ref`, `refs`, `references`, `part of`, `related to`, `relates to`, `contributes to`, `toward`, `towards`. Links the PR to the issue
-  without applying the merge status; use when the link is wanted.
-- **`skip <ID>` / `ignore <ID>`** — suppresses linking entirely.
-
-This is the same rule class as `[skip ci]` above — an external system parsing a magic token out of prose, across the same surfaces.
+**Only the issue being shipped may sit behind a close keyword; every other issue ID in a commit message, PR title or PR
+description is referenced bare.** Linear's GitHub integration scans all three surfaces for `<keyword> <ISSUE-ID>` and,
+on merge, moves that issue to the team's merge state. The match is positional, not grammatical: a close verb adjacent to
+an ID fires whatever the sentence means (`the fix <ID> shipped`, a forward reference to what a future issue will close),
+and nothing in the PR flow warns. Keywords: `close/closes/closed/closing`, `fix/fixes/fixed/fixing`,
+`resolve/resolves/resolved/resolving`, `complete/completes/completed/completing`,
+`implement/implements/implemented/implementing`. Safe forms: a **bare ID**; a **non-closing keyword** (`ref`, `refs`,
+`references`, `part of`, `related to`, `relates to`, `contributes to`, `toward`), which links without the state change;
+`skip <ID>` / `ignore <ID>`, which suppresses linking.
 
 ### PR Guidelines
 
-- Summarize the overall change, not individual commit details
-- Focus on the business value and technical impact
-- Use clear, descriptive titles that explain the change's purpose
-
-## Branch Protection
-
-These standards help ensure:
-
-- Main branch always has functioning CI
-- Clean, professional commit history
-- No accidental CI bypasses in production code
+Summarize the overall change rather than the commits, lead with the business value and technical impact, and give the
+PR a title that explains its purpose.
 
 ## Working Tree Protection
 
-**🛑 CRITICAL**: Destructive git commands can cause permanent, unrecoverable data loss. Multiple Claude sessions may be working simultaneously, and the user may have uncommitted work in progress.
+Multiple Claude sessions work in one repository at once, and the user may have uncommitted work in progress. `git
+restore <files>`, `git checkout <file>`, `git reset --hard` and `git clean -f` lose that work permanently: reflog does
+not track working-tree files, and `git fsck --lost-found` cannot recover discarded working-tree changes.
 
-### Forbidden Commands (Require Explicit Permission)
+### Forbidden Commands
 
-These commands are **BLOCKED** by the git-permissions hook (`~/.claude/hooks/git-permissions.sh`) and require explicit user approval:
+| Command | Rule |
+|---|---|
+| `git reset` in any mode but `--soft` | bare `git reset` and `git reset HEAD~1` are `--mixed`; `--soft` moves HEAD only |
+| `git restore <files>` | `--staged` is allowed |
+| `git checkout` / `git switch` with an operand | a `<file>` destroys the file, a `<branch>` moves the shared tree. Allowed only as a plain switch with nothing to lose: an existing branch, a clean tracked tree, a resolvable directory (the payload `cwd` or a literal `-C`), no fleet running out of the checkout. `-B` and `switch -C` are blocked outright; `--detach`, `-b`, `-c` are allowed |
+| `--ours` / `--theirs` | only on files git lists as unmerged in a merge in progress; elsewhere it overwrites from the index. Interactive only: an unattended `/finish` resolves conflicts with the Edit tool |
+| `git clean -f` / `-fd` | `-n` / `--dry-run` is the sanctioned preview |
+| `git stash` mutating forms | `drop`, `clear`, `branch` always; bare, `push`, `pop`, `apply` whenever a second party can be on the stack (a linked worktree, a running fleet). `list` / `show` always allowed |
+| force in any spelling | `--force`, `--force-with-lease`, short `-f` (bundled too) on `push`/`branch`/`checkout`/`switch`/`clean`/`worktree`/`tag`/`gc`, a `+refspec` push |
 
-| Command | Impact | Why Blocked |
-|---------|--------|-------------|
-| `git reset --hard` | **PERMANENT LOSS** of all uncommitted changes (working tree + staging) | Destroys work from other sessions and user's WIP |
-| `git reset` (any mode but `--soft`) | Unstages all changes (`--mixed`, the default) or destroys the tree (`--hard`) | May interfere with other sessions' staged changes; `--soft` moves HEAD only and stays allowed |
-| `git restore <files>` | **PERMANENT LOSS** of working tree changes for specified files | No recovery possible - changes gone forever. `--staged` stays allowed, as does a `--ours`/`--theirs` take on files git lists as unmerged in a merge in progress (the working copy there is git's own conflict output) |
-| `git checkout` / `git switch` with an operand | **PERMANENT LOSS** of working tree changes (`<file>`), or the SHARED tree moved onto another branch (`<branch>`) | Allowed only as a plain switch with nothing to lose: an existing branch (local or `origin/`), a clean tracked tree, a resolvable directory (the payload `cwd` or a literal `-C`; no quoted or `$VAR` `-C`, no `cd` in the command), and no fleet running out of the checkout. `-B` and `switch -C` reset an existing branch and move the tree, so they are blocked outright; `--detach`, `-b`, `-c` stay allowed. A `--ours`/`--theirs` take on unmerged files of a merge in progress is allowed under the same directory rules; off an unmerged path the flag overwrites from the index, so a non-conflicted file, a directory pathspec, or an unverifiable path stays blocked |
-| `git clean -f/-fd` | **PERMANENT LOSS** of all untracked files | May delete files created by other sessions |
-| `git stash` mutating forms | Applies or drops entries on the repo's ONE worktree-shared stash stack | `drop`, `clear` and `branch` always. Bare, `push`, `pop`, `apply` only when a second party can be on the stack — the repo has a linked worktree, or a fleet is running out of it — since a concurrent push between your push and pop makes `pop` apply their diff and delete their entry; on a single-checkout repo they are allowed. `list`/`show` always allowed |
-| Force in any spelling — `--force`, `--force-with-lease`, short `-f`, or a `+refspec` push | Overrides safety checks, can cause data loss or destructive remote changes | Bypass of git's protective mechanisms |
+### What the hook enforces
 
-**What the hook enforces, precisely.** Every row above is matched by intent rather than by one literal spelling, and `hooks/git-permissions.test.sh` is the regression guard. Force covers the long flag, `--force-with-lease`, short `-f` (bundled forms included) on `push`/`branch`/`checkout`/`switch`/`clean`/`worktree`/`tag`/`gc`, and a `+refspec` force-push carrying no flag at all; the force and destructive-branch checks run *above* the `status|log|diff|show|branch|add|commit|reflog` allowlist, so `git branch --force`/`-D`/`-M` cannot short-circuit past them. `git reset` is blocked in every mode but `--soft` — bare `git reset` and `git reset HEAD~1` are `--mixed` and blocked accordingly. `git checkout` and `git switch` are blocked on any operand — the bare `git checkout <file>` that destroys the file and the `<branch>` form that moves the shared working tree — unless the hook can verify, from the payload's `cwd` or a literal `-C` path, that it is a plain switch with nothing to lose: an existing branch, a clean tracked tree, and no fleet marker live in the main checkout (`tmp/fleet-deadline.json` unstopped, unexpired, and recording no integration `branch` — an epic fleet's sessions and a running `/fleet-sequence`'s runner both steer each issue with a per-issue `start.<id>.wt-source-branch` key and never move the checkout, so neither gates a switch); a stash `push`/`pop`/`apply` is released on the same evidence when the repo also has no linked worktree. The hook fails closed on anything it cannot resolve (a quoted or `$VAR` `-C`, a `cd` in the command, no `cwd`), and it only reads — the switch itself is still git's, which refuses a branch checked out in another worktree. `-B` and `switch -C` are blocked outright: they reset an existing branch and move the tree in one word, and the old flag-only allowance let them through while blocking the plain switch. `--detach`, `-b` and `-c` stay allowed. A `--ours`/`--theirs` take (`checkout` or `restore`) is allowed only when a merge is in progress in the resolved directory and every operand is one file git lists as unmerged — measured: off an unmerged path the flag restores the index copy and exits 0, so there it is the ordinary destructive form — and it is an interactive convenience only: an unattended `/finish` resolves conflicts through the Edit tool, because `git checkout` is not allowlisted and the auto-mode classifier adjudicates it (`skills/finish/SKILL.md` Step 9). `git clean` blocks real force flags while explicitly permitting `-n` / `--dry-run` as the sanctioned preview. The hook evaluates **every** `&&` / `||` / `;` / `|` / newline segment after trimming whitespace, so `git status && git reset --hard` and a leading-space ` git reset --hard` are both caught; and it **fails closed**, refusing all git commands when `jq` is missing or the payload does not parse. What it still cannot see is anything that displaces `git` from command position (next section) — which is why the rules in this document bind whether or not the hook catches the spelling you used.
+Each row is matched by intent rather than one spelling (`hooks/git-permissions.test.sh` is the guard); the force and
+destructive-branch checks run above the `status|log|diff|…` allowlist, so `git branch -D` cannot short-circuit past
+them. Every `&&` / `||` / `;` / `|` / newline segment is evaluated after trimming whitespace, and the hook fails closed
+on anything it cannot resolve (a quoted or `$VAR` `-C`, a `cd`, no `cwd`, missing `jq`). Nothing said in the
+conversation unblocks it; a destructive command the user genuinely wants is run by the user in their own terminal.
 
 ### The hook only sees the Bash tool's command string
 
-`git-permissions.sh` matches the string the Bash tool was given, and only when `git` is its leading word. A destructive git command run from **inside a script file** (`python3 sweep.py`, `bash revert.sh`) is invisible to it and executes unguarded — and the script runners are themselves pre-approved, so no permission prompt fires either. Any other form that displaces `git` from command position bypasses it the same way: `bash -c "git restore f"`, `cd x && git restore f`, `env git restore f`. **And three forms bypass it while `git` still is a plain top-level command**, because every rule anchors on `^git` and so inspects only the first word of the whole string: a leading allowlisted subcommand in a compound (`git status && git reset --hard`, `git log; git clean -fd`), any leading whitespace (` git reset --hard`), and every line after the first in a multi-line command. The hook is a backstop for direct top-level invocation, not a guarantee.
+It matches only a command string whose leading word is `git`. A destructive command inside a script (`python3 sweep.py`)
+or displaced from command position (`bash -c "git restore f"`, `cd x && git restore f`, `env git restore f`) runs
+unguarded, and the runner is pre-approved so no prompt fires. The rules here bind whether or not the hook catches the
+spelling you used.
 
-**To undo a temporary edit — a mutation test, a spike, a bisect probe — copy the file aside and copy it back. Never revert with git, and never park it with `git stash` either.** A `/start wt` worktree's change is typically uncommitted and partly untracked, so `git checkout -- <file>` / `git restore <file>` destroys it with no recovery. `stash` *preserves* the edit, so it reads as compliant with "never revert" — but the stash stack is shared across every worktree of the repo, and a concurrent session's push can make your `pop` apply their work and drop their entry (mechanism under Safe Commands below).
+### To undo a temporary edit, copy the file aside and copy it back
+
+A mutation test, a spike, a bisect probe: never revert with git and never park it with `git stash`. A worktree's change
+is typically uncommitted and partly untracked, so `git restore` destroys it with no recovery. The stash stack lives in
+the common git dir and is shared by every worktree of the repo; `pop` takes `stash@{0}` and drops it, so a concurrent
+session's push between your push and your pop makes your `pop` apply their diff and delete their entry.
 
 ### Multi-Session Awareness
 
-**Fundamental principle**: Multiple Claude Code sessions can work simultaneously on the same repository.
-
-**Never assume changes are mistakes.** Modified files outside your task's scope are evidence of a
-concurrent session, not of an error to tidy up. Name the unexpected paths, say they look like other
-work, and ask whether to include them or leave them — do not discard them on your own read of what
-"should" be modified.
-
-**Timing is not attribution.** A file's mtime falling inside your own subagents' run window is
-correlation — a concurrent session or an editor autosave leaves the identical signature, and a
-mechanism you invented to explain it ("the tool must have rewritten this") is not evidence. Treat
-anything you did not positively write as another session's.
-
-**Prefer the response that needs no attribution: leave it in the working tree and stage your commit
-by name.** Excluding a file is free and reversible; reverting destroys work you may not own — and
-asking the user to approve a disposition premised on your guess just launders the guess through
-them.
+- **Never assume changes are mistakes.** Modified files outside your task are evidence of a concurrent session. Name the
+  paths, say they look like other work, and ask whether to include or leave them.
+- **Timing is not attribution.** An mtime inside your subagents' run window is correlation; an editor autosave leaves the
+  same signature. Treat anything you did not positively write as another session's.
+- **Prefer the response that needs no attribution:** leave it in the tree and stage your commit by name. Excluding a
+  file is free and reversible; reverting destroys work you may not own.
 
 #### Branch operations mutate the SHARED working tree — never reach for them unasked
 
-The rules above cover file-level destruction (`restore`/`reset`/`clean`), and the hook blocks those. Branch operations are the other multi-session hazard — and the hook does NOT catch them: bare `git branch` is hook-allowed and the branch-*creating* forms `git checkout -b` / `git switch -c` still run unguarded (they are flag-only, so the hook permits them by design), while `git branch -D`/`-M`/`-f` and any `checkout`/`switch` onto a named branch are now blocked. In a checkout shared by concurrent sessions they mutate state every session in that directory sees.
+`git checkout -b` / `git switch -c` are flag-only and run unguarded. Switching carries the current uncommitted changes,
+another session's WIP included, onto the target branch, and a concurrent session then commits onto whatever branch you
+switched to; a branch you just created can accrue another session's commits before you delete it.
 
-- **`git checkout` / `checkout -b` moves the shared working tree.** Switching branches carries the *current* uncommitted changes — including another session's WIP — onto the target branch. A concurrent session that then commits, commits onto **whatever branch you switched to**, not the one it thinks it's on.
-- **A branch you "just created" can accrue other sessions' commits.** Between your `checkout -b` and a later `git branch -D`, a concurrent session can land a commit on your branch. The delete then de-references *their* commit — destructive despite you having committed nothing, and the hook won't stop it.
-- **Uncommitted changes you didn't create = an active concurrent session. Do not run ANY branch/checkout/switch operation.** Leave the branch and working tree exactly as-is — the same STOP that governs `restore`/`reset`, extended to branch state.
-
-Concrete rules:
-
-1. **Never create, switch, or delete a branch in a checkout you don't exclusively own without an explicit user instruction.** "The current branch looks wrong for this issue" (unrelated name, far ahead of `main`) is a reason to **STOP and ASK**, never to re-branch on your own judgment. (A `/start wt` worktree session exclusively owns its own worktree — creating/deleting its branch there is fine; this is about the shared main checkout.)
-2. **Before `git branch -D <b>`, verify `<b>` still points where you left it** (`git rev-parse <b>` == the SHA at creation). If it moved, a concurrent session committed onto it — do not delete; investigate and surface.
-3. **Never rebase or otherwise rewrite a `/start wt` branch in an unattended run** — the `/auto` grant excludes history rewrites; merge from source instead. Interactively, a deliberate rewrite must be followed immediately by `~/.claude/scripts/wt-restamp.sh <wt_dir>` (owner-gated; refuses if any commit since the last stamp would be lost), otherwise the rewrite detaches the stamped baseline and `/finish` refuses the merge as a suspected hijack (exit 4).
-4. **Verify `git branch --show-current` in the SAME turn as any commit or ref-moving command in a shared checkout.** A branch check from earlier in the session is stale the moment another session (or an IDE action) switches the checkout — `git status --short` does not show the branch, so nothing else surfaces the move. Measured 2026-08-21: a commit intended for the integration branch landed on a sibling session's issue branch, and a `merge --ff-only` moved that branch's ref, because the branch was verified turns earlier and the checkout had been switched in between. If the branch is not the one the work belongs on, STOP and surface it — never commit "where we are" (rule 1 already forbids switching on your own judgment).
-
-(Scoped `git add <path>` staging — never `git add -A` in a shared checkout — is already covered under "Proper File Staging" below.)
-
-#### `/finish merge` is self-serializing per parent repo
-
-When multiple worktree sessions run `/finish merge` concurrently against the same parent repo, [scripts/finish-merge.sh](../scripts/finish-merge.sh) acquires an exclusive lock keyed by the repo's common git dir (via [scripts/with-repo-lock.py](../scripts/with-repo-lock.py)) before advancing source — one key per parent repo, shared across all its worktrees. Other sessions block on stderr (`[finish-queue] waiting for <common-git-dir> ...`) and acquire in turn.
-
-The merge is structured so the source branch is only ever advanced cleanly: the worktree branch is first brought up to source's tip **inside the worktree** (private to the session, lock-free, and editable even from a background session), and any conflicts are resolved there — never in the main checkout. Source is then advanced by `git merge --ff-only` (when the main checkout is on source) or an atomic `git update-ref` compare-and-swap (when it is on another branch). The main checkout is therefore never left mid-merge and its HEAD is never switched, so a concurrent session can never merge into an unclean directory.
-
-- Lockfile: `~/.claude/locks/repo-<sha256-prefix>.lock`. To inspect the current holder: `cat ~/.claude/locks/repo-*.lock`.
-- Release: `fcntl.flock` is OS-managed; the lock is released on any process exit (including SIGKILL). No stale-lock cleanup is needed.
-- Scope: only the fast-forward finalize (and a fast, conflict-free worktree pre-merge) is locked. Worktree-branch pushes, Linear updates, and `gh pr create` (PR mode) run in parallel — they don't contend. On a conflict the script exits 2 and releases the lock; the slow conflict resolution runs lock-free in the private worktree with the main checkout clean and available to other sessions.
-- Optimistic re-check: source can advance between a session's worktree pre-merge and its fast-forward (another `/finish merge`, or a local human/CI update). The finalize re-verifies under the lock that the worktree branch still descends from source's current tip and re-merges the new delta if not, looping until it converges — it does not fast-forward a stale branch.
-
-#### Transient blocks are deferred, never forced
-
-A `/finish merge` can be blocked by a condition that will clear on its own — most commonly the **main checkout sitting on the shared source branch with another session's uncommitted WIP** (the merge would have to fast-forward that working tree over edits that aren't ours, which multi-session safety forbids). These are **transient, not failures**: [scripts/finish-merge.sh](../scripts/finish-merge.sh) exits `3` (distinct from `1` hard failure / `2` conflict), self-enqueues the merge to a local queue under `<repo>/.claude/merge-queue/`, and leaves the worktree intact. A local launchd drainer ([scripts/drain-merge-queue.sh](../scripts/drain-merge-queue.sh) → [scripts/merge-queue.sh](../scripts/merge-queue.sh) `drain`) retries every ~15 min until the merge lands. Crucially, the **merge owns the `Ready For Release` transition** ([scripts/mark-ready-for-release.sh](../scripts/mark-ready-for-release.sh)): `/finish` does not mark the issue ready in Step 8 for a `merge` flow — it transitions only after the merge actually lands (Step 9 on exit 0, or the drainer on an async landing). A queued issue therefore stays **In Progress**, so Linear never shows a release state for code that isn't merged. Inspect with `/merge-queue`. The drainer **never** resolves conflicts unattended (that would land unreviewed code on a shared branch) — it flags those for a human and notifies. We never stash, commit, or revert another session's WIP to unblock a merge.
-
-Transient-block triggers reclassified to exit 3: main checkout on source + dirty; source checked out in another worktree; main checkout mid-operation; source under continuous contention. The dirty-tree check is also **relaxed** — it only blocks when the main checkout is actually *on* the source branch, since otherwise source advances by ref-only `git update-ref` that never touches the working tree.
-
-#### Posture for high-concurrency runs (avoids the block entirely)
-
-Running many issues at once, **keep the main checkout parked on a quiet branch** (its own worktree for in-place work, or the default branch) rather than on the shared integration branch. When the main checkout is never on the source branch, every merge advances source by a clean ref-only `git update-ref` that never reads the tree, so the queue rarely engages. The queue is the safety net; this posture is the cheap fix that prevents most deferrals in the first place. When the checkout has to sit on the branch a fleet merges into (a day branch you are also working on), each merge fast-forwards it with `git merge --ff-only`, which carries your uncommitted edits to files the merge leaves alone and refuses atomically — deferring that one merge to the queue — when it would change a file you have edited. So commit every edit you make there in the same turn anyway — edit, lint, `git add <file> && git commit` — or the first merge that touches it waits on you. (Until 2026-10-12 any dirt there deferred every merge: one uncommitted CLAUDE.md edit held a three-session fleet's merges on 2026-09-17, and one uncommitted comment queued each session's last ship on 2026-10-11.) The default push rules stand; a commit is what clears the block, not a push.
+1. Never create, switch or delete a branch in a checkout you do not exclusively own without an explicit instruction. A
+   branch that "looks wrong for this issue" is a reason to stop and ask. A `/start wt` worktree is exclusively owned.
+2. Before `git branch -D <b>`, verify `git rev-parse <b>` still equals the SHA at creation; if it moved, another session
+   committed onto it.
+3. Never rebase or rewrite a `/start wt` branch in an unattended run; merge from source instead. An interactive rewrite
+   is followed immediately by `~/.claude/scripts/wt-restamp.sh <wt_dir>`, or `/finish` refuses the merge as a hijack.
+4. Verify `git branch --show-current` in the **same turn** as any commit or ref-moving command in a shared checkout:
+   another session or the IDE can switch it between turns, and `git status --short` does not show the branch. If it is
+   not the branch the work belongs on, stop and surface it; never commit "where we are".
 
 ### Proper File Staging
 
-**Only stage files you created or modified:**
+Stage only files you created or modified, by path: never `git add .`, `git add -A`, or a directory you did not wholly
+touch. When you see unexpected changes, do not `restore`, `reset` or sweep them in; ask whether to include them, leave
+them unstaged, or commit them separately.
+
+### Safe Commands
+
+These pass the hook without prompting. **Hook-safe is not authorization**: `add` / `commit` / `push` still need the grant
+in § Commit and Push Authorization.
 
 ```bash
-# ✅ CORRECT - Specific files only
-git add doc/e2e/01-playwright-best-practices.md
-git add doc/e2e/README.md
-git add doc/e2e/04-cucumber-migration.md
-
-# ❌ FORBIDDEN - Stages everything
-git add .
-git add -A
-git add doc/  # Even this is too broad if you didn't touch ALL doc files
-
-# ❌ FORBIDDEN - Touches other work
-git add packages/  # Unless you explicitly worked on ALL of packages/
+git status; git diff; git log; git reflog; git add <specific-path>; git commit
+git restore --staged <path>                   # unstage without discarding
+git stash list                                # read-only
+git merge-tree --write-tree <base> <branch>   # dry-run merge: does this merge clean? Touches nothing
 ```
-
-### When You See Unexpected Changes
-
-Do not `restore` them, do not `reset` to "clean up", and do not sweep them in with `git add .`. Ask
-whether to include them, leave them unstaged, or commit them separately.
-
-### Safe Commands (not blocked by the hook)
-
-These commands pass the git-permissions hook without prompting. **Hook-safe is not authorization:**
-`git add` / `git commit` / `git push` appear below because they are not *destructive*, but they still
-require the explicit grant in § Commit and Push Authorization — the two are separate gates, and passing
-this one says nothing about the other.
-
-```bash
-git status              # Check repository state
-git diff                # See changes
-git log                 # View history
-git add <specific>      # Stage specific files
-git commit              # Commit staged changes
-git restore --staged    # Unstage (does not discard changes)
-git stash list          # View the stash stack (read-only)
-git reflog              # View reference log
-git merge-tree --write-tree <base> <branch>   # dry-run merge: answers "does this merge clean?" in a second, touching nothing
-```
-
-**`git stash push`/`pop` are NOT on that list.** The stash stack lives in the **common** git dir (`<repo>/.git/refs/stash`), not per-worktree — every worktree of a repo pushes onto and pops off one shared stack, and `git stash list` from any worktree shows every other session's entries. `pop` takes `stash@{0}` and **drops** it, so a concurrent session pushing between your push and your pop makes your `pop` apply their diff into your tree *and* delete their entry. `git-permissions.sh` blocks every mutating form (bare `stash`, `push`, `pop`, `apply`, `drop`, `clear`), allowing only `stash list`/`stash show` — but the hook sees only top-level `git` commands (see above), so a stash run from inside a script executes unguarded. To undo a temporary edit, use the file-copy rule above.
 
 ### Running Git Outside the Current Directory
 
-**Never `cd <dir> && git …`. Use `git -C <dir> …` instead.**
+Use `git -C <dir> …`, never `cd <dir> && git …`: `Bash(git:*)` is pre-approved and `cd:*` is not, so the compound
+matches `cd` and prompts every time. The same holds for every pre-approved command: prefer the tool's own directory flag
+(`pnpm --dir`, `make -C`), and where a runner genuinely needs its own cwd, a fixed-path wrapper with its own allow rule
+(`~/.claude/scripts/wt-rspec.sh`, `wt-ci.sh`, `wt-bundle.sh`). Never a blanket `Bash(cd:*)` rule: even
+`Bash(cd apps/api && rspec:*)` admits an appended `; rm -rf ~`. From inside a worktree-isolated session, `git -C` at the
+shared checkout is refused ([git-worktrees.md](git-worktrees.md)).
 
-```bash
-# ❌ FORBIDDEN — triggers a permission prompt every time
-cd /path/to/repo && git status
+### A path-filtered git command resolves its pathspec against the cwd
 
-# ✅ CORRECT
-git -C /path/to/repo status
-```
+`git diff -- <path>`, `git log -- <path>` and `git show <ref> -- <path>` resolve a bare pathspec relative to the shell's
+cwd. After a `cd` into a subdirectory (which persists across tool calls) a repo-root-relative path doubles, matches
+nothing, prints nothing and exits 0, indistinguishable from "no changes"; only `git status -- <path>` warns. The tell is
+an unfiltered form contradicting a filtered one; anchor the call with `git -C <repo-root>`.
 
-`Bash(git:*)` is pre-approved, but `cd:*` is not — prefixing with `cd` makes the command match `cd` rather than `git`, so every invocation prompts.
+### `git log -S` returns the commit that MADE the change
 
-**This is not a git-specific rule — it applies to every pre-approved command.** A `cd <dir> && <allowlisted-cmd>` compound matches `cd`, so the allow rule for the real command never fires and the call falls through to a prompt (or, in auto mode, to the classifier). Prefer the tool's own directory flag whenever one exists — `git -C`, `pnpm --dir`, `make -C`, `rspec` run via a wrapper script. When a runner genuinely requires its own working directory (Rails needs `apps/api`), the fix is a fixed-path wrapper that takes the directory and the env as arguments and hardcodes the executable, each with its own allow rule in `settings.json`: `~/.claude/scripts/wt-rspec.sh` (`bundle exec rspec`), `wt-ci.sh` (`./ci`), and `wt-bundle.sh` (every other `bundle exec` subcommand — `rake db:migrate`, `rails runner`; measured 2026-09-30, BF-2219: the `cd … && DB_PORT=… rake db:migrate` one-liner was denied as `[Modify Shared Resources]` mid-merge and stalled an unattended run on a human prompt). **Not** a blanket `Bash(cd:*)` rule — that would greenlight anything beginning with `cd`, and a trailing-wildcard variant like `Bash(cd apps/api && rspec:*)` still admits an appended `; rm -rf ~`.
-
-### A path-filtered git command resolves its pathspec against the cwd, and three of them fail silently
-
-`git diff -- <path>`, `git log -- <path>`, and `git show <ref> -- <path>` resolve a bare pathspec relative to the shell's cwd, not the repo root. Issued after a `cd` into a subdirectory — which the rule above notes is sometimes unavoidable, and whose effect persists across every later tool call in the session — a repo-root-relative pathspec silently doubles: `git diff -- apps/api/spec/foo_spec.rb` run from inside `apps/api` resolves to `apps/api/apps/api/spec/foo_spec.rb`, matches nothing, prints **nothing at all**, and exits **0**. That is indistinguishable from "this file has no changes" — a conclusion worth acting on.
-
-`git status -- <path>` is the exception, and only partly: it also exits 0, but prints `warning: could not open directory '<doubled-path>'` to stderr, so it self-diagnoses where the other three do not. Measured on all four.
-
-The tell is an unfiltered form contradicting a filtered one — `git diff --stat` listing a file that `git diff -- <that file>` calls unchanged. Anchor the call instead of trusting the prompt: `git -C <repo-root> …`, per the rule above.
-
-### The commit `git log -S` returns is the one that MADE the change — the before-state is its parent
-
-Checking how code behaved *before* some change is routine: `/quality-review` adjudicating a finding that characterizes a pre-fix state, and the "verify the stated defect still exists" check (basefund's `.claude/rules/planning.md`), whose `git log -S <symbol>` bullet is the usual way in. `git log -S <token>` is the right way to find the commit — it returns the one whose occurrence count changed, i.e. that **introduced or removed** the token — and that same sha is then the wrong ref to read the before-state from. `git show <sha>:<path>` is the file *with* the change applied; the before-state is `git show <sha>^:<path>`.
-
-**In the `<ref>:<path>` content form the mistake is silent, and the answer inverts rather than degrades**: the command succeeds, prints plausible code, and the guard or fix you are checking for is *present* — which reads as proof that the before-state claim is false. An asymmetry hides it: a wrong **path** at a good ref dies with `fatal: path '…' does not exist in '<sha>'` (exit 128), so a typo self-diagnoses while a wrong ref never does. Observed on BF-1158: a verifier adjudicating whether a validation read a column before its column-existence guard landed cited the *guard commit* as "the actual pre-guard code" and reported that the validation never read the column, before or after. The pre-guard body — `git show <guard-commit>^:<path>` — has no guard, and both branches of the method read the column, so no record population could make the read unreachable. The correct sentence was one accepted finding away from being rewritten into a false one.
-
-**The diff forms do not share this failure — prefer them when the question is what changed.** `git show <sha>` and `git show <sha> -- <path>` print the before *and* after states with `-`/`+` markers, so an added guard is visibly an addition (measured on that commit: seven `+` lines, with the surrounding column reads on unprefixed context lines). Reporting a diff's `+` lines as the prior state is a separate mistake, and a non-silent one — the markers are right there.
-
-`^` is the **first** parent, so on a merge commit it is the branch that was merged into, not the branch that carried the change; for the other side use `<sha>^2`. `git rev-list --parents -n 1 <sha>` names both parents on one line and is the probe to reach for when in doubt. `^2` against a non-merge fails loudly (`fatal: ambiguous argument`, exit 128), so that half of the mistake cannot pass silently either.
-
-### Worktree-isolated sessions: no loops, no `$(…)`, no `git -C` at the shared checkout
-
-A session registered on a worktree via `EnterWorktree` — every `/start wt`, and so every `/auto` and every fleet session — runs its Bash commands through a static containment check (measured on harness 2.1.222, in foreground and background sessions alike), and subagents inherit the restriction. It refuses four shapes, each with its own message:
-
-- **Any loop construct or `$(…)` command substitution** → *"this command is too complex to verify that it stays inside the worktree; break it into plain, separate commands."* Shape-based, not git-based: a git-free `for` loop over `linear-cli`, the sanctioned `until`-marker poll, and the git-free substitution `echo "$(echo hi)"` are all refused. Statement count is irrelevant in both directions — `echo one; echo two; echo three` runs, while the single simple command `dirname "$(git rev-parse --path-format=absolute --git-common-dir)"` is refused. For an UNBOUNDED loop — the sanctioned `until`-marker poll — "break it into separate commands" is unfollowable, since the loop is the construct: `Write` it to a script and run the script instead (the poll-loop form is spelled out in CLAUDE.md § Waiting on delegated work). A BOUNDED fan over a known list (five `diff -u` calls, three `git` probes) is followable as literally instructed — unroll it into one `;` sequence in a single Bash call, `>|` on the first write and `>>` after, and skip the script. **Process substitution is refused in both directions too**, with this same message: measured, `cat <(echo hi)` and `echo hi > >(cat)` are each refused, while bare `cat <file>`, `diff <file> <file>`, an `&&` chain, and a `>|` redirect all run — so the cause is the `<(`/`>(`, not the chaining or the redirect. The natural use, `diff <(…) <(…)` over two derived streams, likewise has no single-command equivalent: write each stream to its own `tmp/` file in separate commands, then `diff` the two files.
-- **`eval` as a word, anywhere in the command** → *"this command runs a string through eval, which can't be verified to stay inside the worktree; run the command directly instead."* A word match that ignores quoting: `echo eval` and `echo "eval"` are refused while `evaluate` and `my_eval_helper` run. So it fires on a `grep "eval" …` whose only `eval` is the search pattern (grep for `ev[a]l` instead) and on `agent-browser eval` — that tool's only route for running JS in a page, and the load-bearing step of the Storybook play-function check (basefund's `.claude/rules/storybook.md` records the project-side half); the any-script exemption below covers both.
-- **`git -C <path outside the worktree>`** (likewise `--git-dir`, `GIT_DIR`, `GIT_WORK_TREE`) → *"this command redirects git to the shared checkout via -C."* Decided by **target**, not shape: the guard resolves a same-command variable assignment, so `M=/path/to/main; git -C "$M" status` is refused while the identical shape pointing inside the worktree runs.
-- **A `-C` target the guard cannot resolve statically** (`git -C ~/.claude …`) → *"this command points git at a directory computed at runtime."* Fails closed.
-
-These still run: a plain top-level `git` command (`git rev-parse --show-toplevel`), a plain git command with a pipe or an `&&` tail (`git status --porcelain && echo DONE`), a plain `;` sequence of simple commands, `git -C <path inside this worktree>` (literal, or a variable that resolves there), and **any script** — only the Bash tool's own command string is analyzed, so `~/.claude/scripts/finish-merge.sh` keeps working exactly as written even though it runs `git -C` against the main checkout internally.
-
-**A heredoc body is part of the analyzed command string, so prose can trip the first bullet's shape check.** A token sequence *inside the body* that parses as a redirection is refused with that bullet's message — *"too complex to verify that it stays inside the worktree"* — even though the command itself is a plain `cmd <<'EOF'`. This is deterministic and content-dependent, never flaky: measured here, bodies containing `` ` ``, `<JsxTag />`, the prose word `for`, `<`, `<>`, `<-`, or `->` all run, while a body containing `<->` is refused every time. It bites where a command pipes *generated prose* into a script — `quality-review-write-verdict.sh <ID> - <<'VERDICT_EOF'`, `/finish`'s commit-message heredoc, `/pr-update`'s `gh pr edit` body — because the text is composed long before anyone reads it as shell, and the same command shape succeeding on the previous issue makes the refusal look random. Do not conclude the guard is unpredictable and do not abandon the one-call form on the strength of one refusal: reword the offending token in the body (`<->` → `to/from`), or, when the body cannot change, `Write` it to the worktree's `tmp/` and pass that path as an argument instead.
-
-The same refusal fires on a command whose **own** redirect uses zsh's `>>|`: `echo x >>| tmp/f` is refused while the identical call with `>>` or with `>|` runs. `>>|` is zsh-only and a hard bash syntax error, so a bash-grammar check cannot read it as a redirect at all; `>|` parses in both shells and is unaffected. CLAUDE.md's clobber bullet prescribes `>>|` by reflex, so this collides routinely — use one `>|` write, or a script.
-
-So the `git -C /path/to/repo` form recommended above is right everywhere except at a shared checkout from inside a worktree, where it is hard-refused and there is no flag to override it. Derive paths with plain probes instead — from a worktree, `git rev-parse --show-toplevel` gives the worktree root and `git rev-parse --path-format=absolute --git-common-dir` gives `<main-checkout>/.git`, whose parent is the main checkout — then substitute the resulting **literal absolute paths** into subsequent commands. Shell variables cannot carry them between calls anyway: shell state does not survive across Bash tool calls.
-
-### Windows Git Bash: `ref:path` Arguments
-
-MSYS path conversion mangles some colon arguments: `git show origin/main:.gitignore` becomes `origin\main;.gitignore` (`fatal: ambiguous argument`).
-It triggers when the ref contains `/` and the path starts with a dot (`origin/main:package.json` passes, `origin/main:.claude/settings.json` fails),
-so it looks intermittent. Prefix any `ref:path` command with `MSYS_NO_PATHCONV=1` — harmless on macOS:
-
-```bash
-MSYS_NO_PATHCONV=1 git show origin/main:.gitignore
-```
-
-### Windows Git Bash: comparing paths
-
-`pwd -P` is not canonical on MSYS — it normalizes differently depending on the input path format, so string-comparing two `pwd -P` outputs across differently-formatted inputs is unreliable. `cd C:/Users/…` and `cd /c/Users/…` are the same location but can resolve to different strings, and a path under a mount alias (`/tmp` → `AppData/Local/Temp`) resolves to `/tmp/…` from one entry form and `/c/Users/…/Temp/…` from another. Git compounds this: `git rev-parse --show-toplevel` (and `--absolute-git-dir`, `--git-common-dir`) emit Windows form (`C:/Users/…`) while surrounding shell code carries MSYS form (`/c/Users/…`).
-
-Do not test path identity by string-comparing resolved paths, and be wary of deriving a value one script `pwd -P`-resolves that another script compares against (e.g. a per-repo lock key from `cd "$common_dir" && pwd -P`) — the two can diverge by input format alone. Prefer a structural signal independent of path format: e.g. to tell a registered linked worktree from an orphaned dir, test the shape of `git rev-parse --absolute-git-dir` (`*/worktrees/*`) plus the worktree's own `.git` pointer, not `--show-toplevel` vs the directory string.
-
-### Windows Git Bash: native tools behind the shell
-
-The shell is MSYS but `jq`, `python`, `gh` and `git` are native Windows binaries, and three of their habits reach the scripts here:
-
-- **The winget `jq` ends every output line with CRLF** (measured on jq 1.8.2). `$(…)` strips the trailing CR with the newline, so most call sites work, but `read` keeps it — a `while read id … done < <(jq -r …)` loop walks `TT-26\r`, which is how `epic-graph.sh` reported every child of an epic as missing. `update.sh` installs a `~/bin/jq` shim that adds `-b` (jq's own LF switch) to every call; a machine that has not run it shows exactly that symptom.
-- **Python writes stdio in the console code page with CRLF.** A `→` or `≈` in a report line raises `UnicodeEncodeError` under cp1252, and `open()`/`read_text()` decode files the same way. The `.py` entry points reconfigure stdio to UTF-8 with LF and pass `encoding="utf-8"` explicitly; a new script does the same. `python3` itself is a `~/bin` shim (python.org ships `python.exe` only), also from `update.sh`.
-- **A POSIX-looking argument to a native binary is rewritten before the binary sees it**: `jq -n --arg p /tmp/x.rb` arrives as `C:/Users/<you>/AppData/Local/Temp/x.rb`, and a `.py` script echoes back the native spelling of any path it was handed. A test that hands a system path to a native tool as *data* sets `MSYS_NO_PATHCONV=1` (the scratch-path-guard suite); one that asserts on an echoed path compares through `wt_path_native` (`scripts/wt-path.sh`), never the raw `mktemp` string.
-- **Three suites cannot run here at all and self-skip.** `wt-restamp`, `wt-disown` and `reap-worktrees` are built on POSIX process liveness — `ps -o lstart=` / `-o comm=` / `-o ppid=` — and MSYS `ps` has no `-o` at all, so every death verdict degrades to `unknown` and their fixtures cannot be expressed (PR #9 measured wt-disown at 81–139 passing across identical runs). Each prints one counted `SKIP` line and exits 0 on `MINGW*|MSYS*|CYGWIN*`, so `pnpm test` stays green without mistaking the gap for coverage; `FORCE_POSIX_SUITES=1` runs one anyway. The same limitation is why a stale worktree on Windows needs a manual `wt-disown.sh --force` instead of being auto-resumed.
-- **pnpm runs package scripts through cmd.exe here, and reads `scriptShell` only from `pnpm-workspace.yaml`.** Before 2026-09-14 `pnpm test`'s `hooks/x.test.sh && …` chain died at *'hooks' is not recognized* on every Windows machine, and `check-markdown`'s quoted glob reached markdownlint with its quotes intact — 0 files linted, exit 0, a green that verified nothing. `pnpm-workspace.yaml` now pins `scriptShell: bash`; pnpm 11 ignored the same key in a project `.npmrc` and in `npm_config_script_shell` (measured). A machine without `bash` on PATH fails loudly with spawn ENOENT rather than mis-parsing.
-
-### Recovery is not available
-
-This is why the rules above are absolute rather than advisory. A session once read a concurrent
-session's API changes as unrelated mistakes, ran `git restore` on them, then `git reset --hard` to
-tidy up — destroying hours of work from both sessions. Every recovery attempt failed.
-
-| Command | Changes lost | Recoverable? |
-|---|---|---|
-| `git restore <files>` | Unstaged working tree changes | **No** — permanent |
-| `git reset --hard` | All uncommitted changes | Only if staged or committed first |
-| `git clean -fd` | Untracked files | **No** — permanent |
-
-Reflog does not track working tree files, dangling blobs rarely help for unstaged changes, and
-`git fsck --lost-found` cannot recover discarded working tree changes.
-
-The `git-permissions.sh` hook blocks these commands, and it reads only the command string — nothing
-said in the conversation unblocks it (its block messages claimed otherwise until 2026-10-19). A
-destructive command the user genuinely wants is run by the user in their own terminal; the hook is the
-floor, not the reasoning.
+That sha is the wrong ref to read the before-state from: `git show <sha>:<path>` is the file **with** the change, and
+the before-state is `git show <sha>^:<path>`. The mistake is silent and inverts the answer (the guard you are checking
+for is present, which reads as proof the before-state claim is false), while a wrong *path* fails loudly. Prefer the
+diff forms (`git show <sha>`, `git show <sha> -- <path>`) when the question is what changed. `^` is the first parent; on
+a merge commit the other side is `<sha>^2` (`git rev-list --parents -n 1 <sha>` names both).
 
 ## Verifying a git config value was registered
 
-`git config --get <key>` reads **system, then global, then local** and returns the highest-precedence value it finds — local overrides global overrides system, and within a single file the last entry wins. It is therefore not a valid check that a setup step — a `prepare` script, an installer, a bootstrap command — registered the value in *this* clone: when the same key is also set in `~/.gitconfig` or `~/.config/git/config`, the command prints the expected value and exits 0 whether the setup step ran, failed, or was reverted. It reads green either way and pins nothing.
-
-Scope the read to the level you are actually asserting about:
+`git config --get <key>` returns the highest-precedence value across system, global and local, so it says nothing about
+whether a setup step registered the value in *this* clone when the key is also set in `~/.gitconfig`. Scope the read:
 
 ```bash
-git config --local --get <key>              # this repository only; exits 1 when unset — that failure is the whole signal
+git config --local --get <key>              # this repository only; exit 1 when unset is the whole signal
 git config --show-origin --get-all <key>    # every level, naming the file each value came from
+GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null git config --get <key>   # fresh-clone reproduction
 ```
 
-For a from-scratch reproduction — fresh clone, setup step deliberately not yet run — neutralize the outer levels too:
-
-```bash
-GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null git config --get <key>
-```
-
-`--local` is per-**repository**, not per-worktree: inside a `/start wt` worktree it reads the main clone's shared `$GIT_DIR/config`, so a sibling worktree's setup step satisfies your check. Only `config.worktree` (gated on `extensions.worktreeConfig`) is worktree-scoped.
-
-This is [negative control](problem-solving.md#a-verification-you-never-watched-fail-is-not-a-verification) applied to a one-line check: run the command against the pre-change state and confirm it reads *differently*. Do it especially when the check is going into a **success criterion** — nothing re-verifies a criterion at pickup, so an unfalsifiable one passes every time it is read.
+`--local` is per repository, not per worktree: inside a `/start wt` worktree it reads the main clone's shared config;
+only `config.worktree` (gated on `extensions.worktreeConfig`) is worktree-scoped. Run the check against the pre-change
+state and confirm it reads differently
+([problem-solving.md](problem-solving.md#a-verification-you-never-watched-fail-is-not-a-verification)), especially for
+a success criterion, which nothing re-verifies at pickup.
 
 ## Commit and Push Authorization
 
-Commits and pushes are **separate, explicit grants**. Neither is implied by implementation verbs.
+Commits and pushes are separate, explicit grants. Neither is implied by implementation verbs.
 
 ### Authorization Rules
 
-- "implement", "do it", "fix it", "make the change" → does NOT authorize a commit
-- "commit" → applies only to current set of changes; NOT a standing grant for the session; does NOT include push
-- "push" → applies only to currently-committed state; does NOT include future commits; does NOT imply commit
-- "commit and push" / "commit, push, and create a PR" → explicit multi-action grant; honor as written
+- "implement", "do it", "fix it", "make the change" → no commit.
+- "commit" → the current set of changes only; not a standing grant for the session; no push.
+- "push" → the currently committed state only; no future commits; no commit.
+- "commit and push" / "commit, push, and create a PR" → an explicit multi-action grant; honor as written.
 
 ### Named exceptions: skill-scoped grants
 
-Invoking `/finish` is an explicit grant to commit that one issue's change set — the documented contract of the skill IS the grant — and to push it only under the `push` token or in `pr` mode, where a PR needs the branch on origin. The default is no push (keeper ruling 2026-10-19): a `/finish` a session runs on its own initiative leaves the commit local. Invoking `/auto` (or `/loop /auto`) is the single **run-scoped standing grant**: it authorizes the `/finish auto` commit+push of every issue that run ships, because unattended shipping is `/auto`'s entire documented purpose. In worktree-merge mode the push half of that grant is exercised only by `scripts/auto-push-main.sh` — fast-forward only, at a deploy-gated pick and at deadline wind-down, and only where the project has set `AUTO_PUSH_MAIN=lazy` (keeper ruling 2026-09-19); elsewhere the merge commit waits for a human's push (`/finish` Step 7). The grant is bounded — no force-pushes, no history rewrites, no committing work unattributable to a Linear issue — and every shipped change is audited via the issue's plan and completion comments. Invoking `/keeper` is an explicit grant to commit and push, in the `~/.claude` repo only, the config changes that run adjudicates and accepts — bounded to files the skill edited or accepted (staged by name), no force-pushes, no history rewrites, and never files the adjudication rejected or deferred (concurrent-session WIP stays in the tree); on the keeper's machine (`reflect.keeper` = `true`) that push targets main and covers merging accepted proposal PRs, while in contributor mode the grant is **proposal-branch-only** — main is never committed to or pushed, and the one sanctioned reset is the skill's documented pure-clone restore (pushed-branch containment plus in-session consent, rescue branch left behind). Invoking `/checkpoint` is an explicit grant to commit and push one WIP checkpoint of the named issue's change set — staged by name, push suppressible with `no push`. Invoking `/reflect` grants exactly one commit and no push: project-scoped config edits, check-gated and staged by name — inside a `/start wt` worktree so they ride the issue merge, or on the main checkout's source branch once that worktree is gone, with the branch verified in the same turn (§ Multi-Session Awareness, rule 4); user-level `~/.claude` edits are never committed by that skill in any mode. Invoking `/fleet-sequence` is the same run-scoped standing grant for the issues it lists: each child session ships under `/auto`'s grant, merging into the sequence's integration branch (or the launch branch under `merge`), and the runner pushes that branch and opens its one PR, with the same bounds. Invoking `/epic-pr` is an explicit grant to push one epic's integration branch and open its PR onto the recorded base — the branch the fleet already merged into, pushed by ref; it never merges the PR and never moves the checkout. No other skill or phrasing creates a standing grant.
+The documented contract of a skill is its grant. No other skill or phrasing creates a standing grant.
+
+- `/finish` commits that one issue's change set; it pushes only under the `push` token or in `pr` mode.
+- `/auto` (or `/loop /auto`) is the single **run-scoped standing grant**: the `/finish auto` commit and push of every
+  issue the run ships. In worktree-merge mode the push half runs only through `scripts/auto-push-main.sh` (fast-forward
+  only, at a deploy-gated pick and at deadline wind-down, only where the project sets `AUTO_PUSH_MAIN=lazy`); elsewhere
+  the merge commit waits for a human's push. No force-pushes, no history rewrites, no committing work unattributable to
+  a Linear issue.
+- `/fleet-sequence` is the same run-scoped grant for the issues it lists, merging into the sequence's integration branch
+  (or the launch branch under `merge`); the runner pushes that branch and opens its one PR.
+- `/epic-pr` pushes one epic's integration branch by ref and opens its PR; it never merges the PR or moves the checkout.
+- `/keeper` commits and pushes, in the `~/.claude` repo only, the config changes it accepts, staged by name, never files
+  it rejected or deferred. On the keeper's machine (`reflect.keeper` = `true`) that targets main and covers merging
+  accepted proposal PRs; in contributor mode the grant is proposal-branch-only.
+- `/checkpoint` commits and pushes one WIP checkpoint of the named issue's change set, staged by name; `no push`
+  suppresses the push.
+- `/reflect` commits exactly once and never pushes: project-scoped config edits, check-gated and staged by name, with the
+  branch verified in the same turn (§ Multi-Session Awareness, rule 4). User-level `~/.claude` edits are never committed
+  by that skill.
 
 ### Default Behavior
 
-Stage nothing, commit nothing, push nothing. Make edits, run hooks/tests, report what changed, wait for explicit direction.
-
-Pre-commit hooks (lint, typecheck) running automatically is fine — those aren't commits.
-
-### When Unsure
-
-Ask: "Want me to commit this, or leave it staged for review?" or "Want me to push, or leave the commit local?"
+Stage nothing, commit nothing, push nothing. Make edits, run hooks and tests, report what changed, wait for direction.
+Pre-commit hooks running on their own are not commits. When unsure, ask: "Want me to commit this, or leave it staged
+for review?" or "Want me to push, or leave the commit local?"
 
 ### Why
 
-Review IS the workflow. Each commit is a recorded artifact the user wants to inspect before it's written to history. Each push is visible to others and triggers CI — both gates exist for the same reason: nothing leaves the user's control without explicit say-so.
-
-## A worktree forks from where you are working — verify the base, and correct without `--force`
-
-`EnterWorktree` takes no source ref: its base comes from the `worktree.baseRef` setting, and the `fresh`
-default forks from `origin/<default-branch>` — NOT from the branch the checkout is on. On a long-running
-branch that silently hands you the default branch's tree (measured 2026-08-13: a debug worktree requested
-while the checkout sat on `nextjs-descope-user` was cut from origin/main, and its tooling findings described
-the wrong tree). This machine sets `worktree.baseRef: "head"` (settings.json), so `EnterWorktree`,
-`--worktree`, and agent isolation all fork from the current local HEAD — keep it that way. On a machine
-without the setting, VERIFY the fork point on entry before trusting anything in the tree:
-`git log --oneline -1` against the intended source, or `git merge-base --is-ancestor <source> HEAD`.
-
-A mis-sourced `EnterWorktree` worktree is corrected with the tool that made it: `ExitWorktree(action:
-"remove")`, which refuses to delete uncommitted files or unmerged commits unless `discard_changes: true` is
-passed after confirming with the user. Never `git worktree remove --force` — hook-blocked, it destroys the
-worktree's contents unexamined, and run from inside the worktree it deletes this session's own cwd (measured
-2026-08-13: the session that did was left with no worktree, no cwd, and no replacement). Rebuilding by hand:
-verify the source ref exists first (`git rev-parse --verify <ref>`) — a long-running branch often has no
-`origin/` twin — and remember the checkout's own branch cannot be checked out twice: fork a NEW branch
-(`git worktree add -b <work-branch> <path> <source-branch>`), then re-enter with `EnterWorktree({path})`.
-
-## Re-pointing a `/start wt` worktree at another merge target
-
-A worktree's merge target is the `start.source-branch` value in its per-worktree config: `git config --worktree start.source-branch <branch>` is what `finish-detect-mode.sh` reads, and the identity gate flags only a *wiped* value, never a changed one. But the stamp has three tiers, and the two identity sidecars — `.claude/worktree-identity/wt-identity-<id>.env` in the repo and `wt-identity-<id>.env` under `~/.claude/jobs/<session>/` — still carry the old branch, so every later probe loads the identity from a sidecar with a dissent WARN (measured 2026-09-23 on two worktrees re-pointed by config alone: corroboration 1/2, git-config dissenting). Change `WT_IDENTITY_SOURCE_BRANCH=` in both sidecars to match, or the re-point reads as tampering from then on. `wt_identity_stamp` is not the tool for this — the auto-mode classifier blocks it as a bypass — and neither is deleting and recreating a worktree that already carries work.
-
-## A throwaway worktree tests HEAD, not your working tree
-
-`git worktree add --detach <path> HEAD` checks out **committed** content — exactly right for capturing a HEAD baseline, and exactly wrong for exercising a change that is still uncommitted (the normal case mid-issue). The worktree runs the *pre-change* code and nothing says so. The failure is biased toward a false PASS: pre-change code exercised against a newly-added guard reproduces the old permissive behavior, which reads as "the command ran fine" rather than as an error, so a guard that never executed gets reported as verified. Run it before and after carrying the change in — the first run is the [negative control](problem-solving.md#a-verification-you-never-watched-fail-is-not-a-verification), and only the difference between the two is evidence.
-
-Carry the change in as a patch rather than enumerating files by hand; one file you forget to copy reproduces the same silent pass:
-
-```bash
-git -C <repo> diff HEAD >| tmp/wt.diff && git -C <wt> apply tmp/wt.diff   # all tracked modifications
-cp <repo>/<new-file> <wt>/<new-file>                                     # untracked additions
-```
-
-Undo it before `git worktree remove`: removal refuses on **modified or untracked** files (`fatal: … contains modified or untracked files, use --force to delete it`), and `--force` is blocked by the git-permissions hook, so the flag git suggests is not available. Restore tracked files with `git show HEAD:<path> >| <wt>/<path>` (`>|`, not `>` — the target exists by definition, so an imported `NO_CLOBBER` would silently refuse the restore on the one path invoked to repair a tree) — not `git restore`/`git checkout` (hook-blocked), and not `git stash` (also hook-blocked; the stack is worktree-shared — Safe Commands above) — and delete any file you added.
-
-## The hourly reaper reclaims `/start wt` worktrees it can prove finished — pin one you mean to keep
-
-`reap-worktrees.sh` runs hourly under launchd and removes a worktree — and deletes its branch — once the
-branch is merged into its source branch or the repo default, the tree is clean, the index has sat idle past
-the grace (60 minutes), and no live Claude session has its cwd inside it. Those rules encode the `/start wt` lifecycle: one issue, one branch, merged once
-and done. A worktree you made by hand under `.claude/worktrees/`, or one `EnterWorktree` made, has no such
-lifecycle: commit in it, merge it out, keep going, and "merged, clean, idle" is its resting state between
-rounds. Measured 2026-09-08: `api-memo` (hand-made, no Linear issue, no PR) had been merged into `hotfixes`
-twice that afternoon; eight minutes after PR #485 carried `hotfixes` onto `origin/main`, the 22:08Z pass
-removed the directory and deleted `rosskevin/api-memo-design`. No commit was lost — every one was already on
-`main` — but the worktree and the ref the session was working from were gone.
-
-The reaper now keys on provenance: a worktree without the `/start wt` identity stamp is reported
-`KEEP — unmanaged` and never touched. Two per-worktree config keys adjust that, in either direction:
-
-```bash
-git -C <wt> config --worktree reap.keep true       # pin: never auto-reaped, stamped or not (KEEP — pinned)
-git -C <wt> config --worktree --unset reap.keep    # release the pin
-git -C <wt> config --worktree reap.managed true    # opt a hand-made worktree INTO the /start wt rules
-```
-
-A worktree with a live Claude session inside it — the harness process's cwd under it — is never reaped,
-whatever the evidence (added 2026-09-24 after three interactive sessions were reaped in one week: BF-2074
-twice, BF-2101 once; the pass that removed each worktree then TERMed the session for sitting in it). Pin a
-`/start interactive` worktree you will drive from outside it or return to after the session ends — it is
-stamped, so once merged and idle with no session inside it is otherwise eligible. A queued merge outranks the pin: the drainer removes that worktree when its merge
-lands. `--worktree` config needs `extensions.worktreeConfig`; `start-wt-setup.sh` enables it in every repo it
-has touched, and a repo without it refuses the write with a `fatal:` naming the extension.
-
-Each pass also removes identity sidecars (`.claude/worktree-identity/wt-identity-<id>.env`) whose worktree is
-gone and whose file is older than the grace. The merge, recovery, and reap paths delete a worktree's sidecar
-with the worktree, so the sweep catches hand removals and the backlog from before any path deleted them
-(basefund held 1,025 against one live worktree on 2026-10-07).
-
-A session that drives a worktree from the main checkout is the one a reap hurts most: `cd <wt>; cmd` against
-a worktree that no longer exists reports the failed `cd` on stderr, and `;` runs `cmd` anyway — in the main
-checkout (measured 2026-09-08: a tracked file on `hotfixes` was modified this way). Address the worktree
-without changing directory (`git -C <wt> …`, absolute paths), or chain with `&&` so a failed `cd` stops the
-line. The reaper's process sweep is no guard here: it kills only processes whose cwd is inside a worktree that
-is already gone, and a session parked in the main checkout is never in that set.
+Review is the workflow: each commit is an artifact the user inspects before it enters history, and each push is visible
+to others and triggers CI. Nothing leaves the user's control without explicit say-so.

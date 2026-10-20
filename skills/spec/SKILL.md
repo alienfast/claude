@@ -1,18 +1,25 @@
 ---
 name: spec
-description: Groom a Linear issue into a certified spec — research the issue and codebase context, interview the user for problem/outcomes/success criteria, rewrite the description in the canonical spec shape, and graduate it with the `specified` label that gates autonomous /auto pickup. Decision-shaped issues ("Decide X") take the decision-grade path instead — architect-backed research, a debate brief with recommendations, a recorded decision, and filed follow-ups rather than certification. With no args, surfaces the top-ranked uncertified issues (including the Triage inbox) to pick from. Interactive-only — never runs unattended. Use when the user says 'spec', 'spec next', 'groom this issue', 'certify PL-XX', 'spec the backlog', 'debate this decision issue', or invokes /spec.
+description: Groom a Linear issue into a certified spec — research, interview the user, rewrite the description in the canonical shape, attach `specified` (the /auto pickup gate). No args surfaces the uncertified roster to pick from; a "Decide X" issue takes the decision-grade path. Interactive-only. Use when the user says 'spec', 'spec next', 'groom this issue', 'certify PL-XX', 'debate this decision issue', or invokes /spec.
 argument-hint: "[ISSUE-ID]"
 ---
 
 # Spec (Certify an Issue)
 
-Turns a rough human-entered issue into a **certified spec** and marks it `specified` — the label that makes it eligible for `/next specified` and autonomous `/auto` pickup. The certification contract, canonical template, and quality bar live in [standards/issue-spec.md](../../standards/issue-spec.md) — read it before grooming.
+Turns a rough human-entered issue into a **certified spec** and marks it `specified` — the label that makes it eligible
+for `/next specified` and autonomous `/auto` pickup. The certification contract, canonical template, and quality bar
+live in [standards/issue-spec.md](../../standards/issue-spec.md) — read it before grooming.
 
-**Boundary:** `/spec` designs the WHAT — problem, desired outcome, success criteria, scope. Never the HOW. Implementation planning (technical approach, file lists, step-by-step design) is `/start` Step 6's job, in plan mode, at execution time. A spec that prescribes implementation both duplicates that step and constrains it with stale assumptions.
+**Boundary:** `/spec` designs the WHAT — problem, desired outcome, success criteria, scope. Never the HOW.
+Implementation planning is `/start` Step 6's job, in plan mode, at execution time. A spec that prescribes implementation
+duplicates that step and constrains it with stale assumptions.
 
 ## Interactive-only — refuse autonomous contexts
 
-`/spec` interviews a human and requires signoff (Step 5 — implicit for a purely-codifying draft, explicit on divergence); there is no autonomous mode. If invoked with an `auto` token, or from an unattended context with no user to interview, stop immediately: `ERROR: /spec is interactive-only — it needs a human for the interview and signoff. Run it directly.` `/auto` never dispatches `/spec`; its NO-CANDIDATES message only *suggests* a human run it.
+`/spec` interviews a human and requires signoff (Step 5); there is no autonomous mode. Invoked with an `auto` token, or
+from an unattended context with no user to interview, stop immediately: `ERROR: /spec is interactive-only — it needs a
+human for the interview and signoff. Run it directly.` `/auto` never dispatches `/spec`; its NO-CANDIDATES message only
+*suggests* a human run it.
 
 ## When to Use
 
@@ -36,21 +43,14 @@ Error on any other token (including `auto` — see above).
 
 ### Step 1: Pick mode — surface uncertified candidates (no-arg form)
 
-Team scope resolves mechanically, exactly like `/next` Step 2: `$LINEAR_TEAM` if exported (single key or comma list), else omit `--team` and the script searches every team in the workspace — never ask which team. A user who explicitly names a team is the one exception (`--team <KEY>`). Run:
-
-```bash
-~/.claude/scripts/next-candidates.sh --exclude-label specified --include-triage --include-blocked --limit 10
-```
-
-Same ranking as `/next` — so its hard gates hold here too: an issue **assigned to anyone else is never offered for grooming** (assignment is a claim — `standards/linear-workflow.md`; the script hides them and appends a hidden-count note, surfaced verbatim). The ranking is a **strict stage order** (keeper decision 2026-08-13): every Planned/Todo issue outranks every Backlog issue, which outranks the entire **Triage inbox**, priority and class notwithstanding — an Urgent inbox report never outranks an unprioritized Planned issue (BF-34 did exactly that under the old stage tie and got recommended over the Planned queue the keeper was draining). Triage is included at all (unlike `/next`, where it is never workable) because grooming is what drains it — but only ever last. Blocked issues are included deliberately too: certifying a spec before its blocker resolves builds runway `/auto` can pick up the moment it unblocks. The **Planned/Todo queue is exhaustive by construction**: `next-candidates.sh` never hides unstarted-stage candidates behind the `--limit` cut — every below-cut Planned/Todo issue is appended in a trailing **"Planned/Todo below the cut"** section (keeper policy 2026-08-12). Treat that section's issues as full roster members. The limit trims only the Backlog/Triage tail; raise it when processing a large inbox.
-
-Issues parked behind a human decision keep `specified` plus a `needs decision` label (`standards/issue-spec.md`), so the exclude filter above hides them — list them with a second invocation:
-
-```bash
-~/.claude/scripts/next-candidates.sh --label 'needs decision' --include-blocked --limit 10
-```
-
-**Present the roster as three stage buckets in this fixed order — Planned, Backlog, Triage — never one mixed list** (keeper priority 2026-08-13: certify ALL of Planned first, then all of Backlog, and look at the inbox only once both are empty — the buckets exist so the user can SEE that a stage is drained). Bucket membership comes from each entry's `State:` line. Each bucket renders as its own numbered list — one line per candidate, `ID — title`, plus a clause on why it ranks (tier, priority, blocked-but-certifiable), never a prose paragraph — with that bucket's parked (`needs decision`) issues directly beneath it in the SAME rendering (measured 2026-08-12: parked Planned issues compressed into a prose sentence were missed and re-asked; a parked issue is part of draining its bucket — grooming one means making and recording the decision in the interview, after which certification clears the label, Step 6 item 5). An empty bucket still renders, as its one-line proof — `Planned: fully certified, nothing parked.` — because showing a stage is drained is half the roster's job. Then AskUserQuestion with options drawn from the **first non-empty bucket only**, top-ranked first, the recommendation its top item — parked issues included as options when they outrank the uncertified ones. Never offer or recommend a Backlog issue while the Planned bucket holds any candidate (uncertified or parked), nor a Triage issue while either earlier bucket does; `Other` already covers a deliberate out-of-order pick. **One exception, and it renders inside the Planned bucket:** a Backlog issue that BLOCKS a Planned candidate is Planned work in waiting — when a Planned candidate shows unresolved blockers, resolve them (`~/.claude/scripts/linear-deps-graph.sh <ID>`) and list any Backlog blocker in the Planned bucket annotated `Backlog — blocks <Planned-ID>`, fully eligible as an option; certifying it includes promoting it to Planned (Step 6 item 4's blocker-promotion clause). The dialog is where the user decides, so it must be legible on its own — a bare-ID option list sends them to Linear to find out what they're choosing. All three buckets empty → `Everything workable is already certified.` and stop.
+Read [references/pick-mode.md](references/pick-mode.md) and follow it: team scope resolves mechanically as in `/next`
+(never ask which team); the roster comes from `next-candidates.sh --exclude-label specified --include-triage
+--include-blocked`, plus a `--label 'needs decision'` run for parked issues; it is presented as **three stage buckets in
+fixed order — Planned, Backlog, Triage — never one mixed list**, each bucket a numbered `ID — title — why it ranks`
+list with its parked issues beneath it and an empty bucket rendered as its one-line proof; AskUserQuestion offers
+options from the **first non-empty bucket only**, recommendation on top — a Backlog blocker of a Planned candidate
+renders inside the Planned bucket as the one exception; all three empty → `Everything workable is already certified.`
+and stop.
 
 ### Step 2: Claim, then research
 
@@ -58,14 +58,28 @@ Issues parked behind a human decision keep `specified` plus a `needs decision` l
 
    ```bash
    ~/.claude/scripts/linear-context.sh <ID>          # digest: desc + deps + standalone AND anchored comments
-   linear-cli issues get <ID> -o json -q             # raw .description for round-tripping; note .state.name, labels, and .assignee
+   linear-cli issues get <ID> -o json -q             # raw .description for round-tripping; note .state.name, labels, .assignee
    ```
 
-   The digest is for reading (anchored reviewer comments are invisible to plain `issues get` — linear skill gotcha #1); the raw `.description` is what gets preserved verbatim in Step 4.
+   The digest is for reading (anchored reviewer comments are invisible to plain `issues get` — linear skill gotcha #1);
+   the raw `.description` is what Step 4 preserves verbatim.
 
-   **Claim for the interview's duration.** When `.assignee` is empty, assign the issue to the user now — `linear-cli issues assign <ID> me`, **not** `issues update <ID> --assignee me` — and remember that it arrived unassigned. `--help` calls `assign` a "shortcut for update --assignee", and the difference it glosses over is the whole point: `update`'s success line reports the mutation and names only the issue, so it prints `+ Updated issue: <ID> <title>` at exit 0 whether or not the field was written (linear gotcha #8, measured there on `--state`), while `assign` echoes the server's resulting assignee — `+ Assigned <ID> to <name>` — so a write that did not land shows up in the output instead of reading as success. Measured 2026-09-19 on BFP-180: the `update` form exited 0 having written no assignee, the identical command re-run later wrote it, and the gap surfaced ten minutes on only because a human happened to be looking at Linear. **Confirm `.assignee` on a fresh `issues get --no-cache` before interviewing**; still empty means re-issue it, which costs one call if the read was merely stale. Assignment is a claim (`standards/linear-workflow.md`), so the temporary claim makes the in-flight grooming visible and takes the issue out of **other people's** rankings — but not out of a sibling session's on this machine: `next-candidates.sh` keeps an assigned-to-me issue in the pool and promotes it to **tier 1** (its line 631 comment: "Assigned-to-me stays (that is tier 1)"), and its `hidden as claimed by a person` count excludes self-assignments, so that note is not a check that the claim landed. Where sessions share one Linear identity — any `/auto` fleet — claiming an already-`specified` issue to re-groom it therefore *raises* its pick rank for siblings rather than protecting it; wire `needs decision` or work it outside the fleet window if that matters. Step 6 item 8 restores the pre-groom state once certification lands, and every earlier exit restores it too (Error Handling). An issue already assigned to someone else is never touched — pick mode never offers one (Step 1's hard gate), so it can only arrive via a targeted `/spec <ID>`; groom it without cycling their claim.
-2. **Related work:** `linear-cli search issues "<keywords>"` (workspace-wide — no `--team` flag) for duplicates/overlap; `~/.claude/scripts/linear-deps-graph.sh <ID>` for blockers and parent context.
-3. **Classify before dispatching research.** The issue is **decision-grade** when its deliverable is a decision rather than a buildable spec: the title or a "Decision needed" section asks a question ("Decide …"), two-plus candidate designs are named, an authorization/policy surface is in play, or other issues block on the answer. Decision-grade grooming runs the deltas in [Decision-grade issues](#decision-grade-issues) over Steps 2–6 — starting with the deeper `architect` dispatch replacing item 4 below. Everything else proceeds unchanged.
+   **Claim for the interview's duration.** When `.assignee` is empty, `linear-cli issues assign <ID> me` — **not**
+   `issues update <ID> --assignee me`, which prints success at exit 0 whether or not the field was written (linear
+   gotcha #8); `assign` echoes the server's resulting assignee. **Confirm `.assignee` on a fresh `issues get
+   --no-cache` before interviewing**; still empty means re-issue it. Assignment is a claim
+   (`standards/linear-workflow.md`): it hides the issue from **other people's** rankings — not from a sibling session
+   sharing this Linear identity, where `next-candidates.sh` keeps an assigned-to-me issue at tier 1 — so in a fleet
+   window re-grooming a `specified` issue *raises* its pick rank; wire `needs decision` or work it outside the window.
+   Step 6 item 8 restores the pre-groom state, and every earlier exit restores it too (Error Handling). An issue already
+   assigned to someone else is never touched — groom it without cycling their claim.
+2. **Related work:** `linear-cli search issues "<keywords>"` (workspace-wide — no `--team` flag) for duplicates and
+   overlap; `~/.claude/scripts/linear-deps-graph.sh <ID>` for blockers and parent context.
+3. **Classify before dispatching research.** The issue is **decision-grade** when its deliverable is a decision rather
+   than a buildable spec: the title or a "Decision needed" section asks a question ("Decide …"), two-plus candidate
+   designs are named, an authorization or policy surface is in play, or other issues block on the answer. Read
+   [references/decision-grade.md](references/decision-grade.md) and run its deltas over Steps 2–6 — starting with the
+   deeper `architect` dispatch that replaces item 4. Everything else proceeds unchanged.
 4. **Codebase context** — delegate one read-only exploration to ground the interview in current behavior:
 
    ```text
@@ -77,62 +91,121 @@ Issues parked behind a human decision keep `specified` plus a `needs decision` l
    to in the product.
    ```
 
-5. **A moved gate, on both paths.** When the issue moves who may set a gating state (a confirmation, an approval, a ratification) to a new role, the research also covers two things. This holds for item 4's Explore prompt and for the decision-grade `architect` interrogation that replaces it. First, it enumerates every predicate that **reads** that state and names what each one grants the new setter. Second, it enumerates every path that reverses the state and says whether a mistake by the new setter can be undone. The old setter's check may have been the only one standing between two capabilities, and the new setter may already hold one side. Each grant the issue does not already intend, and each missing reversal, goes to the interview as a question in product terms, and the answer is written into the spec. A spec that records what the decision grants its subjects, but not what it grants the person now making it, has left that question to the implementer. Measured 2026-10-07: a spec letting an organization's admins confirm a pending team recorded what confirmation grants the team's members and never what it grants the confirming admin. Confirmation unlocked that admin's existing self-grant to owner on the team, and a rejection by the new role had no product path back. Both surfaced only at review, after a green implementation, which then parked for a human decision.
+5. **A moved gate, on both paths.** When the issue moves who may set a gating state (a confirmation, an approval, a
+   ratification) to a new role, the research also enumerates every predicate that **reads** that state and what each
+   grants the new setter, and every path that reverses the state and whether the new setter's mistake can be undone.
+   The old setter's check may have been the only one between two capabilities the new setter already half-holds. Each
+   grant the issue does not already intend, and each missing reversal, goes to the interview as a question in product
+   terms, and the answer is written into the spec — otherwise it surfaces at review, after a green implementation.
 
 ### Step 3: Interview the user
 
-**Issue brief first — the user answers from your summary, never from a Linear tab.** Immediately before the first AskUserQuestion — so it sits directly above the dialog, not scrolled away behind research narration — emit a compact brief: `<ID> — <title>`; state / priority / estimate / labels; a 2–4 sentence digest of the description as filed (what's being asked and why); anything load-bearing from the comments; and the research findings that reframe the request (current behavior, related issues). This is the recurring failure the brief exists to prevent: interview questions arriving unanchored, and the user opening Linear mid-interview to work out what issue they're even deciding about.
+**Issue brief first — the user answers from your summary, never from a Linear tab.** Immediately before the first
+AskUserQuestion — directly above the dialog, not behind research narration — emit a compact brief: `<ID> — <title>`;
+state / priority / estimate / labels; a 2–4 sentence digest of the description as filed; anything load-bearing from the
+comments; the research findings that reframe the request.
 
-Then elicit what the quality bar needs: problem + who's affected, desired outcome, success criteria, scope boundaries (at least one explicit exclusion — deliverable exclusions; a mechanism-exclusion only to record containment the human chose, marked `(decided: <who/why>)`, and when the root cause is undiagnosed don't write a mechanism-exclusion at all; unmarked exclusions on pre-convention specs read as falsifiable hypotheses, so add missing markings while regrooming — standards/issue-spec.md § Out of Scope bounds the deliverable, never the evidence), priority. Do NOT ask about the estimate — recommend one and apply it without a question (keeper direction 2026-08-13: always fine with the recommendation; the field stays on the issue but is not otherwise tracked). A volunteered estimate still wins over the recommendation.
+Then elicit what the quality bar needs: problem + who's affected, desired outcome, success criteria, scope boundaries
+(at least one explicit exclusion — deliverable exclusions; a mechanism-exclusion only to record containment the human
+chose, marked `(decided: <who/why>)`, and none when the root cause is undiagnosed; add missing markings while regrooming
+— `standards/issue-spec.md` § Out of Scope bounds the deliverable, never the evidence), priority. Do NOT ask about the
+estimate — recommend one and apply it; a volunteered estimate still wins.
 
-- **Walk the `### Nice to Have` list explicitly before certifying** — the tier is a brainstorm surface (`standards/issue-spec.md`: target of opportunity, not a requirement), and grooming is its one promotion moment. For each line, offer: promote to `### Must Have` (it turned out to matter), keep as Nice to Have (a genuine target of opportunity — implemented only if it falls out easily, never deferred or filed), or delete (brainstorm that didn't earn its keep). Batch this into the interview's existing dialogs; also offer the interview's own brainstormed angles as *new* Nice to Have lines — that is the tier's purpose. A kept line certifies as non-binding color: the unattended session plans around it only when trivially in-path.
-- Use AskUserQuestion with batched questions and **pre-filled drafts as options** — the user corrects rather than authors.
-- **Recommend, don't menu.** Every question with a defensible default leads with a "(Recommended)" option stating the reason it fits this codebase and product — the user corrects a stance rather than adjudicating an unweighted list. An option set you cannot rank is the signal to research more, not to ask anyway.
-- Each dialog stands alone: a later batch may arrive long after the brief scrolled by, so restate in the question text the sliver of context that decision needs (what the trade-off is, what the draft currently says) rather than assuming the brief is still on screen.
-- Skip what the issue + research already answer confidently — confirm, don't re-ask.
-- Iterate until every quality-bar item can be checked honestly.
+- **Walk the `### Nice to Have` list explicitly before certifying** — the tier is a brainstorm surface, and grooming is
+  its one promotion moment. For each line offer: promote to `### Must Have`, keep (implemented only if it falls out
+  easily, never deferred or filed), or delete. Batch into the existing dialogs; offer the interview's own brainstormed
+  angles as *new* lines. A kept line certifies as non-binding color.
+- Use AskUserQuestion with batched questions and **pre-filled drafts as options** — the user corrects rather than
+  authors.
+- **Recommend, don't menu.** Every question with a defensible default leads with a "(Recommended)" option stating why it
+  fits this codebase and product. An option set you cannot rank is the signal to research more, not to ask anyway.
+- Each dialog stands alone: restate the sliver of context the decision needs rather than assuming the brief is still on
+  screen.
+- Skip what the issue + research already answer confidently — confirm, don't re-ask. Iterate until every quality-bar
+  item can be checked honestly.
 
-**Decisive for autonomous processing is the bar — the spec's consumer is an unattended session that cannot ask anything.** "Groomed" means every judgment call the implementation will face is either answered in the spec or explicitly excluded. When the interview surfaces an open question, do not certify around it — route by what is missing:
+**The bar is decisiveness — the spec's consumer is an unattended session that cannot ask anything.** Every judgment call
+the implementation will face is either answered or explicitly excluded. When the interview surfaces an open question,
+do not certify around it — route by what is missing:
 
 - **Continue the interview** until the spec is decisive — the default; most gaps close with one more batched question.
-- **A named human decision the user is not ready to make** → finish the spec, certify, and park it: `~/.claude/scripts/linear-add-label.sh <ID> 'needs decision'` plus a comment naming the pending decision (the certified-but-parked state from `standards/issue-spec.md`, hidden from every ranking until the label clears — see Step 6 item 5 for the ordering).
-- **The work turns out human-performed** with no agent-shippable slice → apply the `human` label instead and skip certification.
-- **Mixed — human acts embedded in otherwise agent-shippable work** (a console action, a dashboard change, a ratification) → never label the whole issue; shrink the human surface, by whichever fits. **Split**: the agent-shippable slice becomes its own certified issue and the human act reduces to a named prerequisite or checklist item — often not an issue at all (BF-858's gate was a two-minute console probe, and parking the whole issue cost 21 verified files 91 commits of drift). **Shrink in place**: when the human act *is* the issue's core, re-shape it so agents prepare and the human ratifies — BF-877's recommend-then-ratify, a prefilled worksheet with deliberation reserved for a named hard set, kept `human` but got an order of magnitude cheaper. This is the receiving end of `/auto-prep`'s "flag it for `/spec` to split at the handoff." **Carve-out: a human act that gates whether the shipped code works in production is always its own tracked issue** — an operator-set secret or env var, a vendor-console setting, a DNS or webhook registration. "Often not an issue at all" covers a gate on the *agent's* progress; never one on the *product's*. The tell is that every downstream gate reads green **by construction**: the spec can legitimately require the code to degrade cleanly when the config is absent, so `/quality-review` confirms that degradation and `/finish` checks the boxes while the feature sits dark in production with nothing red anywhere. File it `human` at certification — certifiable, since the label records the executor, not spec quality (`standards/issue-spec.md` § The `human` label) — the parity `/prd` already has at its own certification step. Place it in `Planned` via Step 6 item 2's `--allow-planned`, which this interactive run may use: state is the release-scoping control, so a `human` issue there is what keeps the column from reading drained and what `/auto-prep`'s release-scope audit reports. **The edge depends on what each dependent does without the human act** (keeper ruling 2026-10-04; `standards/issue-spec.md` § Certification includes collision edges, the `human` carve-out). A dependent that merely goes *dark* without it — the code degrades cleanly, nothing a user sees is false — takes `related`: a `human` blocker would hide it from every ranking until a person acts, and the code can ship first. A dependent whose shipped behavior is *wrong* without it — it tells a user something untrue, or acts on something not yet there — takes `blocks` from the `human` issue: hiding it from the fleet until a person acts is the point, and it is not stranded invisibly, since `fleet-blockers.sh` walks blocker chains to their roots and reports a `human` root on `/auto-prep`'s unblock list. Never `blocks` toward a `human` issue whose act does not need the agent issue's code — a template, a secret or a DNS record can be set before anything ships, so the edge orders nothing real, while stage inheritance (blocker ← blocked) would pull a Backlog agent issue into Planned just for gating a Planned `human` one. **The exception is a human act performed on what the agent issue ships** — typically the hand-deploy of a production stack after the code merges. That is a prerequisite, so the agent issue `blocks` the `human` one: the person reads Linear, not a ranking, and the edge is how Linear tells them the deploy is due. Measured (2026-10-08): the deploy issues BF-2477 (for BF-2327) and BF-2480 (for its siblings BF-2478 and BF-2479) were first wired `related` under the unqualified rule, leaving Linear with no order between the code and its deploy, until the keeper caught it. Measured (BF-2292, filed 2026-10-02 under the previous never-`blocks` rule): the Customer.io template behind BF-2291's coordinator email was wired `related` to both BF-2291, which goes dark without it (correct), and BF-2126, whose dialog tells the participant their coordinator will review the request; BF-2126 reached production two days later with no coordinator receiving anything, its only gate a success criterion on BF-2292 that nothing on BF-2126 reads. Measured (BF-2034): the spec excluded "putting the real token value on any stack", specified and verified the no-token failure path, and recorded the human step in its Boundaries, its certification comment and its completion Notes — none of which any later gate re-reads. Nothing was filed; the feature and its API dependency both reached Ready For Release with the production path answering FAILED to every caller.
+- **A named human decision the user is not ready to make** → finish the spec, certify, and park it:
+  `~/.claude/scripts/linear-add-label.sh <ID> 'needs decision'` plus a comment naming the pending decision (Step 6 item
+  5 has the ordering).
+- **The work turns out human-performed** with no agent-shippable slice → apply `human` instead and skip certification.
+- **Mixed — human acts embedded in otherwise agent-shippable work** (a console action, a dashboard change, a
+  ratification) → never label the whole issue; shrink the human surface. **Split**: the agent-shippable slice becomes
+  its own certified issue and the human act reduces to a named prerequisite or checklist item — often not an issue at
+  all. **Shrink in place**: when the human act *is* the core, re-shape it so agents prepare and the human ratifies. This
+  is the receiving end of `/auto-prep`'s "flag it for `/spec` to split at the handoff."
+
+  **Carve-out: a human act that gates whether the shipped code works in production is always its own tracked issue** —
+  an operator-set secret or env var, a vendor-console setting, a DNS or webhook registration. "Often not an issue at
+  all" covers a gate on the *agent's* progress, never on the *product's*: when the spec legitimately requires clean
+  degradation, every downstream gate reads green while the feature sits dark in production. File it `human` at
+  certification (the label records the executor, not spec quality) and place it in `Planned` via Step 6 item 2's
+  `--allow-planned`, which this interactive run may use — a `human` issue there keeps the column from reading drained
+  and is what `/auto-prep`'s release-scope audit reports. Its edges follow the `human` carve-out in
+  `standards/issue-spec.md` § Certification includes collision edges: `related` when the dependent merely goes dark
+  without the act, `blocks` from the `human` issue when the dependent's shipped behavior would be wrong without it, and
+  the reverse — the agent issue `blocks` the `human` one — when the act is performed on what the agent ships (a
+  hand-deploy after the merge).
 
 An indecisive spec certified anyway does not ship — it burns an `/auto` slot and comes back as a skip or a review block.
 
 ### Step 4: Draft the spec
 
-Write `tmp/spec-<id-lowercase>.md` in the canonical template shape ([standards/issue-spec.md](../../standards/issue-spec.md)). Its Problem is the story the interview surfaced — the named actor, what they saw, the stake in their units, then the mechanism — with the measurements it does not carry under `## Evidence` (that standard's § The Problem is a story). Append the original human text verbatim as a trailing `## Original request` blockquote (from the raw description captured in Step 2). Omit that section only when the original description is empty or already spec-shaped (e.g. re-grooming a `/prd`-created body — edit in place instead of quoting). A criterion that describes behavior names the layer that pins it — Step 2's code read is what says where the mechanism lives, so this is the drafter's call from the research, never an interview question (that standard's quality bar). Self-check against the quality bar before presenting.
+Write `tmp/spec-<id-lowercase>.md` in the canonical template shape ([standards/issue-spec.md](../../standards/issue-spec.md)).
+Its Problem is the story the interview surfaced — the named actor, what they saw, the stake in their units, then the
+mechanism — with the measurements it does not carry under `## Evidence` (that standard's § The Problem is a story).
+Append the original human text verbatim as a trailing `## Original request` blockquote (from the raw description in
+Step 2); omit it only when the original is empty or already spec-shaped (re-grooming a `/prd` body — edit in place). A
+criterion that describes behavior names the layer that pins it — the drafter's call from Step 2's code read, never an
+interview question. Self-check against the quality bar before presenting.
 
 ### Step 5: Signoff — implicit when the draft only codifies the interview
 
-Show the user the full draft either way — it is the artifact about to overwrite the Linear description, and it must be visible in chat before it lands. Whether to *ask* is what graduates:
+Show the user the full draft either way — it is about to overwrite the Linear description and must be visible in chat
+before it lands. Whether to *ask* is what graduates:
 
-- **Faithful codification → no approval prompt.** If every substantive element of the draft — problem, outcome, each success criterion, each scope exclusion, priority — traces to an interview answer the user gave or corrected, to the issue's own description and comments, or to template boilerplate, the interview already WAS the approval. (The estimate is exempt from this trace: it is recommended, never elicited, so it can never block the no-prompt path.) Asking again re-asks settled questions. State in one line that the draft codifies the interview answers unchanged, present it, and proceed directly to Step 6.
-- **Material divergence → explicit approval, asked on the delta.** If the draft carries anything the interview never put to the user — a research-driven reframing, a criterion or exclusion you authored rather than they selected, a scope change discovered after their answers — lead with that delta (what is new and why), then iterate until they explicitly approve it. No approval → release the claim and stop; nothing beyond Step 2's temporary claim has been written to Linear.
+- **Faithful codification → no approval prompt.** If every substantive element — problem, outcome, each criterion, each
+  exclusion, priority — traces to an interview answer, to the issue's own description and comments, or to template
+  boilerplate, the interview already WAS the approval (the estimate is exempt: recommended, never elicited). State in one
+  line that the draft codifies the interview unchanged, present it, proceed to Step 6.
+- **Material divergence → explicit approval, asked on the delta.** If the draft carries anything the interview never put
+  to the user — a research-driven reframing, a criterion or exclusion you authored, a scope change discovered after
+  their answers — lead with that delta, then iterate until they explicitly approve. No approval → release the claim and
+  stop; nothing beyond Step 2's temporary claim has been written.
 
-Cheapest way to stay on the first branch: when drafting surfaces something new, fold it into a final interview batch as pre-filled options (Step 3's correct-don't-author pattern) rather than carrying it silently into the draft.
+Cheapest way to stay on the first branch: fold anything drafting surfaces into a final interview batch as pre-filled
+options rather than carrying it silently into the draft.
 
 ### Step 6: Apply to Linear (order matters)
 
-1. **Description** — if the interview ran long, re-fetch the raw description first with `linear-cli issues get <ID> -o json -q --no-cache` (bypassing linear-cli's read cache — a stale cached copy would silently "confirm" a concurrent human edit, and the next command would clobber it) and reconcile any conflict rather than overwriting it. Then:
+1. **Description** — if the interview ran long, re-fetch the raw description first with
+   `linear-cli issues get <ID> -o json -q --no-cache` (a stale cached copy would silently "confirm" a concurrent human
+   edit, and the next command would clobber it) and reconcile any conflict. Then:
 
    ```bash
    ~/.claude/scripts/linear-post.sh description <ID> tmp/spec-<id-lowercase>.md
    ```
 
-2. **Sub-issues** (only if the quality bar's sizing check failed — epic-sized work): offer a breakdown; for each child Write a spec-shaped body to `tmp/`, then:
+2. **Sub-issues** (only if the quality bar's sizing check failed — epic-sized work): offer a breakdown; for each child
+   Write a spec-shaped body to `tmp/`, then:
 
    ```bash
-   ~/.claude/scripts/linear-create-child.sh --allow-planned --allow-unrouted <ID> <TEAM> Planned "<title>" <body-file>   # --allow-planned: the Planned placement is deliberate (interactive, human-in-the-loop); --allow-unrouted: item 5 certifies each child afterwards
+   ~/.claude/scripts/linear-create-child.sh --allow-planned --allow-unrouted <ID> <TEAM> Planned "<title>" <body-file>   # Planned is deliberate here (interactive); item 5 certifies each child afterwards
    linear-cli relations add <BLOCKER> <BLOCKED> -r blocks     # blocker FIRST (blocked-by 400s in every published version through 0.3.27)
    ~/.claude/scripts/linear-add-label.sh <ID> epic            # the groomed issue is now a delegated epic — its children carry the work
    ```
 
    Each child is certified too (item 5 applies to every created issue).
 3. **Metadata** from the interview, only what changed: `linear-cli issues update <ID> -p <priority> -e <estimate>`.
-4. **State:** if — and only if — the issue is in `Triage`, move it: `linear-cli issues update <ID> -s Planned` (grooming is triage acceptance). **Blocker promotion:** a `Backlog` issue picked from the Planned bucket's `blocks <Planned-ID>` annotation (Step 1's exception) moves to `Planned` the same way — bringing it forward to unblock Planned work is why it was offered, and the user's pick is the approval. Never touch any other state — assignment and In Progress belong to `/start`, and the one exception is the decision-grade close-to-Done defined in [Decision-grade issues](#decision-grade-issues).
+4. **State:** if — and only if — the issue is in `Triage`, move it: `linear-cli issues update <ID> -s Planned` (grooming
+   is triage acceptance). **Blocker promotion:** a `Backlog` issue picked from the Planned bucket's `blocks
+   <Planned-ID>` annotation moves to `Planned` the same way — the user's pick is the approval. Never touch any other
+   state — assignment and In Progress belong to `/start`; the one exception is the decision-grade close to `Done`
+   ([references/decision-grade.md](references/decision-grade.md)).
 5. **Certify:**
 
    ```bash
@@ -140,60 +213,80 @@ Cheapest way to stay on the first branch: when drafting surfaces something new, 
    ~/.claude/scripts/linear-remove-label.sh <ID> 'needs decision'
    ```
 
-   Read-merge-set — never a bare `issues update -l`, which replaces the whole label set. Exit 2 on the add → the spec landed but the issue is **not** certified: surface the helper's pointer, report certification incomplete, and skip items 6–7. The removal is a no-op when the label is absent; when present, this certification is exactly what clears it — the interview recorded the decision the label was waiting on (`standards/issue-spec.md`). The one exception: when this run is what parked the issue (Step 3's decisiveness rule left a named decision open), skip the removal and instead apply the label — with its naming comment — right after `specified` attaches.
+   Read-merge-set — never a bare `issues update -l`, which replaces the whole label set. Exit 2 on the add → the spec
+   landed but the issue is **not** certified: surface the helper's pointer, report certification incomplete, skip items
+   6–7. The removal is a no-op when the label is absent; when present, this certification is what clears it. The one
+   exception: when this run is what parked the issue (Step 3), skip the removal and instead apply the label — with its
+   naming comment — right after `specified` attaches.
 
-   **Tier:** when the certified spec meets the `simple` semantics ([standards/issue-spec.md](../../standards/issue-spec.md) § The `simple` label — risk-low, no open decision; effort does not matter), also `~/.claude/scripts/linear-add-label.sh <ID> simple` and say so in item 7's comment. Never on a `security`, `human`, `needs decision`, or `epic` issue — so never in a run that parked the issue (the exception above) or made it an epic (item 2); in doubt leave it off — `/auto-prep` re-audits in both directions. Exit 2 on this add is inconclusive (linear gotcha #17), affects only the review tier, and never skips items 6–7 — note it in item 7's comment and continue.
-6. **Collision edges — wire them now; prose is not a control.** Certification is what makes this issue pickable by `/auto`, and grooming is the moment its touched files/methods are actually known (Step 2 just read the code) — so this is the cheapest and last reliable point to make sequencing mechanical (`/auto-prep` re-derives collisions later from description text alone, and the quality bar keeps file lists out of descriptions). Check the issue (and every sub-issue just created) against other open issues touching the same code — including issues certified earlier in the same session, which are the commonest colliders. Beyond those, run 2–3 `linear-cli search issues "<token>"` probes on the change's most distinctive single tokens — method/predicate names, distinctive file basenames (skip generic ones like `SKILL.md`, `CLAUDE.md`, or `README.md` — substitute a method/predicate token, the skill's directory name, the full repo-relative path of a nested file, or the project name for a project `CLAUDE.md` or a repo-root `README.md`, whose path is just the bare basename), one token per call, never a composed phrase (matches are contiguous substrings) — and read the non-terminal hits for file overlap. Calibration:
-   - **Prerequisite, same method, or deliberate increment** — the three meanings of `blocks` (standards/issue-spec.md § Certification includes collision edges) → `linear-cli relations add <BLOCKER> <BLOCKED> -r blocks` (blocker = the logically-prior issue; when no order is discernible, the earlier/already-open one). Same method means both edits land in one region of a function, predicate, resolver, or component body — Step 2's code read is what answers it; disjoint branches of a long body, like a shared file or class name alone, are the bullet below, while an edit every branch runs under (a lock at the top of the body) collides with each of them. When the collider is uncertified, `needs decision`, or `solo`, use `related` + comment instead — a blocks edge behind a never-unattended-shipping blocker strands this issue (standards/issue-spec.md). For a `blocks` edge, verify it took (`linear-cli relations list <BLOCKED>`) and confirm the blocked issue no longer appears in `~/.claude/scripts/next-candidates.sh` output — run it with a generous `--limit` (the default is 3, so absence at the default limit can be truncation, not blocking — and a `solo` label alone also hides the issue there, independent of any edge); a `related` edge changes no ranking, so that absence check does not apply to it. When reporting blocker status anywhere in this skill, use the ranking's own semantics: a blocker in `Done`, `Canceled`, `Duplicate`, or `Ready for Release` (the script's `TERMINAL_STATES`, matched case-insensitively) is RESOLVED — Linear's UI shows a `blocks` relation as blocking until the issue closes, and repeating that framing misreports shipped blockers as still open.
-   - **Same file or same method in different regions, a shared spec/locale/config file, or disjoint files sharing a mechanism** (a concern or helper both are likely to reach for) → `-r related` plus a comment naming the overlap; never serialize on a file. `next-candidates.sh` soft-de-ranks the issue while its `related` partner is in flight, and `/finish`'s merged-tree check gates the merge, so git — not the schedule — reconciles the file.
-   - **No overlap** → no edge.
+   **Tier:** when the certified spec meets the `simple` semantics (`standards/issue-spec.md` § The `simple` label —
+   risk-low, no open decision; effort does not matter), also `linear-add-label.sh <ID> simple` and say so in item 7's
+   comment. Never on a `security`, `human`, `needs decision`, or `epic` issue — so never in a run that parked the issue
+   or made it an epic; in doubt leave it off (`/auto-prep` re-audits both directions). Exit 2 on this add is
+   inconclusive (linear gotcha #17), affects only the review tier, and never skips items 6–7.
+6. **Collision edges — wire them now; prose is not a control.** Certification makes the issue pickable, and grooming is
+   the moment its touched files and methods are actually known (Step 2 just read the code) — the last reliable point to
+   make sequencing mechanical. Check the issue (and every sub-issue just created) against other open issues touching
+   the same code — including issues certified earlier in the same session, the commonest colliders — and run 2–3
+   `linear-cli search issues "<token>"` probes on the change's most distinctive single tokens (method or predicate
+   names, distinctive basenames; for a generic basename like `SKILL.md`, `CLAUDE.md` or `README.md` substitute the
+   skill's directory name, the full repo-relative path of a nested file, or the project name), one token per call, never
+   a composed phrase (matches are contiguous substrings), and read the non-terminal hits for file overlap. Calibrate per
+   [standards/issue-spec.md](../../standards/issue-spec.md) § Certification includes collision edges — `blocks` only for a
+   prerequisite, a same-method collision (both edits in one region of a function body; disjoint branches are `related`,
+   an edit every branch runs under collides with each), or a deliberate increment, blocker first (no discernible order →
+   the earlier/already-open one); `related` plus a comment for a shared file, spec, locale, config, or mechanism; nothing
+   for no overlap; never `blocks` behind an uncertified, `needs decision`, or `solo` collider. For a `blocks` edge, verify
+   it took (`linear-cli relations list <BLOCKED>`) and confirm the blocked issue no longer appears in
+   `next-candidates.sh` output run with a generous `--limit` (the default is 3, so absence at the default can be
+   truncation; a `solo` label alone also hides an issue there). A `related` edge changes no ranking, so that check does
+   not apply. Report blocker status with the ranking's semantics: a blocker in `Done`, `Canceled`, `Duplicate`, or
+   `Ready for Release` (`TERMINAL_STATES`, case-insensitive) is RESOLVED, whatever Linear's UI shows.
 
-   A sequencing constraint recorded only in description prose is invisible to automation — `next-candidates.sh` reads relations and labels, never description or comment text — so two colliding certified issues WILL be picked concurrently by a fleet unless the edge exists (`blocks` hides the dependent; `related` only de-ranks it while its partner is in flight). Wire it immediately after item 5 certifies — the standard's accepted residual window (standards/issue-spec.md) is seconds long, not a step to defer.
-7. **Certification comment** (only after the label attached): Write a short body to `tmp/spec-comment-<id-lowercase>.md` — certified via `/spec`, one-line scope summary, sub-issues created (if any), original request preserved in the description — then:
+   A constraint recorded only in prose is invisible to automation — `next-candidates.sh` reads relations and labels,
+   never text — so two colliding certified issues WILL be picked concurrently unless the edge exists. Wire it
+   immediately after item 5; the standard's accepted residual window is seconds, not a step to defer.
+7. **Certification comment** (only after the label attached): Write a short body to `tmp/spec-comment-<id-lowercase>.md`
+   — certified via `/spec`, one-line scope summary, sub-issues created (if any), original request preserved — then:
 
    ```bash
    ~/.claude/scripts/linear-post.sh comment <ID> tmp/spec-comment-<id-lowercase>.md
    ```
 
-8. **Release the claim:** if Step 2 claimed a previously-unassigned issue, restore that state — `linear-cli issues assign <ID>` (the bare form unassigns, linear gotcha #4). Certification is the handoff to unattended pickup, and the released claim is part of it: an assignment left behind reads as a person's in-flight work and hides the issue from every teammate's ranking. An issue that carried an assignee before grooming keeps it.
+8. **Release the claim:** if Step 2 claimed a previously-unassigned issue, restore that state —
+   `linear-cli issues assign <ID>` (the bare form unassigns, linear gotcha #4). Certification is the handoff to
+   unattended pickup, and the released claim is part of it: an assignment left behind reads as a person's in-flight
+   work and hides the issue from every teammate's ranking. An issue that carried an assignee before grooming keeps it.
 
 ### Step 7: Report and continue
 
-Compact summary: what was rewritten, state moved (Triage → Planned, or a Backlog blocker promoted), label applied, collision edges wired (if any), sub-issues created, the temporary claim released — and the handoff line: *eligible for `/next specified` and `/auto` pickup*. In pick mode, **re-run Step 1's roster and re-render the full three-bucket presentation for every subsequent pick** — same buckets, same rules each time, so the state of every stage stays visible across the session. When this certification just DRAINED a bucket (nothing uncertified, nothing parked left in it), announce the milestone as its own line before offering anything further — `Planned is fully certified — moving to Backlog.` / `Backlog is fully certified — the Triage inbox is next.` — the milestone is the point of the bucket order, not a footnote. Stop when the user is done.
-
-## Decision-grade issues
-
-The deliverable is a **recorded decision plus filed follow-ups**, not a certified description — running the standard path instead certifies criteria that ask the implementer to decide, which the quality bar forbids. The standard steps still run, with these deltas (worked case: BF-1002, "Decide the backing set for counterparty selection"):
-
-**Research — dispatch `architect` (Fable/max by definition), and interrogate, don't survey.** The generic Explore prompt returns a map too shallow to debate from. Build a structured interrogation from the issue's own claims: quote the gate/predicate bodies verbatim, enumerate every write site of the state in question, schema shapes, the linkage (or its absence) between the tables involved, and who-mints-what. Add `git log --grep <ID>` / `git log -S<symbol>` probes — commit messages are where deferred decisions get recorded (BF-878's commit read "BF-1002 carries that decision"), and prior-decision provenance reframes the debate. Architect unavailable → Explore with the same prompt, and say so.
-
-**Verify the option space before debating it.** The issue's A-vs-B framing is a filing-time reading, not a constraint: check whether an option structurally collapses (BF-1002's "pure global" collapsed into a hybrid because per-tenant relationship data hung off the table it would have replaced) or a third shape dominates both. Reframing the forks is the highest-value move in this path and must happen before the first question.
-
-**Interview — the problem as a story first, then forks, in the business's words** (the product-owner form of `standards/problem-solving.md` § Ask as a story, which governs every question to the user). The decider is the product owner, and a decision issue an agent filed arrives in the code's vocabulary — class names, column names, the code's own verbs — which the interview translates, never relays. Before the first AskUserQuestion, present the brief in this order: (1) **the problem as a concrete scenario** — who does what, what a customer or operator sees, what goes wrong — with no identifiers; (2) **whether it matters** — which filed concerns change what a user sees and which are hygiene with no consumer, and whether the originating issue's own Decisions already answer the question (an agent files a decision issue against a rule the product owner recorded the day before as readily as against an open one, so the first question is then whether anything here changes that decision); recommend dropping what is hygiene, since a decision with nothing to build is a first-class outcome here (the Output step below closes it `Done`, with no follow-ups to file); (3) the reframing facts from research, your position, and the strongest counterargument against it. Then interview only the genuine forks, staged — product intent first, the design consequences of those answers second, residuals third, one or two forks per batch — and **draft the next stage only after the previous one is answered, re-deriving which forks that answer already settles**: a product-intent answer routinely collapses every design consequence, so a second batch is the exception, not the plan, and questions lined up in advance are the ones that no longer make sense when it arrives. Write each fork as the scenario it decides ("a customer asked to be removed from the directory and a superuser removed them; later a listed duplicate is merged into them — do they go back in, or stay out?") with options named by their outcome for the business. Step 3's recommend-don't-menu rule is mandatory here, with its reason in product terms; identifiers and the code fact the recommendation rests on go into the brief's evidence and the recorded decision, never into a question or option — a question the product owner cannot answer without opening the code is written wrong (the interview-side form of `standards/issue-spec.md`'s route-the-decision-not-the-doubt rule). Measured 2026-09-29: a brief built around "stamp the ledger row" and a four-fork first batch (twelve options, a column name in the question text) drew "I frankly don't know what stamping is… what problem are we solving with this issue?"; the product owner's first answer restated the rule the originating issue had recorded the day before, every queued consequence question dissolved, and the decision closed in one exchange once posed as the scenario above with two outcomes — nothing to build.
-
-**Output — record, file, propagate, close.**
-
-- Record the decision **on the issue**: who decided, when, each question's answer with its rationale — including any invariant the decision *refines*, stated in its refined form (otherwise the next reviewer reads the change as a regression against the old invariant).
-- Check off the criteria the record satisfies; a criterion the follow-ups will discharge stays unchecked, with the comment naming which issue carries it.
-- File follow-ups in canonical shape; certify only those meeting the bar. One whose requirements cannot yet prescribe behavior (criteria would read "decide X") files **uncertified + `needs decision`** (`standards/issue-spec.md`), never certified around the gap. Wire collision edges per Step 6 item 6 — including against open issues touching the units the follow-ups will extend.
-- A code comment that defers to this issue ("whether that should count is BF-2538") goes stale when it closes. Rewriting it to state the decision is the one code edit `/spec` makes — comment-only, since `rules/comments.md` forbids filing an issue whose whole remedy is a comment edit — and it is **committed in the same step**, by path, under the repo lock (`~/.claude/scripts/with-repo-lock.py "$(git rev-parse --path-format=absolute --git-common-dir)" git commit -m "<ID>: …" -- <file>`). The option that offers it says it commits, and the user's pick is the grant. Never leave it uncommitted for review, and on the default branch ask where it goes instead. The main checkout is usually on the branch a fleet merges into, and an uncommitted edit there is the dirty tree `standards/git.md` § Posture for high-concurrency runs warns about: on 2026-10-11 one such comment, left "for your review", halted all three sessions of a 14-hour fleet at their next picks, forfeiting 26.3 of 41.9 session-hours.
-- Close the decision issue `Done` — a decision with no code change rides no release, so `Ready for Release` is wrong for it. This is the one place `/spec` touches state beyond Triage → Planned, and invoking `/spec` IS the grant for the move (the same idiom as `/auto`'s run-scoped commit/push grant) — never stop to re-ask. A decided issue left open is not caution: unlabeled and uncertified in Backlog, it re-enters `/spec` pick mode and bare `/next` rankings as a workable candidate while carrying nothing to work (measured 2026-09-25, BF-2144: the recorded decision sat open until the user corrected the run — "it needs to be terminal state").
-
-**Propagate to dependents before clearing their gates.** Write the decision into each dependent's *description*, never only a comment (`standards/issue-spec.md`). Before removing `needs decision` from any dependent, re-read its spec for judgment calls the recorded decision does not answer — clearing the label makes a certified issue fleet-pickable, so an unstated scope ships as an unattended agent's invention. The human is present: interview the residual now (BF-879's affiliation read-scope was caught exactly here; one question closed it).
-
-**Session model.** The judgment that pays in this path — catching a residual gate, noticing the option-space collapse — lives in the main loop, which no dispatch upgrades. Suggest `/model claude-fable-5` before a decision-grade grooming when the session is on a lower tier.
+Compact summary: what was rewritten, state moved (Triage → Planned, or a Backlog blocker promoted), label applied,
+collision edges wired, sub-issues created, the temporary claim released — and the handoff line: *eligible for
+`/next specified` and `/auto` pickup*. In pick mode, re-run the roster and re-render all three buckets for every
+subsequent pick, announcing a drained bucket as its own milestone line (`references/pick-mode.md` § After each
+certification). Stop when the user is done.
 
 ## What /spec must NOT do
 
-- **No implementation planning** — no technical approach, no step-by-step code plan, no key-file lists, no verification-command blocks. `/start` Step 6 (plan mode) owns all of that.
-- **No persistent claiming** — no In Progress, no branch creation, no code edits beyond the committed decision-comment rewrite (Decision-grade issues → Output), and no assignment that outlives the grooming: Step 2's temporary interview claim is the one assignment it makes, and every exit path releases it (Step 6 item 8; Error Handling on earlier exits).
-- **No certification without signoff** — Step 5's approval is implicit only for a draft that purely codifies the interview answers; a spec carrying material the user never saw or approved never gets the label.
-- **No undisposed exits** — every run ends with the issue certified (optionally parked `needs decision`), labeled `human` and left uncertified (Step 3's routing for work that turns out human-performed with no agent-shippable slice), closed `Done` (decision-grade), or restored to its pre-groom state with the claim released (Step 5 signoff withheld; Error Handling). Stopping to ask permission for a state move this skill's own path prescribes is an undisposed exit, not caution.
+- **No implementation planning** — no technical approach, no code plan, no key-file lists, no verification-command
+  blocks. `/start` Step 6 (plan mode) owns all of that.
+- **No persistent claiming** — no In Progress, no branch creation, no code edits beyond the committed decision-comment
+  rewrite (`references/decision-grade.md` § Output), and no assignment that outlives the grooming: Step 2's temporary
+  claim is the one assignment it makes, and every exit path releases it.
+- **No certification without signoff** — Step 5's approval is implicit only for a draft that purely codifies the
+  interview; a spec carrying material the user never saw never gets the label.
+- **No undisposed exits** — every run ends with the issue certified (optionally parked `needs decision`), labeled
+  `human` and left uncertified, closed `Done` (decision-grade), or restored to its pre-groom state with the claim
+  released. Stopping to ask permission for a state move this skill's own path prescribes is an undisposed exit, not
+  caution.
 
 ## Error Handling
 
 - **Issue not found / linear-cli failure** → surface the error verbatim and stop.
-- **Any exit after Step 2's claim that never reaches Step 6 item 8** — signoff withheld, an error row below, the work turning out `human`-labeled and uncertified, the user moving on — release the claim before stopping (`linear-cli issues assign <ID>`): a dangling assignment reads as a person's in-flight work and hides the issue from teammates' rankings indefinitely.
-- **`linear-add-label.sh` exit 2** → the spec landed but the issue is NOT certified; give the `linear-cli labels create "specified" -t issue` pointer and stop before the collision step and the comment.
+- **Any exit after Step 2's claim that never reaches Step 6 item 8** — signoff withheld, an error below, the work turning
+  out `human`, the user moving on — release the claim before stopping (`linear-cli issues assign <ID>`): a dangling
+  assignment hides the issue from teammates' rankings indefinitely.
+- **`linear-add-label.sh` exit 2** → the spec landed but the issue is NOT certified; give the
+  `linear-cli labels create "specified" -t issue` pointer and stop before the collision step and the comment.
 - **Explore agent unavailable** → proceed on Linear context alone and say so before the interview.
 - **`linear-cli auth status` logged out** → prompt: `linear-cli auth oauth`.
