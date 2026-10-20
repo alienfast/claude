@@ -195,7 +195,7 @@ options rather than carrying it silently into the draft.
 
    ```bash
    ~/.claude/scripts/linear-create-child.sh --allow-planned --allow-unrouted <ID> <TEAM> Planned "<title>" <body-file>   # Planned is deliberate here (interactive); item 5 certifies each child afterwards
-   linear-cli relations add <BLOCKER> <BLOCKED> -r blocks     # blocker FIRST (blocked-by 400s in every published version through 0.3.27)
+   linear-cli relations add <BLOCKER> <BLOCKED> -r blocks     # blocker FIRST (-r blocked-by 400s — linear gotcha #10)
    ~/.claude/scripts/linear-add-label.sh <ID> epic            # the groomed issue is now a delegated epic — its children carry the work
    ```
 

@@ -69,6 +69,3 @@ ncu --jsonUpgraded                    # machine-readable upgrade info
 pnpm dlx semver diff 1.2.3 1.3.0      # → "minor"  (no global `semver` on this machine)
 pnpm dlx semver satisfies 1.2.4 "^1.2.3"  # → true
 ```
-
-For range-notation and pre-release edge cases, see the
-[semver-advisor skill resources](../skills/semver-advisor/resources/range-notation.md).

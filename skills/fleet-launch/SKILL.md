@@ -61,7 +61,8 @@ script's header documents the key). Every fleet pick forks from the branch and e
 while the human's own `/start wt` still forks from the checkout's branch. A checkout ON the integration branch launches
 with a `WARN`: merges then fast-forward its tree and defer to the merge queue while it is dirty — check out the base.
 
-After the fleet, [`/epic-pr`](../epic-pr/SKILL.md) opens the PR from `branch` onto `base`. Sessions clear the fork keys
+After the fleet, `~/.claude/scripts/epic-pr.sh <EPIC-ID>` opens the PR from `branch` onto `base`, and `/pr-update <PR#>`
+writes its description. Sessions clear the fork keys
 of shipped members; `git config --get-regexp 'wt-source-branch'` lists any left by failed members (kept so a resume still
 lands on the epic) — unset them once those issues are resolved. A token whose epic has no prepared branch launches on the
 checkout's own branch with a WARN naming `/epic-prep <ID>`. `FLEET_PROMPT` still overrides the prompt; an override that
@@ -140,8 +141,9 @@ meters a 5h burst window and a weekly window, and they resolve so:
   n≤3 re-opens the bracket; `weekly` means rotate accounts, not shrink the fleet; `session` IS the 5h window under
   another name (resets on exact 5h boundaries) and routes as `5-hour`.
 
-Model/permission defaults follow `/auto`'s unattended-run prerequisites (`--model 'opus[1m]' --effort xhigh
---permission-mode auto` — `auto`, not `acceptEdits`, which stalls a background session at the first gated Bash prompt).
+Model, effort and permission-mode defaults are the script's own (added only for flags not already passed) and follow
+`/auto`'s unattended-run prerequisites (`skills/auto/references/launch-prereqs.md`): permission mode `auto`, not
+`acceptEdits`, which stalls a background session at the first gated Bash prompt.
 No `--autocompact`: the `loop-boundary` mod compacts each session to one boundary message when an iteration ends with an
 outcome line, so every iteration starts at the session floor (`mods/loop-boundary/README.md`); the launch refuses, exit 5,
 where `loop-boundary@alienfast-claude` is not enabled (`scripts/mod-enabled.sh`), unless an explicit `--autocompact` after

@@ -86,8 +86,7 @@ Specs are problem + outcomes + success criteria only — **no implementation pla
 ~/.claude/scripts/linear-create-child.sh --allow-planned --allow-unrouted ENG-100 ENG Planned "Add JWT refresh tokens" tmp/sub-issue-description.md
 
 # Set a blocking dependency: ENG-101 blocks ENG-102 (i.e. ENG-102 is blocked by ENG-101).
-# Use `-r blocks` with the blocker FIRST — the `blocked-by` enum value is broken in every
-# published linear-cli version through 0.3.27 (it sends "blockedBy", which the API rejects).
+# Use `-r blocks` with the blocker FIRST — `-r blocked-by` 400s (linear skill gotcha #10).
 linear-cli relations add ENG-101 ENG-102 -r blocks
 
 # Certify each created issue (read-merge-set — `issues update -l` alone would replace the label set)
@@ -111,7 +110,7 @@ linear-cli search issues "user database"
 ~/.claude/scripts/linear-deps-graph.sh --team ENG    # {nodes, edges} — filter with jq (linear skill gotcha #2); blocked chains: scripts/fleet-blockers.sh
 ```
 
-**Pro tip:** After creating tickets, establish dependencies directly with `linear-cli relations add <BLOCKER> <BLOCKED> -r blocks` (blocker first; the `blocked-by` enum is broken in every published version through 0.3.27).
+**Pro tip:** After creating tickets, establish dependencies directly with `linear-cli relations add <BLOCKER> <BLOCKED> -r blocks` (blocker first; `-r blocked-by` 400s — linear skill gotcha #10).
 
 ## Best Practices
 

@@ -46,7 +46,7 @@ A reflection step that drips low-value "lessons" into `CLAUDE.md`/rules **active
 
 ## Routing — where a lesson goes
 
-Per "Where Knowledge Goes" in `~/.claude/CLAUDE.md`. Target **shared config**; memory is not a destination — a
+Per `~/.claude/CLAUDE.md` § Knowledge routing. Target **shared config**; memory is not a destination — a
 generalizable lesson is team-worthy, so it belongs in committed config, and a non-generalizable note is `drop`.
 
 | Lesson shape | Destination |
@@ -147,7 +147,7 @@ Your job is to REJECT unless it clearly survives all of:
 1. Generalizable — this states a standing principle that will recur across sessions/people. Single-session frequency is NOT evidence of recurrence on its own. (You cannot see other sessions — judge the plausibility that the principle is durable; do not reject a sound general principle merely for lack of cross-session proof.)
 2. Not already covered — read <target file> and the related rules/standards/CLAUDE.md; quote anything that already says this. If covered, reject.
 3. Would actually have helped — the change, present beforehand, would have shortcut the friction (for reconcile: the contradiction is real and the fix matches CURRENT reality — read the code/scripts to confirm).
-4. Correct destination — per ~/.claude/CLAUDE.md "Where Knowledge Goes".
+4. Correct destination — per ~/.claude/CLAUDE.md § Knowledge routing.
 5. Claims about other skills hold — when the draft asserts how another skill, standard, or rule behaves, or prescribes an action another skill owns, READ those files (skills included — gate 2's read set stops at rules/standards/CLAUDE.md) and confirm every assertion. Reject, or return a `corrected_draft`, when a claim misstates the referenced behavior or would conflict with what that skill does. A rule stating a false fact about the workflow is worse than no rule.
 6. Quantified or enumerative claims about the codebase hold — a count, a universal, any characterization of a family. Verify by enumerating every member and checking each, never by sampling or trusting the draft's survey, and state the enumeration in your reason line. This gate and gate 7 are the only ones whose read set reaches application code, so for a type `add` candidate no other gate catches a false claim about the codebase. When the lesson survives but the claim does not, return a `corrected_draft` with the accurate enumeration rather than `drop` — this overrides the default-to-drop below, which governs doubt about the lesson, not a fixable claim.
 7. Impossibility and universal-negative claims hold — "no hook can be written", "nothing can reach X", "the only answers are A or B". The failure this gate exists for: a draft measured ONE mechanism's absence correctly and generalized to the capability's absence, so re-reading the measurement never surfaces the error. Name the capability, list the mechanisms that could satisfy it, and check each (read set reaches library and application code). When the enumeration cannot be closed, return a `corrected_draft` scoped to what was measured ("`beforeSend` cannot see a replay event") in place of the unscoped claim ("no hook can") — the default action here. A rule that forecloses a mechanism talks the next reader out of the correct solution.

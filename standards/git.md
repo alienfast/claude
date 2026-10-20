@@ -200,7 +200,8 @@ The documented contract of a skill is its grant. No other skill or phrasing crea
   a Linear issue.
 - `/fleet-sequence` is the same run-scoped grant for the issues it lists, merging into the sequence's integration branch
   (or the launch branch under `merge`); the runner pushes that branch and opens its one PR.
-- `/epic-pr` pushes one epic's integration branch by ref and opens its PR; it never merges the PR or moves the checkout.
+- `scripts/epic-pr.sh` pushes one epic's integration branch by ref and opens its PR; it never merges the PR or moves the
+  checkout. Running it is the grant for that one push.
 - `/keeper` commits and pushes, in the `~/.claude` repo only, the config changes it accepts, staged by name, never files
   it rejected or deferred. On the keeper's machine (`reflect.keeper` = `true`) that targets main and covers merging
   accepted proposal PRs; in contributor mode the grant is proposal-branch-only.

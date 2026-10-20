@@ -15,8 +15,7 @@ number or URL (§1).
 **The "before" you describe is what the base branch shipped (`origin/$BASE`, or `<mergeCommit>^1` for a PR already
 merged — §1) — never an intermediate branch commit.** A bug introduced and fixed within the same branch was never
 shipped: describe the net effect, not the intra-branch detour. Any "fixes / was broken / now works / adds" statement is
-implicitly a claim about the baseline — verify it against `origin/$BASE` (§4) before writing it. If a feature was added
-in one commit and removed in another, it is NOT in the PR description. Always verify features exist in `HEAD`.
+implicitly a claim about the baseline — verify it against `origin/$BASE` (§4) before writing it.
 
 ## Bash Command Rule
 
@@ -154,7 +153,7 @@ blob.
 #### Verify the feature exists in the final state
 
 For each area of apparent change: `git show HEAD:path/to/file.ts | grep -q "feature_name" && echo PRESENT || echo
-REMOVED`. **If a feature doesn't appear in the final state, DO NOT include it.** `./scripts/verify-feature.sh <path>
+REMOVED`. `./scripts/verify-feature.sh <path>
 "<pattern>"` wraps this (an empty pattern checks file existence); it reads the local `HEAD` only, so when targeting a PR
 by number use `git show <headRefOid>:<path>`. Worked examples: [resources/analysis-workflow.md](resources/analysis-workflow.md).
 

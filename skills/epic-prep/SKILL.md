@@ -11,7 +11,7 @@ effort: xhigh
 An epic-scoped fleet works one epic's graph and nothing else: `/fleet-launch epic:<ID>` dispatches `/loop /auto
 epic:<ID>`, every pick runs `next-candidates.sh --root <ID>`, and the epic ships as **one PR from an integration branch
 the fleet merges into as it goes**. This skill is the prep bookend — `/epic-prep` → `/fleet-launch` → `/fleet-status`
-(member burn-down) → `/fleet-retro` → `/epic-pr`.
+(member burn-down) → `/fleet-retro` → `~/.claude/scripts/epic-pr.sh`, then `/pr-update <PR#>`.
 
 It is [`/auto-prep`](../auto-prep/SKILL.md) with the pool cut to the graph, plus five things a team prep never needs:
 certifying members in dependency order, deciding what sits just outside the graph, promoting the whole graph together,
@@ -135,8 +135,8 @@ git merge-base --is-ancestor "$base" "$branch" || echo "WARN: $branch is behind 
 No checkout happens here or at launch — `fleet-launch.sh` never moves the main checkout; each session's `/auto` steers
 its picks onto the branch with a per-issue fork key ([`/fleet-launch`](../fleet-launch/SKILL.md) § Epic-scoped launch;
 `scripts/auto-fork-key.sh`'s header documents the key), so the human keeps the checkout on `base` or any other branch.
-After the fleet, [`/epic-pr`](../epic-pr/SKILL.md) opens the PR from `branch` onto `base` from what this prep and the
-launch recorded.
+After the fleet, `~/.claude/scripts/epic-pr.sh <EPIC-ID>` pushes `branch` by ref and opens the PR onto `base` from what
+this prep and the launch recorded (read its header; `--dry-run` previews), then `/pr-update <PR#>` writes the description.
 
 ### Step 7: Hard gate — every resolved member's code is on the branch
 
@@ -236,7 +236,7 @@ run, declined (holding the gate), terminal, nested epics closed by the sweep. Th
 batch, the critical path and any priority changes, and the audit's remaining `FOCUS` rows. When Step 8 found a deploy
 gate, say before the launch line that this epic will not ship as one PR, name the gates, and carry the operator's
 release-shape choice into the launch line. Then the launch line: `/fleet-launch` (bare) with the recommended count and
-duration, which term bound it, the integration branch and its base, and the post-fleet step (`/epic-pr`). Every Linear
+duration, which term bound it, the integration branch and its base, and the post-fleet step (`scripts/epic-pr.sh`, then `/pr-update`). Every Linear
 write is reversible — say so once.
 
 ## What this skill must NOT do

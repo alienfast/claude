@@ -150,6 +150,7 @@
       "/private/tmp"
     ]
   },
+  "model": "fable",
   "hooks": {
     "PreToolUse": [
       {
@@ -233,7 +234,6 @@
     "baseRef": "head"
   },
   "enabledPlugins": {
-    "typescript-lsp@claude-plugins-official": true,
     "effort-phase@alienfast-claude": true,
     "spawn-policy@alienfast-claude": true,
     "loop-boundary@alienfast-claude": true,
@@ -262,9 +262,8 @@
     }
   },
   "tui": "fullscreen",
+  "autoMemoryEnabled": false,
   "theme": "dark",
   "agentPushNotifEnabled": true,
-  "skipAutoPermissionPrompt": true,
-  "autoMemoryEnabled": false,
-  "model": "fable"
+  "skipAutoPermissionPrompt": true
 }

@@ -13,7 +13,7 @@ allowed-tools:
   - Bash(gh:*)
   - Bash(git:*)
   - Bash(linear-cli:*)
-  - Task
+  - Agent
   - Skill
   - AskUserQuestion
   - EnterWorktree
@@ -159,7 +159,7 @@ standard before delegating.
 
 #### Phase 2: Parallel Research (Independent Tasks)
 
-Launch ALL package research in a single parallel batch — one message with multiple Task calls, 10–20 `general-purpose`
+Launch ALL package research in a single parallel batch — one message with multiple Agent calls, 10–20 `general-purpose`
 agents. Never research packages sequentially. Depth follows the Phase 1.5 classification:
 
 - **MAJOR** — full research: changelogs, breaking changes, upgrade or migration guides.

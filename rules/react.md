@@ -14,7 +14,7 @@ paths:
 - **Composition**: Prefer over inheritance, compound patterns (Card.Header, Card.Body)
 - **Effect events**: `useEffectEvent` for values an effect reads but must not react to — keeps them out of the dependency array without suppressing the lint rule
 - **Imports**: Named imports only - `import { useState, useEffect } from 'react'`
-- **Legacy imports**: ALWAYS replace `import * as React from 'react'` and `import React from 'react'` with named imports
+- **Legacy imports**: replace `import * as React from 'react'` and `import React from 'react'` with named imports
 
 ## Naming Conventions
 

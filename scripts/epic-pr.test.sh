@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression suite for epic-pr.sh — the post-fleet resolver behind /epic-pr. Fixtures pin: the epic resolution order
+# Regression suite for epic-pr.sh — the post-fleet epic PR resolver. Fixtures pin: the epic resolution order
 # (argument, then the checked-out epic/* branch, then the recommendation's scope, then the one local epic/* branch) and
 # its two ASK exits (no candidate, several candidates); the base order (--base, recorded, config, checkout) and the
 # ASK when the checkout sits on the integration branch; the roster split — landed members in landing order, a

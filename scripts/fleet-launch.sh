@@ -40,8 +40,8 @@
 #               detached the checkout at the branch and set the checkout-wide key: that posture
 #               took the checkout away from its human for the fleet's duration and steered their
 #               interactive /start wt onto the epic branch too. After the fleet: open the epic's
-#               PR from `branch` onto `base` with /epic-pr (epic-pr.sh resolves the roster and runs
-#               integration-pr.sh, then /pr-update on the PR by number).
+#               PR from `branch` onto `base` with epic-pr.sh (it resolves the roster and runs
+#               integration-pr.sh); /pr-update on the PR by number writes the description.
 #               A token with no matching prepared
 #               branch launches on the checkout's own branch with a WARN — the human typed it.
 #   [backlog]   Let every session fall through to Backlog once nothing Planned/Todo is pickable
@@ -453,7 +453,7 @@ fi
 # main checkout stays where its human left it — a detach here (the posture until 2026-09-23) took the checkout
 # away for the fleet's duration and steered the human's own /start wt onto the epic branch as well.
 if [ -n "$scope_branch" ]; then
-  echo "Sessions fork from and merge into $scope_branch by ref (per-issue fork keys; the main checkout stays on ${checkout_branch:-its current HEAD}). After the fleet: /epic-pr opens the PR from $scope_branch onto ${scope_base:-<base>} and runs /pr-update on it."
+  echo "Sessions fork from and merge into $scope_branch by ref (per-issue fork keys; the main checkout stays on ${checkout_branch:-its current HEAD}). After the fleet: ~/.claude/scripts/epic-pr.sh opens the PR from $scope_branch onto ${scope_base:-<base>}; then /pr-update <PR#>."
 fi
 
 # The marker is rewritten on every launch: a stale deadline from a previous fleet would end every

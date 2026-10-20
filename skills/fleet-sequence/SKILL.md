@@ -63,9 +63,10 @@ runner holds is refused in any other list, and two `merge` sequences never share
 other's merges as its own landings). Whether to run two at once is the operator's call — `solo` work still wants the
 checkout's merge point and the check gate to itself.
 
-Model and permission defaults are `/fleet-launch`'s (`--model 'opus[1m]' --effort xhigh --permission-mode auto`, no
-`--autocompact` — the `loop-boundary` mod owns boundary compaction, and the launch refuses, exit 5, where it is not
-enabled unless an explicit `--autocompact` is passed); overrides go after `--` when calling the script directly.
+Model, effort and permission-mode defaults are `/fleet-launch`'s (the launch script's own, per
+`skills/auto/references/launch-prereqs.md`), with no `--autocompact` — the `loop-boundary` mod owns boundary compaction,
+and the launch refuses, exit 5, where it is not enabled unless an explicit `--autocompact` is passed; overrides go after
+`--` when calling the script directly.
 
 ## Behavior
 

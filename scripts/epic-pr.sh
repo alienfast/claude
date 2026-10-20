@@ -6,7 +6,8 @@
 # The post-fleet step /epic-prep and /fleet-launch both end on is `integration-pr.sh <branch> <base> <member IDs...>`,
 # whose every argument is already recorded somewhere — the recommendation /epic-prep wrote, the marker /fleet-launch
 # wrote, the branch name, Linear's graph — so nobody should have to type it. This resolves them and hands them to
-# integration-pr.sh; /epic-pr dispatches here and narrates, then runs /pr-update on the PR it reports.
+# integration-pr.sh; run it by hand after an epic fleet (/epic-prep and /fleet-launch name the step), then /pr-update on
+# the PR it reports.
 #
 # Resolution, first hit wins and is named in EPIC_SOURCE / BASE_SOURCE:
 #   epic    the argument; else the checkout's branch when it is `epic/<id>`; else the fleet marker's scope
