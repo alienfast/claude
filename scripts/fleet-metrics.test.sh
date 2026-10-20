@@ -187,6 +187,21 @@ cat > "$RATE_LIMITS_DIR/abc12345-0000.jsonl" <<'EOF'
 {"measured_at":"2026-08-04T11:40:00.000Z","windows":[{"kind":"five_hour","percentUsed":57,"resetsAt":"2026-08-04T15:00:00.000Z"},{"kind":"seven_day","percentUsed":13,"resetsAt":"2026-08-08T22:00:00.000Z"}]}
 {"measured_at":"2026-08-04T15:10:00.000Z","windows":[{"kind":"five_hour","percentUsed":4,"resetsAt":"2026-08-04T20:00:00.000Z"},{"kind":"seven_day","percentUsed":14,"resetsAt":"2026-08-08T22:00:00.000Z"}]}
 EOF
+# Other sessions on the same meter (2026-10-20: basefund's five-session fleet shared the account all night and the verdict
+# counted this fleet's four): another project's session read the 10:00 block before the 11:40 peak — counted, named by its
+# project, a worktree dir resolving to its main checkout — while one read the NEXT block and one read the same block on another
+# account (the row's `account`, in the shape mods/rate-limits writes), neither counted.
+cat > "$RATE_LIMITS_DIR/zz990001-0000.jsonl" <<'EOF'
+{"measured_at":"2026-08-04T11:00:00.000Z","windows":[{"kind":"five_hour","percentUsed":50,"resetsAt":"2026-08-04T15:00:00.000Z"},{"kind":"seven_day","percentUsed":12,"resetsAt":"2026-08-08T22:00:00.000Z"}]}
+EOF
+cat > "$RATE_LIMITS_DIR/zz990002-0000.jsonl" <<'EOF'
+{"measured_at":"2026-08-04T15:30:00.000Z","windows":[{"kind":"five_hour","percentUsed":9,"resetsAt":"2026-08-04T20:00:00.000Z"},{"kind":"seven_day","percentUsed":14,"resetsAt":"2026-08-08T22:00:00.000Z"}]}
+EOF
+cat > "$RATE_LIMITS_DIR/zz990003-0000.jsonl" <<'EOF'
+{"measured_at":"2026-08-04T11:10:00.000Z","account":"other@example.com","windows":[{"kind":"five_hour","percentUsed":3,"resetsAt":"2026-08-04T15:00:00.000Z"},{"kind":"seven_day","percentUsed":1,"resetsAt":"2026-08-08T22:00:00.000Z"}]}
+EOF
+mkdir -p "$WORK/projects/-Users-x-projects-otherproj--claude-worktrees-tt-9"
+printf '{"type":"user","timestamp":"2026-08-04T11:00:00Z","message":{"role":"user","content":"hi"}}\n' > "$WORK/projects/-Users-x-projects-otherproj--claude-worktrees-tt-9/zz990001-0000.jsonl"
 
 # ---- run ----
 JSON="$WORK/out.json"
@@ -225,9 +240,12 @@ ck_has "readings line"   "peak five_hour **57% used** at 2026-08-04T11:40:00.000
 # the 88 is the highest reading, but its block began at 05:00 and so carries five hours spent before the fleet: kept apart, never the peak
 ck "5h inherited reading" "88 2026-08-04T09:59:58.000Z abc12345" "$(q "' '.join(str(d['windows']['readings']['five_hour_inherited'][k]) for k in ('percent','at','run_key'))")"
 ck_has "inherited note"  "A higher 88% at 2026-08-04T09:59:58.000Z (\`abc12345\`) fell in a 5h block already running when the fleet started" "$MD"
-# the verdict: both fixture sessions were active at the 11:40 peak, so 57% splits to 28.5 each and the window fits three such
-ck "headroom verdict"    "2 28.5 3 1" "$(q "' '.join(str(d['windows']['headroom'][k]) for k in ('sessions_active','pct_per_session','fits_sessions','more_sessions'))")"
-ck_has "headroom verdict line" "**Headroom verdict** — at the peak reading (57% at 2026-08-04T11:40:00.000Z) 2 session(s) were active, ~28.5% of the 5h window each, so the window fits ~3 concurrent session(s) at this workload: **1 more session would have fit**." "$MD"
+# the verdict: both fixture sessions were active at the 11:40 peak and the other project's zz990001 had read the same block, so
+# 57% over 3 sessions and the 1.67h the block had run is 11.4% per session-hour — a whole block fits one such session, not three
+ck "headroom verdict"    "3 19.0 1 -2" "$(q "' '.join(str(d['windows']['headroom'][k]) for k in ('sessions_active','pct_per_session','fits_sessions','more_sessions'))")"
+ck "headroom: the fleet's own count, the block's run, the rate" "2 1.67 11.4" "$(q "' '.join(str(d['windows']['headroom'][k]) for k in ('fleet_sessions_active','block_elapsed_h','pct_per_session_hour'))")"
+ck "headroom: the other session named by its project" "[{'run_key': 'zz990001', 'project': 'otherproj'}]" "$(q "d['windows']['headroom']['other_sessions']")"
+ck_has "headroom verdict line" "**Headroom verdict** — at the peak reading (57% at 2026-08-04T11:40:00.000Z) the 5h block had run 1.67h of 5 and 3 session(s) were on the meter — 2 of this fleet and 1 other(s) on the same account: \`zz990001\` (otherproj) — burning ~11.4% of the window per session-hour, so a whole block fits ~1 concurrent session(s) at this workload: **2 too many: the window would have filled**." "$MD"
 
 # token attribution: msg_A counted ONCE (1000, not 2000) despite two rows; main = 1000+500+250.
 ck "main tokens dedup"  "1750"     "$(q "d['sessions'][0]['output_tokens']['main/claude-opus-5']")"
@@ -941,7 +959,7 @@ ck_has "md prov fresh share"    "Fresh share **100%**" "$MD11"
 ck_has "md prov creator"        "quality-review-bot (1)" "$MD11"
 ck_has "md trend section"       "## Cross-run trend" "$MD11"
 ck_has "md trend current mark"  " ←" "$MD11"
-ck_has "md tests line: a diff with no spec or story files is measured at net 0" "Tests per shipped issue: +0.0 rspec examples, +0.0 story exports (net declarations across 1 of 1 landed ships" "$MD11"
+ck_has "md tests line: a diff with no spec or story files is measured at net 0" "Tests per shipped issue: +0.0 rspec examples, +0.0 vitest tests, +0.0 story exports (net declarations across 1 of 1 landed ships" "$MD11"
 # History: the json + md runs above measured the SAME session set -> one row, not two (dedupe).
 ck "history dedupes rerun"  "1" "$(wc -l < "$CK11/tmp/fleet-metrics-history.jsonl" | tr -d ' ')"
 ck "history in json"        "1" "$(q11 "len(d['history'])")"
@@ -2055,6 +2073,33 @@ runh
 ck "holds: the hold itself is unchanged without the sibling ship" "10.1" "$(qh "[s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['held']['hours']")"
 ck_lacks "holds: ships outside the interval do not flag" "held 10.1h while siblings landed" "$MDH"
 cp "$FIXH/b2bb1003-0000.jsonl" "$WORK/projects/$MH/"
+# A hold whose every tick says Backlog had nothing pickable either is the pool running out, not a gate, and the sibling's
+# landing inside it is in-flight work finishing (2026-10-20: four such sessions, three false flags). The clause is printed only
+# under the `backlog` fallback, so the ticks prove the token on their own — the ledger, which the next launch clears, is not
+# consulted: the same ticks carrying the clause, the ledger untouched (it lacks the token) — the hours stand, the flag does not.
+sed 's/waiting for the Planned\/Todo column to drain\./0 Backlog candidate(s) wait behind the gate; backlog fallback is on but Backlog has nothing pickable either - wait._ waiting for the Planned\/Todo column to drain./' \
+  "$FIXH/1cc250ad-0000.jsonl" > "$WORK/projects/$MH/1cc250ad-0000.jsonl"
+runh
+ck "holds: empty-Backlog ticks counted"         "4 4"  "$(qh "' '.join(str([s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['held'][k]) for k in ('ticks','backlog_empty_ticks'))")"
+ck "holds: the hours stand when the pool ran out" "10.1" "$(qh "[s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['held']['hours']")"
+ck_lacks "holds: no mixed-launch flag when every tick said Backlog was empty" "held 10.1h while siblings landed" "$MDH"
+# The clause on only some ticks is a pool that ran out mid-hold and a gate before it: still flagged.
+python3 - "$FIXH/1cc250ad-0000.jsonl" "$WORK/projects/$MH/1cc250ad-0000.jsonl" <<'MK_PARTIAL'
+import sys
+clause = "backlog fallback is on but Backlog has nothing pickable either - "
+src, dest = sys.argv[1:3]
+out, done = [], False
+for line in open(src):
+    if "AUTO-CONTINUE: no pick" in line and not done:
+        line = line.replace("waiting for the Planned/Todo column to drain.", clause + "waiting for the Planned/Todo column to drain.", 1)
+        done = True
+    out.append(line)
+open(dest, "w").write("".join(out))
+MK_PARTIAL
+runh
+ck "holds: a partial clause count"              "4 1"  "$(qh "' '.join(str([s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['held'][k]) for k in ('ticks','backlog_empty_ticks'))")"
+ck_has "holds: the flag stays when only some ticks said Backlog was empty" "held 10.1h while siblings landed 1 ship(s)" "$MDH"
+cp "$FIXH/1cc250ad-0000.jsonl" "$WORK/projects/$MH/"
 # BLOCKED-HOLD: the same real ticks with the kind and the waiting clause swapped for the BLOCKED-HOLD contract's.
 sed -e 's/PLANNED-HOLD/BLOCKED-HOLD/g' -e 's/waiting for the Planned\/Todo column to drain\./waiting for a sibling to ship./g' \
   "$FIXH/1cc250ad-0000.jsonl" > "$WORK/projects/$MH/1cc250ad-0000.jsonl"
@@ -2303,7 +2348,7 @@ ck "owned block: the peak is the fleet's own 72"        "72 2026-10-14T04:15:05.
 ck "owned block: the launch-time 90 is inherited"       "90 2026-10-13T22:52:21.501Z" "$(q27 "' '.join(str(d['windows']['readings']['five_hour_inherited'][k]) for k in ('percent','at'))")"
 ck "owned block: verdict at the 72"                     "3 24.0 4 1" "$(q27 "' '.join(str(d['windows']['headroom'][k]) for k in ('sessions_active','pct_per_session','fits_sessions','more_sessions'))")"
 ck "owned block: the trend's 5h% is the 72"             "72" "$(q27 "[r for r in d['history'] if r['session_set']=='a6270002,af270001,e6270003'][0]['peak_five_hour_pct']")"
-ck_has "owned block: verdict line"                      "at the peak reading (72% at 2026-10-14T04:15:05.136Z) 3 session(s) were active, ~24.0% of the 5h window each, so the window fits ~4 concurrent session(s) at this workload: **1 more session would have fit**" "$MD27"
+ck_has "owned block: verdict line"                      "at the peak reading (72% at 2026-10-14T04:15:05.136Z) the 5h block had run 4.92h of 5 and 3 session(s) were on the meter — all this fleet's — burning ~4.88% of the window per session-hour, so a whole block fits ~4 concurrent session(s) at this workload: **1 more session would have fit**" "$MD27"
 run27 b7270004
 ck "inherited only: no five_hour peak"                  "None" "$(q27 "d['windows']['readings']['peaks'].get('five_hour')")"
 ck "inherited only: no verdict"                         "None" "$(q27 "d['windows']['headroom']")"
@@ -2356,6 +2401,7 @@ G29() { git -C "$CK29" -c user.email=t@t -c user.name=t "$@"; }
 git -C "$CK29" init -q 2>/dev/null
 printf 'RSpec.describe Foo do\n  it "old one" do\n  end\n  it "to remove" do\n  end\nend\n' > "$CK29/spec/foo_spec.rb"
 printf "export default { title: 'Foo' };\nexport const Base = {};\n" > "$CK29/Foo.stories.tsx"
+printf "import { it } from 'vitest'\nit('old', () => {})\n" > "$CK29/app/foo.test.ts"
 G29 add -A && G29 commit -q -m "init"
 G29 branch -M main
 G29 checkout -q -b bf-901
@@ -2363,6 +2409,9 @@ printf 'RSpec.describe Foo do\n  it "old one" do\n  end\n  it "new a" do\n  end\
 printf "export default { title: 'Foo/Renamed' };\nexport const Base = {};\nexport const A = {};\nexport const B = {};\n" > "$CK29/Foo.stories.tsx"
 printf 'class Foo\n  it "is not a spec"\nend\n' > "$CK29/app/foo.rb"
 printf "export default { title: 'Baz' };\n" > "$CK29/Baz.stories.ts"
+# vitest, in the shapes BFP's suite declares: six tests (plain, modifier, `.each(rows)(`, chained) replace the init file's one;
+# skip, todo, describe and a look-alike identifier never count. 2026-10-20: 16 BFP ships added 1,079 of these while the gauge read +0.0.
+printf "import { describe, it, test } from 'vitest'\ndescribe('foo', () => {\n  it('a', () => {})\n  test('b', () => {})\n  it.each([[1], [2]])('c %%i', () => {})\n  test.concurrent('d', () => {})\n  it.concurrent.each([[1]])('e', () => {})\n  it.only('f', () => {})\n  it.skip('g', () => {})\n  it.todo('h')\n  it_is_not('i')\n})\n" > "$CK29/app/foo.test.ts"
 G29 add -A && G29 commit -q -m "BF-901: widen the policy"
 G29 checkout -q main
 G29 merge --no-ff -q -m "Merge BF-901" bf-901
@@ -2391,26 +2440,28 @@ run29 a
 # BF-901: +3 `it` -1 `it` = +2 (it_behaves_like, the app/ file and `export default` are not declarations); BF-902: +1. BF-903 is unmeasured.
 ck "tests: rspec net"              "3"   "$(q29 "d['tests_per_shipped']['rspec_examples_net']")"
 ck "tests: story net"              "2"   "$(q29 "d['tests_per_shipped']['story_exports_net']")"
+# BF-901 vitest: six added, the init file's one removed = +5; BF-902 touches no test file.
+ck "tests: vitest net"             "5"   "$(q29 "d['tests_per_shipped']['vitest_tests_net']")"
 ck "tests: measured/unmeasured"    "2 1" "$(q29 "' '.join(str(d['tests_per_shipped'][k]) for k in ('measured_ships','unmeasured_ships'))")"
-ck "tests: per-shipped values"     "1.5 1.0" "$(q29 "' '.join(str(d['tests_per_shipped'][k]) for k in ('rspec_examples_per_shipped','story_exports_per_shipped'))")"
-ck "tests: headline row carries the fields" "1.5 1.0 3 2 2" "$(python3 -c "
+ck "tests: per-shipped values"     "1.5 2.5 1.0" "$(q29 "' '.join(str(d['tests_per_shipped'][k]) for k in ('rspec_examples_per_shipped','vitest_tests_per_shipped','story_exports_per_shipped'))")"
+ck "tests: headline row carries the fields" "1.5 2.5 1.0 3 5 2 2" "$(python3 -c "
 import json,sys
 r=[json.loads(l) for l in open(sys.argv[1])][-1]
-print(' '.join(str(r[k]) for k in ('rspec_examples_per_shipped','story_exports_per_shipped','rspec_examples_net','story_exports_net','measured_ships')))" "$H29")"
-ck_has "tests: report line"        "Tests per shipped issue: +1.5 rspec examples, +1.0 story exports (net declarations across 2 of 3 landed ships; previous fleet +1.0 / +0.5)" "$WORK/out29a.md"
-ck_has "tests: rising flag fires against the lower row" "- **Tests per shipped issue rose**: rspec +1.5 vs +1.0, stories +1.0 vs +0.5 — ships are adding tests where the issue sits rather than where the mechanism lives; read the project's layer contract and route the duplicate arms to /test-sweep" "$WORK/out29a.md"
-ck_has "tests: trend header columns" "| filed/ship | ex/ship | st/ship | fresh% |" "$WORK/out29a.md"
-# ex/ship and st/ship cells by header position, per trend row: this fleet, the earlier gauge fleet, and the pre-gauge row.
-ck "tests: trend cells by row" "+1.5,+1.0 +1.0,+0.5 -,-" "$(python3 -c "
+print(' '.join(str(r[k]) for k in ('rspec_examples_per_shipped','vitest_tests_per_shipped','story_exports_per_shipped','rspec_examples_net','vitest_tests_net','story_exports_net','measured_ships')))" "$H29")"
+ck_has "tests: report line"        "Tests per shipped issue: +1.5 rspec examples, +2.5 vitest tests, +1.0 story exports (net declarations across 2 of 3 landed ships; previous fleet +1.0 / - / +0.5)" "$WORK/out29a.md"
+ck_has "tests: rising flag fires against the lower row" "- **Tests per shipped issue rose**: rspec +1.5 vs +1.0, vitest +2.5 vs -, stories +1.0 vs +0.5 — ships are adding tests where the issue sits rather than where the mechanism lives; read the project's layer contract and route the duplicate arms to /test-sweep" "$WORK/out29a.md"
+ck_has "tests: trend header columns" "| filed/ship | ex/ship | vt/ship | st/ship | fresh% |" "$WORK/out29a.md"
+# ex/ship, vt/ship and st/ship cells by header position, per trend row: this fleet, the earlier gauge fleet, and the pre-gauge row.
+ck "tests: trend cells by row" "+1.5,+2.5,+1.0 +1.0,-,+0.5 -,-,-" "$(python3 -c "
 import sys
 cells = lambda l: [c.strip() for c in l.strip().strip('|').split('|')]
 lines = open(sys.argv[1], encoding='utf-8').read().splitlines()
 hdr = cells(next(l for l in lines if l.startswith('| fleet start')))
-ex, st = hdr.index('ex/ship'), hdr.index('st/ship')
+ex, vt, st = hdr.index('ex/ship'), hdr.index('vt/ship'), hdr.index('st/ship')
 row = lambda start: cells(next(l for l in lines if l.startswith('| ' + start)))
-print(' '.join(','.join((r[ex], r[st])) for r in (row(t) for t in (sys.argv[2], '2026-02-01', '2026-01-01'))))
+print(' '.join(','.join((r[ex], r[vt], r[st])) for r in (row(t) for t in (sys.argv[2], '2026-02-01', '2026-01-01'))))
 " "$WORK/out29a.md" "$(python3 -c "import json; print(json.load(open('$WORK/out29a.json'))['history'][-1]['fleet_start'][:10])")")"
-ck_has "tests: trend paragraph names the columns" "ex/ship and st/ship are the tests-per-shipped gauges" "$WORK/out29a.md"
+ck_has "tests: trend paragraph names the columns" "ex/ship, vt/ship and st/ship are the tests-per-shipped gauges" "$WORK/out29a.md"
 
 # A previous fleet that added MORE tests per ship: no flag, and the line still names it.
 cat > "$H29" <<'EOF'
@@ -2419,25 +2470,37 @@ cat > "$H29" <<'EOF'
 EOF
 run29 b
 ck_lacks "tests: no flag when the previous fleet was higher" "Tests per shipped issue rose" "$WORK/out29b.md"
-ck_has   "tests: previous fleet shown on the line" "previous fleet +9.0 / +9.0)" "$WORK/out29b.md"
+ck_has   "tests: previous fleet shown on the line" "previous fleet +9.0 / - / +9.0)" "$WORK/out29b.md"
 # Either value rising is enough: rspec falls but stories rise against 0.5, then the reverse.
 cat > "$H29" <<'EOF'
 {"fleet_start": "2026-02-01T00:00:00Z", "session_set": "old00002", "shipped": 4, "sessions": 1, "rspec_examples_per_shipped": 9.0, "story_exports_per_shipped": 0.5}
 EOF
 run29 c
-ck_has   "tests: one rising value flags" "rspec +1.5 vs +9.0, stories +1.0 vs +0.5" "$WORK/out29c.md"
+ck_has   "tests: one rising value flags" "rspec +1.5 vs +9.0, vitest +2.5 vs -, stories +1.0 vs +0.5" "$WORK/out29c.md"
 cat > "$H29" <<'EOF'
 {"fleet_start": "2026-02-01T00:00:00Z", "session_set": "old00002", "shipped": 4, "sessions": 1, "rspec_examples_per_shipped": 0.5, "story_exports_per_shipped": 9.0}
 EOF
 run29 e
-ck_has   "tests: the rspec value rising alone flags" "rspec +1.5 vs +0.5, stories +1.0 vs +9.0" "$WORK/out29e.md"
+ck_has   "tests: the rspec value rising alone flags" "rspec +1.5 vs +0.5, vitest +2.5 vs -, stories +1.0 vs +9.0" "$WORK/out29e.md"
+cat > "$H29" <<'EOF'
+{"fleet_start": "2026-02-01T00:00:00Z", "session_set": "old00002", "shipped": 4, "sessions": 1, "rspec_examples_per_shipped": 9.0, "vitest_tests_per_shipped": 0.5, "story_exports_per_shipped": 9.0}
+EOF
+run29 f
+ck_has   "tests: the vitest value rising alone flags" "rspec +1.5 vs +9.0, vitest +2.5 vs +0.5, stories +1.0 vs +9.0" "$WORK/out29f.md"
+# A previous row carrying only the vitest field is still the previous fleet, and a higher value there is no flag.
+cat > "$H29" <<'EOF'
+{"fleet_start": "2026-02-01T00:00:00Z", "session_set": "old00002", "shipped": 4, "sessions": 1, "vitest_tests_per_shipped": 9.0}
+EOF
+run29 g
+ck_lacks "tests: a vitest-only previous row does not flag" "Tests per shipped issue rose" "$WORK/out29g.md"
+ck_has   "tests: a vitest-only previous row prints on the line" "previous fleet - / +9.0 / -)" "$WORK/out29g.md"
 # Only pre-gauge rows: nothing to compare against.
 cat > "$H29" <<'EOF'
 {"fleet_start": "2026-01-01T00:00:00Z", "session_set": "old00001", "shipped": 5, "sessions": 1}
 EOF
 run29 d
 ck_lacks "tests: no flag without a previous row carrying the field" "Tests per shipped issue rose" "$WORK/out29d.md"
-ck_has   "tests: unavailable previous prints dashes" "previous fleet - / -)" "$WORK/out29d.md"
+ck_has   "tests: unavailable previous prints dashes" "previous fleet - / - / -)" "$WORK/out29d.md"
 
 # Nothing measurable: a ship with no commit anywhere.
 CK29N="$WORK/ck29n"; mkdir -p "$CK29N/tmp"
@@ -2460,7 +2523,7 @@ M29M="$(mk29 "$CK29M")"; mkdir -p "$WORK/projects/$M29M"
 echo '{"status": "drained", "reason": "deadline", "shipped": ["BF-960"], "canceled": [], "skipped": [], "failed": []}' > "$CK29M/tmp/auto-state-29000003.json"
 sed 's/msg_t29/msg_t29m/' "$WORK/projects/$M29/29000001-0000.jsonl" > "$WORK/projects/$M29M/29000003-0000.jsonl"
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK29M" --sessions 29000003 > "$WORK/out29m.md" 2>&1
-ck_has "tests: a net removal keeps its sign" "Tests per shipped issue: -2.0 rspec examples, +0.0 story exports (net declarations across 1 of 1 landed ships" "$WORK/out29m.md"
+ck_has "tests: a net removal keeps its sign" "Tests per shipped issue: -2.0 rspec examples, +0.0 vitest tests, +0.0 story exports (net declarations across 1 of 1 landed ships" "$WORK/out29m.md"
 
 echo
 echo "$PASS passed / $FAIL failed / $SKIP skipped"

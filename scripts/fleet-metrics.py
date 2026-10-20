@@ -151,6 +151,8 @@ TERMINAL_TAG = re.compile(r"^\s*(NO-CANDIDATES|AUTO-HALTED):", re.M)
 # hold writes no ledger status, so this line is the only trace of one. Line-anchored for the reason TERMINAL_TAG is; the kind
 # rides after the dash on the same line (an epic-scoped run prefixes `epic <ID>: `).
 HOLD_TICK = re.compile(r"^[ \t]*AUTO-CONTINUE: no pick\b[^\n]*?(PLANNED-HOLD|BLOCKED-HOLD)", re.M)
+# next-candidates.sh's clause under --backlog-fallback when Backlog is as empty as the gated column: the pool ran out.
+BACKLOG_EMPTY_TICK = re.compile(r"backlog fallback is on but Backlog has nothing pickable either")
 # Every other way an iteration ends: a pick or ship (`AUTO-CONTINUE: <ID> …`, or the bare tag line — a session can end on its
 # closing prose with no AUTO-CONTINUE line, as 1cc250ad did after BF-2131), a halt, a drain. These close a hold interval.
 OUTCOME_LINE = re.compile(
@@ -596,7 +598,7 @@ def scan_transcript(path, agg, agent_type="main", description=""):
                 if t and emitted and agent_type == "main" and not r.get("isSidechain"):
                     holds = HOLD_TICK.findall(body)
                     if holds:
-                        agg["hold_ticks"].append((t, holds[-1]))
+                        agg["hold_ticks"].append((t, holds[-1], bool(BACKLOG_EMPTY_TICK.search(body))))
                     elif OUTCOME_LINE.search(body):
                         agg["outcome_times"].append(t)
                 for kind in LIMIT_HIT.findall(body):
@@ -768,9 +770,10 @@ def hold_gauge(agg, deadline):
     landed nine issues, and no gauge fired. An interval opens at the iteration that emitted the first tick of a run of ticks
     and closes where the next iteration begins after the run's last tick, once any other iteration-ending outcome line
     follows; an interval nothing closes runs to the session's last activity. Every interval is clipped at the fleet deadline,
-    past which a quiet session is wound down rather than holding. Returns hours, tick count, ticks per kind, and the intervals."""
+    past which a quiet session is wound down rather than holding. Returns hours, tick count, ticks per kind, how many ticks said
+    Backlog had nothing pickable either (the `backlog` fallback's own clause — the pool ran out), and the intervals."""
     ticks = sorted(agg["hold_ticks"])
-    events = sorted([(t, 0, None) for t in agg["outcome_times"]] + [(t, 1, kind) for t, kind in ticks])
+    events = sorted([(t, 0, None) for t in agg["outcome_times"]] + [(t, 1, (kind, empty)) for t, kind, empty in ticks])
     # The firing, not `turn_openers`: mods/loop-boundary injects a user record right after every iteration ends, which would close
     # an interval seconds after its last tick instead of where the next iteration begins.
     openers = sorted(agg["loop_starts"])
@@ -782,7 +785,7 @@ def hold_gauge(agg, deadline):
                 i = bisect_right(openers, t)
                 start = openers[i - 1] if i and (prev_outcome is None or openers[i - 1] > prev_outcome) else t
                 cur = [start, None, []]
-            cur[2].append((t, kind))
+            cur[2].append((t, *kind))
         else:
             prev_outcome = t
             if cur is not None:
@@ -793,7 +796,7 @@ def hold_gauge(agg, deadline):
     if cur is not None:
         cur[1] = max(agg["last"] or cur[2][-1][0], cur[2][-1][0])
         spans.append(cur)
-    intervals, kinds, n_ticks, seconds = [], Counter(), 0, 0.0
+    intervals, kinds, n_ticks, n_empty, seconds = [], Counter(), 0, 0, 0.0
     for start, end, span_ticks in spans:
         if deadline is not None:
             end = min(end, deadline)
@@ -801,11 +804,13 @@ def hold_gauge(agg, deadline):
             continue
         intervals.append((start, end))
         seconds += (end - start).total_seconds()
-        for tick_t, kind in span_ticks:
+        for tick_t, kind, empty in span_ticks:
             if tick_t <= end:
                 n_ticks += 1
+                n_empty += empty
                 kinds[kind] += 1
-    return {"hours": seconds / 3600, "ticks": n_ticks, "kinds": dict(kinds), "intervals": intervals}
+    return {"hours": seconds / 3600, "ticks": n_ticks, "backlog_empty_ticks": n_empty, "kinds": dict(kinds),
+            "intervals": intervals}
 
 
 def new_agg():
@@ -826,7 +831,7 @@ def new_agg():
         # final `noop: true` wakeup with no dispatch after the last landing is a HOLD, which is how
         # the pool-exhausted gauge admits a session that died before it could write `drained`.
         "last_wakeup": None, "last_agent_dispatch": None,
-        # Main-loop `AUTO-CONTINUE: no pick` hold ticks as (time, PLANNED-HOLD|BLOCKED-HOLD), the time of every other
+        # Main-loop `AUTO-CONTINUE: no pick` hold ticks as (time, PLANNED-HOLD|BLOCKED-HOLD, Backlog empty too), the time of every other
         # iteration-ending outcome line, and each `/loop /auto` firing — the inputs to hold_gauge.
         "hold_ticks": [], "outcome_times": [], "loop_starts": [],
         # name -> subagent_type from this session's own Agent tool_use inputs, and how many
@@ -1346,8 +1351,9 @@ def boundary_compactions(checkout, run_key):
 
 
 def rate_limit_peaks(run_key):
-    """The highest reading of each window in a session's mods/rate-limits history, with when it was taken, plus every five_hour
-    reading with the start of the 5h block it fell in (its resetsAt less five hours); None without one."""
+    """The highest reading of each window in a session's mods/rate-limits history, with when it was taken and the account it
+    metered (the row's `account`, absent before the mod recorded one), plus every five_hour reading with its resetsAt and the
+    start of the 5h block it fell in (that resetsAt less five hours); None without one."""
     peaks, five_hour, n = {}, [], 0
     for p in sorted(RATE_LIMITS_DIR.glob(f"{run_key}*.jsonl")):
         try:
@@ -1365,10 +1371,11 @@ def rate_limit_peaks(run_key):
                 if not isinstance(kind, str) or not isinstance(pct, (int, float)):
                     continue
                 if kind not in peaks or pct > peaks[kind]["percent"]:
-                    peaks[kind] = {"percent": pct, "at": row.get("measured_at")}
+                    peaks[kind] = {"percent": pct, "at": row.get("measured_at"), "account": row.get("account")}
                 if kind == "five_hour":
                     reset = ts(w.get("resetsAt"))
-                    five_hour.append({"percent": pct, "at": row.get("measured_at"),
+                    five_hour.append({"percent": pct, "at": row.get("measured_at"), "account": row.get("account"),
+                                      "resets_at": w.get("resetsAt"),
                                       "block_start": reset - timedelta(hours=5) if reset else None})
     return {"readings": n, "peaks": peaks, "five_hour": five_hour} if n else None
 
@@ -1394,7 +1401,8 @@ def fleet_rate_limit_peaks(sessions, fleet_first):
             own = bool(fleet_first and r["block_start"] and r["block_start"] >= fleet_first)
             best = owned if own else inherited
             if best is None or r["percent"] > best["percent"]:
-                rec = {"percent": r["percent"], "at": r["at"], "run_key": key}
+                rec = {"percent": r["percent"], "at": r["at"], "run_key": key, "account": r.get("account"),
+                       "resets_at": r.get("resets_at")}
                 if own:
                     owned = rec
                 else:
@@ -1407,20 +1415,69 @@ def fleet_rate_limit_peaks(sessions, fleet_first):
             "five_hour_inherited": inherited}
 
 
+def project_label(run_key):
+    """The project a session's transcript lives under: the encoded project dir's last path segment, a worktree's shown as its
+    main checkout; None when no transcript is found."""
+    for p in PROJ.glob(f"*/{run_key}*.jsonl"):
+        name = p.parent.name.split("--claude-worktrees-")[0]
+        return name.rsplit("-projects-", 1)[1] if "-projects-" in name else name.lstrip("-")
+    return None
+
+
+def meter_sessions_in_block(block_start, account, until, exclude):
+    """Sessions outside `exclude` whose mods/rate-limits history read `account`'s five_hour meter inside the 5h block beginning
+    at `block_start`, at or before `until`: the other sessions on the same meter when a reading was taken. The machine's other
+    fleets and interactive sessions are here, and a fleet's own scope never admits them."""
+    found = []
+    for p in sorted(RATE_LIMITS_DIR.glob("*.jsonl")):
+        key = p.stem[:8]
+        if key in exclude or key in found:
+            continue
+        try:
+            lines = p.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            at = ts(row.get("measured_at"))
+            if not at or at > until or row.get("account") != account:
+                continue
+            resets = [ts(w.get("resetsAt")) for w in row.get("windows") or [] if w.get("kind") == "five_hour"]
+            if any(r and r - timedelta(hours=5) == block_start for r in resets):
+                found.append(key)
+                break
+    return found
+
+
 def headroom_verdict(sessions, fleet_rl):
-    """How many sessions the 5h window fits at this workload: the peak five_hour reading over the sessions active when it was
-    taken. The meter is account-wide, so the share per session is the peak over that concurrency, and the fit assumes burn scales
-    with it. None without a non-zero reading."""
+    """How many sessions a whole 5h block fits at this workload, from the peak five_hour reading. The block had run only part
+    of its five hours when the reading was taken, and every session on that account's meter in the block spent into it — this
+    fleet's active at the instant, plus any other session (another project's fleet, an interactive one) whose history read the
+    same account in the same block before it — so the reading over those session-hours is the burn per session-hour, and a
+    whole block fits 100 / (5 x that). Measured 2026-10-20: a 95% reading 2.4h into a block, with a 5-session basefund fleet
+    on the same account, read as "4 sessions, exactly at capacity" when 9 were spending and the block was half run.
+    None without a non-zero reading."""
     pk = (fleet_rl or {}).get("peaks", {}).get("five_hour")
     if not pk or not pk.get("percent"):
         return None
-    at = ts(pk.get("at"))
-    active = sum(1 for s in sessions if at and s["agg"]["first"] and s["agg"]["last"]
-                 and s["agg"]["first"] <= at <= s["agg"]["last"])
-    n = active or len(sessions)
-    share = pk["percent"] / n
-    fits = int(100 // share)
-    return {"at": pk.get("at"), "five_hour_pct": pk["percent"], "sessions_active": n, "pct_per_session": round(share, 1),
+    at, reset = ts(pk.get("at")), ts(pk.get("resets_at"))
+    block_start = reset - timedelta(hours=5) if reset else None
+    elapsed_h = (at - block_start).total_seconds() / 3600 if at and block_start else None
+    if not elapsed_h or elapsed_h <= 0:
+        return None
+    fleet_active = sum(1 for s in sessions if s["agg"]["first"] and s["agg"]["last"]
+                       and s["agg"]["first"] <= at <= s["agg"]["last"]) or len(sessions)
+    others = meter_sessions_in_block(block_start, pk.get("account"), at, {s["run_key"] for s in sessions})
+    n = fleet_active + len(others)
+    per_session_hour = pk["percent"] / (n * elapsed_h)
+    fits = int(100 // (per_session_hour * 5))
+    return {"at": pk.get("at"), "five_hour_pct": pk["percent"], "account": pk.get("account"),
+            "block_elapsed_h": round(elapsed_h, 2), "sessions_active": n, "fleet_sessions_active": fleet_active,
+            "other_sessions": [{"run_key": k, "project": project_label(k)} for k in others],
+            "pct_per_session": round(pk["percent"] / n, 1), "pct_per_session_hour": round(per_session_hour, 2),
             "fits_sessions": fits, "more_sessions": fits - n}
 
 
@@ -1691,22 +1748,26 @@ def is_merge_subject(issue, subject):
 
 
 SPEC_FILE = re.compile(r"(?:^|/)spec/(?:.+/)?[^/]+_spec\.rb$")
+VITEST_FILE = re.compile(r"\.test\.[cm]?[jt]sx?$")
 STORY_FILE = re.compile(r"\.stories\.tsx?$")
 # `\b` after the keyword is what keeps `it_behaves_like` out: a declaration count, so shared-example expansion is not counted.
 SPEC_DECL = re.compile(r"[+-]\s*(?:it|specify|example|scenario)\b")
+# `it(`/`test(` with any modifier chain (`it.each(rows)(`, `test.concurrent(`); a chain naming skip or todo declares no test.
+VITEST_DECL = re.compile(r"[+-]\s*(?:it|test)(?P<mods>(?:\.\w+(?:\([^()]*\))?)*)\(")
 STORY_DECL = re.compile(r"[+-]export const \w+")
 DIFF_FLAGS = ["--no-color", "--no-ext-diff", "--no-renames", "--src-prefix=a/", "--dst-prefix=b/", "-U0"]
 
 
 def count_declarations(diff_text):
-    """(rspec examples, story exports) net of removals over a unified diff, from files that can declare them."""
-    rspec = story = 0
+    """(rspec examples, vitest tests, story exports) net of removals over a unified diff, from files that can declare them."""
+    rspec = vitest = story = 0
     kind, in_hunk = None, False
     for line in diff_text.splitlines():
         if line.startswith("diff --git "):
             m = re.match(r"diff --git a/(.+) b/\1$", line)
             path = m.group(1) if m else ""
-            kind = "rspec" if SPEC_FILE.search(path) else "story" if STORY_FILE.search(path) else None
+            kind = ("rspec" if SPEC_FILE.search(path) else "vitest" if VITEST_FILE.search(path)
+                    else "story" if STORY_FILE.search(path) else None)
             in_hunk = False
         elif line.startswith("@@"):
             in_hunk = True
@@ -1714,18 +1775,22 @@ def count_declarations(diff_text):
             sign = 1 if line[0] == "+" else -1
             if kind == "rspec" and SPEC_DECL.match(line):
                 rspec += sign
+            elif kind == "vitest":
+                m = VITEST_DECL.match(line)
+                if m and not re.search(r"\.(?:skip|todo)\b", m.group("mods")):
+                    vitest += sign
             elif kind == "story" and STORY_DECL.match(line):
                 story += sign
-    return rspec, story
+    return rspec, vitest, story
 
 
 def landed_declarations(checkout, landing):
-    """Net (rspec examples, story exports) one landing added, or None when it cannot be measured. A merge commit's
-    change is its diff against the first parent (the branch merged INTO); fast-forward commits each stand alone."""
+    """Net (rspec examples, vitest tests, story exports) one landing added, or None when it cannot be measured. A merge
+    commit's change is its diff against the first parent (the branch merged INTO); fast-forward commits each stand alone."""
     if not landing or not landing[1]:
         return None
     kind, shas = landing
-    rspec = story = 0
+    rspec = vitest = story = 0
     for sha in shas:
         cmd = ["diff", *DIFF_FLAGS, f"{sha}^1", sha] if kind == "merge" else ["show", "--format=", *DIFF_FLAGS, sha]
         try:
@@ -1735,29 +1800,33 @@ def landed_declarations(checkout, landing):
             return None
         if proc.returncode != 0:
             return None
-        r, st = count_declarations(proc.stdout)
+        r, vt, st = count_declarations(proc.stdout)
         rspec += r
+        vitest += vt
         story += st
-    return rspec, story
+    return rspec, vitest, story
 
 
 def tests_per_shipped(checkout, merged, shipped):
     """Net test declarations the fleet's landed ships added, per measured ship. A static count over each ship's landed
     diff because the baseline cache holds only trees a session measured, while every ship leaves a diff."""
-    rspec = story = measured = 0
+    rspec = vitest = story = measured = 0
     for issue in sorted(shipped):
         counts = landed_declarations(checkout, (merged.get(issue) or {}).get("landing"))
         if counts is None:
             continue
         measured += 1
         rspec += counts[0]
-        story += counts[1]
+        vitest += counts[1]
+        story += counts[2]
     return {
         "rspec_examples_net": rspec,
+        "vitest_tests_net": vitest,
         "story_exports_net": story,
         "measured_ships": measured,
         "unmeasured_ships": len(shipped) - measured,
         "rspec_examples_per_shipped": round(rspec / measured, 1) if measured else None,
+        "vitest_tests_per_shipped": round(vitest / measured, 1) if measured else None,
         "story_exports_per_shipped": round(story / measured, 1) if measured else None,
     }
 
@@ -2410,9 +2479,11 @@ def main():
         "ctx_share_ge200k": round(ctx_ge200_share, 3) if ctx_ge200_share is not None else None,
         "filed_per_shipped": filed_per_shipped,
         "rspec_examples_net": tests["rspec_examples_net"],
+        "vitest_tests_net": tests["vitest_tests_net"],
         "story_exports_net": tests["story_exports_net"],
         "measured_ships": tests["measured_ships"],
         "rspec_examples_per_shipped": tests["rspec_examples_per_shipped"],
+        "vitest_tests_per_shipped": tests["vitest_tests_per_shipped"],
         "story_exports_per_shipped": tests["story_exports_per_shipped"],
         "fresh_shipped_share": fresh_share,
         "pool_exhausted_h": pool_exhausted_h,
@@ -2522,8 +2593,10 @@ def main():
     prev_tests = next((r for r in reversed(history)
                        if r.get("session_set") != headline["session_set"]
                        and (r.get("rspec_examples_per_shipped") is not None
+                            or r.get("vitest_tests_per_shipped") is not None
                             or r.get("story_exports_per_shipped") is not None)), None)
     prev_ex = prev_tests.get("rspec_examples_per_shipped") if prev_tests else None
+    prev_vt = prev_tests.get("vitest_tests_per_shipped") if prev_tests else None
     prev_st = prev_tests.get("story_exports_per_shipped") if prev_tests else None
     burn_rate_all = round(sum(fleet_tokens.values()) / session_hours) if session_hours else None
     stall_groups = quota_stalls(sessions)
@@ -2592,6 +2665,7 @@ def main():
                 "throttle": throttle.get(s["run_key"]),
                 "held": {
                     "hours": round(holds[s["run_key"]]["hours"], 2), "ticks": holds[s["run_key"]]["ticks"],
+                    "backlog_empty_ticks": holds[s["run_key"]]["backlog_empty_ticks"],
                     "kinds": holds[s["run_key"]]["kinds"],
                     "in_idle_tail_h": round(holds[s["run_key"]]["in_idle_tail_h"], 2),
                     "intervals": [{"start": f"{lo:%Y-%m-%dT%H:%M:%SZ}", "end": f"{hi:%Y-%m-%dT%H:%M:%SZ}"}
@@ -2907,9 +2981,10 @@ def main():
 
     if tests["measured_ships"]:
         tests_line = (f"Tests per shipped issue: {signed_one(tests['rspec_examples_per_shipped'])} rspec examples, "
+                      f"{signed_one(tests['vitest_tests_per_shipped'])} vitest tests, "
                       f"{signed_one(tests['story_exports_per_shipped'])} story exports (net declarations across "
                       f"{tests['measured_ships']} of {len(all_shipped)} landed ships; previous fleet "
-                      f"{signed_one(prev_ex)} / {signed_one(prev_st)})")
+                      f"{signed_one(prev_ex)} / {signed_one(prev_vt)} / {signed_one(prev_st)})")
     elif all_shipped:
         tests_line = (f"Tests per shipped issue: nothing could be measured — none of the {len(all_shipped)} shipped issue(s) "
                       f"has a landing commit in this checkout's history, or git was unavailable")
@@ -3073,7 +3148,10 @@ def main():
     if fleet_rl:
         def reading(kind):
             pk = fleet_rl["peaks"].get(kind)
-            return f"**{pk['percent']}% used** at {pk.get('at') or '?'} (`{pk['run_key']}`)" if pk else "no reading"
+            if not pk:
+                return "no reading"
+            return (f"**{pk['percent']}% used** at {pk.get('at') or '?'} (`{pk['run_key']}`)"
+                    + (f" on `{pk['account']}`" if pk.get("account") else ""))
         inh = fleet_rl.get("five_hour_inherited")
         lead = "A higher" if fleet_rl["peaks"].get("five_hour") else "The highest reading,"
         inherited_note = (f" {lead} {inh['percent']}% at {inh.get('at') or '?'} (`{inh['run_key']}`) fell in a 5h block already "
@@ -3093,10 +3171,17 @@ def main():
             verdict = (f"**{more} more session{'s' if more != 1 else ''} would have fit**" if more > 0 else
                        f"**{-more} too many: the window would have filled**" if more < 0 else
                        "**exactly at capacity — no room for another**")
-            print(f"**Headroom verdict** — at the peak reading ({hv['five_hour_pct']}% at {hv['at']}) {hv['sessions_active']} "
-                  f"session(s) were active, ~{hv['pct_per_session']}% of the 5h window each, so the window fits ~{hv['fits_sessions']} "
-                  f"concurrent session(s) at this workload: {verdict}. The meter is account-wide (the operator's own sessions "
-                  f"count against it), the share assumes burn scales with the session count, and a reading moves only when "
+            others = hv["other_sessions"]
+            who = ("all this fleet's" if not others else
+                   f"{hv['fleet_sessions_active']} of this fleet and {len(others)} other(s) on the same account: "
+                   + ", ".join(f"`{o['run_key']}` ({o['project'] or 'project unknown'})" for o in others))
+            print(f"**Headroom verdict** — at the peak reading ({hv['five_hour_pct']}% at {hv['at']}"
+                  f"{', on `' + hv['account'] + '`' if hv.get('account') else ''}) the 5h block had run "
+                  f"{hv['block_elapsed_h']}h of 5 and {hv['sessions_active']} session(s) were on the meter — {who} — burning "
+                  f"~{hv['pct_per_session_hour']}% of the window per session-hour, so a whole block fits ~{hv['fits_sessions']} "
+                  f"concurrent session(s) at this workload: {verdict}. The meter is account-wide and the count reads "
+                  f"mods/rate-limits histories, so a session that kept none is invisible to it; the share assumes burn scales "
+                  f"with the session count, and a reading moves only when "
                   f"the window moves a whole point — so take the fit as a bracket of one, not a count to the session.\n")
     else:
         print("**Window readings** — none: no session kept a mods/rate-limits history (`~/.claude/local/rate-limits/"
@@ -3190,9 +3275,9 @@ def main():
         def pct(v):
             return f"{round(100 * v)}%" if v is not None else "-"
         print("| fleet start | n | hours | shipped | $/issue | ktok/issue | $/Mtok out | sub-final% | "
-              "cycles | find/rev | C+H/rev | plan% | ctx>=200k% | filed/ship | ex/ship | st/ship | fresh% | idle% | thr% | hold% | rewr% | "
-              "5h% |")
-        print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+              "cycles | find/rev | C+H/rev | plan% | ctx>=200k% | filed/ship | ex/ship | vt/ship | st/ship | fresh% | idle% | "
+              "thr% | hold% | rewr% | 5h% |")
+        print("|" + "---|" * 23)
         for r in history[-6:]:
             mark = " ←" if r.get("session_set") == headline["session_set"] and not args.all else ""
             fs = (r.get("fleet_start") or "?")[:16].replace("T", " ")
@@ -3204,7 +3289,8 @@ def main():
                   f"{cell(r.get('avg_cycles'))} | {cell(r.get('findings_per_review'))} | "
                   f"{cell(r.get('crit_high_per_review'))} | {pct(r.get('plan_origin_share'))} | "
                   f"{pct(r.get('ctx_share_ge200k'))} | {cell(r.get('filed_per_shipped'))} | "
-                  f"{signed_one(r.get('rspec_examples_per_shipped'))} | {signed_one(r.get('story_exports_per_shipped'))} | "
+                  f"{signed_one(r.get('rspec_examples_per_shipped'))} | {signed_one(r.get('vitest_tests_per_shipped'))} | "
+                  f"{signed_one(r.get('story_exports_per_shipped'))} | "
                   f"{pct(r.get('fresh_shipped_share'))} | {pct(r.get('idle_tail_share'))} | "
                   f"{pct(r.get('throttle_share'))} | {pct(r.get('hold_share'))} | {pct(r.get('rewritten_request_share'))} | "
                   f"{cell(r.get('peak_five_hour_pct'), '{}%')} |")
@@ -3215,8 +3301,9 @@ def main():
               "of work (ctx>=200k% names the driver — the loop-boundary lever since 2026-10-09, the autocompact cap before). sub-final% is the share of "
               "subagent messages whose final usage row was written: below 100% that row's ktok/issue is a "
               "floor and its $/Mtok out a ceiling, and a `-` is a row measured before the gauge existed. "
-              "ex/ship and st/ship are the tests-per-shipped gauges: the net rspec examples and story exports the fleet's landed "
-              "ships added, per measured ship, and a `-` is a row recorded before the gauge existed. "
+              "ex/ship, vt/ship and st/ship are the tests-per-shipped gauges: the net rspec examples, vitest tests and story "
+              "exports the fleet's landed ships added, per measured ship, and a `-` is a row recorded before the gauge (or that "
+              "column) existed. "
               "fresh% is the treadmill "
               "gauge: the share of shipped issues created during or within 7 days before the run. "
               "idle% is the pool-exhausted gauge: session-hours sessions sat on an empty or gated pool "
@@ -3338,9 +3425,14 @@ def main():
                      f"{ed['sibling_ships']} issue(s) they picked after this drain — not forfeited capacity; the cost "
                      f"is at most the wait on those picks (compare each one's Linear createdAt with the drain time)."))
         # The mid-run hold: >=1h in PLANNED-HOLD / BLOCKED-HOLD while a sibling landed ships inside the hold intervals. A fleet
-        # launched with mixed `backlog` tokens produces it, and neither idle% nor the drained-early flag can see it.
+        # launched with mixed `backlog` tokens produces it, and neither idle% nor the drained-early flag can see it. Not a hold
+        # whose every tick said Backlog had nothing pickable either: next-candidates.sh prints that clause only under the
+        # fallback, so the ticks themselves prove the token (the ledger's `backlog` does not survive the next launch), and the
+        # hold is the pool running out — the landings inside it are siblings finishing in-flight work, and the hours already
+        # sit in `held` and idle% (2026-10-20: four `backlog` sessions on an empty pool, three flags, each read as a mixed launch).
         hg = holds[s["run_key"]]
-        if hg["hours"] >= 1:
+        pool_ran_out = hg["ticks"] > 0 and hg["backlog_empty_ticks"] == hg["ticks"]
+        if hg["hours"] >= 1 and not pool_ran_out:
             landed = {}
             for o in sessions:
                 if o is s:
@@ -3455,11 +3547,15 @@ def main():
               f"the verdict names deferred filings but never says whether sibling edges were wired or "
               f"none were owed, so retro Step 4's edge audit starts blind on these (unwired "
               f"same-mechanism siblings recurred on two consecutive fleets; BF-1226).")
-    cur_ex, cur_st = tests["rspec_examples_per_shipped"], tests["story_exports_per_shipped"]
-    if (cur_ex is not None and prev_ex is not None and cur_ex > prev_ex) \
-            or (cur_st is not None and prev_st is not None and cur_st > prev_st):
+    cur_ex, cur_vt, cur_st = (tests["rspec_examples_per_shipped"], tests["vitest_tests_per_shipped"],
+                              tests["story_exports_per_shipped"])
+
+    def rose(cur, prev):
+        return cur is not None and prev is not None and cur > prev
+    if rose(cur_ex, prev_ex) or rose(cur_vt, prev_vt) or rose(cur_st, prev_st):
         flagged = True
-        print(f"- **Tests per shipped issue rose**: rspec {signed_one(cur_ex)} vs {signed_one(prev_ex)}, stories "
+        print(f"- **Tests per shipped issue rose**: rspec {signed_one(cur_ex)} vs {signed_one(prev_ex)}, vitest "
+              f"{signed_one(cur_vt)} vs {signed_one(prev_vt)}, stories "
               f"{signed_one(cur_st)} vs {signed_one(prev_st)} — ships are adding tests where the issue sits rather than where the "
               f"mechanism lives; read the project's layer contract and route the duplicate arms to /test-sweep")
     no_merge = [i for i, m in merged.items() if m["commit"] and not m["merge"]]
