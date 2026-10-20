@@ -68,7 +68,7 @@ Trial first with `--dry-run --max-groups 1`, then `--max-groups 1` for one real 
 
 - `retire` — every assertion is already pinned at the owning layer, which the proposal names as `target`; with no owner to name it is `keep`.
 - `consolidate` — a repeated matrix moves to the surface that owns it; each consumer keeps one wiring case.
-- `detag` — a play-less story file whose behavior sibling carries the tests takes the render-only tag.
+- `detag` — a play-less story file takes the render-only tag only when a play already in the gate mounts each of its exports with the same render, args and fixture; the proposal names the sibling in `target` and maps every export to its covering play, and a file with one unmounted export is `keep`.
 - `hoist-ddl` — an rspec example pinning presence, uniqueness, or a foreign key that `db/schema.rb` already enforces becomes a one-line schema assertion.
 - `keep` — the cost or repetition holds for a reason, stated in the evidence.
 
