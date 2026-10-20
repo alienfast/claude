@@ -70,3 +70,14 @@ deterministic traps below with the fix in its message.
   header, and prefer a whole-file `grep -c` on a pattern that cannot shift, or a real parser (`ruby -rcsv`).
 - macOS `/usr/bin/awk` counts bytes, not characters: `awk 'length > 160'` over-counts multi-byte text. It never misses a
   long line, so use it as the first pass and confirm with `grep -n '.\{161,\}' <file>`.
+
+## A backgrounded tool task is a process group: kill the group, not its leader
+
+- The harness runs a backgrounded Bash call as a zsh leader with the command's whole tree beneath it, all in one process
+  group. `kill <leader-pid>` ends only the zsh: the tree is reparented to launchd and keeps running, and a test that had
+  hung in a Python heredoc burned a core for four hours after its leader was killed. End the task by group,
+  `kill -- -<pgid>`, with `ps -o pgid= -p <pid>` to name the group and `ps -axo pid,pgid,command | awk '$2==<pgid>'` to
+  confirm nothing survived.
+- The same shape decides which bound actually bounds: GNU `timeout` kills the group it created, while `kill <pid>`, a
+  `perl alarm` and a watchdog that TERMs `$!` reach the direct child only. `run_bounded` in `lib/lint.sh` holds the
+  bound either way; source it rather than hand-rolling one.

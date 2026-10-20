@@ -107,8 +107,10 @@ targeted checks that bound its own work (a single spec file, a type check), and 
 "verify" reaches for the most complete check available.
 
 **A stranded delegation leaves its command still running.** Before re-messaging or re-dispatching, confirm the original
-process is gone (`pgrep -f`); otherwise two runs against one set of test databases, one dev-server port or one lock
-produce failures that read as real defects but are contention.
+process is gone (`pgrep -f`), and end it by process group rather than by its leader pid
+([shell.md](shell.md#a-backgrounded-tool-task-is-a-process-group-kill-the-group-not-its-leader)); otherwise two runs
+against one set of test databases, one dev-server port or one lock produce failures that read as real defects but are
+contention.
 
 ## A write-capable delegation that dies mid-task leaves an unknown tree
 
