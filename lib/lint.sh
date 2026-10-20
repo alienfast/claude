@@ -11,19 +11,21 @@
 
 # Run "$@" under a wall-clock timeout, killing it (exit 124/143) if it overruns. Prefers
 # timeout/gtimeout when present, else a portable background-watchdog fallback so the bound holds on
-# a stock macOS without coreutils. The command must take its input as ARGUMENTS, not stdin:
-# backgrounded jobs in a non-interactive shell get stdin redirected from /dev/null, so a piped
-# prompt would silently vanish in the fallback path.
-_run_bounded() {
+# a stock macOS without coreutils. Both paths kill the command's whole process group: the fallback
+# starts it as a group leader (perl setpgrp; perl ships with macOS), because TERM to the direct
+# child alone leaves a hung grandchild (a script's python heredoc) spinning past the bound. The
+# command must take its input as ARGUMENTS, not stdin: backgrounded jobs in a non-interactive shell
+# get stdin redirected from /dev/null, so a piped prompt would silently vanish in the fallback path.
+run_bounded() {
   local secs="$1"; shift
   if command -v timeout >/dev/null 2>&1; then
     timeout "$secs" "$@"; return $?
   elif command -v gtimeout >/dev/null 2>&1; then
     gtimeout "$secs" "$@"; return $?
   fi
-  "$@" &
+  perl -e 'setpgrp(0, 0); exec { $ARGV[0] } @ARGV; print STDERR "exec $ARGV[0]: $!\n"; exit 127' "$@" &
   local cmd_pid=$!
-  ( sleep "$secs"; kill -TERM "$cmd_pid" 2>/dev/null ) &
+  ( sleep "$secs"; kill -TERM -- "-$cmd_pid" 2>/dev/null ) &
   local watch_pid=$!
   wait "$cmd_pid" 2>/dev/null; local rc=$?
   kill -TERM "$watch_pid" 2>/dev/null; wait "$watch_pid" 2>/dev/null
@@ -67,8 +69,8 @@ lint_and_fix() {
     last_output="$LINT_OUTPUT"
     local prompt rc
     prompt=$(printf 'Fix the following lint errors. Do not ask questions, just fix them:\n\n%s\n' "$LINT_OUTPUT")
-    # Prompt is passed as an argument (not stdin) so _run_bounded's background fallback keeps it.
-    _run_bounded "$CLAUDE_FIX_TIMEOUT" claude -p "$prompt" --allowedTools Edit,Read && rc=0 || rc=$?
+    # Prompt is passed as an argument (not stdin) so run_bounded's background fallback keeps it.
+    run_bounded "$CLAUDE_FIX_TIMEOUT" claude -p "$prompt" --allowedTools Edit,Read && rc=0 || rc=$?
     if [ "$rc" -eq 124 ] || [ "$rc" -eq 143 ]; then
       echo "  ⏱️  Claude fix attempt exceeded ${CLAUDE_FIX_TIMEOUT}s and was stopped — moving on."
     fi
