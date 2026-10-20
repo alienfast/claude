@@ -43,7 +43,7 @@ Create specifications with:
 
 ### 3. Architecture Decision Records (ADRs)
 
-ONLY write ADRs when explicitly requested by the user. When asked, use this format:
+Write an ADR only when the user asks for one, in this format:
 
 ```markdown
 # ADR: [Decision Title]

@@ -92,7 +92,7 @@ belongs to `/keeper`, never to this skill — do not commit, stash, reset, or di
 
 ## Step 3 — Report
 
-Three lines, no more:
+Report, in this order:
 
 1. What the project pull did — commits pulled, already current, or skipped and why.
 2. Whether the update script finished (`Done!`) and whether any ⚠️ in its output still needs the user — with the exact

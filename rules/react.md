@@ -6,15 +6,13 @@ paths:
 
 # React Rules
 
-## Modern Patterns (React 19+)
+## House choices (React 19)
 
-- **Components**: Arrow function components: `const X = () =>`. Class components deprecated.
-- **State**: `useState` (local), `useReducer` (complex state), `useActionState` (form actions)
-- **Data fetching**: `use()` hook for promises (React 19+), custom hooks for data fetching
-- **Composition**: Prefer over inheritance, compound patterns (Card.Header, Card.Body)
-- **Effect events**: `useEffectEvent` for values an effect reads but must not react to — keeps them out of the dependency array without suppressing the lint rule
-- **Imports**: Named imports only - `import { useState, useEffect } from 'react'`
-- **Legacy imports**: replace `import * as React from 'react'` and `import React from 'react'` with named imports
+- Arrow function components (`const X = () =>`); named imports only (`import { useState } from 'react'`), replacing
+  `import * as React from 'react'` / `import React from 'react'` where you find them.
+- `useEffectEvent` for values an effect reads but must not react to — keeps them out of the dependency array without
+  suppressing the lint rule.
+- Compound components (`Card.Header`, `Card.Body`) over boolean-prop proliferation.
 
 ## Naming Conventions
 
@@ -78,10 +76,3 @@ Otherwise, mention it in the "Approved" section as a deliberate non-finding ("in
 
 - **Catch inside the callback**: `startTransition(async () => { try { await refetch() } catch (e) { ... } })`. Applies to every rejectable promise handed to a transition — Apollo `refetch()`, a `useLazyQuery` execute, a raw `fetch` — not just the one that looks risky.
 - **Why**: a rejection inside `useTransition`'s `startTransition` becomes the hook's pending state and is re-thrown DURING RENDER from `useTransition()` itself on the next render, so only the nearest error boundary catches it — never a local try/catch, and never the inline error-state fallback the component uses elsewhere. (The top-level `startTransition` imported from `react` differs: rejections there go to a global error report and reach no boundary.)
-
-## Anti-Patterns
-
-- ❌ Higher-order hooks or passing hooks as props
-- ❌ Chaining effects to update interdependent state
-- ❌ Creating objects/functions in dependency arrays without memoization
-- ❌ `forwardRef` (deprecated in React 19+, use `ref` prop directly)

@@ -157,7 +157,8 @@ prerequisite, a same-method collision, or a deliberate increment (`linear-cli re
 blocks`, blocker first); `related` for a shared file, spec, locale, or mechanism; nothing for no overlap. Never wire
 `blocks` behind an uncertified, `needs decision`, or non-head `solo` blocker. When the partner already sits in a chain,
 read both `.relations[]` and `.inverseRelations[]` (gotcha #22) and attach at the **tail**. A blocker already in `Done`,
-`Canceled`, `Duplicate`, or `Ready for Release` is resolved (the ranking's `TERMINAL_STATES`).
+`Canceled`, `Duplicate`, `Ready for Release`, or `In Review` is resolved (the ranking's `TERMINAL_STATES`;
+`standards/linear-workflow.md` § Terminal States).
 
 **Marker** — one **standalone** comment on every issue apply considered and left in the pool (keep, narrow, certify,
 hand-to-spec, ask-filer, regroom); not on `unchanged` skips, cancels, ship-closes, or duplicates. It must be its own

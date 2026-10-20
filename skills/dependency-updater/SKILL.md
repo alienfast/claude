@@ -116,8 +116,8 @@ user picks in-place, offer only `pr`. Never silently downgrade a `merge` request
 
 Then set up the workspace per [references/workspace.md](references/workspace.md): worktree mode runs `/start`'s own
 `start-wt-setup.sh` → `EnterWorktree` → `start-wt-verify.sh --claim` (never `Skill(start … interactive)`, never a
-hand-rolled `git worktree add`; a `FAILED-CHECK` baseline stops the run); in-place mode claims the issue with one
-`issues update --assignee me --state "In Progress"` and finishes `pr` only.
+hand-rolled `git worktree add`; a `FAILED-CHECK` baseline stops the run); in-place mode claims the issue through
+`~/.claude/scripts/linear-claim.sh <ID> --state "In Progress"` and finishes `pr` only.
 
 **`--dry-run` files nothing and creates nothing.** Ask neither question and skip the rest of this phase — keep step 1's
 team resolution, which recall needs. Detection, research and recall still run (recall is read-only), and the report
@@ -258,8 +258,9 @@ performs. Always pass the `auto` token:
 
 - `Skill(skill: "finish", args: "merge auto")` — merges the branch into its recorded source branch and removes the
   worktree.
-- `Skill(skill: "finish", args: "pr auto")` — opens a PR based on the recorded source branch. The issue stays In
-  Progress (the PR is open, not shipped) and the worktree is left in place by design, so Phase 6 removes it.
+- `Skill(skill: "finish", args: "pr auto")` — opens a PR based on the recorded source branch and moves the issue to
+  Ready For Release (an open PR is work waiting for its release); the worktree is left in place by design, so Phase 6
+  removes it.
 - **In-place mode**: `Skill(skill: "finish", args: "pr auto")`. Outside a worktree `/finish pr` targets the repo's
   default branch and touches no worktree.
 

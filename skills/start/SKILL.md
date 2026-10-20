@@ -172,9 +172,9 @@ Labels line predates the label read, and one cached before a label attached miss
 
 ### Step 2: Check for Blockers
 
-The digest's **Blockers (issues blocking this)** section lists each blocker's state. A blocker is resolved only when its
-state is terminal for the team (typically `Done`, `Canceled`, `Ready For Release`, plus team-custom terminal states such
-as `Released`, `Shipped`, `Won't Do`); in doubt treat it as unresolved — a false positive is recoverable, silently passing
+The digest's **Blockers (issues blocking this)** section lists each blocker's state. A blocker is resolved when its state is one `standards/linear-workflow.md` § Terminal States for Dependency Resolution
+lists (`Done`, `Canceled`/`Cancelled`, `Duplicate`, `Ready For Release`, `In Review`, by name) or a team-custom terminal
+state such as `Released`, `Shipped`, `Won't Do`; in doubt treat it as unresolved — a false positive is recoverable, silently passing
 a real blocker is not. List each unresolved blocker with its state and ask whether to proceed anyway or address it first.
 **Auto mode:** do not ask — emit `SKIPPED-BLOCKED: <ISSUE-ID> — blocked by <BLOCKER-ID> (<state>)` and stop; nothing is
 claimed or modified, and `/auto` records a skip, not a failure (`/next` pre-filters blocked issues, so this is rare).
@@ -206,7 +206,7 @@ Verify availability from the digest's `**State:**`, `**Assignee:**` and `**Label
   agent-shippable slice. Nothing claimed.` and stop.
 - `In Progress`, assigned to **me** → idempotent resumption; skip the update and continue (either mode).
 
-Otherwise claim it immediately: `linear-cli issues update PL-13 --assignee me --state "In Progress"`.
+Otherwise claim it immediately: `~/.claude/scripts/linear-claim.sh PL-13 --state "In Progress"` — its verdict line is the read-back; anything but a confirmed claim means do not proceed as if claimed.
 
 **`stalled` label cleanup (claim or resumption, either mode).** `/auto` applies `stalled` when it abandons an In Progress
 issue; being picked up again is the attention it asked for, so remove it now —

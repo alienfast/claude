@@ -153,7 +153,7 @@ blob.
 #### Verify the feature exists in the final state
 
 For each area of apparent change: `git show HEAD:path/to/file.ts | grep -q "feature_name" && echo PRESENT || echo
-REMOVED`. `./scripts/verify-feature.sh <path>
+REMOVED`. `"$HOME/.claude/skills/pr-update/scripts/verify-feature.sh" <path>
 "<pattern>"` wraps this (an empty pattern checks file existence); it reads the local `HEAD` only, so when targeting a PR
 by number use `git show <headRefOid>:<path>`. Worked examples: [resources/analysis-workflow.md](resources/analysis-workflow.md).
 
@@ -257,11 +257,9 @@ reference headings, and ends with the PR link in place of the Slack-style underl
 
 ## Writing Rules
 
-Beyond §4's two verifications (feature in `HEAD`; baseline before any "fixes" claim) and §6's links: **focus on
-outcomes, not process** — the result, not the development journey; **be specific** — "Add MySQL native password
-authentication", not "Update database config"; **test your claims** — "CI runs connectivity checks" means the CI file
-actually shows that; **use present tense** — "Adds X", "Implements Y"; **quantify when possible** — "3x performance
-improvement", "99.99% SLA", "$460/month cost".
+Beyond §4's two verifications (feature in `HEAD`; baseline before any "fixes" claim) and §6's links: write outcomes, not
+the development journey, in the present tense ("Adds X", "Implements Y"); a claim about CI or tests means the file
+actually shows it.
 
 ## After Generating Description
 

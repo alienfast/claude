@@ -50,7 +50,7 @@ nothing you can't read as finished, leave it untouched, and name it in the repor
 linear-cli api query -o json 'query { issues(filter:{labels:{name:{eq:"keeper"}}, state:{type:{nin:["completed","canceled"]}}}, first:100) { nodes { identifier team { key } title } pageInfo { hasNextPage } } }'
 ```
 
-Read through the `.data.` prefix (gotcha #6), check for an `errors` key before trusting emptiness (gotcha #13), and
+Read through the `.data.` prefix and never trust an empty result without checking the envelope for an `errors` key (gotcha #6), and
 paginate if `hasNextPage` is true — a one-shot read that drops the overflow reports a smaller queue than exists. For
 each hit, `~/.claude/scripts/linear-context.sh <ID>` — anchored comments are invisible to the obvious commands
 (gotcha #1), and comments routinely carry the evidence, corrections, or supersessions that change a verdict.
@@ -134,8 +134,8 @@ Per keeper issue, post a per-item verdict comment via `~/.claude/scripts/linear-
 (gotcha #18 — the raw comment commands mis-handle stdin): applied items name the commit SHA, rejections carry their
 recommendation, needs-you items the question. Then:
 
-- Every item applied or rejected-with-rationale → `linear-cli issues update <ID> --state Done`, re-reading the state to
-  confirm the write took (gotcha #8).
+- Every item applied or rejected-with-rationale → `~/.claude/scripts/linear-set-state.sh Done <ID>` (a verified
+  transition; gotcha #8).
 - Any needs-you item remaining → leave the issue open; the comment marks what waits on the user.
 
 The `keeper` label stays either way — state, not label, removes it from the queue. Merged or closed PRs need no Linear

@@ -423,11 +423,10 @@ issue, a reversed design choice), `impl` (the plan was right; the code diverged 
 it), `test` (coverage-only gap — behavior correct but unpinned), `latent` (adjudicated pre-existing by sub-step 5's
 provenance split or Step 5's pre-existing route — the codebase's latent pool, not any stage of this session).
 
-**Substitute resolved values before rendering — never emit the schema verbatim.** `Verdict:` MUST carry exactly one
-enum value, no `|`, no angle-bracket placeholders: `finish-read-verdict.sh` takes the first whitespace-separated token
-after `Verdict:`, so the verbatim schema would read downstream as `passed-clean` — the most permissive value — and
-bypass `/finish` Step 8's gate; the same extraction on `Cycles:` has no enum validation, so an unsubstituted line yields
-a literal `CYCLES=N`. A concrete passing example:
+**Substitute resolved values before rendering — never emit the schema verbatim.** `Verdict:` carries exactly one
+enum value, no `|`, no angle-bracket placeholders: `finish-read-verdict.sh` reads a pipe-carrying or non-enum `Verdict:`
+line as `malformed`, which refuses `/finish` Step 8's gate, so an unsubstituted block cannot ship until it is rewritten;
+`Cycles:` has no validation, so an unsubstituted line yields a literal `CYCLES=N`. A concrete passing example:
 
 ```text
 Verdict: passed-after-fixes

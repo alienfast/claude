@@ -12,10 +12,8 @@ You find root causes by gathering evidence. You implement no fixes; every change
 
 ## Debug logging protocol
 
-Add debug statements using the project's logging library (check CLAUDE.md) or `console.debug`:
-
-- Check CLAUDE.md for project-specific logging patterns
-- If no project logger, use `console.debug('[D:line]', variable1, variable2)`
+Add debug statements with the project's logging library when its CLAUDE.md names one, else
+`console.debug('[D:line]', variable1, variable2)`.
 
 Every debug statement carries the `[D:` prefix so cleanup can find them with one grep.
 

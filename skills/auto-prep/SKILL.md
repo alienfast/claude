@@ -78,11 +78,12 @@ priority bump; `bug`/`security` labels missing from issues that plainly are one 
 
 ## Step 3: Consolidate families, then wire collision edges
 
-**First confirm the team has a completed-type state that `/finish` lands in.** `next-candidates.sh` clears a blocker
-only once its state's *type* is `completed` or `canceled`, so an edge whose blocker ships into a `started` state never
-releases and the lane idles. Compare `linear-cli statuses list -t <KEY> --no-cache -o json | jq -r '.statuses[] |
-"\(.name) \(.type)"'` against where `mark-ready-for-release.sh` lands. With no such state, still wire the edges but say so
-and treat every chain as manual.
+**First confirm the team's ship state is one the ranking resolves.** `next-candidates.sh` clears a blocker only when its
+state NAME is in `TERMINAL_STATES` (Done, Canceled/Cancelled, Duplicate, Ready For Release, In Review — case-insensitive;
+`standards/linear-workflow.md` § Terminal States), so an edge whose blocker ships into a differently named state never
+releases and the lane idles. Compare `linear-cli statuses list -t <KEY> --no-cache -o json | jq -r '.statuses[].name'`
+against that list and against where `mark-ready-for-release.sh` lands. With no match, still wire the edges but say so and
+treat every chain as manual.
 
 Build overlap groups from each certified issue's edit-bearing sections, subjects first and paths second:
 
@@ -175,10 +176,10 @@ releases and the released issues' priorities as its worth:
   recommendation, since the gate usually covers part of the work and the verified remainder ages.
 - Triage roots → groom (grooming is triage acceptance; never promote around it with a bare state write).
 - **Every Backlog member of a Planned blocking chain** is release scope by implication whatever its labels — an issue is
-  scoped by what it gates, not by its column or the gate parked on it. Promote the whole membership as one batch
-  (`linear-cli issues update <ID> -s Planned`, one approval, each write verified per linear gotcha #8), taking the set
-  from the FOCUS-ROOT rows — the script's ancestry walk returns roots and intermediates; a hand re-derivation drops the
-  intermediates. Promotion is column hygiene, not what makes the fleet reach them (`next-candidates.sh` inherits the
+  scoped by what it gates, not by its column or the gate parked on it. Promote the whole membership as one batch — the
+  script's `PROMOTE-SET:` line IS the set (roots and intermediates; a hand re-derivation from the FOCUS-ROOT rows drops
+  the intermediates): `~/.claude/scripts/linear-set-state.sh Planned <IDs>`, one approval, each write read-back-verified
+  (linear gotcha #8). Promotion is column hygiene, not what makes the fleet reach them (`next-candidates.sh` inherits the
   Planned stage for Backlog issues that transitively block Planned work — `standards/linear-workflow.md` § Stage
   Priorities); it puts them in the keeper's Planned view and grooming filter. Gate labels never hold a member back (they
   already hide it from every ranking in any state), and promotion does not unpark it: its remedy row still leads. A root

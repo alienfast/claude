@@ -239,7 +239,8 @@ Reflection:
   to a literal path and retry before concluding the probe is unavailable.
 - **Step 5 commit fails** (rejected by a hook or precondition) → reverse the edits with the Edit tool exactly as in the
   red-check path, reclassify as `propose`, and surface the git error. Never leave a tracked project edit uncommitted in
-  a merge-mode worktree, or dirty on the main checkout's source branch — there it defers every fleet merge to the queue
+  a merge-mode worktree, or dirty on the main checkout's source branch — there it defers to the queue every fleet merge
+  that changes a file you edited
   (`standards/git-worktrees.md` § Posture for high-concurrency runs).
 - **Auto-fixer/lint touched a config file you were about to edit** → re-read before editing (`rules/markdown.md`).
 - **A proposed edit would remove or restructure existing guidance** → never `apply-now`, even if confident. (A reconcile

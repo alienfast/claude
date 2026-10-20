@@ -110,7 +110,7 @@ first.
 
 ### The count is settled at 3 — no capacity readings at dispatch
 
-**Concurrency is capped at 3. Ask for no `/usage` readings and write no calibration file at launch.** The account
+**Concurrency is capped at 3, settled before launch — the count is never derived from the account's meter at dispatch.** The account
 meters a 5h burst window and a weekly window, and they resolve so:
 
 - **The 5h burst window constrains concurrency, and 3 is the measured answer.** Burn per window is `n × 5 × rate` —

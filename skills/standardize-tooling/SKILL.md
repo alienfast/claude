@@ -23,8 +23,9 @@ A standardized project has all of:
 - **Biome** for lint and format, with **no ESLint and no Prettier** (and no `lint-staged`).
 - **markdownlint-cli2** with the house `.markdownlint-cli2.jsonc`.
 - **madge** circular-import check via `.madgerc` (`skipTypeImports: true`).
-- The **standardized parallel `check` suite** — `run-p -c --aggregate-output check-types check-biome
-  check-circular check-markdown test`.
+- The **standardized parallel `check` suite** — a `run-p -c --aggregate-output` lane set covering at least check-types,
+  check-biome, check-circular, check-markdown and test; read the current lanes live from basefund's `check-unlocked`
+  script (its `check` is a lock wrapper around it).
 - **`.ncurc.cjs`** cooldown aligned to pnpm's 7-day window.
 - **`.vscode`** wired to the `check-types` task, with **no stale `build:ide` script**.
 - **tsdown** as the bundler *if the project builds a library/CLI*.

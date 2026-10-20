@@ -92,8 +92,7 @@ the same way.
 `/quality-review`; **Gate 2 — deferred-items filing** inside `/quality-review`; the Step 10 tagged final line.
 
 Wait for `/start`'s tagged final line — the LAST LLM-authored line of its output, after any intermediate `IN-PROGRESS`
-lines from sub-skills like `/checkpoint` — before beginning Step 2. Do not narrate progress, inject prompts, or race
-ahead.
+lines from sub-skills like `/checkpoint` — before beginning Step 2.
 
 ### Step 2: Branch on /start's tagged final line
 

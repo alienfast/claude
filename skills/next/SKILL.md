@@ -177,7 +177,9 @@ but not alongside a fleet — only the automatic pick is blocked; a targeted `/a
 work is human-performed; no mode runs one, and targeted `/auto <ID>` refuses it too), and `epic` (a delegated container
 whose children carry the work — certify per child; the epic closes itself when its last child releases via
 `mark-ready-for-release.sh`'s parent walk — so it never counts fleet-workable, matching `fleet-blockers.sh` and
-`fleet-forecast.py`). Whenever a gate hid candidates the script appends a hidden-count note — surface those verbatim.
+`fleet-forecast.py`), `deploy-gated` (held until every `blocks` blocker reaches one of the project's
+`$LINEAR_DEPLOYED_STATES`; surfaced via `--label deploy-gated` — `standards/issue-spec.md` § The `deploy-gated` label),
+and — with no label — every issue a running `/fleet-sequence` holds, named in a trailing note. Whenever a gate hid candidates the script appends a hidden-count note — surface those verbatim.
 The count spans every fetched issue carrying the label, including states no ranking lists, so a note exceeding the
 corresponding `--label` listing is expected; the reconciliation recipe is `/auto-prep` Step 4.
 

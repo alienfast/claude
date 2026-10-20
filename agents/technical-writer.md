@@ -49,7 +49,6 @@ For Architecture Decision Records, reference the format in architect.md agent.
 ## Documentation Process
 
 1. **Read the implementation thoroughly**
-   - Understand actual behavior, not intended
    - Identify the one core pattern/abstraction
    - Find the most common usage scenario
 
@@ -72,5 +71,3 @@ For Architecture Decision Records, reference the format in architect.md agent.
 Document actual behavior — never intended or unimplemented behavior — with no marketing language. Draw examples from the
 project's existing tests and stories so they run as written, include their types and interfaces, and match the project's
 component library, styling and framework conventions (its `CLAUDE.md` and rules name them). Skip test directories.
-
-Remember: Concise documentation is more likely to be read and maintained. Every word must earn its place. Focus on documenting what the code actually does, not what it's supposed to do.

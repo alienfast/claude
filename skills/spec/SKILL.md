@@ -201,7 +201,7 @@ options rather than carrying it silently into the draft.
 
    Each child is certified too (item 5 applies to every created issue).
 3. **Metadata** from the interview, only what changed: `linear-cli issues update <ID> -p <priority> -e <estimate>`.
-4. **State:** if — and only if — the issue is in `Triage`, move it: `linear-cli issues update <ID> -s Planned` (grooming
+4. **State:** if — and only if — the issue is in `Triage`, move it: `~/.claude/scripts/linear-set-state.sh Planned <ID>` (a verified transition, gotcha #8; grooming
    is triage acceptance). **Blocker promotion:** a `Backlog` issue picked from the Planned bucket's `blocks
    <Planned-ID>` annotation moves to `Planned` the same way — the user's pick is the approval. Never touch any other
    state — assignment and In Progress belong to `/start`; the one exception is the decision-grade close to `Done`
@@ -240,8 +240,10 @@ options rather than carrying it silently into the draft.
    it took (`linear-cli relations list <BLOCKED>`) and confirm the blocked issue no longer appears in
    `next-candidates.sh` output run with a generous `--limit` (the default is 3, so absence at the default can be
    truncation; a `solo` label alone also hides an issue there). A `related` edge changes no ranking, so that check does
-   not apply. Report blocker status with the ranking's semantics: a blocker in `Done`, `Canceled`, `Duplicate`, or
-   `Ready for Release` (`TERMINAL_STATES`, case-insensitive) is RESOLVED, whatever Linear's UI shows.
+   not apply. Report blocker status with the ranking's semantics: a blocker in any `TERMINAL_STATES` entry of
+   `next-candidates.sh` (`Done`, `Canceled`/`Cancelled`, `Duplicate`, `Ready for Release`, `In Review` — by name,
+   case-insensitive; `standards/linear-workflow.md` § Terminal States for Dependency Resolution) is RESOLVED, whatever
+   Linear's UI shows.
 
    A constraint recorded only in prose is invisible to automation — `next-candidates.sh` reads relations and labels,
    never text — so two colliding certified issues WILL be picked concurrently unless the edge exists. Wire it

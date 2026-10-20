@@ -94,7 +94,7 @@ linear-cli relations add ENG-101 ENG-102 -r blocks
 ~/.claude/scripts/linear-add-label.sh ENG-101 specified
 ```
 
-**Important:** For any description or body content longer than a single line, write it to `tmp/` first and use `~/.claude/scripts/linear-stdin.sh` to pass it via stdin. Do NOT use shell operators (`<`, `|`, `$()`) in Bash commands — they trigger permission prompts regardless of allow-list rules.
+Body text longer than one line goes to `tmp/` and in through `~/.claude/scripts/linear-stdin.sh`, never via `<`, `cat |`, `$()` or a heredoc into `linear-cli` — permission wildcards do not match through shell operators (`standards/linear-workflow.md` § Passing File Content to Linear CLI). Piping `linear-cli` output to `jq` is fine.
 
 ## Discovering Related Work
 

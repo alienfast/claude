@@ -112,19 +112,10 @@ Classify items 1–5 and both of item 6's pre-existing-arm cases **Nice-to-Have*
 
 ## Review Process
 
-1. **Read every changed file completely** — do not skim
-2. **For each function/component, ask: "How can I make this fail?"**
-3. **Trace data flow** from entry to exit, checking every branch
-4. **Cross-reference against stated requirements** — verify EVERY requirement is actually met, not just the obvious ones
-5. **Check error paths**: what happens when every external call fails? Partial failure (3 of 5 succeed)?
-6. **Check implicit assumptions**: inputs, ordering, state, environment that are assumed but not enforced
-7. **Check integration boundaries**: type mismatches, upstream behavior assumptions
-8. **Verify conformance against all applicable conventions.** Check each convention type at both user-level (`~/.claude/`) and project-level (target repo's `.claude/` and root):
-   - CLAUDE.md (rules and guidelines)
-   - standards/ (universal and domain-specific standards)
-   - rules/ (file-type-specific rules, matched to changed file types)
-   - skills/ (workflow and component patterns relevant to the implementation)
-   - Verify compliance, not just absence of violations
+Read every changed file in full and trace data flow from entry to exit, checking each stated requirement individually
+(the categories above are the lens). Then verify conformance against the conventions at both levels — user
+(`~/.claude/`: CLAUDE.md, standards/, rules/ matched to the changed file types, skills/) and project (the target repo's
+`.claude/` and root) — confirming compliance, not just the absence of violations.
 
 ### Reviewing test code: a green suite is not evidence
 

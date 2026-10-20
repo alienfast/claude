@@ -122,7 +122,7 @@ worktree, an uncertified target.
 3. **The run-state path** is `<main-checkout>/tmp/auto-state-<runKey>.json` — per-session, so parallel sessions never
    adopt or clobber each other's state. Carry the absolute path through the iteration for every read and write; a
    state file touched inside a worktree fragments the run and dies with the worktree. Write it via the shell
-   (`printf '%s\n' '<json>' > <path>`) — the worktree-isolation guard refuses Write-tool edits outside the registered
+   (`printf '%s\n' '<json>' >| <path>`) — the worktree-isolation guard refuses Write-tool edits outside the registered
    worktree, and this is gitignored run bookkeeping, not project code; never relocate it into the worktree and never
    set `worktree.bgIsolation: none`. Wherever this skill says `tmp/auto-state-<runKey>.json`, tag texts included,
    substitute the actual value.
