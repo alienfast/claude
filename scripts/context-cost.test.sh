@@ -4,7 +4,9 @@
 # are all asserted against arithmetic the test does itself. The real ~/.claude is never read.
 set -uo pipefail
 
-SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/context-cost.sh"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT="$HERE/context-cost.sh"
+. "$HERE/../lib/lint.sh"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 PASS=0 FAIL=0
@@ -31,7 +33,11 @@ printf -- '---\npaths:\n  - "*.md"\n---\nroot markdown only\n' > "$P/.claude/rul
 printf -- '---\nname: beta\ndescription: >\n  Beta\n  folded\nwhen_to_use: Use it\n---\nbody\n' > "$P/.claude/skills/beta/SKILL.md"
 
 OUT="$WORK/out"
-CLAUDE_USER_DIR="$U" "$SCRIPT" "$P" --paths "apps/api/app/models/user.rb,src/a.ts,src/b.tsx,README.md,doc/x.md,ops/stacks/a/index.ts" > "$OUT" 2>&1
+# The script's glob compiler is a hand-rolled scanner: a branch that stops advancing loops forever (the first draft did, on
+# the `{ts` half of a comma-split brace glob), and this suite sits in `pnpm test`'s chain, so the run is bounded.
+CLAUDE_USER_DIR="$U" run_bounded 30 "$SCRIPT" "$P" --paths "apps/api/app/models/user.rb,src/a.ts,src/b.tsx,README.md,doc/x.md,ops/stacks/a/index.ts" > "$OUT" 2>&1
+rc=$?
+if [ "$rc" -eq 124 ] || [ "$rc" -eq 143 ]; then FAIL=$((FAIL+1)); echo "FAIL: context-cost.sh overran its 30s bound (exit $rc)"; fi
 
 always=$(( $(bytes "$U/CLAUDE.md") + $(bytes "$P/CLAUDE.md") + $(bytes "$P/.claude/rules/planning.md") ))
 comments=$(bytes "$U/rules/comments.md"); ts=$(bytes "$U/rules/typescript.md"); api=$(bytes "$P/.claude/rules/api.md")
