@@ -32,6 +32,9 @@ explicit grant. Read [standards/git.md](standards/git.md) before any git operati
   exception. Delete only what you created, by name, and never remove `tmp/` itself: it holds harness state and the
   skill handoff files `/reap-tmp` manages. `hooks/scratch-path-guard.sh` enforces this; a denied command means rewrite
   the target.
+- A symlink under `tmp/` never points into `.claude/` or `.git/`. Removing it prompts even in auto mode: Claude Code
+  follows the link and treats the `rm` as an edit of a protected file, and an unattended run stalls on the prompt until a
+  human answers. Copy the file into the scratch directory and link to the copy.
 - Machine-local state a `~/.claude` script keeps across sessions goes in `~/.claude/local/` (gitignored), never under a
   harness-written directory (`telemetry/`, `state/`, `sessions/`, `tasks/`), and a built-in fallback must be surfaced
   where a human looks.
