@@ -260,6 +260,78 @@ ck "detag passes"                               'GATES-PASSED detag-ok' "$out"
 ck "detag with nothing removed passes the ledger" 'PASS ledger-gate names=0' "$out"
 ckno "detag prints no steps"                    'STEP ' "$out"
 
+echo "== clone gate =="
+# sweep-scan writes a clone-pair candidate's census as "clone pair: …", and the gate keys on that text
+mkclone() { # mkclone <file> <slug> [census] — a mechanical consolidate that moves setup only (examples_removed 0)
+  mk "$1" "$2" 0 '[]' consolidate true "apps/api/spec/support/shared_contexts/review.rb" ""
+  jq --arg c "${3-clone pair: 83 duplicated lines in 1 block(s) shared by the two files}" \
+    '. + {census: $c, candidate_files: ["apps/api/spec/a_spec.rb", "apps/api/spec/b_spec.rb"]}' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
+}
+cbase() { printf '{"version": 1, "fingerprints": %s}\n' "$2" > "$1"; } # cbase <file> <fingerprints json>
+mkclone "$D/clone.json" clone
+cbase "$ROOT/cb-before.json" '{"aaaa": 1, "bbbb": 2, "cccc": 1}'
+cbase "$ROOT/cb-after.json" '{"bbbb": 1, "cccc": 1}'
+run --proposal "$D/clone.json" --baseline-count 100 --post-count 100 --clone-baseline-before "$ROOT/cb-before.json" --clone-baseline-after "$ROOT/cb-after.json"
+ckrc "a shrunken baseline passes the clone gate" 0 "$rc"
+ck "a dropped fingerprint and a lowered count both count" 'PASS clone-gate removed=2 added=0' "$out"
+ck "the clone proposal passes"                  'GATES-PASSED clone' "$out"
+ckno "no warning when nothing was added"        'WARN clone-gate' "$out"
+run --proposal "$D/clone.json" --baseline-count 100 --post-count 100 --clone-baseline-before "$ROOT/cb-before.json" --clone-baseline-after "$ROOT/cb-before.json"
+ckrc "an unchanged baseline is refused" 1 "$rc"
+ck "names the gate"                             'REFUSED clone-gate removed=0 added=0' "$out"
+ckno "no steps after the clone refusal"         'STEP ' "$out"
+cbase "$ROOT/cb-grown.json" '{"aaaa": 1, "bbbb": 2, "cccc": 1, "dddd": 1}'
+run --proposal "$D/clone.json" --baseline-count 100 --post-count 100 --clone-baseline-before "$ROOT/cb-before.json" --clone-baseline-after "$ROOT/cb-grown.json"
+ckrc "a baseline that only grew is refused" 1 "$rc"
+ck "reports the growth"                         'REFUSED clone-gate removed=0 added=1' "$out"
+cbase "$ROOT/cb-repaired.json" '{"bbbb": 2, "cccc": 1, "eeee": 1}'
+run --proposal "$D/clone.json" --baseline-count 100 --post-count 100 --clone-baseline-before "$ROOT/cb-before.json" --clone-baseline-after "$ROOT/cb-repaired.json"
+ckrc "a shrink beside a re-paired addition passes with a warning" 0 "$rc"
+ck "the pass line counts both"                  'PASS clone-gate removed=1 added=1' "$out"
+ck "and warns about the addition"               'WARN clone-gate added=1' "$out"
+cbase "$ROOT/cb-count-up.json" '{"aaaa": 1, "bbbb": 3, "cccc": 1}'
+run --proposal "$D/clone.json" --baseline-count 100 --post-count 100 --clone-baseline-before "$ROOT/cb-before.json" --clone-baseline-after "$ROOT/cb-count-up.json"
+ckrc "a raised pair count alone is growth, not a shrink" 1 "$rc"
+ck "counted as added"                           'REFUSED clone-gate removed=0 added=1' "$out"
+run --proposal "$D/clone.json" --baseline-count 100 --post-count 100
+ckrc "a clone-pair proposal with no baselines is refused" 1 "$rc"
+ck "names the proposal and the flags"           'REFUSED clone-gate clone: a clone-pair proposal needs --clone-baseline-before and --clone-baseline-after' "$out"
+mkclone "$D/clone-mixed.json" clone-mixed 'big: 12 exports; clone pair: 40 duplicated lines in 2 block(s) shared by the two files'
+run --proposal "$D/clone-mixed.json" --baseline-count 100 --post-count 100
+ckrc "a candidate flagged several ways is still a clone pair" 1 "$rc"
+ck "names it"                                   'REFUSED clone-gate clone-mixed' "$out"
+run --proposal "$D/clone.json" --proposal "$D/clone-mixed.json" --baseline-count 100 --post-count 100
+ck "every clone proposal in the batch is named" 'REFUSED clone-gate clone,clone-mixed:' "$out"
+mkclone "$D/not-clone.json" not-clone 'big: 12 exports'
+run --proposal "$D/not-clone.json" --baseline-count 100 --post-count 100
+ckrc "a consolidate that is no clone pair needs no baselines" 0 "$rc"
+ckno "and prints no clone-gate line"            'clone-gate' "$out"
+mkclone "$D/clone-tail.json" clone-tail 'matrix: 4 exports named FooBlocked*; a clone pair: 10 lines'
+run --proposal "$D/clone-tail.json" --baseline-count 100 --post-count 100
+ckrc "the census text must start a reason with clone pair:, not merely mention it" 0 "$rc"
+run --proposal "$D/a.json" --baseline-count 100 --post-count 97 --ledger "$ROOT/ledger-ab.md" --clone-baseline-before "$ROOT/cb-before.json" --clone-baseline-after "$ROOT/cb-after.json"
+ckrc "baselines given on a batch with no clone pair are gated anyway" 0 "$rc"
+ck "and reported"                               'PASS clone-gate removed=2 added=0' "$out"
+run --proposal "$D/clone.json" --baseline-count 100 --post-count 100 --clone-baseline-before "$ROOT/cb-before.json"
+ckrc "one baseline flag without the other is a usage error" 2 "$rc"
+ck "says they go together"                      'go together' "$out"
+run --proposal "$D/clone.json" --baseline-count 100 --post-count 100 --clone-baseline-before "$ROOT/cb-before.json" --clone-baseline-after "$ROOT/no-such.json"
+ckrc "a missing baseline file is a usage error" 2 "$rc"
+printf '{"fingerprints": "nope"}' > "$ROOT/cb-bad.json"
+run --proposal "$D/clone.json" --baseline-count 100 --post-count 100 --clone-baseline-before "$ROOT/cb-before.json" --clone-baseline-after "$ROOT/cb-bad.json"
+ckrc "a baseline that is not a fingerprint map is an error exit" 2 "$rc"
+ck "says what shape it wanted"                  'not {version, fingerprints' "$out"
+printf '{"version": 1, "fingerprints": {"aaaa": "1"}}' > "$ROOT/cb-strcount.json"
+run --proposal "$D/clone.json" --baseline-count 100 --post-count 100 --clone-baseline-before "$ROOT/cb-strcount.json" --clone-baseline-after "$ROOT/cb-after.json"
+ckrc "a string pair count is not a fingerprint map" 2 "$rc"
+printf '{not json' > "$ROOT/cb-notjson.json"
+run --proposal "$D/clone.json" --baseline-count 100 --post-count 100 --clone-baseline-before "$ROOT/cb-notjson.json" --clone-baseline-after "$ROOT/cb-after.json"
+ckrc "a baseline that is not JSON is an error exit" 2 "$rc"
+cbase "$ROOT/cb-empty.json" '{}'
+run --proposal "$D/clone.json" --baseline-count 100 --post-count 100 --clone-baseline-before "$ROOT/cb-before.json" --clone-baseline-after "$ROOT/cb-empty.json"
+ckrc "a baseline emptied of every fingerprint is the largest shrink" 0 "$rc"
+ck "counts every pair"                          'PASS clone-gate removed=4 added=0' "$out"
+
 echo "== malformed proposals =="
 printf '{not json' > "$D/bad.json"
 run --proposal "$D/bad.json" --baseline-count 1 --post-count 1

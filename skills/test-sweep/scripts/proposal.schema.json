@@ -8,8 +8,8 @@
         "type": "object",
         "properties": {
           "slug": { "type": "string", "description": "the candidate slug exactly as the prompt listed it; names the proposal file" },
-          "file": { "type": "string", "description": "repo-relative path of the file that loses tests (for a group candidate, the first one the disposition edits)" },
-          "suite": { "type": "string", "enum": ["rspec", "storybook"] },
+          "file": { "type": "string", "description": "repo-relative path of the file that loses tests (for a group candidate or a clone pair, the first one the disposition edits)" },
+          "suite": { "type": "string", "enum": ["rspec", "storybook", "e2e"] },
           "kind": {
             "type": "string",
             "enum": ["retire", "consolidate", "detag", "hoist-ddl", "keep"],
@@ -17,7 +17,7 @@
           },
           "target": { "type": "string", "description": "where the surviving assertion lives after the change: file plus example or export name; for a detag, the behavior sibling whose plays mount every tagged export; empty only for keep; the apply gate refuses a proposal that removes examples and leaves it empty" },
           "evidence": { "type": "string", "description": "one line a human reads in the apply dialog: the measured count and the code fact that decides it" },
-          "estimated_seconds": { "type": ["number", "null"], "description": "suite seconds this saves, an order-of-magnitude figure from the most recent run's per-file times scaled by the share of examples removed; 0 for keep; null for storybook when no full junit report exists" },
+          "estimated_seconds": { "type": ["number", "null"], "description": "suite seconds this saves, an order-of-magnitude figure from the most recent run's per-file times scaled by the share of examples removed; 0 for keep; null for storybook when no full junit report exists and always for e2e, which has no timing source" },
           "examples_removed": { "type": "integer", "description": "GROSS examples (rspec) or story exports (storybook) the change deletes or folds away, re-derived by reading the file, whether or not a copy is added back elsewhere (a consolidate that moves 3 and drops 1 is 4); the apply gate checks baseline minus this plus the hoisted additions equals the post-change count" },
           "removed": { "type": "array", "items": { "type": "string" }, "description": "every it description or story export name the change deletes or folds, one entry per removed example (at least examples_removed entries); the apply gate checks the consolidation ledger names each one exactly" },
           "governing_rule": { "type": "string", "description": "the rule file and section that licenses this disposition, e.g. .claude/rules/storybook.md § A shared mechanism is pinned once" },

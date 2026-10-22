@@ -3,8 +3,8 @@
 #
 # WHY THIS EXISTS: the rankers find candidates cheaply, but deciding whether a slow or repeated test is redundant means
 # reading it against the layer that owns its mechanism — the policy spec, the shared dialog's own behavior file, the schema —
-# which is an agent's job and takes minutes per file. This builds the candidate list from rank-rspec-files.sh and
-# story-census.sh, chunks it into groups, and runs one headless `claude -p` per group with structured output
+# which is an agent's job and takes minutes per file. This builds the candidate list from rank-rspec-files.sh,
+# story-census.sh and clone-census.sh, chunks it into groups, and runs one headless `claude -p` per group with structured output
 # (proposal.schema.json), writing one proposal per candidate for the interactive apply session. Nothing here edits the tree,
 # runs a suite, or writes to Linear, and the agents have no sanctioned route to: `--restricted` ignores the user, project and local
 # settings files (a headless run otherwise inherits every allow rule in them — rm, mv, bundle exec rspec, pnpm), `--strict-mcp-config`
@@ -12,14 +12,16 @@
 # `git diff|log|show --output=<file>`, which a prefix allow-list cannot exclude.
 #
 # USAGE
-#   sweep-scan.sh [--repo DIR] [--out DIR] [--suite rspec|storybook|both] [--top N] [--group-size N] [--concurrency N]
+#   sweep-scan.sh [--repo DIR] [--out DIR] [--suite rspec|storybook|e2e|all] [--top N] [--group-size N] [--concurrency N]
 #                 [--max-groups N] [--model NAME] [--api-dir REL] [--junit REL] [--slow N] [--force] [--dry-run] [--summary]
 #                 [--check-current FILE ...] [--force-unlock]
 #
 #   --repo DIR        the project checkout (default: the checkout containing the cwd); a subdirectory resolves to the checkout root
 #   --out DIR         where the census, candidates, proposals, and log go (default: <repo>/tmp)
-#   --suite           which suites to sweep (default both); the candidate, todo and group files carry the suite in their names
-#   --top N           rspec candidates taken from each of the by-seconds and by-seconds-per-example rankings (default 25)
+#   --suite           which suites to sweep (default all; e2e has clone-pair candidates only); the candidate, todo and group files
+#                     carry the suite in their names
+#   --top N           rspec candidates taken from each of the by-seconds and by-seconds-per-example rankings, and clone-pair
+#                     candidates per suite by duplicated lines (default 25)
 #   --group-size N    candidates per agent (default 5; groups never mix suites)
 #   --concurrency N   agents in flight at once (default 4)
 #   --max-groups N    stop after N groups (a trial run)
@@ -39,7 +41,7 @@
 #
 # OUTPUT (one verdict per line on stdout; per-group cost and duration also go to <out>/test-sweep-scan.log)
 #   CANDIDATES <N> current=<N> to-scan=<N> groups=<N>
-#   WARN <detail>                                  rspec timings or story files missing, or no storybook timings (no junit, a
+#   WARN <detail>                                  rspec timings, story files or jscpd missing, or no storybook timings (no junit, a
 #                                                  junit that does not match the tree, or one with no testcases)
 #   GROUP <id> ok records=<N> cost=<usd> seconds=<N>    or  GROUP <id> FAILED|REFUSED <detail>
 #   DRY-RUN prompt=<path> placeholder=<path>
@@ -54,7 +56,8 @@
 # proposals.
 # Exit 0 done, 1 bad input (no candidates could be built, or a proposal is stale), 2 usage, environment error, or LOCKED,
 # 3 a call was refused (session limit or auth) — proposals written before it stand.
-# Requires git, jq, awk, and the claude CLI (except with --dry-run, --summary or --check-current).
+# Requires git, jq, awk, and the claude CLI (except with --dry-run, --summary or --check-current). Clone-pair candidates need
+# jscpd (the project's install, one on PATH, or pnpm to fetch it) and are skipped with a WARN without it.
 
 # shellcheck disable=SC2016  # the awk and jq programs live in single quotes by design
 set -uo pipefail
@@ -76,7 +79,7 @@ need_value() { [ "$2" -ge 2 ] || { echo "sweep-scan: $1 needs a value" >&2; usag
 is_count() { case "$1" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-REPO=""; OUT=""; SUITE="both"; TOP=25; GROUP=5; CONC=4; MAXG=0; MODEL="opus"; API_DIR="apps/api"; JUNIT="tmp/storybook-junit.xml"; SLOWN=25
+REPO=""; OUT=""; SUITE="all"; TOP=25; GROUP=5; CONC=4; MAXG=0; MODEL="opus"; API_DIR="apps/api"; JUNIT="tmp/storybook-junit.xml"; SLOWN=25
 FORCE=0; DRY=0; SUMMARY=0; FORCE_UNLOCK=0; CHECK=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -102,7 +105,7 @@ while [ $# -gt 0 ]; do
 done
 for v in "$TOP" "$GROUP" "$CONC" "$MAXG" "$SLOWN"; do is_count "$v" || die "--top, --group-size, --concurrency, --max-groups and --slow take integers"; done
 [ "$GROUP" -ge 1 ] && [ "$CONC" -ge 1 ] || die "--group-size and --concurrency must be at least 1"
-case "$SUITE" in rspec|storybook|both) ;; *) die "--suite must be rspec, storybook, or both" ;; esac
+case "$SUITE" in rspec|storybook|e2e|all) ;; *) die "--suite must be rspec, storybook, e2e, or all" ;; esac
 command -v jq >/dev/null 2>&1 || die "jq is required"
 
 [ -n "$REPO" ] || REPO=$PWD
@@ -170,7 +173,7 @@ mkdir -p "$OUT" || die "cannot create $OUT"
 OUT=$(cd "$OUT" && pwd) || die "cannot enter $OUT"
 
 PROP="$OUT/test-sweep-proposals"; LOG="$OUT/test-sweep-scan.log"; CAND="$OUT/test-sweep-candidates-$SUITE.tsv"
-RANK_OUT="$OUT/test-sweep-rspec-rank.txt"; CENSUS_OUT="$OUT/test-sweep-story-census.txt"
+RANK_OUT="$OUT/test-sweep-rspec-rank.txt"; CENSUS_OUT="$OUT/test-sweep-story-census.txt"; CLONES_OUT="$OUT/test-sweep-clone-census.txt"
 RULES_REL=".claude/test-sweep-rules.md"; RULES_FALLBACK="$OUT/test-sweep-rules.md"; LOCKDIR="$OUT/test-sweep-scan.lock"
 mkdir -p "$PROP/raw"
 
@@ -219,7 +222,23 @@ SLUG_AWK='
   BEGIN { CHARS = " !\"#$%&\047()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~" }'
 raw="$CAND.raw"
 : > "$raw"
-if [ "$SUITE" != "storybook" ]; then
+# One jscpd run serves every suite: the census prints each suite's pairs, and each suite block below takes its own.
+bash "$HERE/clone-census.sh" --repo "$REPO" --out "$OUT" --top "$TOP" > "$CLONES_OUT"
+rc=$?
+case "$rc" in
+  0) HAVE_CLONES=1 ;;
+  1) HAVE_CLONES=0; echo "WARN no jscpd — clone-pair candidates skipped ($(sed -n 's/^NO-JSCPD //p' "$CLONES_OUT" | head -n 1); pnpm install in the project, or put jscpd or pnpm on PATH)" ;;
+  *) die "clone-census.sh failed (exit $rc)" ;;
+esac
+clone_candidates() {  # clone_candidates <suite> → one candidate row per CLONE pair of that suite; sweep-apply keys its clone gate on the "clone pair:" census text
+  [ "$HAVE_CLONES" -eq 1 ] || return 0
+  awk_c -v s="$1" "$SLUG_AWK"'
+    $1 == "CLONE" && $2 == s {
+      a = $5; b = $6; na = a; nb = b; sub(/.*\//, "", na); sub(/.*\//, "", nb)
+      printf "%s\t%s\t%s|%s\tclone pair: %s duplicated lines in %s block(s) shared by the two files\n", slug(s "-clone", na "-" nb) "-" hash(a "|" b), s, a, b, $3, $4
+    }' "$CLONES_OUT"
+}
+if [ "$SUITE" = rspec ] || [ "$SUITE" = all ]; then
   bash "$HERE/rank-rspec-files.sh" --repo "$REPO" --api-dir "$API_DIR" > "$RANK_OUT"
   rc=$?
   case "$rc" in
@@ -241,8 +260,9 @@ if [ "$SUITE" != "storybook" ]; then
     1) echo "WARN no rspec timings ledger — rspec candidates skipped (run the full suite once through run_rspec)" ;;
     *) die "rank-rspec-files.sh failed (exit $rc)" ;;
   esac
+  clone_candidates rspec >> "$raw"
 fi
-if [ "$SUITE" != "rspec" ]; then
+if [ "$SUITE" = storybook ] || [ "$SUITE" = all ]; then
   bash "$HERE/story-census.sh" --repo "$REPO" --junit "$JUNIT" --slow "$SLOWN" > "$CENSUS_OUT"
   rc=$?
   case "$rc" in
@@ -261,7 +281,9 @@ if [ "$SUITE" != "rspec" ]; then
     1) echo "WARN no story files — storybook candidates skipped" ;;
     *) die "story-census.sh failed (exit $rc)" ;;
   esac
+  clone_candidates storybook >> "$raw"
 fi
+if [ "$SUITE" = e2e ] || [ "$SUITE" = all ]; then clone_candidates e2e >> "$raw"; fi
 
 awk_c -F'\t' '
   {
@@ -273,7 +295,7 @@ awk_c -F'\t' '
   END { for (i = 1; i <= n; i++) printf "%s\t%s\t%s\t%s\n", order[i], suite[order[i]], files[order[i]], why[order[i]] }' "$raw" > "$CAND"
 rm -f "$raw"
 total=$(awk_c 'END { print NR }' "$CAND")
-[ "$total" -gt 0 ] || { echo "sweep-scan: no candidates could be built (see $RANK_OUT and $CENSUS_OUT)" >&2; exit 1; }
+[ "$total" -gt 0 ] || { echo "sweep-scan: no candidates could be built (see $RANK_OUT, $CENSUS_OUT and $CLONES_OUT)" >&2; exit 1; }
 
 # ---- resumability: skip a candidate whose proposal is still current -----------------------------------------------------------
 is_current() {  # is_current <slug> <files joined by |>

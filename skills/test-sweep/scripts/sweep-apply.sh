@@ -7,11 +7,13 @@
 # consolidation ledger beside its survivor. A count that moved by more than claimed means a second, unplanned removal; by less,
 # a removal that did not happen. One baseline and one post count describe the whole batch, so the batch is gated once: the
 # removals and hoists are summed and the removed names unioned. Each gate also refuses on missing evidence — an unreadable
-# proposal field, an empty removed list, a missing ledger — rather than passing because there was nothing to check. This runs no
-# suite and applies no mutation itself; it prints the proof steps the operator still owes.
+# proposal field, an empty removed list, a missing ledger — rather than passing because there was nothing to check. A clone-pair
+# batch has one more mechanical witness: the project's clone baseline, regenerated after the change, must have lost a fingerprint.
+# This runs no suite and applies no mutation itself; it prints the proof steps the operator still owes.
 #
 # USAGE
 #   sweep-apply.sh --proposal F [--proposal F ...] --baseline-count N --post-count N [--hoisted N ...] [--ledger F]
+#                  [--clone-baseline-before F --clone-baseline-after F]
 #
 #   --proposal F         one proposal JSON from <out>/test-sweep-proposals/; repeatable, one per proposal in the frozen batch
 #   --baseline-count N  the suite's example count before the change (rspec: the baseline cache's SUMMARY; storybook: the
@@ -23,6 +25,11 @@
 #   --ledger F           the consolidation ledger (a commit message draft, a PR body); required whenever the batch removes anything.
 #                        A line is `- "<removed description>" → <survivor file or description>` (`->` also reads); a removed name
 #                        is covered only by a line whose quoted field equals it exactly.
+#   --clone-baseline-before F / --clone-baseline-after F
+#                        the project's clone baseline (jscpd's `{version, fingerprints: {<hash>: <pairs>}}`) copied aside before the first
+#                        edit, and the one regenerated after the last; both or neither. Required whenever the batch holds a clone-pair
+#                        proposal (one whose census reads `clone pair: …`); the gate requires at least one fingerprint, or one pair
+#                        count, gone, and warns on any addition.
 #
 # A proposal's `examples_removed` is GROSS: the examples or stories deleted or folded away, whether or not a copy is added back
 # elsewhere. What is added back is `--hoisted`; the gate expects baseline - sum(examples_removed) + sum(hoisted) = post.
@@ -30,16 +37,20 @@
 # OUTPUT (one verdict per line)
 #   PROPOSAL <slug> kind=<kind> mechanical=<bool> examples_removed=<N> removed_names=<N>     one per proposal
 #   REFUSED <gate> <detail>                       gates: proposal-shape, mechanical-gate, placeholder-gate, kind-gate, target-gate,
-#                                                 mutation-gate, hoisted-gate, ledger-gate (also per proposal: names missing, empty, or multi-line)
+#                                                 mutation-gate, hoisted-gate, ledger-gate (also per proposal: names missing, empty, or multi-line),
+#                                                 clone-gate
 #   BATCH proposals=<N> examples_removed=<N> hoisted=<N>
 #   WARN hoist-ddl with --hoisted 0 ...
 #   PASS count-gate expected=<N> post=<N>         or  REFUSED count-gate expected=<N> (baseline - removed + hoisted) post=<N>
 #   PASS ledger-gate names=<N>                    or  REFUSED ledger-gate <missing --ledger | missing="<name>"...>
+#   PASS clone-gate removed=<N> added=<N>         or  REFUSED clone-gate <detail>; only with the two baselines or a clone-pair proposal
+#   WARN clone-gate added=<N> ...                 the regenerated baseline also gained fingerprints or pair counts
 #   STEP mutation <slug> <text>                   the mutation each deleted routing arm's survivor must redden against
 #   STEP broken-assertion <slug> <target>         break one relocated assertion deliberately, watch it fail, restore
 #   GATES-PASSED <slug>                           one per proposal, only when nothing was refused
 #
-# Exit 0 every gate passes, 1 a gate refused, 2 usage error or a proposal that is not JSON.
+# Exit 0 every gate passes, 1 a gate refused, 2 usage error, a proposal that is not JSON, or a clone baseline that is not a
+# fingerprint map.
 # Requires jq, sed and grep.
 
 set -uo pipefail
@@ -59,7 +70,7 @@ norm_count() {  # norm_count <label> <value> → the value as a plain decimal
   echo $((10#$2))
 }
 
-PROPS=(); BASE=""; POST=""; HOISTED=0; LEDGER=""
+PROPS=(); BASE=""; POST=""; HOISTED=0; LEDGER=""; CB_BEFORE=""; CB_AFTER=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --proposal) need_value "$1" $#; PROPS+=("$2"); shift 2 ;;
@@ -67,6 +78,8 @@ while [ $# -gt 0 ]; do
     --post-count) need_value "$1" $#; POST=$(norm_count "$1" "$2") || exit 2; shift 2 ;;
     --hoisted) need_value "$1" $#; h=$(norm_count "$1" "$2") || exit 2; HOISTED=$((HOISTED + h)); shift 2 ;;
     --ledger) need_value "$1" $#; LEDGER="$2"; shift 2 ;;
+    --clone-baseline-before) need_value "$1" $#; CB_BEFORE="$2"; shift 2 ;;
+    --clone-baseline-after) need_value "$1" $#; CB_AFTER="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "sweep-apply: unknown argument: $1" >&2; usage; exit 2 ;;
   esac
@@ -74,6 +87,11 @@ done
 [ ${#PROPS[@]} -gt 0 ] && [ -n "$BASE" ] && [ -n "$POST" ] || { usage; exit 2; }
 command -v jq >/dev/null 2>&1 || die "jq is required"
 [ -z "$LEDGER" ] || [ -f "$LEDGER" ] || die "no such ledger file: $LEDGER"
+if [ -n "$CB_BEFORE" ] || [ -n "$CB_AFTER" ]; then
+  [ -n "$CB_BEFORE" ] && [ -n "$CB_AFTER" ] || die "--clone-baseline-before and --clone-baseline-after go together"
+  [ -f "$CB_BEFORE" ] || die "no such clone baseline: $CB_BEFORE"
+  [ -f "$CB_AFTER" ] || die "no such clone baseline: $CB_AFTER"
+fi
 
 US=$(printf '\037')
 # shellcheck disable=SC2016  # jq program, not shell
@@ -94,7 +112,8 @@ FIELDS_JQ='
       ($p.examples_removed | if isint then floor | tostring else "0" end), ($r | length | tostring),
       (($p.placeholder // false) | tostring), (($p.target // "") | clean), (($p.mutation // "") | clean),
       ($r | map(select(type == "string" and test("^\\s*$"))) | length | tostring),
-      ($r | map(select(type == "string" and test("\n"))) | length | tostring) ] | join($us)'
+      ($r | map(select(type == "string" and test("\n"))) | length | tostring),
+      (($p.census // "") | if type == "string" then test("(^|; )clone pair: ") else false end | tostring) ] | join($us)'
 
 refused=0; ledger_bad=0
 refuse() {  # refuse <gate> <detail>
@@ -103,13 +122,14 @@ refuse() {  # refuse <gate> <detail>
   [ "$1" = ledger-gate ] && ledger_bad=1
 }
 
-SEEN=$'\n'; ALL_NAMES=""; NAMES_TOTAL=0; TOTAL_REMOVED=0; N_OK=0; ANY_HOIST_DDL=0; ADDS_BACK_REMOVED=0
+SEEN=$'\n'; ALL_NAMES=""; NAMES_TOTAL=0; TOTAL_REMOVED=0; N_OK=0; ANY_HOIST_DDL=0; ADDS_BACK_REMOVED=0; CLONE_SLUGS=""
 OK_SLUG=(); OK_MUT=(); OK_TARGET=()
 for pf in "${PROPS[@]}"; do
   [ -s "$pf" ] || die "no such proposal: $pf"
   fields=$(jq -r --arg us "$US" "$FIELDS_JQ" "$pf" 2>/dev/null) || die "not valid JSON: $pf"
   case "$fields" in *$'\n'*) refuse proposal-shape "$pf: holds more than one JSON value"; continue ;; esac
-  IFS=$US read -r problems slug kind mechanical removed nnames placeholder target mutation nempty nmulti <<< "$fields"
+  IFS=$US read -r problems slug kind mechanical removed nnames placeholder target mutation nempty nmulti isclone <<< "$fields"
+  [ "$isclone" != true ] || CLONE_SLUGS="$CLONE_SLUGS${CLONE_SLUGS:+,}${slug:-$pf}"
   label=${slug:-$pf}
   if [ -n "$problems" ]; then refuse proposal-shape "$label: missing or wrong-typed field(s): $problems"; continue; fi
   case "$SEEN" in *$'\n'"$slug"$'\n'*) refuse proposal-shape "$label: listed twice"; continue ;; esac
@@ -167,6 +187,30 @@ if [ "$TOTAL_REMOVED" -gt 0 ] || [ "$NAMES_TOTAL" -gt 0 ]; then
   fi
 fi
 [ "$ledger_bad" -eq 1 ] || echo "PASS ledger-gate names=$NAMES_TOTAL"
+
+# The baseline is a map of content fingerprints to clone-pair counts; a consolidation drops a key or lowers a count, and nothing
+# else proves the pasted block is gone (the suite count cannot: moving setup removes no example). An addition beside the removals
+# is a re-paired copy of a block three or more files carry, or a new clone — reported, and left to the lane's --update listing.
+if [ -n "$CB_BEFORE" ]; then
+  delta=$(jq -rn --slurpfile b "$CB_BEFORE" --slurpfile a "$CB_AFTER" '
+    def fp: if type == "object" and (.fingerprints | type) == "object" and ([.fingerprints[]] | all(type == "number")) then .fingerprints else null end;
+    ($b[0] | fp) as $B | ($a[0] | fp) as $A
+    | if $B == null or $A == null then "bad"
+      else ([($B | keys[]), ($A | keys[])] | unique) as $ks
+        | reduce $ks[] as $k ({removed: 0, added: 0};
+            (($B[$k] // 0) - ($A[$k] // 0)) as $d | if $d > 0 then .removed += $d elif $d < 0 then .added -= $d else . end)
+        | "\(.removed) \(.added)" end' 2>/dev/null) || delta="bad"
+  [ "$delta" != bad ] || die "a clone baseline is not {version, fingerprints: {<hash>: <count>}}: $CB_BEFORE or $CB_AFTER"
+  read -r cl_removed cl_added <<< "$delta"
+  if [ "$cl_removed" -gt 0 ]; then
+    echo "PASS clone-gate removed=$cl_removed added=$cl_added"
+    [ "$cl_added" -eq 0 ] || echo "WARN clone-gate added=$cl_added fingerprint(s) or pair count(s): a re-paired copy of a block three or more files carry, or a new clone — read the lane's --update listing before committing"
+  else
+    refuse clone-gate "removed=0 added=$cl_added: the regenerated baseline is no smaller, so the batch consolidated no clone"
+  fi
+elif [ -n "$CLONE_SLUGS" ]; then
+  refuse clone-gate "$CLONE_SLUGS: a clone-pair proposal needs --clone-baseline-before and --clone-baseline-after (the project's clone baseline copied aside before the first edit, and regenerated after the last)"
+fi
 
 [ "$refused" -eq 0 ] || exit 1
 

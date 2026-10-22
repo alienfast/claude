@@ -41,6 +41,9 @@ mkdir -p "$R/tools" "$R/apps/api/tools" "$R/apps/app/src/app/(authenticated)/adm
 echo a > "$R/tools/both.rb"
 echo a > "$R/apps/api/tools/both.rb"
 echo a > "$R/apps/app/src/app/(authenticated)/admin/kyc/[id]/_components/X.stories.tsx"
+mkdir -p "$R/packages/e2e/tests"
+echo a > "$R/packages/e2e/tests/a.spec.ts"
+echo a > "$R/packages/e2e/tests/b.spec.ts"
 git -C "$R" add -A
 git -C "$R" commit -q -m base
 SHA=$(git -C "$R" rev-parse --short=10 HEAD)
@@ -173,11 +176,34 @@ printf '%s\n' "$@" > "$SWEEP_TEST_ARGV"
 printf '{"structured_output":{"sha":"abcdef0123","candidates":[]},"total_cost_usd":0,"is_error":false}'
 STUB
 chmod +x "$STUBDIR/claude"
+# A canned jscpd beside it: the fixture has no node_modules, so clone-census.sh takes the one on PATH. The report pairs the two
+# spec files, the two story files, the two e2e specs, and adds a same-file clone and a story-to-production pair that must not nominate.
+cat > "$STUBDIR/jscpd" <<'STUB'
+#!/usr/bin/env bash
+[ "${1-}" = --version ] && { echo "jscpd 5.4.1"; exit 0; }
+out=""; while [ $# -gt 0 ]; do [ "$1" = --output ] && out="${2-}"; shift; done
+cp "$SWEEP_TEST_REPORT" "$out/jscpd-report.json"
+STUB
+chmod +x "$STUBDIR/jscpd"
+dup() { jq -n --arg a "$1" --arg b "$2" --argjson l "$3" '{format: "x", lines: $l, tokens: ($l * 10), isNew: false, firstFile: {name: $a, start: 1, end: $l}, secondFile: {name: $b, start: 5, end: (4 + $l)}}'; }
+{
+  dup apps/api/spec/policies/x_spec.rb apps/api/spec/requests/x_spec.rb 12
+  dup apps/app/Foo.stories.tsx 'apps/app/src/app/(authenticated)/admin/kyc/[id]/_components/X.stories.tsx' 11
+  dup apps/app/Foo.stories.tsx apps/app/Foo.stories.tsx 10
+  dup apps/app/Foo.stories.tsx tools/both.rb 10
+  dup packages/e2e/tests/a.spec.ts packages/e2e/tests/b.spec.ts 15
+} | jq -s '{duplicates: ., statistics: {}}' > "$ROOT/report.json"
+REPORT="$ROOT/report.json"
 printf 'spec/requests/x_spec.rb\t1.5\n' > "$(git -C "$R" rev-parse --path-format=absolute --git-common-dir)/rspec-file-times.tsv"
 SCANOUT="$ROOT/scanout"
-out=$(PATH="$STUBDIR:$PATH" SWEEP_TEST_ARGV="$ARGV" bash "$SCRIPT" --repo "$R" --out "$SCANOUT" --suite rspec --max-groups 1 2>&1); rc=$?
+out=$(PATH="$STUBDIR:$PATH" SWEEP_TEST_ARGV="$ARGV" SWEEP_TEST_REPORT="$REPORT" bash "$SCRIPT" --repo "$R" --out "$SCANOUT" --suite rspec --max-groups 1 2>&1); rc=$?
 ckrc "the scan ran one group to completion" 0 "$rc"
-ck "one candidate, one group" 'CANDIDATES 1 current=0 to-scan=1 groups=1' "$out"
+ck "the ranked file and the clone pair, one group" 'CANDIDATES 2 current=0 to-scan=2 groups=1' "$out"
+cand=$(cat "$SCANOUT/test-sweep-candidates-rspec.tsv")
+ck "the clone pair is an rspec candidate" 'rspec-clone-x_spec.rb-x_spec.rb-' "$cand"
+ck "with both files and the census text" "apps/api/spec/policies/x_spec.rb|apps/api/spec/requests/x_spec.rb	clone pair: 12 duplicated lines in 1 block(s) shared by the two files" "$cand"
+ck "the clone census is written for the agents" 'CLONE rspec 12 1 apps/api/spec/policies/x_spec.rb apps/api/spec/requests/x_spec.rb' "$(cat "$SCANOUT/test-sweep-clone-census.txt")"
+ck "the raw report is kept" present "$([ -s "$SCANOUT/test-sweep-clone-report.json" ] && echo present || echo absent)"
 if [ -f "$ARGV" ]; then
   argline() { grep -qFx -- "$1" "$ARGV" && echo present || echo absent; }
   ck "--restricted is passed" present "$(argline --restricted)"
@@ -191,6 +217,31 @@ if [ -f "$ARGV" ]; then
 else
   fail=$((fail+1)); echo "  FAIL  the stub claude was never invoked"; echo "$out"
 fi
+
+echo "== clone pairs nominate per suite, and e2e exists through them alone =="
+out=$(PATH="$STUBDIR:$PATH" SWEEP_TEST_REPORT="$REPORT" bash "$SCRIPT" --repo "$R" --out "$SCANOUT" --suite e2e --dry-run 2>&1); rc=$?
+ckrc "an e2e scan builds its candidates from clone pairs" 0 "$rc"
+ck "one e2e candidate" 'CANDIDATES 1 current=0 to-scan=1 groups=1' "$out"
+pfile=$(printf '%s\n' "$out" | sed -n 's/^DRY-RUN prompt=\([^ ]*\).*/\1/p')
+ck "the prompt lists the pair with its suite" 'suite: e2e | files: packages/e2e/tests/a.spec.ts, packages/e2e/tests/b.spec.ts | why: clone pair: 15 duplicated lines in 1 block(s)' "$(cat "$pfile")"
+ck "the prompt points the agent at the clone census" 'test-sweep-clone-census.txt' "$(cat "$pfile")"
+ck "the placeholder carries the suite" '"suite": "e2e"' "$(cat "$SCANOUT/test-sweep-proposals/dry-run/"*.json)"
+out=$(PATH="$STUBDIR:$PATH" SWEEP_TEST_REPORT="$REPORT" bash "$SCRIPT" --repo "$R" --out "$SCANOUT" --suite storybook --dry-run 2>&1); rc=$?
+ckrc "a storybook scan runs" 0 "$rc"
+ck "the story pair alone: a same-file clone and a production pair are not candidates" 'CANDIDATES 1 current=0 to-scan=1 groups=1' "$out"
+ck "and it is the two story files" 'apps/app/Foo.stories.tsx|apps/app/src/app/(authenticated)/admin/kyc/[id]/_components/X.stories.tsx' "$(cat "$SCANOUT/test-sweep-candidates-storybook.tsv")"
+out=$(bash "$SCRIPT" --repo "$R" --out "$SCANOUT" --suite both --dry-run 2>&1); rc=$?
+ckrc "the old suite name both is refused" 2 "$rc"
+ck "and the message names the four" 'rspec, storybook, e2e, or all' "$out"
+NOJS="$ROOT/nojscpd"; mkdir -p "$NOJS"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$NOJS/jscpd"; cp "$NOJS/jscpd" "$NOJS/pnpm"; chmod +x "$NOJS/jscpd" "$NOJS/pnpm"
+out=$(PATH="$NOJS:$PATH" bash "$SCRIPT" --repo "$R" --out "$ROOT/scanout-nojscpd" --suite rspec --dry-run 2>&1); rc=$?
+ckrc "a scan with no working jscpd still runs" 0 "$rc"
+ck "warns and skips the clone pairs" 'WARN no jscpd' "$out"
+ck "the ranked candidate remains" 'CANDIDATES 1 current=0 to-scan=1 groups=1' "$out"
+out=$(PATH="$NOJS:$PATH" bash "$SCRIPT" --repo "$R" --out "$ROOT/scanout-nojscpd" --suite e2e --dry-run 2>&1); rc=$?
+ckrc "an e2e scan with no jscpd has nothing to build" 1 "$rc"
+ck "and says where to look" 'test-sweep-clone-census.txt' "$out"
 
 echo
 echo "sweep-scan: $pass passed, $fail failed"

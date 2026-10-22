@@ -1,7 +1,7 @@
 ---
 name: test-sweep
-description: Audit a project's test suites for cost and redundancy — rank rspec files by seconds and seconds per example, story files by exports and repetition, and propose one disposition per candidate (retire, consolidate, detag, hoist-ddl). `scan` runs unattended and read-only; `apply` executes mechanical proposals under the ledger gates and files judgment items. Use when the user says 'test sweep', 'what tests are slow', 'test-sweep scan', 'test-sweep apply', or invokes /test-sweep.
-argument-hint: "[scan|apply] [suite:rspec|storybook|both] [top:N] [--dry-run] [--max-groups N]"
+description: Audit a project's test suites for cost and redundancy — rank rspec files by seconds and seconds per example, story files by exports and repetition, jscpd's cross-file clone pairs between test files by duplicated lines, and propose one disposition per candidate (retire, consolidate, detag, hoist-ddl). `scan` runs unattended and read-only; `apply` executes mechanical proposals under the ledger gates and files judgment items. Use when the user says 'test sweep', 'what tests are slow', 'test-sweep scan', 'test-sweep apply', or invokes /test-sweep.
+argument-hint: "[scan|apply] [suite:rspec|storybook|e2e|all] [top:N] [--dry-run] [--max-groups N]"
 ---
 
 # Test Sweep — Audit the Suites for Cost and Redundancy
@@ -16,7 +16,8 @@ unattended; `apply` changes tests and is interactive only — it refuses an `aut
 outright: `ERROR: /test-sweep apply is interactive-only — removing coverage is a human decision. Run it directly.` A bare
 `/test-sweep` runs `apply` when proposals exist and otherwise says to scan first.
 
-Read first: the project's testing rules (its `.claude/rules/api.md` and `.claude/rules/storybook.md`, or equivalents),
+Read first: the project's testing rules (its `.claude/rules/api.md`, `.claude/rules/storybook.md` and
+`.claude/rules/playwright.md`, or equivalents),
 [standards/testing.md](../../standards/testing.md) (what makes a surviving assertion discriminate), and
 [agents/developer.md](../../agents/developer.md) § Testing Standards (the mutation protocol the apply gates enforce).
 Project inputs, script exit codes and every verdict line are in [references/scripts.md](references/scripts.md).
@@ -24,9 +25,9 @@ Project inputs, script exit codes and every verdict line are in [references/scri
 ## Arguments
 
 - `scan` | `apply` — the mode.
-- `suite:rspec|storybook|both` — default `both`.
-- `top:N` — rspec candidates taken from each of the two rankings (default 25). Tagged files, repeated descriptions, and
-  every story-census flag are candidates regardless.
+- `suite:rspec|storybook|e2e|all` — default `all`. `e2e` has clone-pair candidates only.
+- `top:N` — rspec candidates taken from each of the two rankings, and clone-pair candidates taken per suite by duplicated
+  lines (default 25). Tagged files, repeated descriptions, and every story-census flag are candidates regardless.
 - `--dry-run` — scan only: build the candidates, write the first group's prompt and one placeholder proposal, call no
   agent.
 - `--max-groups N` — scan only: stop after N agent groups (a trial run).
@@ -60,6 +61,14 @@ disposition:
   becomes a one-line schema assertion.
 - `keep` — the cost or repetition holds for a reason, stated in the evidence.
 
+**Clone pairs.** `clone-census.sh` runs jscpd once per scan — with the project's committed `.jscpd.json` and
+`.jscpd-baseline.json` when present, the skill's defaults (a 10-line floor over TypeScript, TSX and Ruby) when not — and
+nominates each pair of test files of one suite that share a block, folded per file pair and ranked by duplicated lines.
+Same-file clones, pairs with a non-test file, and pairs the baseline does not yet carry (the clone gate's red, not the
+sweep's) are not candidates. A clone pair's disposition is `consolidate` when the block is shared setup that belongs in a
+`shared_context`, a `Foo.stories.shared.tsx` module or a Playwright fixture or page object, `retire` when one copy's
+assertions the other already pins, `keep` when the same scaffolding wraps different mechanisms.
+
 Each proposal says whether it is `mechanical` (a deletion or move with a named survivor and no open question) or a
 judgment item, carries the `mutation` each deleted routing arm's survivor must redden against, and counts
 `examples_removed` gross (every example deleted or folded away, whether or not a copy is added back; the added-back
@@ -82,8 +91,9 @@ count is `--hoisted` at apply time).
    must print `CURRENT`; a `STALE` proposal is dropped from the batch and re-scanned.
 3. **Execute the approved batch, then gate it once.** Capture the baseline count **once**, before the first edit: rspec
    from `~/.claude/scripts/suite-baseline-cache.sh lookup rspec` (record one if it misses, per the project's rspec
-   reference); storybook from the test-storybook count, or the census `EXPORTS` when the ledger counts exports. Make
-   every change in the batch — delegate to a `developer` agent with the proposals' paths — and write the **consolidation
+   reference); storybook from the test-storybook count, or the census `EXPORTS` when the ledger counts exports. When the
+   batch holds a clone-pair proposal, also copy the project's clone baseline aside first
+   (`cp .jscpd-baseline.json tmp/test-sweep-clone-baseline-before.json`). Make every change in the batch — delegate to a `developer` agent with the proposals' paths — and write the **consolidation
    ledger** into the commit message or PR body: one line per removed `it` description or story export, the quoted name
    exactly as the proposal's `removed` spells it and the survivor that now pins it after the arrow:
 
@@ -91,13 +101,15 @@ count is `--hoisted` at apply time).
    - "<removed description>" → <survivor file or description>
    ```
 
-   Measure the post count once, on the same suite, after the last edit, then run one gate for the whole batch —
-   `sweep-apply.sh` sums `examples_removed` and `--hoisted` across the proposals and unions their `removed` names:
+   Measure the post count once, on the same suite, after the last edit, and for a clone-pair batch regenerate the clone
+   baseline with the project's lane (`node .claude/rules/check-clones.mjs --update` here), then run one gate for the whole
+   batch — `sweep-apply.sh` sums `examples_removed` and `--hoisted` across the proposals and unions their `removed` names:
 
    ```bash
    bash ~/.claude/skills/test-sweep/scripts/sweep-apply.sh \
      --proposal tmp/test-sweep-proposals/<slug-a>.json --proposal tmp/test-sweep-proposals/<slug-b>.json \
-     --baseline-count <before the batch> --post-count <after the batch> [--hoisted <added>] --ledger <ledger file>
+     --baseline-count <before the batch> --post-count <after the batch> [--hoisted <added>] --ledger <ledger file> \
+     [--clone-baseline-before tmp/test-sweep-clone-baseline-before.json --clone-baseline-after .jscpd-baseline.json]
    ```
 
    Name every approved proposal with its own `--proposal`, exactly the frozen list; `--hoisted` may repeat. A `REFUSED`
@@ -106,7 +118,10 @@ count is `--hoisted` at apply time).
    `hoist-ddl` proposals is refused (`hoisted-gate`), since only those kinds add anything back and never more than they
    removed; a ledger name that is not an exact quoted entry, a removed list shorter than `examples_removed`, a missing
    `--ledger`, a proposal that is a judgment item, a dry-run placeholder, a `keep`, or one removing examples with no
-   `target` or no `mutation` is refused outright. Fix the change, never the numbers.
+   `target` or no `mutation` is refused outright; a clone-pair proposal with no baselines, or a regenerated baseline that
+   lost no fingerprint or pair count, is refused (`clone-gate`), and a baseline that also gained entries passes with a
+   `WARN` — a re-paired copy of a block three or more files carry, or a new clone; the lane's `--update` listing says
+   which before the change is committed. Fix the change, never the numbers.
 4. **The two proofs the script prints.** `STEP broken-assertion` — break one relocated assertion in the survivor
    deliberately, confirm it fails, restore it. `STEP mutation` — for every deleted routing arm, apply the recorded
    mutation to the implementation and confirm the survivor reddens; a survivor that stays green was never pinning the
@@ -125,8 +140,8 @@ The apply session reads the proposals under `tmp/test-sweep-proposals/`, `tmp/te
 `tmp/test-sweep-scan.log`; the reaper keeps those and the scan's `.tsv`/`.txt` tables for 30 days.
 
 **Report**, in this order: the growth rate (`SLOPE` per commit and per week — `-` when the points are too few or too
-close — `WINDOW`, `CLEAN`/`DIRTY-FALLBACK`, points, span); what the scan covered (the `CANDIDATES` line, proposals by
-kind); what was applied (per proposal: examples removed, estimated seconds, survivor, both proofs); what was filed
+close — `WINDOW`, `CLEAN`/`DIRTY-FALLBACK`, points, span); what the scan covered (the `CANDIDATES` line, the clone
+census's `CLONES` line, proposals by kind); what was applied (per proposal: examples removed, estimated seconds, survivor, both proofs); what was filed
 (issue ids); what was kept and why, in one line each.
 
 ## Cadence
@@ -162,6 +177,8 @@ silently.
   testcase count differs from the census `EXPORTS`: a filtered run's report, or exports added or removed since the last
   full run.
 - **`NO-BASELINES`** → no suite-baseline cache yet; record a full run through `suite-baseline-cache.sh`.
+- **`NO-JSCPD`** (the scan prints `WARN no jscpd`) → clone-pair candidates were skipped; `pnpm install` in the project
+  (jscpd is a devDependency wherever the clone gate exists), or put `jscpd` or `pnpm` on PATH, then re-scan.
 - **A group logs `FAILED`** → read `tmp/test-sweep-proposals/raw/group-<id>.json.err`; re-running the scan picks the
   group's candidates up.
 - **`LOCKED`** → another scan is running; wait for it, or `--force-unlock` when its pid is dead.

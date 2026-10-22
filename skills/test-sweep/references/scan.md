@@ -6,10 +6,12 @@ the output schema is [scripts/proposal.schema.json](../scripts/proposal.schema.j
 
 ## What it reads
 
-`rank-rspec-files.sh` (the timings ledger, the last run's junit, the spec tree) and `story-census.sh` (the story files
-from git, never a tree walk, so nested worktrees are not counted). Both outputs land in the project's `tmp/` as
-`test-sweep-rspec-rank.txt` and `test-sweep-story-census.txt`, and the agents read them there. `baseline-series.sh` is
-not a candidate source; it is the growth-rate figure the apply report carries.
+`rank-rspec-files.sh` (the timings ledger, the last run's junit, the spec tree), `story-census.sh` (the story files
+from git, never a tree walk, so nested worktrees are not counted) and `clone-census.sh` (one jscpd run over the checkout,
+with the project's `.jscpd.json` and `.jscpd-baseline.json` when present). The outputs land in the project's `tmp/` as
+`test-sweep-rspec-rank.txt`, `test-sweep-story-census.txt` and `test-sweep-clone-census.txt`, and the agents read them
+there; the raw jscpd report is kept beside them as `test-sweep-clone-report.json`. `baseline-series.sh` is not a
+candidate source; it is the growth-rate figure the apply report carries.
 
 ## Ranking rules
 
@@ -20,8 +22,12 @@ is a noisy sample — agents are told to prefer seconds per example and the file
 file with ten or more exports, every story name shared by three or more behavior files, every helper defined at top
 level in three or more `*.stories.shared.tsx` files, every file with four or more exports sharing a
 `…Blocked`/`…Granted`/`…Refused`/`…LandsOn` prefix, and every play-less, untagged spec file whose behavior sibling exists
-(a play is a `play:` key or a `play(` call). A file flagged several ways is one candidate with all its reasons; a SHARED,
-HELPER, or REPEAT group is one candidate spanning its files.
+(a play is a `play:` key or a `play(` call). Clone-pair candidates are, per suite, the top N file pairs by duplicated
+lines among jscpd's cross-file clones whose two files are test files of that suite (`*_spec.rb`; `*.stories.tsx` and
+`*.stories.shared.tsx`; `*.spec.ts`), every block the pair shares folded into one candidate whose line ranges the census
+lists under it. A same-file clone, a pair with a non-test file, and — where a baseline is committed — a pair the baseline
+does not carry are not candidates. The e2e suite exists through this source alone. A file flagged several ways is one
+candidate with all its reasons; a SHARED, HELPER, REPEAT or clone-pair group is one candidate spanning its files.
 
 ## The deep pass
 
@@ -48,7 +54,8 @@ when no full junit report exists.
 
 `tmp/test-sweep-proposals/<slug>.json` per candidate, the raw agent output under `raw/`, the candidate, todo and group
 tables suite-scoped as `tmp/test-sweep-candidates-<suite>.tsv`, `tmp/test-sweep-todo-<suite>.tsv` and
-`tmp/test-sweep-groups-<suite>.txt`, and per-group cost and duration in `tmp/test-sweep-scan.log`. The scan's stdout
+`tmp/test-sweep-groups-<suite>.txt`, the three census files and the jscpd report named above, and per-group cost and
+duration in `tmp/test-sweep-scan.log`. The scan's stdout
 (`tmp/test-sweep-scan.out`) is the only place the `CANDIDATES` line lives.
 
 ## One scan at a time
