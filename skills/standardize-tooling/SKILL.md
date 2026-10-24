@@ -2,8 +2,8 @@
 name: standardize-tooling
 description: >-
   Converge a TypeScript project's dev tooling onto the house conventions — pnpm 12, Biome (no ESLint/Prettier),
-  markdownlint-cli2, madge, the parallel `check` suite, tsdown for libraries, `auto` with OIDC publishing — then gate on
-  `pnpm check`. Idempotent; applies only the gaps. Use when the user says 'standardize tooling', 'migrate to
+  markdownlint-cli2, madge, the jscpd clone gate, the parallel `check` suite, tsdown for libraries, `auto` with OIDC
+  publishing — then gate on `pnpm check`. Idempotent; applies only the gaps. Use when the user says 'standardize tooling', 'migrate to
   pnpm/Biome/tsdown', 'apply house tooling conventions', or asks to convert off yarn/npm + ESLint/Prettier + tsup.
 ---
 
@@ -23,9 +23,14 @@ A standardized project has all of:
 - **Biome** for lint and format, with **no ESLint and no Prettier** (and no `lint-staged`).
 - **markdownlint-cli2** with the house `.markdownlint-cli2.jsonc`.
 - **madge** circular-import check via `.madgerc` (`skipTypeImports: true`).
-- The **standardized parallel `check` suite** — a `run-p -c --aggregate-output` lane set covering at least check-types,
-  check-biome, check-circular, check-markdown and test; read the current lanes live from basefund's `check-unlocked`
-  script (its `check` is a lock wrapper around it).
+- The **jscpd clone gate** — `jscpd` with the house `.jscpd.json`, a committed `.jscpd-baseline.json` of content
+  fingerprints generated from the target's own tree, the `check-clones` lane (`.claude/rules/check-clones.mjs`, read
+  live from basefund and adapted to the target's CI and languages), the baseline's `merge=jscpd-baseline` driver
+  (`tools/scripts/merge-jscpd-baseline.mjs` + `.gitattributes`, registered by the root `prepare`), and their tests in a
+  node-only `test-tools` vitest lane.
+- The **standardized parallel `check` suite** — a `run-p -c --aggregate-output` lane set (`npm-run-all2`) covering at
+  least check-types, check-biome, check-circular, check-clones, check-markdown, test and test-tools; read the current
+  lanes live from basefund's `check-unlocked` script (its `check` is a lock wrapper around it).
 - **`.ncurc.cjs`** cooldown aligned to pnpm's 7-day window.
 - **`.vscode`** wired to the `check-types` task, with **no stale `build:ide` script**.
 - **tsdown** as the bundler *if the project builds a library/CLI*.
@@ -40,7 +45,9 @@ them** — never reproduce config from memory or freeze a snapshot.
 
 - **`~/projects/basefund`** — primary. Monorepo, consumes the private `@alienfast` GitHub Packages registry,
   not npm-published. Canonical for `pnpm-workspace.yaml`, `biome.jsonc`, `.markdownlint-cli2.jsonc`,
-  `.ncurc.cjs`, the `check` suite, and `.vscode/*`.
+  `.ncurc.cjs`, the `check` suite, the clone gate (`.jscpd.json`, `.claude/rules/check-clones.mjs`,
+  `tools/scripts/merge-jscpd-baseline.mjs` and their tests), and `.vscode/*`. `~/projects/bfp-control-panel` is the
+  worked example of the clone gate adapted to a target with no CI runner and TypeScript only.
 - **`~/projects/gltfjsx`** — single-package + published + tsdown + OIDC worked example. Canonical for the
   single-package shapes, `.madgerc`, `tsdown.config.ts`, and `publishConfig`.
 - **`~/projects/vite-plugin-i18next-loader`** — the OIDC `auto` release-workflow template (basefund isn't published).
@@ -71,7 +78,8 @@ bash ~/.claude/skills/standardize-tooling/scripts/detect-state.sh [target-dir]
 Key signals: `PACKAGE_MANAGER`, `PACKAGE_MANAGER_PIN`, `LEFTOVER_PM_FILES`, `IS_MONOREPO`,
 `HAS_ESLINT`, `HAS_PRETTIER`, `HAS_LINT_STAGED`, `HAS_BIOME`, `BUNDLER`, `ALIENFAST_REGISTRY`,
 `IS_PUBLISHED`, `HAS_AUTO`, `HAS_OIDC_WORKFLOW`, `HAS_CHECK_SUITE`, `HAS_BUILD_IDE_SCRIPT`,
-`HAS_MADGE`/`HAS_MADGERC`, `HAS_MARKDOWNLINT`, `HAS_COOLDOWN`, `HAS_NCURC`, `VSCODE_TASKS_CHECK_TYPES`.
+`HAS_MADGE`/`HAS_MADGERC`, `HAS_JSCPD`/`HAS_JSCPD_BASELINE`/`HAS_CHECK_CLONES`/`HAS_JSCPD_MERGE_DRIVER`,
+`HAS_MARKDOWNLINT`, `HAS_COOLDOWN`, `HAS_NCURC`, `VSCODE_TASKS_CHECK_TYPES`.
 
 ### 2. Compute the gap
 
@@ -90,6 +98,9 @@ Order only where a real dependency forces it; otherwise order does not matter:
 - Write `pnpm-workspace.yaml` (and registry wiring) **before** `pnpm install`.
 - Write `biome.jsonc` **before** running `biome check` / `pnpm check`.
 - Approve native builds (`pnpm approve-builds`) **after** the first `pnpm install` reports them.
+- Generate `.jscpd-baseline.json` (`node .claude/rules/check-clones.mjs --update`) **after** `pnpm install` (the
+  driver registration in `prepare` and the jscpd binary both come from it) and **after** the first `biome check --write`,
+  since the fingerprints are over the tokens as written.
 
 ### 4. Gate
 
@@ -105,3 +116,8 @@ do these:
 - Configure the npmjs **Trusted Publisher** for the package (GitHub Actions; org/repo; workflow filename).
 - Delete now-unused `GH_TOKEN` / `NPM_TOKEN` repo secrets.
 - Optionally run `/dependency-updater` for a full app-dependency refresh, and `/init` to create/update CLAUDE.md.
+- Commit `.jscpd-baseline.json` with the gate, and read what it records before doing so: every pair is a clone the
+  tree carries today, accepted as it stands rather than consolidated. The first `--update` prints no pair listing (it
+  lists only what a committed baseline lacked), so list them with the JSON reporter —
+  `pnpm exec jscpd --config .jscpd.json --reporters json --output tmp/jscpd-report` — and summarize by directory
+  pair; on bfp-control-panel 550 of 620 pairs touched a test or story file and none crossed `apps/` and `packages/`.

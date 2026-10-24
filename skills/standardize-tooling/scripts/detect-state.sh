@@ -116,6 +116,17 @@ emit HAS_MARKDOWNLINT "$({ has_dep markdownlint-cli2 || [[ -f "$TARGET/.markdown
 emit HAS_COOLDOWN "$({ [[ -f "$TARGET/pnpm-workspace.yaml" ]] && grep -qE '^\s*minimumReleaseAge:' "$TARGET/pnpm-workspace.yaml"; } && echo true || echo false)"
 emit HAS_NCURC "$([[ -n "$(first_glob "$TARGET"/.ncurc.cjs "$TARGET"/.ncurc.js)" ]] && echo true || echo false)"
 
+# --- Clone gate (jscpd) ------------------------------------------------------
+# Four signals, all of which must hold: the dependency with its config, a committed baseline, the lane wired into the
+# check suite, and the baseline's merge driver both attached in .gitattributes and registered by `prepare`.
+emit HAS_JSCPD "$({ has_dep jscpd && [[ -f "$TARGET/.jscpd.json" ]]; } && echo true || echo false)"
+emit HAS_JSCPD_BASELINE "$([[ -f "$TARGET/.jscpd-baseline.json" ]] && echo true || echo false)"
+emit HAS_CHECK_CLONES "$([[ "$check" == *check-clones* && -n "$(field scripts.check-clones)" ]] && echo true || echo false)"
+driver="false"
+if [[ -f "$TARGET/.gitattributes" ]] && grep -qE '\.jscpd-baseline\.json[[:space:]]+merge=jscpd-baseline' "$TARGET/.gitattributes" \
+   && [[ "$(field scripts.prepare)" == *merge.jscpd-baseline.driver* ]]; then driver="true"; fi
+emit HAS_JSCPD_MERGE_DRIVER "$driver"
+
 # --- .vscode -----------------------------------------------------------------
 vscode_ct="false"
 if [[ -f "$TARGET/.vscode/tasks.json" ]] && grep -q 'check-types' "$TARGET/.vscode/tasks.json"; then vscode_ct="true"; fi

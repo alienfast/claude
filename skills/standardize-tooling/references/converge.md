@@ -7,7 +7,7 @@ the non-obvious gotchas. Publishing-only attributes (tsdown, `auto`, OIDC, Actio
 
 ## Read-live rule
 
-The house configs evolve (Biome 2.5.x, pnpm 12.x, markdownlint-cli2 0.22.x, TypeScript 6.x, …). **Read the
+The house configs evolve (Biome 2.5.x, pnpm 12.x, markdownlint-cli2 0.23.x, TypeScript 7.x, jscpd 5.x, …). **Read the
 current file from the source checkout, copy it, then adapt** — never reproduce a config from memory or from
 this document. This doc tells you *which* file is canonical and *how* to adapt it; the bytes come from the
 live checkout. If a needed source checkout is absent, stop and tell the user rather than inventing config.
@@ -30,6 +30,8 @@ npm-published). `~/projects/gltfjsx` is the single-package + published + tsdown 
 | `check`/`check-*` scripts | `basefund/package.json` (turbo) or `gltfjsx/package.json` (single) |
 | `.vscode/settings.json`, `extensions.json` | `gltfjsx/.vscode/` (cleanest) or `basefund/.vscode/` |
 | `.vscode/tasks.json` → `check-types` | `gltfjsx/.vscode/tasks.json` (single) or `basefund/.vscode/tasks.json` (mono matchers) |
+| `.jscpd.json`, `.claude/rules/check-clones.mjs`, `tools/scripts/merge-jscpd-baseline.mjs`, `tools/scripts/nodeRuntime.ts`, the two `tools/scripts/*.test.ts`, the `.gitattributes` line, the `prepare` registration | `basefund/…` at the same paths; `bfp-control-panel/…` for the no-CI, TypeScript-only adaptation and its `tools/scripts/vitest.config.ts` |
+| `.jscpd-baseline.json` | **never copied** — generated from the target's own tree by `node .claude/rules/check-clones.mjs --update` |
 | tsdown, `auto`, OIDC workflow, `publishConfig` | see [publishing.md](publishing.md) |
 
 ## pnpm 12 + workspace + supply-chain cooldown + allow-builds
@@ -109,24 +111,27 @@ npm-published). `~/projects/gltfjsx` is the single-package + published + tsdown 
 
 ## Standardized check suite + madge
 
-**Met when** `HAS_CHECK_SUITE=true`, `HAS_NPM_RUN_ALL=true`, `HAS_MADGE=true`, `HAS_MADGERC=true`.
+**Met when** `HAS_CHECK_SUITE=true`, `HAS_NPM_RUN_ALL=true`, `HAS_MADGE=true`, `HAS_MADGERC=true` (the clone gate's own
+lane is the next section).
 
 **Source** — `basefund/package.json` (turbo-based `check-types`/`test`) or `gltfjsx/package.json` (single:
 `tsc --noEmit`, `vitest run`); `.madgerc` from `gltfjsx/.madgerc`.
 
 ### Apply
 
-Add `npm-run-all2` (the maintained fork of `npm-run-all`, which the detector still accepts) + `madge` and the
-script suite, adapting `check-circular`'s extensions and src dirs to the
-target (`./src` single-package; `./apps/*/src ./packages/*/src …` monorepo):
+Add `npm-run-all2` (the maintained fork of `npm-run-all`, which the detector still accepts; replace an `npm-run-all`
+entry with it — same `run-p` flags) + `madge` and the script suite, adapting `check-circular`'s extensions and src dirs
+to the target (`./src` single-package; `./apps/*/src ./packages/*/src …` monorepo):
 
 ```json
-"check": "run-p -c --aggregate-output check-types check-biome check-circular check-markdown test",
+"check": "run-p -c --aggregate-output check-types check-biome check-circular check-clones check-markdown test test-tools",
 "check-biome": "biome check --write",
 "check-circular": "madge --circular --extensions ts <src dirs> --ts-config ./tsconfig.json",
+"check-clones": "node .claude/rules/check-clones.mjs --self-test && node .claude/rules/check-clones.mjs",
 "check-markdown": "markdownlint-cli2 --fix \"**/*.md\"",
 "check-types": "tsc --noEmit",
-"test": "vitest run"
+"test": "vitest run",
+"test-tools": "vitest run --config tools/scripts/vitest.config.ts"
 ```
 
 ### Gotchas
@@ -141,6 +146,74 @@ target (`./src` single-package; `./apps/*/src ./packages/*/src …` monorepo):
   calls `ts.sys`) and fail on unresolved imports — basefund-control-panel's `scripts/check-circular.mjs` is a worked example.
 - Do not add a separate `build:ide` tsc script — point `.vscode/tasks.json` at the `check-types` script instead.
 - `BUNDLER` is a root-level signal; in a monorepo each publishable package decides tsdown vs not on its own.
+
+## Clone gate (jscpd)
+
+**Met when** `HAS_JSCPD=true`, `HAS_JSCPD_BASELINE=true`, `HAS_CHECK_CLONES=true` and `HAS_JSCPD_MERGE_DRIVER=true`.
+
+**Source** — `basefund/.jscpd.json`, `basefund/.claude/rules/check-clones.mjs`, `basefund/tools/scripts/merge-jscpd-baseline.mjs`,
+`nodeRuntime.ts`, `merge-jscpd-baseline.test.ts`, `check-clones-base.test.ts`, the `.gitattributes` line and the `prepare`
+registration; `bfp-control-panel` holds the same files adapted to a target with no CI runner and no Ruby, plus the
+`tools/scripts/vitest.config.ts` a repo without a root vitest config needs. The lane's docblock is the full contract — the
+fingerprint baseline, the re-pairing filter, the accepted false greens — and is read, not summarized here.
+
+### Apply
+
+- Add `jscpd` and `execa` (the tests spawn `git` and `node` through it) to the root devDependencies, caret ranges. Copy
+  `.jscpd.json` and adapt it: `format`/`formatsExts` to the target's languages (basefund scans TS and Ruby; a TS-only
+  target drops `ruby` and the `formatsExts` entry), `pattern` to its source roots, `ignore` to its build outputs — keep
+  `.claude/worktrees/**` and `tmp/**`, `minLines: 10` and the import-line `ignorePattern`.
+- Copy `check-clones.mjs` to `.claude/rules/check-clones.mjs` — the same path, because the merge driver's conflict message,
+  the rule prose and the script's own `UPDATE_COMMAND` all spell it. Adapt the base resolution to the target's CI:
+  basefund resolves CircleCI (the open PR's target through GitHub, else `CHECK_CLONES_BASE_REVISION`); a target with no
+  CI runner keeps only the local resolution (`start.source-branch`, else the default branch) and deletes
+  `lookupPrTarget`, `resolvePreviousBuild`, `resolveCiBase` and their three constants, as bfp-control-panel did; a GitHub
+  Actions target would read `GITHUB_BASE_REF` and has no worked example yet. Rewrite the docblock's environment list and
+  parity paragraph to match. When the config drops a format, drop that format's fixtures from the self-test too
+  (`rubyBlock`, the `.rb`/`.rake` entries of `BASE_TREE`, `PLANTS` and `PLANTED_PAIRS`, the success line) — the
+  self-test copies the real `.jscpd.json`, so a planted copy in an unscanned format is never reported and the self-test
+  fails.
+- Copy the merge driver, `nodeRuntime.ts` and the two tests into `tools/scripts/`. Adapt the merge test's `prepare`
+  assertion to whatever ends the target's `prepare` (basefund: `husky`; bfp: `tools/stack-slot ensure`) and its expected
+  driver list (basefund registers two drivers). Drop the base test's CI `describe` blocks with the CI code, and
+  rewrite its "green on the target's own build" arm as a local one (on the merged tree nothing is changed against the
+  base, so the re-pairing is accepted). Wire the tests in: a `projects` entry on the root vitest config where one exists
+  (basefund), else `tools/scripts/vitest.config.ts` with `root` set to its own directory and a `test-tools` script
+  passing `--config` (bfp); `tools/` is not a workspace, so the turbo `test` task never reaches it.
+- `.gitattributes`: `/.jscpd-baseline.json merge=jscpd-baseline`. `prepare`: prepend the two
+  `git config --replace-all merge.jscpd-baseline.{name,driver} … || true;` registrations, unchained, ahead of whatever
+  else runs there (copy the driver command verbatim from basefund's `prepare`: it falls back to `git merge-file` when the
+  script is missing). `.gitignore`: `/.merge_file_*` and `/.jscpd-baseline.json.staged-*`. Biome: exclude
+  `.jscpd-baseline.json` from `files.includes`, with the one-line reason (the tests compare it byte for byte).
+- Then, in this order: `pnpm install` (registers the driver, installs the platform binary), `biome check --write`,
+  `node .claude/rules/check-clones.mjs --self-test`, `node .claude/rules/check-clones.mjs --update` (the first baseline),
+  `node .claude/rules/check-clones.mjs` (green, `judged against …`), `pnpm test-tools`.
+
+### Gotchas
+
+- The cooldown applies to jscpd like anything else: on 2026-10-24 `^5.4.1` resolved to 5.4.1 because 5.4.2 was four
+  days old. A later jscpd can re-key every fingerprint; a red listing most of the tree's clones on a version bump is a
+  re-keyed baseline, regenerated with `--update` in the same change.
+- The baseline is generated per target, never copied: it records that tree's clones as they stand. Later `--update`
+  runs list each pair the committed baseline lacked; the first one has nothing to diff against and lists nothing, so
+  read the first recording through jscpd's JSON reporter (the SKILL's follow-up names the command) before committing it.
+- Vendored or synced source inside the scan (bfp's `packages/*/src`) is a choice to make explicitly: scanning it catches a
+  copy of a vendored component into the app, at the cost that every re-sync lands upstream's new clones as fresh
+  fingerprints — the sync skill's gate then records them (bfp's `sync-shared` gate, step 7). Excluding it is the quieter
+  choice and misses that copy.
+- `--update` after `biome check --write`, always: fingerprints are over the tokens as written, and a clone red that appears
+  only on a second `pnpm check` is Biome, running beside the lane, having formatted a copy into a match.
+- The lane runs inside `check` where the developer's machine is the whole gate; a target with CI also runs
+  `--self-test && node .claude/rules/check-clones.mjs` as its own fail-fast CI step (basefund's shape), since `pnpm check`
+  is never invoked as a whole in CI.
+- A worktree entered by hand or by `EnterWorktree` records no `start.source-branch`, so the lane judges against the
+  default branch; the output names the base either way (`judged against default branch main`).
+- **The default-branch order follows how the target pushes.** Upstream's `resolveLocalBase` asks `origin/HEAD` before the
+  local `main`, which is right where `main` is pushed promptly. A repo that pushes `main` lazily (bfp-control-panel) must
+  ask the local `main` first: against `origin/main`, everything merged since the last push reads as changed, and the
+  next branch off `main` is charged with the clones those merges carried — measured as 48 vendored story pairs from a
+  shared-package sync, red on a branch that touched none of them. Flip the order, the `unfiltered` wording and the base
+  test's "ahead of a local main" arm together.
 
 ## Markdown lint
 
@@ -162,9 +235,11 @@ first H1 (gltfjsx's case).
 
 ### Apply
 
-Add `.ncurc.cjs`: `cooldown: (n) => n.startsWith('@alienfast/') ? 0 : '168h'`, `packageManager: 'pnpm'`,
-`root: true`. Keep `168h` aligned to pnpm's `minimumReleaseAge` 7-day window so `ncu` never suggests an
-update the install would refuse.
+Add `.ncurc.cjs` with `packageFile: './package.json'`, `packageManager: 'pnpm'`, `root: true` and, for a monorepo,
+`workspaces: true` — and **no `cooldown`**: ncu ≥ 22 inherits `minimumReleaseAge` and `minimumReleaseAgeExclude` from
+`pnpm-workspace.yaml` when the rc sets none (it prints `Using minimumReleaseAge from pnpm-workspace.yaml`), and a
+hand-written `cooldown` overrides that inheritance and drifts from the install gate. Basefund's live file carries the
+one-line reason as a comment, plus per-package `reject` entries that are its own; copy the shape, not the rejects.
 
 ## .vscode
 
