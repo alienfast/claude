@@ -35,10 +35,11 @@ Four optional tokens, order-insensitive:
   the transitive blockers of any member, non-terminal only, cross-team included (`scripts/epic-graph.sh`); pass through
   as `--root <ID>`. The graph's teams join the fetch on their own, so `team:` merely widens it. Validated
   **fail-closed by the script**: an ID that does not exist or lacks the `epic` label exits 1 with the reason — surface
-  it and stop; never fall back to the unscoped pool.
+  it and stop; never fall back to the unscoped pool. The scope implies `backlog` (below) for the epic's own members.
 - `backlog`: the Planned gate's human opt-in — pass through as `--backlog-fallback`. Planned/Todo stays strictly first;
   Backlog is offered only when nothing Planned/Todo is pickable at that instant, under a `_BACKLOG-FALLBACK: …_` note
-  naming what still holds the column. `/auto backlog` forwards it (what `/fleet-launch backlog` dispatches).
+  naming what still holds the column. `/auto backlog` forwards it (what `/fleet-launch backlog` dispatches). Implied
+  by `epic:ID`.
 
 Error on any other token.
 
@@ -72,7 +73,7 @@ prefix's team is exactly how certified work in a sibling team gets missed).
 ~/.claude/scripts/next-candidates.sh --completed <COMPLETED-ID>       # post-finish: transitively unblock from <COMPLETED-ID>
 ~/.claude/scripts/next-candidates.sh --label <label>                  # label-filtered (/auto's pick: /next specified)
 ~/.claude/scripts/next-candidates.sh --team PL,BF --limit 5           # explicit scoping / more results
-~/.claude/scripts/next-candidates.sh --root BF-1826 --label specified # epic-scoped (/next epic:BF-1826; what /auto epic:… runs)
+~/.claude/scripts/next-candidates.sh --root BF-1826 --label specified # epic-scoped (/next epic:BF-1826; what /auto epic:… runs; implies --backlog-fallback)
 ~/.claude/scripts/next-candidates.sh --label specified --backlog-fallback   # /next specified backlog; what /auto backlog runs
 ```
 
@@ -116,7 +117,10 @@ Narrate the script's stdout naturally — and **definitively**:
   keeper-gated members remain and nothing is in flight): "the fleet is done with this epic until the keeper acts", with
   the note's list as what to decide, certify or close. It arrives with the drained headline, not a hold.
 - Surface a `_BACKLOG-FALLBACK: …_` note **verbatim** — the pick is Backlog work taken under the `backlog` opt-in while
-  the column still holds work; never call the column drained around it.
+  the column still holds work; never call the column drained around it. Under `epic:` it is the epic's own deferred
+  work, taken by construction.
+- Surface an `_In flight: …_` line **verbatim** under `epic:` — the members siblings are shipping; while it is present
+  the scope is not drained, whatever else the ranking shows.
 - No workable issues (the column drained) → say so plainly; do not invent a suggestion. Under `--label specified`,
   suggest `/spec` to certify backlog issues (or `/prd` to seed new certified ones).
 
@@ -162,6 +166,13 @@ under a `BACKLOG-FALLBACK` note; a releasing Planned issue does not make the cal
 the next pick. With nothing pickable in either column the hold is the gate's (`PLANNED-HOLD`, wait). It is a literal
 token on the invocation — `/fleet-launch backlog`, `/loop /auto backlog`, `/next specified backlog` — never inferred
 from a usage reading; the default stays the gate (`standards/linear-workflow.md` § Stage Priorities).
+
+**An epic scope implies the opt-in.** `--root` opens the fallback by construction: the goal of a scoped run is to
+complete the epic, and a member's column says nothing about that — a review's deferred filing lands as a Backlog
+sub-issue mid-run and is still the epic's work. The member cut precedes the gate, so only the epic's own Backlog
+members are offered, never the team's; Planned/Todo members still go first at every pick, and `EPIC-DRAINED` still
+ends the run once only keeper-gated members remain. Every scoped run also prints an `_In flight: …_` line under the
+scope line while a member is started, since a landing can file children into the scope.
 
 A label filter applies after the workable/blocker filtering and before tiering — it changes the pool, never the ranking
 math. `--exclude-label`, `--include-triage`, and `--include-blocked` are `/spec`'s grooming-discovery knobs, never used

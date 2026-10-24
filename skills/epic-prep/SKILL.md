@@ -117,7 +117,9 @@ approval:
 
 The one state never promoted around is Triage — a Triage member is groomed in Step 2 (grooming is acceptance), never
 state-written past it. With the graph promoted, the Planned gate is satisfied inside the scope and the board says what the
-fleet is doing.
+fleet is doing. The promotion is for the board, not the picker: an epic-scoped pick implies the Backlog fallback, so a
+member left in Backlog — or a review's deferred sub-issue filed there mid-run — is still picked once nothing Planned/Todo
+in the scope is pickable.
 
 ### Step 6: The integration branch
 

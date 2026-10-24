@@ -135,6 +135,14 @@ chain is exactly what spare usage should not do. With nothing pickable in either
 spending policy, not the burst protection. A `_BACKLOG-FALLBACK: …_` note on the pick names what still holds the column,
 so the ledger and the retro can tell fallback work from a gate failure.
 
+**An epic scope implies the opt-in.** `/fleet-launch epic:<ID>`, `/auto epic:<ID>` and `/next epic:<ID>` run
+`next-candidates.sh --root`, which opens the fallback by construction: the goal of a scoped run is to complete the epic,
+and a member's column says nothing about that — a review's deferred filing lands as a Backlog sub-issue mid-run and is
+still the epic's work. The member cut precedes the gate, so only the epic's own Backlog members are offered, never the
+team's; Planned/Todo members still go first at every pick, and `EPIC-DRAINED` still ends the run once only keeper-gated
+members remain. `/epic-prep`'s promotion to Planned is for the board, not the picker. `/fleet-launch epic:<ID>`
+dispatches the literal `backlog` token so the marker and every ledger record the mode.
+
 ## Certified Specs (the `specified` label)
 
 [issue-spec.md](issue-spec.md) owns the `specified` label: its definition, quality bar, canonical template, read-merge-set

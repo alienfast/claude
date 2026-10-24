@@ -1,6 +1,6 @@
 ---
 name: fleet-launch
-description: Launch a fleet of parallel /loop /auto sessions as `claude agents` background sessions, staggered, with an optional time budget; the count defaults to /auto-prep's recommendation. `epic:<ID>` scopes the fleet to one epic's integration branch; `backlog` opens the Backlog fallback. Use when the user says 'fleet launch', 'launch the fleet', 'spawn N auto loops', 'fleet epic', or invokes /fleet-launch.
+description: Launch a fleet of parallel /loop /auto sessions as `claude agents` background sessions, staggered, with an optional time budget; the count defaults to /auto-prep's recommendation. `epic:<ID>` scopes the fleet to one epic's integration branch (the epic's own Backlog members included); `backlog` opens the Backlog fallback team-wide. Use when the user says 'fleet launch', 'launch the fleet', 'spawn N auto loops', 'fleet epic', or invokes /fleet-launch.
 ---
 
 # Fleet Launch
@@ -31,7 +31,10 @@ and before the next launch — launching expires the prior run's ledgers).
   `next-candidates.sh --root <ID>` against live membership. The token overrides the recommendation's `scope` and is the
   only way an inherited scope launches — a typed token is never asked about. Validated fail-closed through
   `scripts/epic-graph.sh` before anything is dispatched or written: a missing issue or one without the `epic` label
-  refuses the launch.
+  refuses the launch. **An epic scope implies `backlog`**: the prompt is `/loop /auto epic:<ID> backlog` and the marker
+  records `backlog: true`. Completing the epic is the goal, so a member deferred to Backlog — a review's sub-issue
+  filing, an unpromoted member — is picked once nothing Planned/Todo in the scope is pickable. The scope cut bounds it:
+  the epic's own members only, never the team's Backlog.
 - `team` — launch team-wide although the recommendation carries a `scope`; the count still defaults from the file, with a
   WARN that `/epic-prep` sized it for the epic. Mutually exclusive with `epic:<ID>`.
 - `backlog` — the prompt gains ` backlog` (`next-candidates.sh --backlog-fallback`): a session with nothing Planned/Todo
@@ -39,7 +42,7 @@ and before the next launch — launching expires the prior run's ledgers).
   for a day with spare usage (the gate is the default — `standards/linear-workflow.md` § Stage Priorities); it changes
   spending policy only, the headroom gate still parks near the 5h ceiling. Recorded as `backlog: true` in the marker. A
   session's mode is fixed at launch — open the fallback on an idling fleet with `/fleet-launch <n> <remaining duration>
-  backlog`. Composes with `epic:<ID>` and `team`.
+  backlog`. Composes with `team`; implied by `epic:<ID>`.
 - `stale-ok` — launch although `~/.claude` is behind `origin/main` in a file the sessions load, with a one-line `WARN`.
   Without it that state stops the launch with `TOOLING-STALE` (exit 4). Composes with every other token.
 
@@ -167,7 +170,7 @@ hides a running sibling; a kept single-run ledger (`mode: single`) does neither.
 - Marker: `<main-checkout>/tmp/fleet-deadline.json`, written on **every** launch as `{fleet_sessions, count,
   launch_epoch}`, plus `{deadline_epoch, deadline}` when the launch carried a duration, plus `{scope, members}` (and
   `{branch, base}` when prep recorded an integration branch) when epic-scoped, plus `{backlog: true}` under the `backlog`
-  token, plus `{retiring: [keys]}` when a top-up carried sessions out of a marker already winding down (deadline passed,
+  token or an epic scope, plus `{retiring: [keys]}` when a top-up carried sessions out of a marker already winding down (deadline passed,
   or `stopped: true`). A retiring session stays in `fleet_sessions` but `hooks/auto-deadline-gate.sh` treats the deadline
   as passed for it whatever the new `deadline_epoch` says, so it finishes its in-flight issue and stops, and stays retired
   through later top-ups. The launch prints how many carried plus new sessions will run, WARNs above the cap of 3, and

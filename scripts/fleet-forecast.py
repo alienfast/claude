@@ -26,6 +26,8 @@ Usage:
   to the epic's graph members right after the fetch (epic-graph.sh — the epic, its descendants,
   and their blockers, non-terminal only), the graph's teams are fetched on their own, and a
   SCOPE line leads the output. Fails closed: a root that is not an epic exits 1 with the reason.
+  The scope implies --backlog (keeper ruling 2026-10-23, as next-candidates.sh --root does): the
+  epic's own Backlog members are picked once nothing Planned/Todo in the scope is pickable.
   --sessions / --horizon-h default from tmp/fleet-recommendation.json (sessions / duration_h);
   horizon falls back to 12. --hours-per-issue overrides the calibration from
   tmp/fleet-metrics-history.jsonl (mean session_hours/shipped over recent runs, rows above
@@ -372,6 +374,8 @@ def main():
     ap.add_argument("--backlog", action="store_true",
                     help="simulate /fleet-launch backlog — Backlog is picked once nothing Planned/Todo is pickable")
     args = ap.parse_args()
+    if args.root:
+        args.backlog = True  # the scope implies the fallback (docstring); the member cut keeps it to the epic's own Backlog
 
     rec = {}
     try:
@@ -482,7 +486,8 @@ def main():
           f" — pool {len(pool)} shippable of {len(certified)} certified")
     print(f"HOURS-PER-ISSUE: {base} ({source}{'' if args.flat else '; estimate-weighted'})")
     if args.backlog:
-        print("BACKLOG-FALLBACK: on — Backlog is picked once nothing Planned/Todo is pickable; Planned/Todo stays first at every pick")
+        print("BACKLOG-FALLBACK: on" + (" (epic scope — the epic's own Backlog members)" if args.root else "")
+              + " — Backlog is picked once nothing Planned/Todo is pickable; Planned/Todo stays first at every pick")
     unstarted_ids = [iid for iid in pool if pool[iid].stype == "unstarted"]
     backlog_ids = [iid for iid in pool if pool[iid].stype == "backlog"]
     # An inherited-stage blocker is a Planned-stage pick by construction — it is not the crossover

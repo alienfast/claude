@@ -34,7 +34,8 @@ single pick. Never persist the output anywhere `/auto` or a fleet session might 
 
 `--root` forecasts what `/fleet-launch epic:<ID>` would run: the pool is cut to the epic's graph members right after the
 fetch (`scripts/epic-graph.sh`), the graph's teams are fetched on their own, and a `SCOPE:` line leads the output. It
-fails closed — a root that is not an epic exits 1 with the reason; never render the team forecast in its place.
+fails closed — a root that is not an epic exits 1 with the reason; never render the team forecast in its place. The scope
+implies `--backlog`: a `BACKLOG-FALLBACK: on (epic scope …)` line says so, and a member is never `WITHHELD`.
 
 Defaults: sessions and horizon from `tmp/fleet-recommendation.json` (horizon falls back to 12h); no count from either
 source is a hard error — point at `/auto-prep` or ask for one. Useful overrides: `--hours-per-issue X` (replace the

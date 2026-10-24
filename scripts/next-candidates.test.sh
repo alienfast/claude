@@ -493,9 +493,9 @@ cp "$FIX/issues-main.json" "$FIX/issues-page.json"; cp "$FIX/deps-main.json" "$F
 # ---- outside it, so no hidden or hold note may count one — the cut lands before the notes ----
 OUTR="$WORK/outr.md"
 run "$OUTR" --limit 20 --root TT-27 || { echo "FAIL: root run exited $?"; cat "$OUTR.err"; exit 1; }
-ck "scoped order (TT-29 blocked, TT-20 withheld as Backlog, TT-27 hidden as the epic)" "TT-26 TT-40" "$(order_of "$OUTR")"
+ck "scoped order (TT-29 blocked, TT-20 withheld as Backlog while TT-26/TT-40 are pickable, TT-27 hidden as the epic)" "TT-26 TT-40" "$(order_of "$OUTR")"
 ck_has  "scope line"        "_Scope: epic TT-27 — 5 non-terminal member(s) across TT; ranking limited to the graph._" "$OUTR"
-ck_has  "scoped planned-hold counts members only" "_PLANNED-HOLD: Backlog withheld — the Planned/Todo column is not drained (1 issue(s) hold the gate: 0 pickable now; 1 need the keeper — TT-27 [epic — certify per child; it closes itself when they release]). 1 Backlog candidate(s) wait behind the gate; it opens when the column drains — pass --no-stage-gate to list them._" "$OUTR"
+ck_has  "scoped planned-hold counts members only" "_PLANNED-HOLD: Backlog withheld — the Planned/Todo column is not drained (1 issue(s) hold the gate: 0 pickable now; 1 need the keeper — TT-27 [epic — certify per child; it closes itself when they release]). 1 Backlog candidate(s) wait behind the gate; backlog fallback is on — they open as soon as nothing Planned/Todo is pickable._" "$OUTR"
 ck_has  "scoped epic note"  "1 issue(s) hidden as delegated epics" "$OUTR"
 ck_lacks "scoped: no needs-decision note (TT-11 is outside)" "hidden awaiting a human decision" "$OUTR"
 ck_lacks "scoped: no claimed note (TT-16 is outside)"        "hidden as claimed" "$OUTR"
@@ -564,7 +564,8 @@ OUTE="$WORK/oute.md"
 run "$OUTE" --limit 20 --root TT-70 || { echo "FAIL: epic in-flight run exited $?"; cat "$OUTE.err"; exit 1; }
 ck "epic in flight: nothing ranked" "" "$(order_of "$OUTE")"
 ck_has  "epic in flight: the hold stands" "_Nothing pickable right now in epic TT-70 (team TT) — the Planned/Todo column is not drained, so Backlog is withheld (PLANNED-HOLD below)." "$OUTE"
-ck_has  "epic in flight: the hold names what the drain waits on" "(2 issue(s) hold the gate: 0 pickable now; 2 need the keeper — TT-70 [epic — certify per child; it closes itself when they release], TT-71 [human]). 0 Backlog candidate(s) wait behind the gate; it opens when the column drains — pass --no-stage-gate to list them. 1 in flight — TT-72; the run ends once every in-flight member lands and nothing else opens._" "$OUTE"
+ck_has  "epic in flight: the hold stands under the scope's fallback" "(2 issue(s) hold the gate: 0 pickable now; 2 need the keeper — TT-70 [epic — certify per child; it closes itself when they release], TT-71 [human]). 0 Backlog candidate(s) wait behind the gate; backlog fallback is on but Backlog has nothing pickable either — wait._" "$OUTE"
+ck_has  "epic in flight: the in-flight line names what the drain waits on" "_In flight: 1 member(s) — TT-72. A landing can file certified children, so the scope is not drained while any is in flight._" "$OUTE"
 ck_lacks "epic in flight: not drained" "EPIC-DRAINED" "$OUTE"
 # TT-72 lands: the real pool fetch omits completed-type issues, and the graph walk drops the terminal child from the members.
 gnode TT-72 "Ready for Release" completed '[]' TT-70 '[]' '[]' '[]'
@@ -576,11 +577,66 @@ ck_has  "epic drained: the headline is the drained text" "_No workable issues in
 ck_has  "epic drained: the note names the remainder" "_EPIC-DRAINED: epic TT-70 has nothing left the fleet can ship — 2 member(s) need the keeper (TT-70 [epic — certify per child; it closes itself when they release], TT-71 [human]) and nothing is in flight. The run ends here; decide, certify or close them and relaunch._" "$OUTE2"
 ck_lacks "epic drained: no hold note" "PLANNED-HOLD" "$OUTE2"
 ck_has  "epic drained: the scope line stays" "_Scope: epic TT-70 — 2 non-terminal member(s) across TT" "$OUTE2"
+ck_lacks "epic drained: no in-flight line" "_In flight:" "$OUTE2"
 OUTE3="$WORK/oute3.md"
 run "$OUTE3" --limit 20 || { echo "FAIL: team-wide keeper-only run exited $?"; cat "$OUTE3.err"; exit 1; }
 ck_has  "team-wide keeper-only remainder: still a hold" "_PLANNED-HOLD: Backlog withheld — the Planned/Todo column is not drained (2 issue(s) hold the gate: 0 pickable now; 2 need the keeper — " "$OUTE3"
 ck_lacks "team-wide keeper-only remainder: never drained" "EPIC-DRAINED" "$OUTE3"
+# A Backlog child filed under the Planned root mid-run (a review's deferred filing) inherits the stage and is the pick, with
+# nothing in flight and every other member the keeper's: a pickable member means the scope is not drained, whatever its column.
+gnode TT-70 Planned unstarted '[{"name":"epic"}]' null '[{"identifier":"TT-71"},{"identifier":"TT-72"},{"identifier":"TT-73"},{"identifier":"TT-74"}]' '[]' '[]'
+gnode TT-74 Backlog backlog '[]' TT-70 '[]' '[]' '[]'
+jq '.data.issues.nodes += [{"identifier":"TT-74","title":"deferred child","estimate":null,"priority":3,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[]},"parent":{"identifier":"TT-70"}}]' "$FIX/issues-page.json" > "$FIX/issues-page.tmp" && mv "$FIX/issues-page.tmp" "$FIX/issues-page.json"
+stamp_created "$FIX/issues-page.json"
+OUTE4="$WORK/oute4.md"
+run "$OUTE4" --limit 20 --root TT-70 || { echo "FAIL: epic deferred-child run exited $?"; cat "$OUTE4.err"; exit 1; }
+ck "epic deferred child: it is the pick" "TT-74" "$(order_of "$OUTE4")"
+ck_has  "epic deferred child: inherits the stage" "Stage inherited: Backlog, but it gates Planned/Todo TT-70 (as blocker or child)" "$OUTE4"
+ck_lacks "epic deferred child: a pickable member is never drained" "EPIC-DRAINED" "$OUTE4"
 mv "$WORK/issues-page.keep" "$FIX/issues-page.json"
+
+# ---- --root implies the Backlog fallback (keeper ruling 2026-10-23): epic TT-80 is Planned and the keeper's, its child TT-81 is
+# ---- Backlog behind the Backlog blocker TT-82 — a member through the blocks edge, inheriting nothing (it blocks Backlog work).
+# ---- Team-wide the gate withholds TT-82 behind a column that can never drain on its own; under the scope the fallback offers
+# ---- it — the scope being the epic's own members and nothing else — and the child opens once it ships ----
+cp "$FIX/issues-page.json" "$WORK/issues-page.keep"; cp "$FIX/deps-page.json" "$WORK/deps-page.keep"
+cat > "$FIX/issues-page.json" <<'EOF'
+{"data":{"issues":{"nodes":[
+ {"identifier":"TT-80","title":"planned epic with deferred work","estimate":null,"priority":0,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[{"name":"epic"}]},"parent":null},
+ {"identifier":"TT-81","title":"backlog child behind a backlog blocker","estimate":null,"priority":3,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[]},"parent":{"identifier":"TT-80"}},
+ {"identifier":"TT-82","title":"backlog blocker of the child","estimate":null,"priority":3,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[]},"parent":null}
+],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
+EOF
+stamp_created "$FIX/issues-page.json"
+cat > "$FIX/deps-page.json" <<'EOF'
+{"data":{"issues":{"nodes":[
+ {"identifier":"TT-82","title":"backlog blocker of the child","state":{"name":"Backlog","type":"backlog"},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-81"}}]}}
+],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
+EOF
+gnode TT-80 Planned unstarted '[{"name":"epic"}]' null '[{"identifier":"TT-81"}]' '[]' '[]'
+gnode TT-81 Backlog backlog '[]' TT-80 '[]' '[]' '[{"type":"blocks","issue":{"identifier":"TT-82"}}]'
+gnode TT-82 Backlog backlog '[]' null '[]' '[{"type":"blocks","relatedIssue":{"identifier":"TT-81"}}]' '[]'
+OUTF="$WORK/outf.md"
+run "$OUTF" --limit 20 || { echo "FAIL: team-wide deferred run exited $?"; cat "$OUTF.err"; exit 1; }
+ck "team-wide: the blocker is withheld" "" "$(order_of "$OUTF")"
+ck_has  "team-wide: the hold" "_PLANNED-HOLD: Backlog withheld — the Planned/Todo column is not drained (1 issue(s) hold the gate: 0 pickable now; 1 need the keeper — TT-80 [epic — certify per child; it closes itself when they release]). 1 Backlog candidate(s) wait behind the gate; it opens when the column drains — pass --no-stage-gate to list them._" "$OUTF"
+OUTF2="$WORK/outf2.md"
+run "$OUTF2" --limit 20 --root TT-80 || { echo "FAIL: scoped deferred run exited $?"; cat "$OUTF2.err"; exit 1; }
+ck "scoped: the blocker is offered" "TT-82" "$(order_of "$OUTF2")"
+ck_has  "scoped: the fallback note" "_BACKLOG-FALLBACK: picking from Backlog — the Planned/Todo column is not drained (1 issue(s) hold it; 1 need the keeper — TT-80 [epic — certify per child; it closes itself when they release]) but nothing in it is pickable now, so 1 Backlog candidate(s) are offered; Planned/Todo resumes first at the next pick._" "$OUTF2"
+ck_lacks "scoped: no hold" "PLANNED-HOLD" "$OUTF2"
+ck_lacks "scoped: not drained" "EPIC-DRAINED" "$OUTF2"
+ck_has  "scoped: the scope line" "_Scope: epic TT-80 — 3 non-terminal member(s) across TT; ranking limited to the graph._" "$OUTF2"
+# TT-82 ships: the pool fetch omits it, the graph drops it, and the child it blocked opens in the Planned stage it inherits.
+gnode TT-82 "Ready for Release" completed '[]' null '[]' '[{"type":"blocks","relatedIssue":{"identifier":"TT-81"}}]' '[]'
+jq 'del(.data.issues.nodes[] | select(.identifier == "TT-82"))' "$FIX/issues-page.json" > "$FIX/issues-page.tmp" && mv "$FIX/issues-page.tmp" "$FIX/issues-page.json"
+jq '.data.issues.nodes[0].state = {"name":"Ready for Release","type":"completed"}' "$FIX/deps-page.json" > "$FIX/deps-page.tmp" && mv "$FIX/deps-page.tmp" "$FIX/deps-page.json"
+OUTF3="$WORK/outf3.md"
+run "$OUTF3" --limit 20 --root TT-80 || { echo "FAIL: scoped post-ship run exited $?"; cat "$OUTF3.err"; exit 1; }
+ck "scoped: the child opens once its blocker ships" "TT-81" "$(order_of "$OUTF3")"
+ck_lacks "scoped: an inherited-stage pick carries no fallback note" "BACKLOG-FALLBACK" "$OUTF3"
+ck_lacks "scoped: still not drained" "EPIC-DRAINED" "$OUTF3"
+mv "$WORK/issues-page.keep" "$FIX/issues-page.json"; mv "$WORK/deps-page.keep" "$FIX/deps-page.json"
 
 # ---- sequence-held: a running /fleet-sequence's queue is hidden from every ranking (its runner dispatches
 # ---- each in turn — a fleet picker taking one would ship it twice), the note names the sequence, and the

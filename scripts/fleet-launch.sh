@@ -9,9 +9,12 @@
 #               recommendation /auto-prep persisted to tmp/fleet-recommendation.json
 #               (error if absent — run /auto-prep first, or pass a count). An explicit
 #               count is the quota throttle: auto-prep recommends from lane math alone.
-#   [epic:<ID>] Scope the fleet to one epic's graph: every session runs `/loop /auto epic:<ID>`
+#   [epic:<ID>] Scope the fleet to one epic's graph: every session runs `/loop /auto epic:<ID> backlog`
 #               (next-candidates.sh --root — the epic, its descendants, and their blockers, and
-#               nothing else). A recommendation carrying a `scope` (an /epic-prep) is used only
+#               nothing else). The scope implies the Backlog fallback (keeper ruling 2026-10-23):
+#               completing the epic is the goal, so a member deferred to Backlog is picked once
+#               nothing Planned/Todo in the scope is pickable — the epic's own members, never the
+#               team's Backlog. A recommendation carrying a `scope` (an /epic-prep) is used only
 #               when this token names it — the token IS the confirmation. Omitted while the file
 #               carries one → SCOPE-CONFIRM, exit 3, nothing dispatched or written: re-run with
 #               `epic:<ID>` or `team`. Until 2026-09-29 the file's scope launched silently, and a
@@ -45,7 +48,7 @@
 #               A token with no matching prepared
 #               branch launches on the checkout's own branch with a WARN — the human typed it.
 #   [backlog]   Let every session fall through to Backlog once nothing Planned/Todo is pickable
-#               (keeper ruling 2026-10-01): the dispatched prompt gains ` backlog`, so each pick runs
+#               (keeper ruling 2026-10-01; implied by epic:<ID>): the dispatched prompt gains ` backlog`, so each pick runs
 #               next-candidates.sh --backlog-fallback instead of idling on PLANNED-HOLD. Planned/Todo
 #               stays strictly first at every pick. The opt-in for a day with spare usage — the
 #               default stays the gate (standards/linear-workflow.md § Stage Priorities), and /auto's
@@ -248,6 +251,9 @@ elif [ -n "$rec_scope" ]; then
   echo "Re-run with 'epic:$rec_scope' to launch the epic fleet, or 'team' to launch team-wide." >&2
   exit 3
 fi
+# The scope implies the fallback (next-candidates.sh --root opens it on its own); carrying the token makes the prompt, the
+# marker and every session's ledger record the mode the sessions actually run in.
+[ -n "$scope" ] && backlog_token=1
 if [ -n "$scope" ]; then
   graph=$("$script_dir/epic-graph.sh" "$scope" 2>"$main_checkout/tmp/fleet-launch-scope.err") || {
     cat "$main_checkout/tmp/fleet-launch-scope.err" >&2
@@ -472,7 +478,11 @@ fi
 if [ "$backlog_token" = 1 ]; then
   tmpm=$(jq '. + {backlog: true}' "$marker")
   printf '%s\n' "$tmpm" > "$marker"
-  echo "Backlog fallback: on — a session picks Backlog only once nothing Planned/Todo is pickable (Planned/Todo first at every pick; the headroom gate still parks near the 5h ceiling)"
+  if [ -n "$scope" ]; then
+    echo "Backlog fallback: on (epic scope) — a session picks the epic's own Backlog members once nothing Planned/Todo in the scope is pickable (Planned/Todo first at every pick; never the team's Backlog; the headroom gate still parks near the 5h ceiling)"
+  else
+    echo "Backlog fallback: on — a session picks Backlog only once nothing Planned/Todo is pickable (Planned/Todo first at every pick; the headroom gate still parks near the 5h ceiling)"
+  fi
 fi
 if [ -n "$deadline_epoch" ]; then
   tmpm=$(jq --argjson epoch "$deadline_epoch" --arg human "$deadline_human" '. + {deadline_epoch: $epoch, deadline: $human}' "$marker")
@@ -566,7 +576,7 @@ prompt="${FLEET_PROMPT:-$default_prompt}"
 if [ -n "$scope" ] && [ "$prompt" != "$default_prompt" ] && ! printf '%s' "$prompt" | grep -qi "epic:$scope"; then
   echo "WARN: FLEET_PROMPT='$prompt' does not carry epic:$scope — the sessions will NOT be scoped to the epic the marker records" >&2
 fi
-if [ "$backlog_token" = 1 ] && [ "$prompt" != "$default_prompt" ] && ! printf '%s' "$prompt" | grep -qiw "backlog"; then
+if [ "$backlog_token" = 1 ] && [ -z "$scope" ] && [ "$prompt" != "$default_prompt" ] && ! printf '%s' "$prompt" | grep -qiw "backlog"; then
   echo "WARN: FLEET_PROMPT='$prompt' does not carry backlog — the sessions will hold on the Planned gate although the marker records the fallback" >&2
 fi
 timeout="${FLEET_STAGGER_TIMEOUT:-180}"

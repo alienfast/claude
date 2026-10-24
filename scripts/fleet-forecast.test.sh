@@ -277,6 +277,9 @@ case "$id" in
   TT-2) node TT-2 Planned unstarted '[{"name":"specified"}]' '[]' '[]' ;;
   TT-5) node TT-5 Backlog backlog '[{"name":"specified"}]' '[]' '[]' ;;
   TT-200) node TT-200 Planned unstarted '[]' '[]' '[]' ;;
+  TT-300) node TT-300 Planned unstarted '[{"name":"epic"},{"name":"specified"}]' '[{"identifier":"TT-301"}]' '[]' ;;
+  TT-301) printf '{"data":{"issue":{"identifier":"TT-301","title":"t","state":{"name":"Backlog","type":"backlog"},"team":{"key":"TT"},"labels":{"nodes":[{"name":"specified"}]},"parent":{"identifier":"TT-300"},"children":{"nodes":[]},"relations":{"nodes":[]},"inverseRelations":{"nodes":[{"type":"blocks","issue":{"identifier":"TT-302"}}]}}}}\n' ;;
+  TT-302) node TT-302 Backlog backlog '[{"name":"specified"}]' '[]' '[{"type":"blocks","relatedIssue":{"identifier":"TT-301"}}]' ;;
   *) echo '{"code":2,"details":[{"message":"Entity not found: Issue"}],"error":true}'; exit 2 ;;
 esac
 EOF
@@ -288,6 +291,8 @@ ck "R scope is the first line" "SCOPE" "$(head -1 "$WORK/r.out" | cut -d: -f1)"
 ck_has "R forecast covers members only" "FORECAST: 1 sessions × 12.0h horizon — est. 3 ship · 0 unreached · 0 stranded — pool 3 shippable of 3 certified" "$WORK/r.out"
 ck_has "R chain inside the scope"  "PICK t=2.0h: TT-2 → s1 (~2.0h) (unblocked by TT-1)" "$WORK/r.out"
 ck_has "R backlog member after the column drains" "PICK t=4.0h: TT-5 → s1" "$WORK/r.out"
+ck_has "R scope implies the fallback" "BACKLOG-FALLBACK: on (epic scope — the epic's own Backlog members)" "$WORK/r.out"
+ck_lacks "R nothing withheld under the scope" "WITHHELD" "$WORK/r.out"
 ck_lacks "R outside planned issue absent" "TT-4" "$WORK/r.out"
 ck_lacks "R outside in-flight blocker absent" "TT-6" "$WORK/r.out"
 ck_lacks "R outside gate holder absent from the hold" "TT-3" "$WORK/r.out"
@@ -298,6 +303,28 @@ ck_lacks "S no forecast in the scope's place" "FORECAST" "$WORK/s.out"
 rc=$(run "$WORK/a.json" "$WORK/t.out" --root TT-404 --sessions 1 --horizon-h 12 --hours-per-issue 2 --flat)
 ck "T missing root exits 1" 1 "$rc"
 ck_has "T refusal names the miss" "not found" "$WORK/t.out.err"
+
+# ---- --root implies the fallback (keeper ruling 2026-10-23): epic TT-300 is Planned and never picked, its Backlog child TT-301
+# ---- waits on the Backlog blocker TT-302, which inherits nothing (it blocks Backlog work). Unscoped, the gate withholds
+# ---- TT-302 behind a column that cannot drain; scoped, the fallback picks it and the child follows ----
+cat > "$WORK/u.json" <<'EOF'
+[
+ {"identifier":"TT-300","estimate":1,"priority":2,"state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"},{"name":"epic"}]},"relations":{"nodes":[]}},
+ {"identifier":"TT-301","estimate":2,"priority":2,"state":{"name":"Backlog","type":"backlog"},"parent":{"identifier":"TT-300"},"labels":{"nodes":[{"name":"specified"}]},"relations":{"nodes":[]}},
+ {"identifier":"TT-302","estimate":2,"priority":3,"state":{"name":"Backlog","type":"backlog"},"labels":{"nodes":[{"name":"specified"}]},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-301"}}]}}
+]
+EOF
+rc=$(run "$WORK/u.json" "$WORK/u.out" --sessions 1 --horizon-h 12 --hours-per-issue 2 --flat)
+ck "U exit" 0 "$rc"
+ck_has "U unscoped: the hold" "HOLD t=0.0h: s1 — Backlog withheld (Planned/Todo not drained: TT-300)" "$WORK/u.out"
+ck_has "U unscoped: the blocker is withheld" "WITHHELD: TT-302 — Backlog withheld (Planned/Todo not drained)" "$WORK/u.out"
+rc=$(run "$WORK/u.json" "$WORK/ur.out" --root TT-300 --sessions 1 --horizon-h 12 --hours-per-issue 2 --flat)
+ck "UR exit" 0 "$rc"
+ck_has "UR scope implies the fallback" "BACKLOG-FALLBACK: on (epic scope — the epic's own Backlog members)" "$WORK/ur.out"
+ck_has "UR blocker picked at once" "PICK t=0.0h: TT-302 → s1" "$WORK/ur.out"
+ck_has "UR child follows" "PICK t=2.0h: TT-301 → s1 (~2.0h) (unblocked by TT-302) (Backlog — blocks Planned/Todo TT-300)" "$WORK/ur.out"
+ck_lacks "UR nothing withheld" "WITHHELD" "$WORK/ur.out"
+ck_lacks "UR no hold" "HOLD t=" "$WORK/ur.out"
 
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

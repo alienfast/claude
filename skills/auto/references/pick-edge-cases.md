@@ -9,8 +9,15 @@ Read from `/auto` Step 2 when `/next` returns an epic-scoped verdict, or when th
   the double-run confirmation. The tag carries the note verbatim —
   `NO-CANDIDATES: epic BF-1826 — <the EPIC-DRAINED note verbatim> <shipped>/<canceled>/<skipped>/<failed> this run.`
   — and the state file's `reason` is `epic <ID>: only keeper-gated members remain, nothing in flight`.
-- While a member is still in flight the `PLANNED-HOLD` note ends `N in flight — <IDs>; the run ends once every
-  in-flight member lands…`: wait **600s**; a sibling's landing is the wake signal.
+- While a member is still in flight the ranking carries `_In flight: N member(s) — <IDs>. A landing can file certified
+  children…_` under the scope line, on every scoped run. A `PLANNED-HOLD` with that line: wait **600s**; a sibling's
+  landing is the wake signal. The same line turns Step 2's *all remaining candidates were already attempted* exit into
+  the same **600s** hold: a session that latches `drained` with four siblings mid-issue is gone when their reviews file
+  the sub-issues it would have taken (2026-10-23: a BF-2792 session ended at 16:56 on one skipped member with a 22:36
+  deadline and four members in flight). Latch `drained` only when the line is absent.
+- A Backlog member is never withheld under the scope: `--root` implies the Backlog fallback, so a `_BACKLOG-FALLBACK: …_`
+  pick is ordinary epic work — a review's deferred sub-issue, an unpromoted member — taken once nothing Planned/Todo
+  in the scope is pickable. Carry the note into the summary as usual; it never means the team's Backlog.
 - The `AUTO-CONTINUE: no pick — …` tag prefixes the note with `epic <ID>: `, since the note's counts are the epic's.
 
 ## A deploy-gated candidate is a push-then-wait, never a hold for the keeper

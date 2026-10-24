@@ -42,7 +42,10 @@ team scope.
   Planned/Todo stays strictly first at every pick (`standards/linear-workflow.md` § Stage Priorities); the token only
   changes what an otherwise idle session does, and is what `/fleet-launch backlog` dispatches. Passed ONLY on the
   literal token — never inferred from a usage reading, the fleet marker, or a sibling's prompt. Composes with `pr` and
-  either scope; with an issue ID it is an error.
+  either scope; with an issue ID it is an error. An epic scope implies it: `next-candidates.sh --root` opens the
+  fallback for the epic's own Backlog members whether or not the token is passed, and `/fleet-launch epic:<ID>`
+  dispatches the token so the ledger and the marker record the mode. The scope is unchanged — Backlog outside the
+  graph is never offered.
 - A team scope (`BF`, or `PL,BF`) restricts the run to those teams' certified backlogs (forwarded to Step 2 as
   `team:<KEYS>`); without it, scope follows `/next` (`$LINEAR_TEAM`, else every team). At most one, and it MUST
   validate: uppercase it and check every comma-part against the workspace's real team keys
@@ -52,7 +55,8 @@ team scope.
   keyed `PR` scopes via `$LINEAR_TEAM`.
 - An epic scope (`epic:BF-1826`) restricts every pick to the epic's graph — the epic, its transitive descendants, and
   the transitive blockers of any member, non-terminal, cross-team, recomputed at every pick (forwarded to Step 2 as
-  `epic:<ID>`, which runs `next-candidates.sh --root <ID>`). It is what `/fleet-launch epic:<ID>` dispatches. At most
+  `epic:<ID>`, which runs `next-candidates.sh --root <ID>`). It is what `/fleet-launch epic:<ID>` dispatches, with
+  `backlog`, which the scope implies. At most
   one, and it MUST validate: `~/.claude/scripts/epic-graph.sh --ids <ID> >/dev/null` — exit 1 means no such issue or
   no `epic` label; emit its stderr and STOP. Composes with `pr` and a team scope (which only widens the fetch). Record
   it as `scope` in the run state (Step 4). When `tmp/fleet-deadline.json` records an integration `branch` for this
@@ -252,6 +256,11 @@ verbatim into the iteration tag's summary so the ledger says the pick was fallba
   run's `shipped`, `canceled`, `skipped`, or `failed` lists (a `DEFERRED-MERGE` issue stays In Progress until the
   queue drains it). If every candidate is excluded that way, set `status: "drained"` and emit
   `NO-CANDIDATES: all remaining candidates were already attempted this run (<shipped>/<canceled>/<skipped>/<failed>). Delete tmp/auto-state-<runKey>.json to re-attempt.`
+  **Under an epic scope, not while a member is in flight**: the ranking's `_In flight: …_` line names the members
+  siblings are shipping, and each landing's review can file certified sub-issues into the scope that this session
+  would take. While that line is present, end as an `AUTO-CONTINUE` no-pick whose summary names the attempted
+  candidates and the in-flight members — **600s** under self-paced `/loop`, `noop: true` — and latch `drained` only
+  when the line is absent (`references/pick-edge-cases.md`).
   Then **drop a candidate whose worktree a sibling live-owns**: if
   `<main-checkout>/.claude/worktrees/<issue-id-lowercased>` exists and `~/.claude/scripts/wt-owner.sh` on it reads
   `OWNER_ALIVE=alive` with `OWNER_IS_ME=0` (the condition `start-wt-create.sh` refuses on), walk down the ranked list
@@ -309,7 +318,8 @@ This skill is the canonical home of the ledger `tmp/auto-state-<runKey>.json` (S
   filename) is the per-session identity.
 - `mode`: written once — `loop` when the invocation arrived through `/loop` (its command block, or a wakeup
   re-delivering it), `single` for a direct invocation (targeted, or a one-shot bare `/auto`); absent reads as `loop`.
-  `scope` (the epic's id) is present only on an epic-scoped run; `backlog: true` only under the `backlog` token.
+  `scope` (the epic's id) is present only on an epic-scoped run; `backlog: true` only under the `backlog` token, which
+  `/fleet-launch epic:<ID>` always dispatches.
 - `status`: `active` → `halted` (breaker or environment halt) / `drained` (no candidates); never back — a new run
   starts by deleting the file. Whichever step sets a terminal `status` also writes `reason` (the one-line summary its
   tag carries) so Step 0's re-emission is verbatim.

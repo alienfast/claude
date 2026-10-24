@@ -86,6 +86,15 @@
 # column the hold is exactly the gate's (PLANNED-HOLD: wait), so the fallback never turns a held
 # column into drained.
 #
+# --root implies --backlog-fallback (keeper ruling 2026-10-23): the goal of an epic-scoped run is
+# to complete the epic, and a member's column says nothing about that — a review's deferred filing
+# lands as a Backlog sub-issue mid-run, a deferred member sits in Backlog unpromoted, and either is
+# still the epic's work. The member cut above bounds the pool to the graph, so the fallback opens
+# only the epic's own Backlog members, never the team's; Planned/Todo members still go first at
+# every pick, and EPIC-DRAINED still ends the run once only keeper-gated members remain. Without
+# it a Backlog member that inherits no stage (a blocker of Backlog work, or a child whose ancestor
+# fetch failed) sat behind the Planned root — always the keeper's — until the deadline.
+#
 # Emits a ranked markdown list to stdout. The --limit cut never hides unstarted-stage
 # work: every Planned/Todo candidate below the cut is appended in a trailing
 # "Planned/Todo below the cut" section carrying its true rank number (keeper policy
@@ -231,6 +240,8 @@ if [ -n "$root" ]; then
     echo "ERROR: --root '$root' does not match ^[A-Z0-9]+-[0-9]+\$" >&2
     exit 1
   fi
+  # The scope implies the fallback (header): an epic's Backlog members are its work, and the member cut keeps it to them.
+  backlog_fallback=1
 fi
 
 for cmd in linear-cli jq; do
@@ -974,29 +985,36 @@ fi
 # its last child releases and /epic-prep promotes human-gated members beside it, so the team-style hold could only tick to the
 # deadline (2026-10-13: 11.7 session-hours across three sessions after the last ship). In flight is a started member that is not
 # In Review, stalled, human or needs decision — chain_reason's reading of a started blocker; a landing can file certified
-# children, so the drain waits for it. Withheld Backlog members keep the hold: the keeper can release those by acting.
+# children, so the drain waits for it, and the in-flight line under the scope line names them on every scoped run so /auto can
+# hold on them when its only candidates are ones it already attempted. The verdict is reached only with nothing to pick: a
+# pickable member proves the scope is not drained whatever its column (a Backlog child of the Planned root inherits the stage and
+# never enters held_json, so the held entries alone read it as drained), and under the scope's fallback a withheld member is
+# offered, never held.
 epic_drained=0
 epic_drained_line=""
-if [ -n "$root" ] && [ "$gate_closed" -eq 1 ]; then
+inflight_json='[]'
+inflight_line=""
+if [ -n "$root" ]; then
   inflight_json=$(jq -c --argjson terminal "$TERMINAL_STATES" '
     [ .[] | select(.state_type == "started")
       | ((.state // "") | ascii_downcase) as $st
       | select((($terminal | map(ascii_downcase)) | index($st)) == null)
       | select(any((.labels // [])[]; (ascii_downcase | IN("stalled", "human", "needs decision"))) | not)
       | .identifier ] | sort' "$list_file")
-  verdict=$(printf '%s' "$held_json" | jq -r --argjson w "$withheld" --argjson inflight "$inflight_json" --arg root "$root" '
-    ([.[] | select(.kind == "pickable")] | length) as $p
-    | [.[] | select(.kind == "releasing")] as $r
+  if [ "$(printf '%s' "$inflight_json" | jq 'length')" -gt 0 ]; then
+    inflight_line=$(printf '%s' "$inflight_json" | jq -r '"_In flight: \(length) member(s) — \(join(", ")). A landing can file certified children, so the scope is not drained while any is in flight._"')
+  fi
+fi
+if [ -n "$root" ] && [ "$gate_closed" -eq 1 ] && [ "$(printf '%s' "$candidates_json" | jq 'length')" -eq 0 ]; then
+  verdict=$(printf '%s' "$held_json" | jq -r --argjson inflight "$inflight_json" --arg root "$root" '
+    [.[] | select(.kind == "releasing")] as $r
     | [.[] | select(.kind == "keeper") | "\(.id) [\(.reason)]"] as $k
-    | if ($p > 0) or (($r | length) > 0) or (($k | length) == 0) or ($w > 0) then "hold"
-      elif ($inflight | length) > 0 then
-        "pending \($inflight | length) in flight — \($inflight | join(", ")); the run ends once every in-flight member lands and nothing else opens."
+    | if (($r | length) > 0) or (($inflight | length) > 0) then "hold"
       else
         "drained _EPIC-DRAINED: epic \($root) has nothing left the fleet can ship — \($k | length) member(s) need the keeper (\($k | join(", "))) and nothing is in flight. The run ends here; decide, certify or close them and relaunch._"
       end')
   case "$verdict" in
     drained\ *) epic_drained=1; epic_drained_line="${verdict#drained }" ;;
-    pending\ *) hold_line="${hold_line%_} ${verdict#pending }_" ;;
   esac
 fi
 hold_note() {
@@ -1119,6 +1137,7 @@ if [ -n "$root" ]; then
 fi
 scope_note() {
   [ -n "$scope_line" ] && printf '%s\n\n' "$scope_line"
+  [ -n "$inflight_line" ] && printf '%s\n\n' "$inflight_line"
   return 0
 }
 

@@ -420,6 +420,15 @@ ck "plain launch records no backlog"      "" "$(jq -r '.backlog // empty' "$REPO
 ck_lacks "plain prompt carries no backlog" "backlog" "$WORK/dispatches"
 ck "override without backlog exits 0"     "0" "$(FLEET_PROMPT='/loop /auto EP' run 1 backlog)"
 ck_has "override without backlog warned"  "does not carry backlog" "$WORK/out"
+# An epic scope implies the token (keeper ruling 2026-10-23): the prompt, the marker and the announcement all carry it, and a
+# FLEET_PROMPT that keeps the scope but drops the word is not warned about — next-candidates.sh --root opens the fallback itself.
+: > "$WORK/dispatches"
+ck "epic launch exits 0"                    "0" "$(run 1 epic:EP-3)"
+ck_has "epic implies backlog in the prompt" "/loop /auto epic:EP-3 backlog" "$WORK/dispatches"
+ck "epic implies backlog in the marker"     "EP-3 true" "$(jq -r '"\(.scope) \(.backlog)"' "$REPO/tmp/fleet-deadline.json")"
+ck_has "epic fallback announced as scoped"  "Backlog fallback: on (epic scope)" "$WORK/out"
+ck "epic override without the word exits 0" "0" "$(FLEET_PROMPT='/loop /auto epic:EP-3' run 1 epic:EP-3)"
+ck_lacks "epic override without the word not warned" "does not carry backlog" "$WORK/out"
 
 # ---- retiring sessions: a relaunch over a wound-down marker must not hand its stragglers the new deadline ----
 # 2026-10-10: two leg-1 sessions finishing their last issues were carried into a 19h marker, ran beside the three new sessions
