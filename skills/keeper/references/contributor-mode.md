@@ -47,7 +47,7 @@ git -C ~/.claude worktree add ~/.claude/tmp/proposal-<slug> -b proposal/<slug> o
 ```
 
 Implement the included items there (Read before Edit, always), under keeper Step 3's gates (sibling script tests green;
-`npx markdownlint-cli2` on touched markdown — run from the worktree). One commit per issue — `keeper: <ID> — <summary>`,
+`npx markdownlint-cli2` on touched markdown; `pnpm check-anchors && pnpm test` once — all run from the worktree). One commit per issue — `keeper: <ID> — <summary>`,
 body carrying per-item outcomes — so the shared history reads the same whoever shipped it.
 
 **Folding local drift in**: copy the live edit into the worktree, commit it on the branch, and only after Step C4's push

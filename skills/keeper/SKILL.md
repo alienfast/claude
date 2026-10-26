@@ -106,8 +106,14 @@ routes to the filer's project rules, and the verdict names which sentence is whi
 - PR items: nothing to apply locally — the merge in Step 4 is the apply. Review on GitHub (inline comments where a
   recommendation is line-scoped).
 - Gates before any commit: a touched `scripts/<name>.(sh|py)` with a sibling `<name>.test.sh` runs it green; touched
-  markdown runs `npx markdownlint-cli2 <files>` from `~/.claude`. A red gate un-accepts the item — report it, don't ship
-  it.
+  markdown runs `npx markdownlint-cli2 <files>` from `~/.claude`. Then `pnpm check-anchors && pnpm test` runs once from
+  `~/.claude` — `pnpm check` minus `check-markdown`, whose `--fix '**/*.md'` would rewrite files outside the accepted
+  set. Two of these read the whole corpus, so a markdown-only item can redden them with no sibling test touched:
+  `check-anchors` fails a cross-file link to a renamed heading, and `reap-tmp.test.sh` fails any `tmp/<name>` the corpus
+  mentions that `classify` leaves on its default rule. The run sees the whole working tree and the `&&` chain stops at
+  the first red, so charge a red to the item whose files its failure names; a red the accepted set did not cause is
+  reported and filed, not charged, and the suites after it still run by hand before anything ships. A red gate
+  un-accepts the item — report it, don't ship it.
 
 ### Step 4: Commit, merge, push — the skill-scoped grant
 
