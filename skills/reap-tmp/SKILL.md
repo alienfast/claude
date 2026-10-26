@@ -42,7 +42,7 @@ First match wins; the manifest is the `classify` function in the script.
 - **scratch** (7 days) — everything else at the top level (including `storybook-junit.xml`), plus the known
   scratch directories (`qr-fix-base-*`, `qr-probe-*`, `screenshots`, `triage-markers`, `triage-apply-bodies`,
   `triage-proposals/raw`, `test-sweep-proposals/raw`, `test-sweep-proposals/dry-run`, `test-sweep-scan.lock`,
-  `pool-pages-*`, `epic-merge`, `proposal-*`). A directory's age is its newest file.
+  `pool-pages-*`, `epic-merge`, `proposal-*`, `jscpd-report`). A directory's age is its newest file.
 - **unknown** — a directory not in the manifest. **Never deleted.** Reported (`UNKNOWN`) once it is 30 days
   old so you add a rule or remove it by hand. A top-level file is scratch by construction, so a name the
   manifest does not know still ages out; a directory is structure someone built, so it does not.

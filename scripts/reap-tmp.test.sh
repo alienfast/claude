@@ -92,6 +92,7 @@ test-sweep-todo-rspec.tsv||handoff test-sweep-scan-inputs
 test-sweep-groups-storybook.txt||handoff test-sweep-scan-inputs
 test-sweep-rspec-rank.txt||handoff test-sweep-scan-inputs
 test-sweep-story-census.txt||handoff test-sweep-scan-inputs
+test-sweep-clone-baseline-before.json||scratch test-sweep-apply-baseline
 storybook-junit.xml||scratch run-output
 fleet-sequence-bf-2022.json||state sequence-marker
 fleet-sequence.json||state sequence-marker
@@ -136,6 +137,7 @@ bf547-desc.md||scratch default-file
 whatever||scratch default-file
 qr-fix-base-bf-123-2|d|scratch-dir scratch-dir
 qr-probe-rails|d|scratch-dir scratch-dir
+jscpd-report|d|scratch-dir scratch-dir
 screenshots|d|scratch-dir scratch-dir
 triage-markers|d|scratch-dir scratch-dir
 triage-apply-bodies|d|scratch-dir scratch-dir

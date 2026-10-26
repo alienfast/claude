@@ -143,6 +143,7 @@ classify() {
     triage-cheap.ndjson|triage-pool.ndjson|triage-head.sha|triage-commit-*.txt|triage-ls-files.txt)
                                        echo "handoff triage-scan-inputs"; return ;;
     test-sweep-*.tsv|test-sweep-*.txt) echo "handoff test-sweep-scan-inputs"; return ;;
+    test-sweep-clone-baseline-*.json)  echo "scratch test-sweep-apply-baseline"; return ;;
     linear-context-*.md|triage-digest-*.md)
                                        echo "cache presence-cache"; return ;;
     *.done|wait-*.sh)                  echo "cache poll-marker"; return ;;
@@ -155,7 +156,7 @@ classify() {
   esac
   if [ "$kind" = d ]; then
     case "$rel" in
-      qr-fix-base-*|qr-probe-*|screenshots|triage-markers|triage-apply-bodies|pool-pages-*|epic-merge|proposal-*|pr-claude)
+      qr-fix-base-*|qr-probe-*|screenshots|triage-markers|triage-apply-bodies|pool-pages-*|epic-merge|proposal-*|pr-claude|jscpd-report)
                                        echo "scratch-dir scratch-dir"; return ;;
       *)                               echo "unknown unknown-dir"; return ;;
     esac
