@@ -20,7 +20,9 @@
 #      main checkout is parked does not decide the fork point.
 #   3. Enables extensions.worktreeConfig (idempotent).
 #   4. Fetches the issue title; composes a kebab-case branch name following
-#      the convention <gh-username>/<id-lower>-<short-kebab-title>.
+#      the convention <gh-username>/<id-lower>-<short-kebab-title>. That is the
+#      name a fresh worktree gets: start-wt-create.sh resumes an issue on the
+#      branch it already has, so BRANCH= can differ after a retitle.
 #   5. Creates, attaches, or reuses a worktree at .claude/worktrees/<id-lower>,
 #      and stamps a tamper-evident identity on it (branch, baseline SHA, source
 #      branch, owner session) to BOTH per-worktree git config and an immune
@@ -255,13 +257,14 @@ create_out=$("$SCRIPT_DIR/with-repo-lock.py" "$repo_key" \
 # path conventions) no characters needing escaping.
 _wt_get() { printf '%s\n' "$create_out" | sed -n "s/^$1=//p" | head -1; }
 wt_abs=$(_wt_get WT_ABS)
+branch=$(_wt_get BRANCH)
 CREATED_WT=$(_wt_get CREATED_WT)
 baseline_sha=$(_wt_get BASELINE_SHA)
 owner_session=$(_wt_get OWNER_SESSION)
 identity_sidecar=$(_wt_get IDENTITY_SIDECAR)
 
-if [ -z "$wt_abs" ]; then
-  echo "ERROR: worktree-create helper returned no WT_ABS; setup aborted." >&2
+if [ -z "$wt_abs" ] || [ -z "$branch" ]; then
+  echo "ERROR: worktree-create helper returned no WT_ABS or BRANCH; setup aborted." >&2
   exit 1
 fi
 

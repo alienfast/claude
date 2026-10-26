@@ -78,6 +78,41 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   exit 1
 fi
 
+# --- The branch an earlier /start of this issue already created ---
+# start-wt-setup.sh composes <user>/<issue>-<kebab title> from the CURRENT title, so a retitle between a park and its resume
+# changes the name: reuse refused the worktree as being on the wrong branch, and attach missed the old branch and forked a
+# fresh one beside it, stranding the parked commits (BF-2822). An existing branch of the issue wins over the composed name.
+# Only a <user>/<issue> name opts in, and `<branch>-recovered` stays out: finish-recover.sh's worktree and queue own it.
+issue_prefix=""
+case "$branch" in */"$issue_lower"|*/"$issue_lower"-*) issue_prefix="${branch%%/*}/$issue_lower" ;; esac
+is_issue_branch() {
+  case "$1" in *-recovered) return 1 ;; "$issue_prefix"|"$issue_prefix"-*) return 0 ;; esac
+  return 1
+}
+if [ -n "$issue_prefix" ]; then
+  resolved=""
+  if [ -d "$wt_dir" ]; then
+    on_branch=$(git -C "$wt_dir" branch --show-current 2>/dev/null || true)
+    if [ "$on_branch" != "$branch" ] && is_issue_branch "$on_branch"; then resolved="$on_branch"; fi
+  elif ! git rev-parse --verify --quiet "refs/heads/$branch" >/dev/null; then
+    candidates=$(git for-each-ref --format='%(refname)' "refs/heads/${issue_prefix%%/*}" | sed 's|^refs/heads/||' \
+      | while IFS= read -r b; do if is_issue_branch "$b"; then printf '%s\n' "$b"; fi; done)
+    case "$candidates" in
+      "") ;;
+      *$'\n'*)
+        echo "ERROR: $issue_id has no branch '$branch' but several earlier ones; keep the one holding the work (git branch -m <it> '$branch') and delete the rest:" >&2
+        printf '%s\n' "$candidates" | sed 's/^/  /' >&2
+        exit 1
+        ;;
+      *) resolved="$candidates" ;;
+    esac
+  fi
+  if [ -n "$resolved" ]; then
+    echo "NOTE: resuming $issue_id on its existing branch '$resolved'; the current title composes '$branch'." >&2
+    branch="$resolved"
+  fi
+fi
+
 # --- Three-way create/reuse/attach (the TOCTOU-prone span, now lock-held) ---
 # mode is one of:
 #   reuse  — worktree dir and branch both exist; the session resumes in place.
