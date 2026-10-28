@@ -56,6 +56,20 @@ rm untracked.txt
 git add a.txt && git commit -q -m edit
 eq "dirty-tree key equals HEAD^{tree} of the commit made from it" "$(git rev-parse 'HEAD^{tree}')" "$dirty_key"
 
+# A same-size edit landing in the second of the last index write leaves every cached stat field matching, so git
+# re-hashes it only through the racy-clean guard: an entry whose mtime is not older than the index file's own. Pinning
+# the entry, the file and the index to one past timestamp is that case made deterministic (the private copy is always
+# made later), and core.checkStat minimal keeps ctime and inode from masking it, as they would not in the real case.
+git config core.checkStat minimal
+touch -t 202601010000 a.txt && git add a.txt      # the cached stat now carries the pinned mtime; the tree is unchanged
+printf 'TWO\n' > a.txt                            # same size as 'two', new content
+touch -t 202601010000 a.txt .git/index            # on-disk stat matches the cache, and entry mtime == index mtime: racily clean
+racy_key=$("$SBC" key)
+git add a.txt                                     # the real index keeps its mtime, so its racy guard re-hashes
+eq "a same-second same-size edit is hashed as the real index hashes it" "$(git write-tree)" "$racy_key"
+git checkout -q HEAD -- a.txt
+git config --unset core.checkStat
+
 rm a.txt
 deleted_key=$("$SBC" key)
 [ "$deleted_key" != "$dirty_key" ] && ok "a deleted tracked file changes the key" || no "a deleted tracked file changes the key" "different" "$deleted_key"

@@ -65,14 +65,16 @@ cache_root() {  # cache_root <repo> → <common dir>/suite-baselines, created
 
 # Hash of the working tree: tracked files as they are on disk plus untracked non-ignored files, honoring
 # .gitignore, unmerged paths refused. Works on a private copy of the index so the real index is never opened
-# for writing; the copy's stat cache is what makes update-index re-hash only the files that changed.
+# for writing. The copy keeps the real index's mtime: git trusts a cached entry whose stat fields match the file
+# unless the entry is racily clean, its mtime not older than the index file's, so a same-size edit made in the
+# second of the last index write is re-hashed only while the copy carries the original's mtime, not cp's fresh one.
 tree_key() {  # tree_key <repo>
   local repo="$1" root real_index tmp_index tree rc
   root=$(cache_root "$repo") || return 1
   real_index=$(git_abs "$repo" --git-path index) || return 1
   tmp_index=$(mktemp "$root/.index.XXXXXX") || return 1
   if [ -s "$real_index" ]; then
-    cp "$real_index" "$tmp_index" || { rm -f "$tmp_index"; return 1; }
+    cp "$real_index" "$tmp_index" && touch -r "$real_index" "$tmp_index" || { rm -f "$tmp_index"; return 1; }
   else
     rm -f "$tmp_index"   # a zero-byte file is not a valid index; git creates a fresh one at a missing path
   fi
