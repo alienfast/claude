@@ -58,31 +58,44 @@ Settle it from each transcript's last TIMESTAMPED record against now:
 identically for all of them; the session registry (`claude agents --json`) says whether a session is *running*, not
 whether it has finished writing. Not `mtime`: the harness keeps appending untimestamped bookkeeping rows
 (`last-prompt`, `cost-state`, `ai-title`, `agent-name`) to a finished session. And stale is not finished: a
-quota-stalled session resumes hours later on a pending wakeup, so cross-check `tmp/fleet-deadline.json` (passed, or
-`stopped`) and the sessions' harness limit messages. When a session may still be writing, wait for it or mark its row
+quota-stalled session resumes hours later on a pending wakeup, so cross-check the fleet's marker — `tmp/fleet-deadline-<slug>.json`,
+or its archived `tmp/fleet-deadline-<slug>.<launch_epoch>.json` once a later launch of that slug displaced it — (passed,
+or `stopped`) and the sessions' harness limit messages. When a session may still be writing, wait for it or mark its row
 provisional — never file a bookkeeping finding against it. `/fleet-status` is the read-only skill for a fleet still in
 flight.
 
 ## Step 1 — Measure
 
 ```bash
-~/.claude/scripts/fleet-metrics.py --checkout <repo>                      # scopes to the launch's recorded session set
-~/.claude/scripts/fleet-metrics.py --checkout <repo> --sessions a,b,c     # an older fleet, or a marker without the set
-~/.claude/scripts/fleet-metrics.py --checkout <repo> --sessions a,b,c --no-record   # compare against an already-recorded fleet
+~/.claude/scripts/fleet-metrics.py --checkout <repo> --list-fleets        # every fleet marker: slug, launch, deadline, sessions, retro'd or not
+~/.claude/scripts/fleet-metrics.py --checkout <repo>                      # the one fleet, or the one fleet not yet in the history
+~/.claude/scripts/fleet-metrics.py --checkout <repo> --fleet bf-2948      # a running fleet, by slug (team, or the lowercased epic id)
+~/.claude/scripts/fleet-metrics.py --checkout <repo> --fleet team@1793136086   # an archived run, by slug@launch_epoch
+~/.claude/scripts/fleet-metrics.py --checkout <repo> --sessions a,b,c     # a marker without the set, or a hand-picked set
+~/.claude/scripts/fleet-metrics.py --checkout <repo> --fleet bf-2839 --no-record   # compare against an already-recorded fleet
 ~/.claude/scripts/fleet-metrics.py --checkout <repo> --since YYYY-MM-DD   # last resort: a time window (or --hours N, --all)
 ```
+
+**Which fleet.** Several fleets run side by side in one checkout and each keeps its own marker
+(`tmp/fleet-deadline-<slug>.json`; an ended run a later launch of the same slug displaced is archived as
+`tmp/fleet-deadline-<slug>.<launch_epoch>.json`), and a launch keeps every fleet this retro has not measured
+(`skills/fleet-launch/SKILL.md` § Ledger expiry), so there may be several to choose from. Start with `--list-fleets`.
+The bare run measures the single marker, or the single fleet the history (`tmp/fleet-metrics-history.jsonl`) does not
+yet name; with several un-retro'd fleets it lists them and exits 2 — ask (AskUserQuestion) which one, with each row's
+slug, launch time and session count in the question, then re-run with `--fleet`. Measuring a fleet writes its history
+row, and the next launch expires its marker and ledgers; a fleet never measured is kept until the operator decides.
 
 A re-run of an already-recorded fleet reads it through the current launch's verdict filter and deadline, after
 `/reap-tmp` has aged its verdicts out, so its review columns come back empty. The analyzer keeps the stored row in that
 case and says so (`--rerecord` overwrites it); pass `--no-record` to make the comparison run write nothing at all.
 
-**A fleet is a session set, not a time window — scope by the set.** `/fleet-launch` records `fleet_sessions` in
-`tmp/fleet-deadline.json` (the short id each `claude --bg` prints, which is the ledger key; the marker's fields are
-`skills/fleet-launch/SKILL.md` § The deadline contract (shared with /auto)). The bare invocation scopes to it and the
-report header names the scope it used; `--sessions` is the same thing typed by hand. A window scopes by *when*, never by
-membership: a targeted `/auto <ID>` run writes a ledger of exactly the same shape, and every such run in the window lands
-in the tables and every total. `/auto` stamps `mode` on its ledger and the script keeps single runs (`mode: single`) out
-of any undirected scope, naming them under *Not fleet members*.
+**A fleet is a session set, not a time window — scope by the set.** `/fleet-launch` records `fleet_sessions` in the
+fleet's marker (the short id each `claude --bg` prints, which is the ledger key; the marker's fields are
+`skills/fleet-launch/SKILL.md` § The deadline contract (shared with /auto)). The bare invocation and `--fleet` scope to
+it and the report header names the marker it used; `--sessions` is the same thing typed by hand. A window scopes by
+*when*, never by membership: a targeted `/auto <ID>` run writes a ledger of exactly the same shape, and every such run in
+the window lands in the tables and every total. `/auto` stamps `mode` on its ledger and the script keeps single runs
+(`mode: single`) out of any undirected scope, naming them under *Not fleet members*.
 
 The script discovers sessions from `<repo>/tmp/auto-state-*.json`, matches each to its transcripts (main **and**
 worktree dirs, **including `subagents/`**), and emits fixed per-session, review-churn and token-attribution tables plus
@@ -90,7 +103,7 @@ a Flags section; `--json` for machine use. Subagent transcripts matter dispropor
 blocked or stalls is invisible to its parent, which sees only a slow `Agent` call.
 
 **Check the discovered session count against the fleet's own before reading any number.** Compare the report header's
-`sessions:` count against `fleet_sessions | length` in `tmp/fleet-deadline.json` (`count` on a marker that predates the
+`sessions:` count against `fleet_sessions | length` in the fleet's marker (`count` on a marker that predates the
 set; with no marker, count the `/loop` sessions yourself), and read the direction, because the two disagreements are
 opposite faults. **More than the fleet's** = non-fleet sessions admitted: re-scope with `--sessions <the /loop run
 keys>`, delete the junk row the mis-scoped run appended to `tmp/fleet-metrics-history.jsonl`, and re-run — the
@@ -131,9 +144,9 @@ numbers in the `windows` block — `peak_5h_output_tokens` with `peak_5h_concurr
 `quota_stall_groups`, and whether the peak is a floor or a ceiling — then read the `Window readings` line and its
 Headroom verdict before sizing anything on the token peaks. Read `references/windows.md` for the reading rules:
 `limit_kind` as wording rather than scope, `recovery_lag_s` over lost hours, which 5h blocks count, and why a deliberate
-wind-down is not a stall. Compare realized burn against the `sizing.rate_tok_per_session_hour` that
-`tmp/fleet-recommendation.json` assumed: a projection that missed by 2x is the finding, and silently repeating it next
-run is how a sizing error becomes permanent.
+wind-down is not a stall. Compare realized burn against the `sizing.rate_tok_per_session_hour` that the fleet's own
+`tmp/fleet-recommendation-<slug>.json` assumed (the team's, or the epic's): a projection that missed by 2x is the
+finding, and silently repeating it next run is how a sizing error becomes permanent.
 
 ## Step 2 — Read the flags, then chase them
 

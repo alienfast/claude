@@ -1921,9 +1921,128 @@ def session_alive(pid, recorded_start):
     return bool(actual) and actual == " ".join(str(recorded_start or "").split())
 
 
+MARKER_NAME_RE = re.compile(r"^fleet-deadline-(.+?)(?:\.(\d+))?\.json$")
+
+
+def fleet_markers(checkout):
+    """Every marker — tmp/fleet-deadline-<slug>.json, or tmp/fleet-deadline-<slug>.<launch_epoch>.json — as (path, slug,
+    archived_epoch, data): one per fleet (lib/fleet-markers.sh), a live marker carrying no epoch suffix and an archived
+    one being an ended run a later launch of the same slug displaced. Newest launch first; an unreadable marker reads
+    as {}."""
+    out = []
+    for p in sorted((checkout / "tmp").glob("fleet-deadline-*.json")):
+        m = MARKER_NAME_RE.match(p.name)
+        if not m:
+            continue
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        out.append((p, m.group(1), int(m.group(2)) if m.group(2) else None, data))
+    out.sort(key=lambda t: t[3].get("launch_epoch") if isinstance(t[3].get("launch_epoch"), (int, float)) else 0,
+             reverse=True)
+    return out
+
+
+def marker_history_rows(checkout):
+    rows = []
+    try:
+        for line in (checkout / "tmp" / "fleet-metrics-history.jsonl").read_text(encoding="utf-8").splitlines():
+            try:
+                r = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(r, dict):
+                rows.append(r)
+    except OSError:
+        pass
+    return rows
+
+
+def marker_retrod(data, rows):
+    """True when a history row names one of the marker's sessions — ids may be recorded as prefixes on either side,
+    the same test lib/fleet-markers.sh's fleet_marker_retrod makes — or when the marker names no session at all."""
+    keys = [str(k).strip() for k in (data.get("fleet_sessions") or []) if str(k).strip()]
+    if not keys:
+        return True
+    for r in rows:
+        for h in (r.get("session_set") or []):
+            h = str(h)
+            if any(k.startswith(h) or h.startswith(k) for k in keys):
+                return True
+    return False
+
+
+def marker_line(path, slug, epoch, data, retrod):
+    def when(v):
+        return datetime.fromtimestamp(v, timezone.utc).strftime("%Y-%m-%d %H:%MZ") if isinstance(v, (int, float)) else "?"
+    le, dl = data.get("launch_epoch"), data.get("deadline_epoch")
+    state = "stopped" if data.get("stopped") else (f"deadline {when(dl)}" if isinstance(dl, (int, float)) else "no deadline")
+    kind = f"archived run  --fleet {slug}@{epoch}" if epoch else f"live          --fleet {slug}"
+    n = len(data.get("fleet_sessions") or [])
+    return (f"  {slug:<14} launched {when(le):<18} {state:<28} {n:>2} session(s)  "
+            f"{'retro-d' if retrod else 'NOT retro-d':<11}  {kind}  [{path.name}]")
+
+
+def resolve_marker(checkout, args, req_keys, explicit_window):
+    """The marker this run measures: (path, data, how) or (None, {}, None) when no marker applies.
+
+    One marker per fleet means the retro has to say which fleet it measures. --fleet names it (a live one by slug, an
+    archived run by slug@launch_epoch). --sessions picks the marker sharing the most keys, else the only marker. A
+    window flag takes the newest live marker for its launch_epoch and deadline. A bare run with ONE marker measures
+    it, as before; with several it measures the one fleet /fleet-retro has not yet recorded (fleet-metrics-history.jsonl
+    shares no session with it), and when that is not one fleet it lists them and exits 2 — the operator chooses with
+    --fleet (adding --no-record to compare an already-recorded fleet) rather than the script guessing."""
+    markers = fleet_markers(checkout)
+    if args.fleet:
+        slug, _, ep = args.fleet.partition("@")
+        slug = slug.lower()
+        want = [m for m in markers if m[1] == slug and ((not ep and m[2] is None) or (ep.isdigit() and m[2] == int(ep)))]
+        if not want:
+            print(f"ERROR: no marker for --fleet {args.fleet} under {checkout / 'tmp'}. Recorded fleets:", file=sys.stderr)
+            rows = marker_history_rows(checkout)
+            for m in markers:
+                print(marker_line(*m, marker_retrod(m[3], rows)), file=sys.stderr)
+            sys.exit(2)
+        return want[0][0], want[0][3], f"--fleet {args.fleet}"
+    if not markers:
+        return None, {}, None
+    if req_keys:
+        best = max(markers, key=lambda m: len({str(k) for k in (m[3].get("fleet_sessions") or [])} & req_keys))
+        if {str(k) for k in (best[3].get("fleet_sessions") or [])} & req_keys or len(markers) == 1:
+            return best[0], best[3], None
+        return None, {}, None
+    if explicit_window:
+        live = [m for m in markers if m[2] is None]
+        pick = live[0] if live else markers[0]
+        return pick[0], pick[3], None
+    if len(markers) == 1:
+        return markers[0][0], markers[0][3], "recorded"
+    rows = marker_history_rows(checkout)
+    cands = [m for m in markers if m[3].get("fleet_sessions") and not marker_retrod(m[3], rows)]
+    if len(cands) == 1:
+        return cands[0][0], cands[0][3], "recorded"
+    head = ("Several un-retro'd fleets here" if cands
+            else "Every recorded fleet here is already in tmp/fleet-metrics-history.jsonl")
+    print(f"{head} — name one with --fleet <slug>[@<launch_epoch>] (add --no-record to compare an already-recorded "
+          f"fleet), or scope with --sessions:", file=sys.stderr)
+    for m in (cands or markers):
+        print(marker_line(*m, marker_retrod(m[3], rows)), file=sys.stderr)
+    sys.exit(2)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--checkout", default=".")
+    ap.add_argument("--fleet",
+                    help="Which fleet to measure, by marker: <slug> for a running fleet's tmp/fleet-deadline-<slug>.json "
+                         "(team, or the lowercased epic id), <slug>@<launch_epoch> for an archived run. Several fleets "
+                         "run side by side in one checkout; --list-fleets shows them.")
+    ap.add_argument("--list-fleets", action="store_true",
+                    help="List every fleet marker under tmp/ — slug, launch, deadline, sessions, whether the history "
+                         "already has its row — and exit.")
     ap.add_argument("--hours", type=float, default=None,
                     help="Window in hours (36 when nothing else scopes the run — see --sessions)")
     ap.add_argument("--since")
@@ -1934,7 +2053,7 @@ def main():
     ap.add_argument("--sessions",
                     help="Comma-separated run keys (e.g. 7d1f4d17,40a56675,9c0e0a3b). Overrides "
                          "every window flag. With no scope flag at all, the set the launch recorded "
-                         "in tmp/fleet-deadline.json (fleet_sessions) is used when present.")
+                         "in the fleet's marker (fleet_sessions) is used — see --fleet for which marker.")
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--allow-partial", action="store_true",
                     help="Persist a trend row even when --sessions excluded a ledger-less session "
@@ -1965,23 +2084,32 @@ def main():
     except (subprocess.SubprocessError, OSError):
         pass
 
+    if args.list_fleets:
+        rows = marker_history_rows(checkout)
+        markers = fleet_markers(checkout)
+        if not markers:
+            print(f"No fleet marker under {checkout / 'tmp'} (tmp/fleet-deadline-<slug>.json).")
+            return 0
+        print(f"Fleet markers under {checkout / 'tmp'} (a launch expires a fleet once the history has its row):")
+        for m in markers:
+            print(marker_line(*m, marker_retrod(m[3], rows)))
+        return 0
+
     # A fleet is a session set, not a time range. Precedence: an explicit --sessions set; an explicit
-    # window (--since/--until/--hours/--all); the set the launch recorded in tmp/fleet-deadline.json;
-    # the default window. A window scopes by WHEN, never by membership — a targeted `/auto <ID>` run
-    # writes a ledger of the same shape, and measured 2026-08-29 a bare --since read 21, then 11,
-    # then 26 sessions against real fleets of 3 and 5 — so the recorded set is the default whenever
-    # the launch wrote one (every /fleet-launch since 2026-08-29).
+    # window (--since/--until/--hours/--all); the set the launch recorded in the fleet's marker
+    # (resolve_marker says which marker that is); the default window. A window scopes by WHEN, never
+    # by membership — a targeted `/auto <ID>` run writes a ledger of the same shape, and measured
+    # 2026-08-29 a bare --since read 21, then 11, then 26 sessions against real fleets of 3 and 5 — so
+    # the recorded set is the default whenever the launch wrote one (every /fleet-launch since 2026-08-29).
     req_keys = {k.strip() for k in args.sessions.split(",") if k.strip()} if args.sessions else None
     scope = "--sessions" if req_keys else None
     explicit_window = bool(args.since or args.until or args.all or args.hours is not None)
+    marker_path, marker_data, _marker_how = resolve_marker(checkout, args, req_keys, explicit_window)
     if req_keys is None and not explicit_window:
-        try:
-            recorded = json.loads((checkout / "tmp" / "fleet-deadline.json").read_text(encoding="utf-8")).get("fleet_sessions")
-        except (json.JSONDecodeError, OSError, AttributeError):
-            recorded = None
+        recorded = marker_data.get("fleet_sessions")
         if isinstance(recorded, list) and recorded:
             req_keys = {str(k).strip() for k in recorded if str(k).strip()}
-            scope = f"fleet_sessions from tmp/fleet-deadline.json ({len(req_keys)})"
+            scope = f"fleet_sessions from tmp/{marker_path.name} ({len(req_keys)})"
     if args.hours is None:
         args.hours = 36.0
     if scope is None:
@@ -2001,11 +2129,7 @@ def main():
     # The tie is the trap — measured 2026-08-21, a prior session's ledger matched launch_epoch to the
     # second and rode a whole retro as a fleet member, inflating shipped 5→7, session-hours 7.4→12.0,
     # and severity/origin mixes with a run nobody was measuring. Mirrors fleet-status.sh's -le.
-    launch_epoch = None
-    try:
-        launch_epoch = json.loads((checkout / "tmp" / "fleet-deadline.json").read_text(encoding="utf-8")).get("launch_epoch")
-    except (json.JSONDecodeError, OSError, AttributeError):
-        pass
+    launch_epoch = marker_data.get("launch_epoch")
 
     dirs = [d for d in PROJ.glob(transcript_dir_glob(checkout)) if d.is_dir()]
 
@@ -2205,12 +2329,8 @@ def main():
     # leaves a passed one alone; a launch without a duration never wrote one). Read once for every consumer: the stall clipping below, the
     # pool-exhausted gauge and the early-drain flag.
     fleet_deadline_dt = None
-    try:
-        dl = json.loads((checkout / "tmp" / "fleet-deadline.json").read_text(encoding="utf-8"))
-        if isinstance(dl.get("deadline_epoch"), (int, float)):
-            fleet_deadline_dt = datetime.fromtimestamp(dl["deadline_epoch"], tz=timezone.utc)
-    except Exception:
-        pass
+    if isinstance(marker_data.get("deadline_epoch"), (int, float)):
+        fleet_deadline_dt = datetime.fromtimestamp(marker_data["deadline_epoch"], tz=timezone.utc)
 
     # When each session's ships landed: git's committer date where a commit carries the id, else the
     # earliest SHIPPED tag. Both capacity detectors below key on this — the ledger's shipped[]

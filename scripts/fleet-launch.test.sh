@@ -132,51 +132,72 @@ ck_has "lists untracked"     "stray.txt" "$WORK/out"
 
 # ---- case 5: `stop` is never gated ----
 # Winding down a fleet must work regardless of tree state — it is the remedy, not a launch.
+TM="$REPO/tmp/fleet-deadline-team.json"
 ck "stop exits 0 when dirty" "0" "$(run stop)"
-ck "stop wrote marker"       "true" "$(jq -r '.stopped' "$REPO/tmp/fleet-deadline.json")"
+ck "stop wrote marker"       "true" "$(jq -r '.stopped' "$TM")"
 # A stop never moves a deadline later: a passed deadline is left byte-identical, a future one becomes now.
 past=$(( $(date +%s) - 10800 ))
-printf '{"deadline_epoch":%s,"deadline":"earlier","count":3,"launch_epoch":1}\n' "$past" > "$REPO/tmp/fleet-deadline.json"
-cp "$REPO/tmp/fleet-deadline.json" "$WORK/marker.before"
+printf '{"deadline_epoch":%s,"deadline":"earlier","count":3,"launch_epoch":1}\n' "$past" > "$TM"
+cp "$TM" "$WORK/marker.before"
 ck "stop past deadline exits 0"       "0" "$(run stop)"
-ck "stop past deadline leaves marker" "same" "$(cmp -s "$WORK/marker.before" "$REPO/tmp/fleet-deadline.json" && echo same || echo changed)"
+ck "stop past deadline leaves marker" "same" "$(cmp -s "$WORK/marker.before" "$TM" && echo same || echo changed)"
 ck_has "stop past deadline says so"   "marker left unchanged" "$WORK/out"
-printf '{"deadline_epoch":9999999999,"deadline":"later","count":3,"launch_epoch":1}\n' > "$REPO/tmp/fleet-deadline.json"
+printf '{"deadline_epoch":9999999999,"deadline":"later","count":3,"launch_epoch":1}\n' > "$TM"
 ck "stop future deadline exits 0"     "0" "$(run stop)"
-ck "stop future deadline moves to now" "true" "$(jq -r '.stopped == true and .deadline_epoch < 9999999999 and .launch_epoch == 1' "$REPO/tmp/fleet-deadline.json")"
-rm -f "$REPO/tmp/fleet-deadline.json"
-ck "stop with no marker exits 0"      "0" "$(run stop)"
-ck "stop with no marker writes one"   "true" "$(jq -r '.stopped == true and (.deadline_epoch > 0)' "$REPO/tmp/fleet-deadline.json")"
+ck "stop future deadline moves to now" "true" "$(jq -r '.stopped == true and .deadline_epoch < 9999999999 and .launch_epoch == 1' "$TM")"
+ck_has "stop names the fleet"         "/tmp/fleet-deadline-team.json (team)" "$WORK/out"
+# The token names the fleet; without one, the single running fleet is the target and several are asked about. No marker is
+# nothing to stop — until 2026-10-28 a stop wrote one, which then gated every later solo /auto in the checkout.
+rm -f "$REPO"/tmp/fleet-deadline*.json
+ck "stop with no marker exits 1"      "1" "$(run stop)"
+ck "stop with no marker writes none"  "no" "$([ -e "$TM" ] && echo yes || echo no)"
+ck_has "stop with no marker says so"  "nothing to stop" "$WORK/out"
+printf '{"deadline_epoch":9999999999,"count":1,"launch_epoch":1}\n' > "$TM"
+printf '{"deadline_epoch":9999999999,"count":1,"launch_epoch":1,"scope":"EP-1","fleet_sessions":[]}\n' > "$REPO/tmp/fleet-deadline-ep-1.json"
+ck "stop with two running fleets exits 1" "1" "$(run stop)"
+ck_has "stop lists both"              "fleet-launch.sh stop epic:EP-1" "$WORK/out"
+ck_has "stop lists the team one"      "fleet-launch.sh stop team" "$WORK/out"
+ck "stop with two running fleets writes nothing" "false" "$(jq -r '.stopped // false' "$TM")"
+ck "stop by epic token exits 0"       "0" "$(run stop epic:ep-1)"
+ck "stop by epic token stops that one" "true false" "$(jq -r '.stopped' "$REPO/tmp/fleet-deadline-ep-1.json") $(jq -r '.stopped // false' "$TM")"
+ck "stop with one running fleet left exits 0" "0" "$(run stop)"
+ck "stop with one running fleet left stops it" "true" "$(jq -r '.stopped' "$TM")"
+ck "stop for an unknown epic exits 1" "1" "$(run stop epic:EP-9)"
+ck_has "stop for an unknown epic names the marker" "no fleet marker for epic:EP-9" "$WORK/out"
+ck "stop with a bad token exits 1"    "1" "$(run stop nonsense)"
+rm -f "$REPO"/tmp/fleet-deadline*.json
 
 # ---- case 6: the marker is written on EVERY launch and records the session set ----
 # A fleet is a session set, not a time window (header). ab000001–ab000004 went to cases 1–4, one launch each.
 git -C "$REPO" checkout -q nextjs-descope-user
 git -C "$REPO" reset -q --hard
-rm -f "$REPO/stray.txt" "$REPO/tmp/fleet-deadline.json" "$REPO"/tmp/auto-state-*.json
+rm -f "$REPO/stray.txt" "$REPO"/tmp/fleet-deadline*.json "$REPO"/tmp/auto-state-*.json
 echo '[]' > "$WORK/agents.json"
 : > "$WORK/dispatches"
 ck "undated launch exits 0"       "0" "$(run 2)"
-ck "undated launch writes marker" "yes" "$([ -s "$REPO/tmp/fleet-deadline.json" ] && echo yes || echo no)"
-ck "marker carries no deadline"   "" "$(jq -r '.deadline_epoch // empty' "$REPO/tmp/fleet-deadline.json")"
-ck "session set recorded"         "ab000005 ab000006" "$(jq -r '.fleet_sessions | join(" ")' "$REPO/tmp/fleet-deadline.json")"
-ck "count recorded"               "2" "$(jq -r '.count' "$REPO/tmp/fleet-deadline.json")"
+ck "undated launch writes marker" "yes" "$([ -s "$TM" ] && echo yes || echo no)"
+ck "marker carries no deadline"   "" "$(jq -r '.deadline_epoch // empty' "$TM")"
+ck "session set recorded"         "ab000005 ab000006" "$(jq -r '.fleet_sessions | join(" ")' "$TM")"
+ck "count recorded"               "2" "$(jq -r '.count' "$TM")"
 ck_has "each id surfaced"         "session ab000005 recorded" "$WORK/out"
 ck_has "set surfaced at the end"  "Fleet session set: ab000005 ab000006" "$WORK/out"
 # The account's windows are read at launch; HOME is empty here, so the launch says there is no reading and why.
 ck_has "no reading explained"        "Rate limits: no reading (" "$WORK/out"
 
-# ---- case 7: a dated launch carries the deadline AND the set; a dead prior set is not inherited ----
+# ---- case 7: a dated launch carries the deadline AND the set; a dead prior set is not inherited — the ended run is archived ----
 : > "$WORK/dispatches"
 ck "dated launch exits 0"         "0" "$(run 1 5h)"
-ck "deadline present"             "true" "$(jq -r '.deadline_epoch > 0' "$REPO/tmp/fleet-deadline.json")"
-ck "prior set not inherited"      "ab000007" "$(jq -r '.fleet_sessions | join(" ")' "$REPO/tmp/fleet-deadline.json")"
+ck "deadline present"             "true" "$(jq -r '.deadline_epoch > 0' "$TM")"
+ck "prior set not inherited"      "ab000007" "$(jq -r '.fleet_sessions | join(" ")' "$TM")"
+ck "prior run archived, not lost" "ab000005 ab000006" "$(cat "$REPO"/tmp/fleet-deadline-team.*.json | jq -r 'select(.fleet_sessions == ["ab000005","ab000006"]) | .fleet_sessions | join(" ")')"
+rm -f "$REPO"/tmp/fleet-deadline-team.*.json
 
-# ---- case 8: a top-up carries the members the registry still runs, anchors only on loop ledgers ----
-# Prior launch: ab000001 (registry: working) and ab000002 (registry: done — listed is not alive).
-# Ledgers: ab000001 loop (kept, carried, pulls launch_epoch back to its mtime); cafe0001 single-run
-# (registry lists it as an interactive row with no id, so it is alive: kept, but neither carried nor
-# anchoring — its older mtime must NOT win); dead0001 absent from the registry (cleared).
-jq -n '{fleet_sessions: ["ab000001", "ab000002"], count: 2, launch_epoch: 1}' > "$REPO/tmp/fleet-deadline.json"
+# ---- case 8: a top-up keeps every listed member, carries the ones the registry still runs, anchors only on loop ledgers ----
+# Prior launch: ab000001 (registry: working) and ab000002 (registry: done — listed is not alive, but it stays a member of
+# the running fleet so the retro can still measure it). Ledgers: ab000001 loop (kept, carried, pulls launch_epoch back to
+# its mtime); cafe0001 single-run (registry lists it as an interactive row with no id, so it is alive: kept, but neither
+# carried nor anchoring — its older mtime must NOT win); dead0001 absent from the registry and named by no marker (cleared).
+jq -n '{fleet_sessions: ["ab000001", "ab000002"], count: 2, launch_epoch: 1}' > "$TM"
 echo '{"status":"active","shipped":["XX-1"]}' > "$REPO/tmp/auto-state-ab000001.json"
 echo '{"status":"active","mode":"single","shipped":["XX-2"]}' > "$REPO/tmp/auto-state-cafe0001.json"
 echo '{"status":"active","shipped":["XX-3"]}' > "$REPO/tmp/auto-state-dead0001.json"
@@ -190,8 +211,8 @@ cat > "$WORK/agents.json" <<'EOF'
 EOF
 : > "$WORK/dispatches"
 ck "top-up exits 0"                      "0" "$(run 1)"
-ck "live member carried, new appended"   "ab000001 ab000008" "$(jq -r '.fleet_sessions | join(" ")' "$REPO/tmp/fleet-deadline.json")"
-ck "launch_epoch anchored on the loop ledger" "$loop_mtime" "$(jq -r '.launch_epoch' "$REPO/tmp/fleet-deadline.json")"
+ck "members kept, live carried, new appended" "ab000001 ab000002 ab000008" "$(jq -r '.fleet_sessions | join(" ")' "$TM")"
+ck "launch_epoch anchored on the loop ledger" "$loop_mtime" "$(jq -r '.launch_epoch' "$TM")"
 ck "single-run ledger kept"              "yes" "$([ -f "$REPO/tmp/auto-state-cafe0001.json" ] && echo yes || echo no)"
 ck "loop ledger kept"                    "yes" "$([ -f "$REPO/tmp/auto-state-ab000001.json" ] && echo yes || echo no)"
 ck "unlisted ledger cleared"             "no" "$([ -f "$REPO/tmp/auto-state-dead0001.json" ] && echo yes || echo no)"
@@ -200,17 +221,21 @@ ck_has "clearing reported"               "Cleared prior-run ledger(s): dead0001"
 # ---- case 8b: the row `claude stop` leaves behind is an ended session; a status-less row in a status-less schema is not ----
 # Measured 2026-10-04: a stopped session stays listed with its state unchanged and the `status`/`pid` keys gone, while
 # every live row carries `status`. The second launch has no `status` anywhere — the pre-2026-10 shape — so the same
-# key-less row must read alive and its ledger must be kept.
-jq -n '{fleet_sessions: ["ab000001", "ab000003"], count: 2, launch_epoch: 1}' > "$REPO/tmp/fleet-deadline.json"
+# key-less row must read alive and its ledger must be kept. The stopped row's ledger is read as dead: named by no marker it
+# is cleared (zz000003), named by the running fleet it is kept for that fleet's retro (ab000003).
+jq -n '{fleet_sessions: ["ab000001", "ab000003"], count: 2, launch_epoch: 1}' > "$TM"
 echo '{"status":"active","shipped":["XX-1"]}' > "$REPO/tmp/auto-state-ab000001.json"
 echo '{"status":"drained","shipped":["XX-4"]}' > "$REPO/tmp/auto-state-ab000003.json"
+echo '{"status":"drained","shipped":["XX-6"]}' > "$REPO/tmp/auto-state-zz000003.json"
 cat > "$WORK/agents.json" <<'EOF'
 [{"id":"ab000001","kind":"background","sessionId":"ab000001-0000-4000-8000-000000000000","state":"working","status":"idle","pid":11},
- {"id":"ab000003","kind":"background","sessionId":"ab000003-0000-4000-8000-000000000000","state":"working"}]
+ {"id":"ab000003","kind":"background","sessionId":"ab000003-0000-4000-8000-000000000000","state":"working"},
+ {"id":"zz000003","kind":"background","sessionId":"zz000003-0000-4000-8000-000000000000","state":"working"}]
 EOF
 : > "$WORK/dispatches"
 ck "stopped-row launch exits 0"          "0" "$(run 1)"
-ck "stopped-row ledger cleared"          "no" "$([ -f "$REPO/tmp/auto-state-ab000003.json" ] && echo yes || echo no)"
+ck "stopped-row unlisted ledger cleared" "no" "$([ -f "$REPO/tmp/auto-state-zz000003.json" ] && echo yes || echo no)"
+ck "stopped-row member ledger kept"      "yes" "$([ -f "$REPO/tmp/auto-state-ab000003.json" ] && echo yes || echo no)"
 ck "live-row ledger kept"                "yes" "$([ -f "$REPO/tmp/auto-state-ab000001.json" ] && echo yes || echo no)"
 echo '{"status":"drained","shipped":["XX-5"]}' > "$REPO/tmp/auto-state-ab000005.json"
 cat > "$WORK/agents.json" <<'EOF'
@@ -235,7 +260,7 @@ rm -f "$REPO"/tmp/auto-state-*.json
 ck "unparseable id still launches"  "0" "$(run 1)"
 ck "dispatched once"                "1" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
 ck_has "warns about the missing id" "could not read the session id" "$WORK/out"
-ck "set left empty, not invented"   "" "$(jq -r '.fleet_sessions | join(" ")' "$REPO/tmp/fleet-deadline.json")"
+ck "set left empty, not invented"   "" "$(jq -r '.fleet_sessions | join(" ")' "$TM")"
 
 # ---- epic scope: the token, the prepared recommendation, and the integration-branch posture ----
 # The id-printing claude stub again (case 9 swapped in the unparseable variant).
@@ -250,44 +275,60 @@ exit 0
 EOF
 git -C "$REPO" checkout -q nextjs-descope-user
 git -C "$REPO" reset -q --hard
-rm -f "$REPO"/tmp/auto-state-*.json "$REPO/tmp/fleet-recommendation.json"
+rm -f "$REPO"/tmp/auto-state-*.json "$REPO"/tmp/fleet-recommendation-*.json "$REPO"/tmp/fleet-deadline*.json
 echo '[]' > "$WORK/agents.json"
+M1="$REPO/tmp/fleet-deadline-ep-1.json"
+M3="$REPO/tmp/fleet-deadline-ep-3.json"
+R1="$REPO/tmp/fleet-recommendation-ep-1.json"
 
-# case 10: an explicit token with no prep — prompt scoped, marker records the scope and the LIVE
+# case 10: an explicit token with no prep — prompt scoped, the epic's own marker records the scope and the LIVE
 # membership, the missing integration branch is warned about, the checkout is not moved.
 : > "$WORK/dispatches"
 ck "token launch exits 0"             "0" "$(run 1 epic:ep-1)"
 ck_has "token prompt scoped"          "/loop /auto epic:EP-1" "$WORK/dispatches"
-ck "token marker scope"               "EP-1" "$(jq -r '.scope' "$REPO/tmp/fleet-deadline.json")"
-ck "token members from the live graph" "EP-1 EP-3" "$(jq -r '.members | join(" ")' "$REPO/tmp/fleet-deadline.json")"
-ck "token records no branch"          "" "$(jq -r '.branch // empty' "$REPO/tmp/fleet-deadline.json")"
+ck "token writes the epic's marker"   "yes" "$([ -s "$M1" ] && echo yes || echo no)"
+ck "token writes no team marker"      "no" "$([ -e "$TM" ] && echo yes || echo no)"
+ck "token marker scope"               "EP-1" "$(jq -r '.scope' "$M1")"
+ck "token members from the live graph" "EP-1 EP-3" "$(jq -r '.members | join(" ")' "$M1")"
+ck "token records no branch"          "" "$(jq -r '.branch // empty' "$M1")"
 ck_has "scope surfaced"               "Scope: epic EP-1 — 2 non-terminal member(s) across EP" "$WORK/out"
 ck_has "missing branch warned"        "no integration branch recorded for epic EP-1" "$WORK/out"
 ck "token leaves the checkout alone"  "nextjs-descope-user" "$(git -C "$REPO" branch --show-current)"
 
-# case 11: a bare launch after /epic-prep STOPS — an inherited scope is asked about, never assumed
-# (2026-09-29: a bare launch four days after prep inherited BF-1826 unnoticed and drained it). Nothing
-# is dispatched, and the marker case 10 wrote is untouched.
+# case 11: a bare launch beside an epic recommendation never inherits its scope — the team slug reads only its own
+# tmp/fleet-recommendation-team.json, so without a count it stops and with one it launches team-wide; a recommendation whose
+# scope does not match its slug (moved by hand) refuses. (2026-09-29: a bare launch four days after prep inherited BF-1826
+# from the then-shared file and drained it.) The marker case 10 wrote is untouched throughout.
 git -C "$REPO" branch -q epic/ep-1 nextjs-descope-user
-jq -n --argjson e "$(date +%s)" '{sessions: 1, team: "EP", generated_epoch: $e, scope: "EP-1", members: ["EP-1","EP-3","EP-9"], branch: "epic/ep-1", base: "nextjs-descope-user"}' > "$REPO/tmp/fleet-recommendation.json"
+jq -n --argjson e "$(date +%s)" '{sessions: 1, team: "EP", generated_epoch: $e, scope: "EP-1", members: ["EP-1","EP-3","EP-9"], branch: "epic/ep-1", base: "nextjs-descope-user"}' > "$R1"
 : > "$WORK/dispatches"
-ck "bare launch over a scoped recommendation exits 3" "3" "$(run)"
-ck_has "scope confirm named"          "SCOPE-CONFIRM: " "$WORK/out"
-ck_has "scope confirm names the epic" "carries epic scope EP-1 (written by /epic-prep 0h ago). Nothing was dispatched or written." "$WORK/out"
-ck_has "scope confirm remedies"       "Re-run with 'epic:EP-1' to launch the epic fleet, or 'team' to launch team-wide." "$WORK/out"
-ck "scope confirm dispatched nothing" "0" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
-ck "scope confirm left the marker"    "EP-1 EP-3" "$(jq -r '.members | join(" ")' "$REPO/tmp/fleet-deadline.json")"
-ck "a count without a token asks too" "3" "$(run 1)"
+ck "bare launch without a team recommendation exits 1" "1" "$(run)"
+ck_has "names the team recommendation" "fleet-recommendation-team.json — run /auto-prep first, or pass a count" "$WORK/out"
+ck "bare launch dispatched nothing"   "0" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
+ck "epic marker untouched"            "EP-1 EP-3" "$(jq -r '.members | join(" ")' "$M1")"
+: > "$WORK/dispatches"
+ck "a count launches team-wide beside the epic recommendation" "0" "$(run 1)"
+ck_has "team prompt unscoped"         "/loop /auto" "$WORK/dispatches"
+ck_lacks "team prompt carries no epic" "epic:" "$WORK/dispatches"
+ck "team marker has no scope"         "" "$(jq -r '.scope // empty' "$TM")"
+ck "epic marker still untouched"      "EP-1 EP-3" "$(jq -r '.members | join(" ")' "$M1")"
+cp "$R1" "$REPO/tmp/fleet-recommendation-team.json"
+: > "$WORK/dispatches"
+ck "a mis-scoped recommendation refuses" "1" "$(run 1)"
+ck_has "mis-scoped named"             "carries scope 'EP-1' but this launch is team-wide" "$WORK/out"
+ck "mis-scoped dispatched nothing"    "0" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
+rm -f "$REPO/tmp/fleet-recommendation-team.json" "$TM"
 
-# case 11a: the typed token is the confirmation — the recommendation supplies count, the membership
-# snapshot, and the branch; the checkout is not moved and no checkout-wide config is written.
+# case 11a: the typed token reads its own slug's recommendation — count, the membership snapshot, and the branch; the
+# checkout is not moved and no checkout-wide config is written.
 : > "$WORK/dispatches"
 ck "prepared launch exits 0"          "0" "$(run epic:ep-1)"
 ck_has "prepared prompt scoped"       "/loop /auto epic:EP-1" "$WORK/dispatches"
+ck_has "prepared count announced"     "Using /epic-prep EP-1's recommendation: 1 session(s)" "$WORK/out"
 ck_has "prepared scope announced"     "Using /epic-prep's recommendation for epic EP-1" "$WORK/out"
-ck "members are the prep snapshot"    "EP-1 EP-3 EP-9" "$(jq -r '.members | join(" ")' "$REPO/tmp/fleet-deadline.json")"
-ck "branch recorded"                  "epic/ep-1" "$(jq -r '.branch' "$REPO/tmp/fleet-deadline.json")"
-ck "base recorded"                    "nextjs-descope-user" "$(jq -r '.base' "$REPO/tmp/fleet-deadline.json")"
+ck "members are the prep snapshot"    "EP-1 EP-3 EP-9" "$(jq -r '.members | join(" ")' "$M1")"
+ck "branch recorded"                  "epic/ep-1" "$(jq -r '.branch' "$M1")"
+ck "base recorded"                    "nextjs-descope-user" "$(jq -r '.base' "$M1")"
 ck "no checkout-wide config written"  "" "$(git -C "$REPO" config --get start.wt-source-branch || true)"
 ck "main checkout not moved"          "nextjs-descope-user" "$(git -C "$REPO" branch --show-current)"
 ck_has "steering surfaced"            "Sessions fork from and merge into epic/ep-1 by ref (per-issue fork keys; the main checkout stays on nextjs-descope-user)" "$WORK/out"
@@ -312,57 +353,50 @@ ck "same-branch checkout not moved"   "nextjs-descope-user" "$(git -C "$REPO" br
 git -C "$REPO" config --unset start.wt-source-branch
 
 # case 11d: a fractional generated_epoch (a python time.time() writer) still announces the count and the staleness WARN.
-cp "$REPO/tmp/fleet-recommendation.json" "$WORK/rec.keep"
-jq --argjson e "$(( $(date +%s) - 2*86400 ))" '.generated_epoch = $e + 0.412131' "$WORK/rec.keep" > "$REPO/tmp/fleet-recommendation.json"
+cp "$R1" "$WORK/rec.keep"
+jq --argjson e "$(( $(date +%s) - 2*86400 ))" '.generated_epoch = $e + 0.412131' "$WORK/rec.keep" > "$R1"
 : > "$WORK/dispatches"
 ck "fractional epoch exits 0"         "0" "$(run epic:ep-1)"
 ck_lacks "fractional epoch no bash error" "syntax error" "$WORK/out"
-ck_has "fractional epoch count announced" "Using /auto-prep's recommendation: 1 session(s)" "$WORK/out"
+ck_has "fractional epoch count announced" "Using /epic-prep EP-1's recommendation: 1 session(s)" "$WORK/out"
 ck_has "fractional epoch staleness warned" "WARN: that recommendation is 48h old" "$WORK/out"
-mv "$WORK/rec.keep" "$REPO/tmp/fleet-recommendation.json"
+mv "$WORK/rec.keep" "$R1"
 
-# case 11e: `team` launches team-wide over the same recommendation — unscoped prompt, no scope in the
-# marker, and a WARN that the inherited count was sized for the epic; an explicit count is not warned.
+# case 11e: `team` is no longer a token — a bare launch IS the team fleet — so it reads as an unparseable duration.
 : > "$WORK/dispatches"
-ck "team launch exits 0"              "0" "$(run team)"
-ck_has "team prompt unscoped"         "/loop /auto" "$WORK/dispatches"
-ck_lacks "team prompt carries no epic" "epic:" "$WORK/dispatches"
-ck "team marker has no scope"         "" "$(jq -r '.scope // empty' "$REPO/tmp/fleet-deadline.json")"
-ck_has "team announced"               "Team-wide launch: ignoring the epic EP-1 scope" "$WORK/out"
-ck_has "team count sizing warned"     "WARN: the recommendation's count (1) was sized for epic EP-1 by /epic-prep" "$WORK/out"
-: > "$WORK/dispatches"
-ck "team with a count exits 0"        "0" "$(run 1 team)"
-ck_lacks "explicit count not warned"  "was sized for epic" "$WORK/out"
-ck "team and epic refuse"             "1" "$(run team epic:ep-1)"
-ck_has "team and epic named"          "ERROR: 'team' and 'epic:EP-1' are mutually exclusive" "$WORK/out"
-ck "team and epic dispatched nothing" "1" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
+ck "team token refuses"               "1" "$(run 1 team)"
+ck_has "team token named"             "cannot parse duration 'team'" "$WORK/out"
+ck "team token dispatched nothing"    "0" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
 
-# case 12: an explicit token overrides the prepared scope — live membership, and no branch, since the
-# prep was for another epic.
+# case 12: another epic's token launches that epic's own fleet — live membership, no branch (no prep for it), and the
+# EP-1 marker is not touched.
+cp "$M1" "$WORK/m1.before"
 : > "$WORK/dispatches"
-ck "override exits 0"                 "0" "$(run 1 epic:EP-3)"
-ck_has "override prompt"              "/loop /auto epic:EP-3" "$WORK/dispatches"
-ck "override members live"            "EP-3" "$(jq -r '.members | join(" ")' "$REPO/tmp/fleet-deadline.json")"
-ck "override records no branch"       "" "$(jq -r '.branch // empty' "$REPO/tmp/fleet-deadline.json")"
+ck "second epic exits 0"              "0" "$(run 1 epic:EP-3)"
+ck_has "second epic prompt"           "/loop /auto epic:EP-3" "$WORK/dispatches"
+ck "second epic members live"         "EP-3" "$(jq -r '.members | join(" ")' "$M3")"
+ck "second epic records no branch"    "" "$(jq -r '.branch // empty' "$M3")"
+ck "first epic's marker untouched"    "same" "$(cmp -s "$WORK/m1.before" "$M1" && echo same || echo changed)"
 
 # case 13: an invalid scope refuses before any dispatch or write — the live marker survives.
-printf '{"deadline_epoch":9999999999,"deadline":"later","count":3}\n' > "$REPO/tmp/fleet-deadline.json"
+printf '{"deadline_epoch":9999999999,"deadline":"later","count":3}\n' > "$REPO/tmp/fleet-deadline-ep-2.json"
 : > "$WORK/dispatches"
 ck "non-epic scope exits 1"           "1" "$(run 1 epic:EP-2)"
 ck "non-epic scope dispatches nothing" "0" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
 ck_has "non-epic scope names the label" "does not carry the 'epic' label" "$WORK/out"
 ck_has "non-epic scope says nothing ran" "nothing was dispatched" "$WORK/out"
-ck "live marker survives a scope refusal" "9999999999" "$(jq -r '.deadline_epoch' "$REPO/tmp/fleet-deadline.json")"
+ck "live marker survives a scope refusal" "9999999999" "$(jq -r '.deadline_epoch' "$REPO/tmp/fleet-deadline-ep-2.json")"
 ck "missing scope exits 1"            "1" "$(run 1 epic:EP-404)"
 ck "malformed token exits 1"          "1" "$(run 1 epic:nope)"
 ck "two tokens exit 1"                "1" "$(run 1 epic:EP-1 epic:EP-3)"
+rm -f "$REPO/tmp/fleet-deadline-ep-2.json"
 
 # case 14: a prepared branch that no longer exists, or a foreign source-branch config, refuses.
-jq '.branch = "epic/gone"' "$REPO/tmp/fleet-recommendation.json" > "$WORK/rec.tmp" && mv "$WORK/rec.tmp" "$REPO/tmp/fleet-recommendation.json"
+jq '.branch = "epic/gone"' "$R1" > "$WORK/rec.tmp" && mv "$WORK/rec.tmp" "$R1"
 : > "$WORK/dispatches"
 ck "missing branch exits 1"           "1" "$(run epic:ep-1)"
 ck_has "missing branch named"         "integration branch 'epic/gone' but no such local branch" "$WORK/out"
-jq '.branch = "epic/ep-1"' "$REPO/tmp/fleet-recommendation.json" > "$WORK/rec.tmp" && mv "$WORK/rec.tmp" "$REPO/tmp/fleet-recommendation.json"
+jq '.branch = "epic/ep-1"' "$R1" > "$WORK/rec.tmp" && mv "$WORK/rec.tmp" "$R1"
 git -C "$REPO" config start.wt-source-branch nextjs-descope-user
 ck "foreign source-branch config exits 1" "1" "$(run epic:ep-1)"
 ck_has "foreign config named"         "start.wt-source-branch is 'nextjs-descope-user'" "$WORK/out"
@@ -402,21 +436,20 @@ rm -f "$REPO/tmp/fleet-sequence-sq-1.json" "$REPO/tmp/fleet-sequence-sq-7.json" 
 
 # case 17: the `backlog` token (keeper ruling 2026-10-01) rides the prompt — composing with an epic scope —
 # and the marker records it for the observers; a launch without it records nothing, and a FLEET_PROMPT
-# override that drops it is warned about like a dropped scope. No recommendation on disk, so a bare
-# count launches team-wide without the SCOPE-CONFIRM stop.
-rm -f "$REPO/tmp/fleet-recommendation.json"
+# override that drops it is warned about like a dropped scope. No recommendation on disk for either slug.
+rm -f "$REPO"/tmp/fleet-recommendation-*.json
 : > "$WORK/dispatches"
 ck "backlog launch exits 0"               "0" "$(run 1 backlog)"
 ck_has "backlog prompt"                   "/loop /auto backlog" "$WORK/dispatches"
-ck "backlog marker"                       "true" "$(jq -r '.backlog' "$REPO/tmp/fleet-deadline.json")"
+ck "backlog marker"                       "true" "$(jq -r '.backlog' "$TM")"
 ck_has "backlog announced"                "Backlog fallback: on" "$WORK/out"
 : > "$WORK/dispatches"
 ck "backlog with epic exits 0"            "0" "$(run 1 epic:EP-3 BACKLOG)"
 ck_has "backlog composes with epic"       "/loop /auto epic:EP-3 backlog" "$WORK/dispatches"
-ck "backlog with epic marker"             "EP-3 true" "$(jq -r '"\(.scope) \(.backlog)"' "$REPO/tmp/fleet-deadline.json")"
+ck "backlog with epic marker"             "EP-3 true" "$(jq -r '"\(.scope) \(.backlog)"' "$M3")"
 : > "$WORK/dispatches"
 ck "plain launch exits 0"                 "0" "$(run 1)"
-ck "plain launch records no backlog"      "" "$(jq -r '.backlog // empty' "$REPO/tmp/fleet-deadline.json")"
+ck "plain launch records no backlog"      "" "$(jq -r '.backlog // empty' "$TM")"
 ck_lacks "plain prompt carries no backlog" "backlog" "$WORK/dispatches"
 ck "override without backlog exits 0"     "0" "$(FLEET_PROMPT='/loop /auto EP' run 1 backlog)"
 ck_has "override without backlog warned"  "does not carry backlog" "$WORK/out"
@@ -425,7 +458,7 @@ ck_has "override without backlog warned"  "does not carry backlog" "$WORK/out"
 : > "$WORK/dispatches"
 ck "epic launch exits 0"                    "0" "$(run 1 epic:EP-3)"
 ck_has "epic implies backlog in the prompt" "/loop /auto epic:EP-3 backlog" "$WORK/dispatches"
-ck "epic implies backlog in the marker"     "EP-3 true" "$(jq -r '"\(.scope) \(.backlog)"' "$REPO/tmp/fleet-deadline.json")"
+ck "epic implies backlog in the marker"     "EP-3 true" "$(jq -r '"\(.scope) \(.backlog)"' "$M3")"
 ck_has "epic fallback announced as scoped"  "Backlog fallback: on (epic scope)" "$WORK/out"
 ck "epic override without the word exits 0" "0" "$(FLEET_PROMPT='/loop /auto epic:EP-3' run 1 epic:EP-3)"
 ck_lacks "epic override without the word not warned" "does not carry backlog" "$WORK/out"
@@ -436,7 +469,7 @@ ck_lacks "epic override without the word not warned" "does not carry backlog" "$
 # registry rows are the real working-session shape (status busy, pid) from fixtures/auto-stall-watch-agents-2026-10-10.json
 # (the live registry now lists those sessions only as the stopped rows `claude stop` leaves behind); the ledgers keep the real
 # key set of tmp/auto-state-b2bb1003.json (`backlog: true`) and tmp/auto-state-3b566c2a.json (no backlog key), the marker the key
-# set of the live tmp/fleet-deadline.json.
+# set of the live marker.
 FX="$(cd "$(dirname "$SCRIPT")" && pwd)/fixtures/auto-stall-watch-agents-2026-10-10.json"
 live_rows() { jq -c '[.[] | select(.id as $i | $ARGS.positional | index($i))]' --args "$@" < "$FX" > "$WORK/agents.json"; }
 ledger_bl='{"pid":20493,"pidStart":"Fri Oct 9 14:47:04 2026","mode":"loop","backlog":true,"status":"active","reason":"","shipped":["XX-1"],"canceled":[],"skipped":[],"failed":[],"consecutiveFailures":0,"reviewBlocks":0}'
@@ -444,26 +477,29 @@ ledger_pl='{"pid":20493,"pidStart":"Fri Oct 9 14:47:04 2026","mode":"loop","stat
 old_marker() { # <deadline_epoch | none> [jq filter applied on top]
   jq -n --arg d "$1" '{count: 3, launch_epoch: 1791601120, fleet_sessions: ["1492b0e1","1cc250ad","3b566c2a","8c16860d","b2bb1003"]}
     + (if $d == "none" then {} else {deadline_epoch: ($d | tonumber), deadline: "2026-10-11 06:09 CDT"} end)' \
-    | jq "${2:-.}" > "$REPO/tmp/fleet-deadline.json"
+    | jq "${2:-.}" > "$TM"
 }
 retire_setup() { # ledger-for-b2bb1003 ledger-for-8c16860d
-  rm -f "$REPO"/tmp/auto-state-*.json "$REPO/tmp/fleet-recommendation.json" "$REPO/tmp/fleet-deadline.json"
+  rm -f "$REPO"/tmp/auto-state-*.json "$REPO"/tmp/fleet-recommendation-*.json "$REPO"/tmp/fleet-deadline*.json
   printf '%s\n' "$1" > "$REPO/tmp/auto-state-b2bb1003.json"
   printf '%s\n' "$2" > "$REPO/tmp/auto-state-8c16860d.json"
   live_rows b2bb1003 8c16860d
   : > "$WORK/dispatches"
 }
-rkeys() { jq -r '(.retiring // []) | sort | join(" ")' "$REPO/tmp/fleet-deadline.json"; }
+rkeys() { jq -r '(.retiring // []) | sort | join(" ")' "$TM"; }
 past=$(( $(date +%s) - 3600 )); ahead=$(( $(date +%s) + 3600 ))
 
 # case 18: a passed deadline retires every carried session; they stay in fleet_sessions, and none of the active-session
-# warnings fire for them (0 non-retiring carried + 3 new is at the cap, not over it).
+# warnings fire for them (0 non-retiring carried + 3 new is at the cap, not over it). The wound-down run is archived under
+# its launch epoch with its full session set, so /fleet-retro can still measure it.
 retire_setup "$ledger_bl" "$ledger_bl"; old_marker "$past"
 ck "passed deadline: launch exits 0"          "0" "$(run 3 19h)"
 ck "passed deadline: both carried retire"     "8c16860d b2bb1003" "$(rkeys)"
-ck "passed deadline: still in fleet_sessions" "8c16860d b2bb1003" "$(jq -r '.fleet_sessions | map(select(startswith("8c") or startswith("b2"))) | sort | join(" ")' "$REPO/tmp/fleet-deadline.json")"
-ck "passed deadline: new sessions recorded"   "3" "$(jq -r '[.fleet_sessions[] | select(startswith("ab"))] | length' "$REPO/tmp/fleet-deadline.json")"
-ck "passed deadline: new deadline in force"   "true" "$(jq -r '.deadline_epoch > now' "$REPO/tmp/fleet-deadline.json")"
+ck "passed deadline: still in fleet_sessions" "8c16860d b2bb1003" "$(jq -r '.fleet_sessions | map(select(startswith("8c") or startswith("b2"))) | sort | join(" ")' "$TM")"
+ck "passed deadline: new sessions recorded"   "3" "$(jq -r '[.fleet_sessions[] | select(startswith("ab"))] | length' "$TM")"
+ck "passed deadline: new deadline in force"   "true" "$(jq -r '.deadline_epoch > now' "$TM")"
+ck "passed deadline: ended run archived"      "1492b0e1 1cc250ad 3b566c2a 8c16860d b2bb1003" "$(jq -r '.fleet_sessions | join(" ")' "$REPO/tmp/fleet-deadline-team.1791601120.json")"
+ck_has "passed deadline: archive reported"    "Kept un-retro'd fleet(s)" "$WORK/out"
 ck_has "retiring named"                       "Retiring session(s): 8c16860d b2bb1003 — carried from a marker that was winding down; each finishes its in-flight issue, then stops picking" "$WORK/out"
 ck_lacks "retiring: no concurrency line"      "Concurrency:" "$WORK/out"
 ck_lacks "retiring: no cap warning"           "over the cap of" "$WORK/out"
@@ -478,8 +514,10 @@ ck "stopped marker: both carried retire"      "8c16860d b2bb1003" "$(rkeys)"
 retire_setup "$ledger_pl" "$ledger_pl"; old_marker "$ahead"
 ck "future deadline: launch exits 0"          "0" "$(run 1 19h)"
 ck "future deadline: nobody retires"          "" "$(rkeys)"
-ck "future deadline: no retiring field"       "false" "$(jq 'has("retiring")' "$REPO/tmp/fleet-deadline.json")"
-ck "future deadline: carried kept"            "8c16860d b2bb1003" "$(jq -r '.fleet_sessions | map(select(startswith("8c") or startswith("b2"))) | sort | join(" ")' "$REPO/tmp/fleet-deadline.json")"
+ck "future deadline: no retiring field"       "false" "$(jq 'has("retiring")' "$TM")"
+ck "future deadline: carried kept"            "8c16860d b2bb1003" "$(jq -r '.fleet_sessions | map(select(startswith("8c") or startswith("b2"))) | sort | join(" ")' "$TM")"
+ck "future deadline: dead members kept too"   "1492b0e1 1cc250ad 3b566c2a" "$(jq -r '.fleet_sessions | map(select(startswith("1") or startswith("3"))) | sort | join(" ")' "$TM")"
+ck "future deadline: a top-up archives nothing" "no" "$(ls "$REPO"/tmp/fleet-deadline-team.*.json >/dev/null 2>&1 && echo yes || echo no)"
 ck_lacks "future deadline: nothing retiring"  "Retiring session(s)" "$WORK/out"
 retire_setup "$ledger_pl" "$ledger_pl"; old_marker none
 ck "no deadline: launch exits 0"              "0" "$(run 1 19h)"
@@ -494,12 +532,12 @@ ck "prior retiring: only the listed stays"    "b2bb1003" "$(rkeys)"
 # finished — the registry listing it is a re-claimed transcript, which must not join the new set as a retiring phantom.
 retire_setup "$ledger_pl" "$ledger_pl"; rm -f "$REPO"/tmp/auto-state-*.json; old_marker "$past"
 ck "ledger-less, wound down: launch exits 0"  "0" "$(run 3 19h)"
-ck "ledger-less, wound down: none carried"    "" "$(jq -r '.fleet_sessions | map(select(startswith("8c") or startswith("b2"))) | join(" ")' "$REPO/tmp/fleet-deadline.json")"
-ck "ledger-less, wound down: no retiring"     "false" "$(jq 'has("retiring")' "$REPO/tmp/fleet-deadline.json")"
+ck "ledger-less, wound down: none carried"    "" "$(jq -r '.fleet_sessions | map(select(startswith("8c") or startswith("b2"))) | join(" ")' "$TM")"
+ck "ledger-less, wound down: no retiring"     "false" "$(jq 'has("retiring")' "$TM")"
 ck_lacks "ledger-less, wound down: silent"    "Retiring session(s)" "$WORK/out"
 retire_setup "$ledger_pl" "$ledger_pl"; rm -f "$REPO"/tmp/auto-state-*.json; old_marker "$ahead"
 ck "ledger-less, live: launch exits 0"        "0" "$(run 1 19h)"
-ck "ledger-less, live: preflight carried"     "8c16860d b2bb1003" "$(jq -r '.fleet_sessions | map(select(startswith("8c") or startswith("b2"))) | sort | join(" ")' "$REPO/tmp/fleet-deadline.json")"
+ck "ledger-less, live: preflight carried"     "8c16860d b2bb1003" "$(jq -r '.fleet_sessions | map(select(startswith("8c") or startswith("b2"))) | sort | join(" ")' "$TM")"
 
 # case 19: the cap — 2 carried + 3 new warns, 1 carried + 2 new is exactly at it, 0 carried + 3 new is silent.
 retire_setup "$ledger_pl" "$ledger_pl"; old_marker "$ahead"
@@ -527,14 +565,76 @@ ck_lacks "backlog: matching session silent"   "carried session b2bb1003" "$WORK/
 retire_setup "$ledger_bl" "$ledger_pl"; old_marker "$past"
 ck "backlog: retiring launch exits 0"         "0" "$(run 1 19h)"
 ck_lacks "backlog: a retiring session is not warned about" "carried session" "$WORK/out"
-rm -f "$REPO"/tmp/auto-state-*.json "$REPO/tmp/fleet-deadline.json"
+
+# ---- concurrent fleets: a launch touches only its own slug's marker and counts the other fleets' live sessions ----
+# A team launch beside a running epic fleet (ep-1, one live session b2bb1003 whose ledger is scoped to it, one dead member):
+# the cap line adds the live session, the epic marker is byte-identical afterwards, and neither of its ledgers is this
+# launch's to clear or carry.
+retire_setup "$ledger_pl" "$ledger_pl"; rm -f "$REPO"/tmp/auto-state-*.json
+jq -n --argjson d "$ahead" '{count: 1, launch_epoch: 1791601120, fleet_sessions: ["b2bb1003","dead0004"], scope: "EP-1", members: ["EP-1"], deadline_epoch: $d}' > "$M1"
+printf '%s\n' "$ledger_pl" | jq '. + {scope: "EP-1"}' > "$REPO/tmp/auto-state-b2bb1003.json"
+echo '{"status":"active","mode":"loop","scope":"EP-1","shipped":["XX-8"]}' > "$REPO/tmp/auto-state-dead0004.json"
+live_rows b2bb1003
+cp "$M1" "$WORK/m1.before"
+ck "beside an epic fleet: team launch exits 0"   "0" "$(run 1 19h)"
+ck_has "beside: other fleet counted"            "Concurrency: 0 carried session(s) + 1 in other fleet(s) (ep-1) + 1 new = 2 running against the cap of 3" "$WORK/out"
+ck_lacks "beside: under the cap, silent"        "over the cap of" "$WORK/out"
+ck "beside: epic marker untouched"              "same" "$(cmp -s "$WORK/m1.before" "$M1" && echo same || echo changed)"
+ck "beside: team marker carries only its own"   "1" "$(jq -r '.fleet_sessions | length' "$TM")"
+ck "beside: the other fleet's live ledger kept" "yes" "$([ -f "$REPO/tmp/auto-state-b2bb1003.json" ] && echo yes || echo no)"
+ck "beside: the other fleet's dead member kept" "yes" "$([ -f "$REPO/tmp/auto-state-dead0004.json" ] && echo yes || echo no)"
+ck_lacks "beside: nothing cleared"              "Cleared prior-run ledger" "$WORK/out"
+: > "$WORK/dispatches"
+ck "beside: over the cap launches"              "0" "$(run 3 19h)"
+ck_has "beside: over the cap warned"            "WARN: 4 non-retiring sessions will run, over the cap of 3" "$WORK/out"
+ck_has "beside: remedy names the other fleet"   "wind down another fleet (/fleet-stop epic:<ID> | team)" "$WORK/out"
+# A live loop ledger scoped to the other fleet but listed by no marker (its launch predates the marker, or an interactive
+# /loop /auto epic:EP-1 beside it) joins neither this launch's set nor its clearing.
+rm -f "$M1"
+: > "$WORK/dispatches"
+ck "foreign-scope loop ledger: launch exits 0"  "0" "$(run 1 19h)"
+ck "foreign-scope loop ledger: not carried"     "" "$(jq -r '.fleet_sessions | map(select(startswith("b2"))) | join(" ")' "$TM")"
+ck "foreign-scope loop ledger: kept"            "yes" "$([ -f "$REPO/tmp/auto-state-b2bb1003.json" ] && echo yes || echo no)"
+
+# ---- expiry: an ended fleet the history names is expired; one it does not name is kept; a same-slug relaunch archives ----
+rm -f "$REPO"/tmp/auto-state-*.json "$REPO"/tmp/fleet-deadline*.json; echo '[]' > "$WORK/agents.json"
+HIST="$REPO/tmp/fleet-metrics-history.jsonl"
+jq -n '{count: 1, launch_epoch: 1700000000, fleet_sessions: ["dead0009"], scope: "EP-2", members: ["EP-2"]}' > "$REPO/tmp/fleet-deadline-ep-2.json"
+jq -n '{count: 1, launch_epoch: 1700000100, fleet_sessions: ["dead0010"], scope: "EP-3", members: ["EP-3"]}' > "$M3"
+jq -n '{count: 1, launch_epoch: 1700000200, fleet_sessions: ["dead0011"]}' > "$TM"
+for k in dead0009 dead0010 dead0011 dead0012; do echo '{"status":"drained","mode":"loop","shipped":["XX-1"]}' > "$REPO/tmp/auto-state-$k.json"; done
+echo '{"session_set":["dead0009"],"shipped":1}' > "$HIST"
+: > "$WORK/dispatches"
+ck "expiry: launch exits 0"                      "0" "$(run 1)"
+ck "expiry: retro'd fleet's marker gone"         "no" "$([ -e "$REPO/tmp/fleet-deadline-ep-2.json" ] && echo yes || echo no)"
+ck "expiry: retro'd fleet's ledger gone"         "no" "$([ -e "$REPO/tmp/auto-state-dead0009.json" ] && echo yes || echo no)"
+ck_has "expiry: expiry reported"                 "Expired retro'd fleet(s)" "$WORK/out"
+ck_has "expiry: names the expired slug"          "  ep-2 (launched" "$WORK/out"
+ck "expiry: un-retro'd fleet's marker kept"      "yes" "$([ -e "$M3" ] && echo yes || echo no)"
+ck "expiry: un-retro'd fleet's ledger kept"      "yes" "$([ -e "$REPO/tmp/auto-state-dead0010.json" ] && echo yes || echo no)"
+ck_has "expiry: kept reported"                   "Kept un-retro'd fleet(s)" "$WORK/out"
+ck_has "expiry: names the kept slug"             "  ep-3 (launched" "$WORK/out"
+ck "expiry: own slug's ended run archived"       "yes" "$([ -e "$REPO/tmp/fleet-deadline-team.1700000200.json" ] && echo yes || echo no)"
+ck "expiry: archive keeps its session set"       "dead0011" "$(jq -r '.fleet_sessions | join(" ")' "$REPO/tmp/fleet-deadline-team.1700000200.json")"
+ck "expiry: archived fleet's ledger kept"        "yes" "$([ -e "$REPO/tmp/auto-state-dead0011.json" ] && echo yes || echo no)"
+ck "expiry: new run lists only its own session"  "1" "$(jq -r '.fleet_sessions | length' "$TM")"
+ck "expiry: unlisted dead ledger cleared"        "no" "$([ -e "$REPO/tmp/auto-state-dead0012.json" ] && echo yes || echo no)"
+ck_has "expiry: clearing names it"               "Cleared prior-run ledger(s): dead0012" "$WORK/out"
+# Once the archived run is retro'd, the next launch expires it with its ledger; the un-retro'd sibling stays.
+echo '{"session_set":["dead0011"],"shipped":1}' >> "$HIST"
+: > "$WORK/dispatches"
+ck "expiry: relaunch exits 0"                    "0" "$(run 1)"
+ck "expiry: retro'd archive gone"                "no" "$([ -e "$REPO/tmp/fleet-deadline-team.1700000200.json" ] && echo yes || echo no)"
+ck "expiry: its ledger gone"                     "no" "$([ -e "$REPO/tmp/auto-state-dead0011.json" ] && echo yes || echo no)"
+ck "expiry: the un-retro'd sibling still kept"   "yes" "$([ -e "$M3" ] && echo yes || echo no)"
+rm -f "$HIST" "$REPO"/tmp/fleet-deadline*.json "$REPO"/tmp/auto-state-*.json
 echo '[]' > "$WORK/agents.json"
 
 # ---- tooling freshness: a stale ~/.claude refuses before anything is written or dispatched ----
 # The prior-run ledger is the write the refusal must precede: the registry is empty, so a launch that got past the
 # check would clear it.
 stale_setup() {
-  rm -f "$REPO/tmp/fleet-deadline.json" "$REPO"/tmp/auto-state-*.json
+  rm -f "$REPO"/tmp/fleet-deadline*.json "$REPO"/tmp/auto-state-*.json
   echo '{"status":"active","shipped":["XX-7"]}' > "$REPO/tmp/auto-state-dead0003.json"
   echo '[]' > "$WORK/agents.json"
   : > "$WORK/dispatches"
@@ -547,7 +647,7 @@ ck_has "stale tooling named"             "TOOLING-STALE: ~/.claude is 1 commit b
 ck_has "stale commit listed"             "hooks: recover a lost wakeup" "$WORK/out"
 ck_has "stale says nothing ran"          "Nothing was dispatched or written. Run /update and re-launch, or re-run with 'stale-ok'" "$WORK/out"
 ck "stale dispatched nothing"            "0" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
-ck "stale wrote no marker"               "no" "$([ -e "$REPO/tmp/fleet-deadline.json" ] && echo yes || echo no)"
+ck "stale wrote no marker"               "no" "$([ -e "$TM" ] && echo yes || echo no)"
 ck "stale cleared no ledger"             "yes" "$([ -f "$REPO/tmp/auto-state-dead0003.json" ] && echo yes || echo no)"
 
 stale_setup

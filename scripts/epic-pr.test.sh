@@ -107,24 +107,42 @@ ck "T2 ask" epic "$(val "$WORK/t2" ASK)"
 ck "T2 candidates" "epic/ep-1,epic/ep-9" "$(val "$WORK/t2" CANDIDATES)"
 g branch -q -D epic/ep-9
 
-# T3 — the argument wins, case-folded; a recorded recommendation for this epic supplies branch and base.
+# T3 — the argument wins, case-folded; the epic's own recommendation (tmp/fleet-recommendation-<slug>.json) supplies branch and base.
 mkdir -p "$REPO/tmp"
-printf '{"scope":"EP-1","branch":"epic/ep-1","base":"release","sessions":2}\n' > "$REPO/tmp/fleet-recommendation.json"
+printf '{"scope":"EP-1","branch":"epic/ep-1","base":"release","sessions":2}\n' > "$REPO/tmp/fleet-recommendation-ep-1.json"
 rc=$(run "$WORK/t3" --dry-run ep-1)
 ck "T3 exit" 0 "$rc"
 ck "T3 epic source" arg "$(val "$WORK/t3" EPIC_SOURCE)"
 ck "T3 base recorded" release "$(val "$WORK/t3" BASE)"
 ck "T3 base source" recommendation "$(val "$WORK/t3" BASE_SOURCE)"
 
-# T4 — no argument: the recommendation's scope is read when the checkout is not on an epic/* branch.
+# T4 — no argument: the one recommendation naming an epic resolves it when the checkout is not on an epic/* branch; a
+# running fleet's marker outranks it, and two of either kind is ASK=epic.
 rc=$(run "$WORK/t4" --dry-run)
 ck "T4 epic source" recommendation "$(val "$WORK/t4" EPIC_SOURCE)"
-# A recommendation for ANOTHER epic contributes neither branch nor base.
-printf '{"scope":"EP-8","branch":"epic/ep-8","base":"release"}\n' > "$REPO/tmp/fleet-recommendation.json"
+printf '{"scope":"EP-8","branch":"epic/ep-8","base":"release"}\n' > "$REPO/tmp/fleet-recommendation-ep-8.json"
+rc=$(run "$WORK/t4c" --dry-run)
+ck "T4c two recommendations ask" 3 "$rc"
+ck "T4c candidates" "EP-1,EP-8" "$(val "$WORK/t4c" CANDIDATES)"
+printf '{"scope":"EP-1","branch":"epic/ep-1","base":"release","fleet_sessions":[]}\n' > "$REPO/tmp/fleet-deadline-ep-1.json"
+rc=$(run "$WORK/t4d" --dry-run)
+ck "T4d a running fleet's marker outranks the recommendations" marker "$(val "$WORK/t4d" EPIC_SOURCE)"
+printf '{"scope":"EP-8","branch":"epic/ep-8","base":"release","fleet_sessions":[]}\n' > "$REPO/tmp/fleet-deadline-ep-8.1700000000.json"
+rc=$(run "$WORK/t4e" --dry-run)
+ck "T4e an archived marker is not a running fleet" marker "$(val "$WORK/t4e" EPIC_SOURCE)"
+ck "T4e epic" EP-1 "$(val "$WORK/t4e" EPIC)"
+rm -f "$REPO/tmp/fleet-deadline-ep-1.json" "$REPO/tmp/fleet-deadline-ep-8.1700000000.json"
+# A recommendation for ANOTHER epic contributes neither branch nor base — only the named epic's own files are read.
+rm -f "$REPO/tmp/fleet-recommendation-ep-1.json"
 rc=$(run "$WORK/t4b" --dry-run EP-1)
 ck "T4b base falls back past a foreign recommendation" main "$(val "$WORK/t4b" BASE)"
 ck "T4b base source" checkout "$(val "$WORK/t4b" BASE_SOURCE)"
-rm -f "$REPO/tmp/fleet-recommendation.json"
+# An archived run of this epic still supplies the pair once its live marker is gone — the PR is opened after the fleet.
+printf '{"scope":"EP-1","branch":"epic/ep-1","base":"release","fleet_sessions":["aa000001"]}\n' > "$REPO/tmp/fleet-deadline-ep-1.1700000000.json"
+rc=$(run "$WORK/t4f" --dry-run EP-1)
+ck "T4f archived marker supplies the base" release "$(val "$WORK/t4f" BASE)"
+ck "T4f base source" marker "$(val "$WORK/t4f" BASE_SOURCE)"
+rm -f "$REPO/tmp/fleet-recommendation-ep-8.json" "$REPO/tmp/fleet-deadline-ep-1.1700000000.json"
 
 # T5 — the checkout on the integration branch itself: the epic comes from the branch; the base must be asked for.
 g checkout -q epic/ep-1

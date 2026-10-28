@@ -20,9 +20,10 @@ single pick. Never persist the output anywhere `/auto` or a fleet session might 
 ### Step 1: Resolve context
 
 - Team: `$LINEAR_TEAM`, or ask. Never scan the workspace.
-- Run from the **project main checkout** — the script defaults read `tmp/fleet-recommendation.json` (session count and
-  duration from `/auto-prep`) and `tmp/fleet-metrics-history.jsonl` (hours-per-issue calibration from past fleets)
-  relative to the cwd.
+- Run from the **project main checkout** — the script defaults read the fleet's own recommendation
+  (`tmp/fleet-recommendation-team.json` from `/auto-prep`, or `tmp/fleet-recommendation-<id-lower>.json` from
+  `/epic-prep` under `--root`: session count and duration) and `tmp/fleet-metrics-history.jsonl` (hours-per-issue
+  calibration from past fleets) relative to the cwd.
 
 ### Step 2: Run the simulation
 
@@ -37,8 +38,8 @@ fetch (`scripts/epic-graph.sh`), the graph's teams are fetched on their own, and
 fails closed — a root that is not an epic exits 1 with the reason; never render the team forecast in its place. The scope
 implies `--backlog`: a `BACKLOG-FALLBACK: on (epic scope …)` line says so, and a member is never `WITHHELD`.
 
-Defaults: sessions and horizon from `tmp/fleet-recommendation.json` (horizon falls back to 12h); no count from either
-source is a hard error — point at `/auto-prep` or ask for one. Useful overrides: `--hours-per-issue X` (replace the
+Defaults: sessions and horizon from the fleet's recommendation file above (horizon falls back to 12h); no count from
+either source is a hard error — point at `/auto-prep` (or `/epic-prep <ID>` under `--root`) or ask for one. Useful overrides: `--hours-per-issue X` (replace the
 history calibration; default 2.0 with no history — a history row above 12 h/issue is ignored with a `NOTE:` on stderr,
 because a non-fleet session set recorded as a fleet reads as a 70-hour issue; surface the note, the history needs
 cleaning), `--flat` (disable estimate-point weighting of per-issue duration). `-h` documents the rest.
@@ -87,5 +88,5 @@ the headroom probe picks through, so no parking is expected. Then:
 - Fetch/parse failure → the script exits non-zero with `ERROR:` on stderr; report it, never render a partial timeline.
 - Zero shippable candidates → the `FORECAST … pool 0 shippable` line is a real result: report it and point at `/spec`
   (certify) or `/auto-prep` (label repair), not at launching anyway.
-- Stale `tmp/fleet-recommendation.json` (>24h, the threshold `fleet-launch.sh` warns at) → mention the staleness when
-  its defaults were used.
+- A stale recommendation file (>24h, the threshold `fleet-launch.sh` warns at) → mention the staleness when its defaults
+  were used.

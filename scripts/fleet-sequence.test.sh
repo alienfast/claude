@@ -267,11 +267,11 @@ git -C "$REPO" config --unset start.wt-source-branch
 # A fleet and a sequence are discrete: a live fleet never blocks a launch (its pickers cannot take a queued
 # issue — next-candidates.sh hides what a running sequence holds — and neither parks the other's checkout).
 reset
-printf '{"fleet_sessions":["fe000001"],"count":1,"deadline_epoch":%s}\n' "$(( $(date +%s) + 3600 ))" > "$REPO/tmp/fleet-deadline.json"
+printf '{"fleet_sessions":["fe000001"],"count":1,"deadline_epoch":%s}\n' "$(( $(date +%s) + 3600 ))" > "$REPO/tmp/fleet-deadline-team.json"
 printf '[{"id":"fe000001","kind":"background","state":"working"}]\n' > "$WORK/agents.json"
 ck "live fleet does not block"  "0" "$(run BF-1 BF-2)"
 ck "alongside a fleet, both dispatched" "2" "$(dispatches)"
-ck "fleet marker left as found" "fe000001" "$(jq -r '.fleet_sessions[0]' "$REPO/tmp/fleet-deadline.json")"
+ck "fleet marker left as found" "fe000001" "$(jq -r '.fleet_sessions[0]' "$REPO/tmp/fleet-deadline-team.json")"
 
 # ---- happy path: three issues onto seq/bf-1, each forked from the branch's advanced tip, one PR at the end ----
 reset

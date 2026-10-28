@@ -25,7 +25,8 @@
 # exactly that. So a finished session is dropped from every signal below and named on the line as "finished:" — the
 # same ledger-first rule ~/.claude/scripts/fleet-sequence.sh waits by.
 #   fleet-sequence            tmp/fleet-sequence.json status == running
-#   fleet-session <id>        an id in tmp/fleet-deadline.json's fleet_sessions that is alive and not finished
+#   fleet-session <id>        an id in a live fleet marker's fleet_sessions (tmp/fleet-deadline-<slug>.json, one per running
+#                             fleet — lib/fleet-markers.sh) that is alive and not finished
 #   auto-ledger <key>         a tmp/auto-state-*.json with status active whose filename key is alive — this is how
 #                             an INTERACTIVE terminal running /loop /auto is seen; interactive rows count only here
 #   background-session <name> a non-ended background session whose cwd is this repo or one of its worktrees AND
@@ -117,11 +118,12 @@ autofleet_keys() {
     key=${${f:t}#auto-state-}; key=${key%.json}
     ledger_finished "$key" || echo "$key"
   done
-  if [ -f "$MAIN/tmp/fleet-deadline.json" ]; then
-    for key in $(jq -r '.fleet_sessions[]? // empty' "$MAIN/tmp/fleet-deadline.json" 2>/dev/null); do
+  for mf in "$MAIN"/tmp/fleet-deadline-*.json(N); do
+    [[ ${${mf:t}%.json} == *.* ]] && continue   # an archived run (fleet-deadline-<slug>.<epoch>.json), not a running fleet
+    for key in $(jq -r '.fleet_sessions[]? // empty' "$mf" 2>/dev/null); do
       ledger_finished "$key" || echo "$key"
     done
-  fi
+  done
   for wt in "$MAIN"/.claude/worktrees/*(N/); do
     git -C "$wt" config --worktree --get-all start.owner-session 2>/dev/null
   done
@@ -141,12 +143,13 @@ busy_signals() {
     && [ "$(jq -r '.status // empty' "$MAIN/tmp/fleet-sequence.json" 2>/dev/null)" = "running" ] \
     && echo "fleet-sequence ($(jq -r '.current // "?"' "$MAIN/tmp/fleet-sequence.json"))"
 
-  if [ -f "$MAIN/tmp/fleet-deadline.json" ]; then
-    for key in $(jq -r '.fleet_sessions[]? // empty' "$MAIN/tmp/fleet-deadline.json" 2>/dev/null); do
+  for mf in "$MAIN"/tmp/fleet-deadline-*.json(N); do
+    [[ ${${mf:t}%.json} == *.* ]] && continue
+    for key in $(jq -r '.fleet_sessions[]? // empty' "$mf" 2>/dev/null); do
       ledger_finished "$key" && continue
       alive_key "$reg" "$key" && echo "fleet-session $key"
     done
-  fi
+  done
 
   for f in "$MAIN"/tmp/auto-state-*.json(N); do
     [ "$(jq -r '.status // empty' "$f" 2>/dev/null)" = "active" ] || continue

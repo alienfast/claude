@@ -1,7 +1,7 @@
 ---
 name: fleet-status
 description: One-screen read-only readout of a running or just-finished /fleet-launch — time left on the deadline, per-session ledgers with liveness, in-flight worktrees, shipped work cross-checked against git and the merge queue, and remaining certified runway. Use when the user says 'fleet status', 'how's the fleet doing', 'what has the fleet shipped', 'what's in flight', or invokes /fleet-status.
-argument-hint: "[--no-runway]"
+argument-hint: "[epic:<ID> | team] [--no-runway]"
 ---
 
 # Fleet Status
@@ -14,15 +14,22 @@ repeatedly, or with no fleet at all.
 Run from the project the fleet works on (a worktree cwd is fine):
 
 ```bash
-~/.claude/scripts/fleet-status.sh              # full readout
-~/.claude/scripts/fleet-status.sh --no-runway  # skip the remaining-candidates count (the one slow section)
+~/.claude/scripts/fleet-status.sh                 # every running fleet, one section each
+~/.claude/scripts/fleet-status.sh epic:BF-2948    # one fleet alone (or `team`)
+~/.claude/scripts/fleet-status.sh --no-runway     # skip the remaining-candidates count (the one slow section, per fleet)
 ```
+
+Several fleets run side by side in one checkout, one marker each (`tmp/fleet-deadline-<slug>.json`,
+[`/fleet-launch`](../fleet-launch/SKILL.md) § Several fleets in one checkout). With no token the readout opens with a
+line naming them and renders the per-fleet sections (deadline, headroom, scope, sessions, shipped, failed/canceled,
+runway) once per fleet under `### Fleet <token>`, then the checkout-wide sections (in flight, merge queue, attention)
+once. An archived marker (an ended run a later launch displaced) is never a section.
 
 ## Reading the output
 
 - **Deadline** — remaining time, `STOPPED` (a wind-down was requested), or none. The marker's fields and who writes them
   are [`/fleet-launch`](../fleet-launch/SKILL.md) § The deadline contract; ending a fleet early is
-  [`/fleet-stop`](../fleet-stop/SKILL.md).
+  [`/fleet-stop`](../fleet-stop/SKILL.md), whose token the wind-down line names.
 - **Headroom** (only when it matters) — the pick-time probe `/auto` parks on (`scripts/fleet-headroom.sh`), run once per
   fleet session on its own `mods/rate-limits` history. `Headroom: THROTTLE` means that account's 5h window is within the
   reserve of full — and, on a cswap-rotating machine, that no other account has room (the `cswap=` tail says which):
@@ -34,10 +41,10 @@ Run from the project the fleet works on (a worktree cwd is fine):
   burn-down is a live `epic-graph.sh` read against the `members` snapshot the launch recorded, so a child filed mid-run
   appears as *added since prep*; a member resolved outside the fleet's own ledgers counts as shipped only. A marker with no
   snapshot says added-since-prep is unknown. The Runway section is then the epic's own `--root` ranking.
-- **Sessions** — one row per `tmp/auto-state-*.json` ledger **from the current fleet**: membership in the marker's
-  `fleet_sessions`, else a ledger whose last write predates `launch_epoch` is prior-run history. Non-members are hidden
-  with a count, single-run ledgers (`mode: single`) are never rowed and get their own count, and a recorded member with no
-  ledger rows as `no ledger`. Liveness comes from the session registry (`claude agents --json`), joined on the ledger's
+- **Sessions** — one row per `tmp/auto-state-*.json` ledger **from that fleet**: membership in its marker's
+  `fleet_sessions`, else a ledger whose last write predates `launch_epoch` is prior-run history. Non-members — another
+  fleet's sessions, an ended fleet's awaiting its retro — are hidden with a count, single-run ledgers (`mode: single`) are
+  never rowed and get their own count, and a recorded member with no ledger rows as `no ledger`. Liveness comes from the session registry (`claude agents --json`), joined on the ledger's
   filename key — **the ledger's recorded pid cannot answer it**: every session in a fleet embeds the fleet-root pid, so
   siblings share one value. Three row shapes:
   - **`ALIVE (<state>)`** — the registry lists it.
@@ -80,5 +87,6 @@ dead-active sessions) — what it means and what resolves it; don't repeat the t
 ## Error Handling
 
 - Not in a git repo → the script errors; relay it.
+- A token naming a fleet with no marker → exit 1 with the fleets that do have one listed; relay the list.
 - `linear-cli` missing or team not inferable → the Linear joins and runway are skipped with a note; the local sections
   (deadline, sessions, worktrees, git cross-check) still render.

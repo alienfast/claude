@@ -1,4 +1,4 @@
-# The `sizing` block of `tmp/fleet-recommendation.json`
+# The `sizing` block of `tmp/fleet-recommendation-<slug>.json`
 
 The block records what the recommendation assumed so `/fleet-retro` can compare realized burn against it; a projection
 that missed is then visible rather than silently repeated. It is not a sizing input — the count comes from lanes and the

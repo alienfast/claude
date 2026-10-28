@@ -4,12 +4,16 @@
 # /fleet-retro: those bookends exist, but mid-run the operator's only options were opening
 # every session in `claude agents` or hand-joining the markers — this script does the join.
 #
-# Usage: fleet-status.sh [--no-runway]
-#   Run from the project the fleet works on (a worktree cwd is fine). --no-runway skips the
-#   remaining-candidates count, the one section that costs a Linear ranking call (~10-20s).
+# Usage: fleet-status.sh [epic:<ID> | team] [--no-runway]
+#   Run from the project the fleet works on (a worktree cwd is fine). Several fleets run side by side
+#   in one checkout, one marker each (lib/fleet-markers.sh): with no token every running fleet gets its
+#   own section (deadline, sessions, scope, shipped, runway) and the checkout-wide sections (in flight,
+#   merge queue, attention) print once; a token reads one fleet alone. --no-runway skips the
+#   remaining-candidates count, the one section that costs a Linear ranking call (~10-20s) per fleet.
 #
 # Sources (all read-only; no Linear writes, no git mutations):
-#   tmp/fleet-deadline.json            fleet_sessions (the session set) + launch_epoch + count, plus
+#   tmp/fleet-deadline-<slug>.json     one per running fleet (an archived fleet-deadline-<slug>.<epoch>.json is
+#                                      not read): fleet_sessions (the session set) + launch_epoch + count, plus
 #                                      the deadline when the launch carried one, plus scope + the
 #                                      prep-time members snapshot (+ branch/base) when it was
 #                                      epic-scoped, plus backlog: true under a `backlog` launch —
@@ -23,11 +27,12 @@
 #   fleet-headroom.sh                  the pick-time headroom probe, run once per fleet session on its own
 #                                      mods/rate-limits history: a THROTTLE answer means sessions are parked
 #
-# Sessions are scoped to the CURRENT fleet: the marker's fleet_sessions decides membership when the
+# Sessions are scoped to EACH fleet: its marker's fleet_sessions decides membership when the
 # launch recorded it (every launch since 2026-08-29), and a single-run ledger (`mode: single` — a
 # targeted or one-shot /auto) is never a member; without the set, ledgers whose last write predates
-# the launch are prior-run history (fleet-launch clears the dead ones at the next launch; until then they are
-# hidden here with a count, and /fleet-retro reads them). Failed/canceled entries are further
+# the launch are prior-run history. Another fleet's ledgers, and ended fleets' ledgers awaiting their
+# retro, are hidden from a fleet's table with a count (a launch expires them once /fleet-retro has
+# measured their fleet — fleet-launch.sh § Expiry). Failed/canceled entries are further
 # cross-checked against each issue's current Linear state, because a ledger entry is a claim
 # about that run only — a later session or an interactive pickup can ship the issue without
 # any ledger recording it, and without the join a long-resolved failure reads as live.
@@ -51,11 +56,15 @@ export PATH="$HOME/.cargo/bin:$PATH"
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 
 no_runway=0
-case "${1:-}" in
-  --no-runway) no_runway=1 ;;
-  "") ;;
-  *) echo "usage: fleet-status.sh [--no-runway]" >&2; exit 1 ;;
-esac
+fleet_token=""
+usage() { echo "usage: fleet-status.sh [epic:<ID> | team] [--no-runway]" >&2; exit 1; }
+for a in "$@"; do
+  case "$a" in
+    --no-runway) no_runway=1 ;;
+    [Ee][Pp][Ii][Cc]:*|[Tt][Ee][Aa][Mm]) [ -z "$fleet_token" ] || usage; fleet_token="$a" ;;
+    *) usage ;;
+  esac
+done
 
 # The four ledger lists are bare issue ids (skills/auto/SKILL.md Step 4), but a session once appended its last ship as
 # {"issue":"BF-2531","tag":"SHIPPED-MERGE","at":…} and `join(", ")` over that mix errors, which the swallowed substitution turned
@@ -86,13 +95,37 @@ have_registry=0
 
 main_checkout=$(git worktree list --porcelain 2>/dev/null | awk '/^worktree /{print substr($0,10); exit}')
 [ -n "$main_checkout" ] || { echo "ERROR: not inside a git repository — run from the fleet's project" >&2; exit 1; }
+. "$SCRIPT_DIR/../lib/fleet-markers.sh"
+
+# The fleets to read: the token's, else every live marker; none → one pass with no marker, the empty-state readout.
+markers=()
+if [ -n "$fleet_token" ]; then
+  case "$fleet_token" in [Tt][Ee][Aa][Mm]) slug=team ;; *) slug=$(fleet_slug "${fleet_token#*:}") ;; esac
+  m=$(fleet_marker_path "$main_checkout" "$slug")
+  if ! [ -s "$m" ]; then
+    echo "ERROR: no fleet marker for $fleet_token ($m). Fleets with a marker here:" >&2
+    while IFS= read -r f; do [ -n "$f" ] && echo "  $(fleet_marker_token "$f")  ($f)" >&2; done < <(fleet_live_markers "$main_checkout")
+    exit 1
+  fi
+  markers=("$m")
+else
+  while IFS= read -r f; do [ -n "$f" ] && markers+=("$f"); done < <(fleet_live_markers "$main_checkout")
+fi
 
 now=$(date +%s)
 printf '## Fleet status — %s\n\n' "$(basename "$main_checkout")"
+if [ "${#markers[@]}" -gt 1 ]; then
+  fleet_list=$(for f in "${markers[@]}"; do fleet_marker_token "$f"; echo; done | paste -sd, - | sed 's/,/, /g')
+  printf '_%d fleets in this checkout — one section each: %s. Read one alone with `fleet-status.sh epic:<ID> | team`._\n\n' "${#markers[@]}" "$fleet_list"
+fi
+teams_seen=""
+
+render_fleet() { # <marker path, or empty when the checkout has no fleet>
+local marker="$1"
+[ "${#markers[@]}" -gt 1 ] && printf '### Fleet %s\n\n' "$(fleet_marker_token "$marker")"
 
 # ---------- deadline ----------
 
-marker="$main_checkout/tmp/fleet-deadline.json"
 fleet_set=""
 if [ -s "$marker" ]; then
   d_epoch=$(jq -r '.deadline_epoch // empty' "$marker")
@@ -115,7 +148,7 @@ if [ -s "$marker" ]; then
 else
   printf '**Deadline:** none — loops run until the certified backlog drains.\n\n'
 fi
-printf '_Wind down early: `/fleet-launch stop` — ends the timer, in-flight issues finish, nothing is killed._\n\n'
+printf '_Wind down early: `/fleet-stop%s` — ends the timer, in-flight issues finish, nothing is killed._\n\n' "$([ -s "$marker" ] && printf ' %s' "$(fleet_marker_token "$marker")")"
 
 # ---------- headroom ----------
 
@@ -424,34 +457,11 @@ else
   [ -n "$ledger_warns" ] && printf '%s\n' "$ledger_warns"
 fi
 [ -n "$ledgerless_keys" ] && printf '_%d fleet session(s) have written no `auto-state` ledger (recorded at launch, or owning a worktree here). Their shipped work is NOT counted in the cross-check below, which is built from ledgers only — /fleet-retro recovers them from transcripts. Interactive sessions holding a worktree are deliberately not listed._\n\n' "$(printf '%s' "$ledgerless_keys" | wc -w | tr -d ' ')"
-[ "$hidden" -gt 0 ] && printf '_%d prior-run ledger(s) hidden (written before the current launch, or not in its recorded session set); /fleet-retro reads them until the next launch clears the dead ones._\n\n' "$hidden"
+[ "$hidden" -gt 0 ] && printf '_%d ledger(s) hidden (another fleet'"'"'s, prior-run, or not in this fleet'"'"'s recorded session set); /fleet-retro reads them until a launch expires their fleet._\n\n' "$hidden"
 [ "$single_hidden" -gt 0 ] && printf '_%d single-run ledger(s) not listed (`mode: single` — a targeted or one-shot /auto, not a fleet member; /fleet-retro measures it only when named with --sessions)._\n\n' "$single_hidden"
 for k in $died_active; do
   printf '⚠️  **Session %s reads `active` but its process is gone** — either it died without recording an outcome (check its last issue for a stranded In Progress claim), or it wound down cleanly and never wrote its terminal status, which strands nothing. Its transcript tells them apart: a `NO-CANDIDATES`/`AUTO-HALTED` tag or a ScheduleWakeup(stop:true) means it finished. `fleet-metrics.py` reports the second shape as `wound down but never finalized its ledger`.\n\n' "$k"
 done
-
-# ---------- in-flight (live worktrees) ----------
-
-printf '### In flight\n\n'
-wt_count=0
-while IFS= read -r wt; do
-  case "$wt" in "$main_checkout"/.claude/worktrees/*) ;; *) continue ;; esac
-  [ -d "$wt" ] || continue
-  wt_count=$((wt_count + 1))
-  issue=$(basename "$wt" | tr '[:lower:]' '[:upper:]')
-  branch=$(git -C "$wt" branch --show-current 2>/dev/null || echo "?")
-  owner=""
-  sidecar="$main_checkout/.claude/worktree-identity/wt-identity-$(basename "$wt").env"
-  [ -f "$sidecar" ] && owner=$(sed -n 's/^WT_IDENTITY_OWNER=//p' "$sidecar" | head -1)
-  linear_bit=""
-  if [ "$have_linear" -eq 1 ]; then
-    linear_bit=$(linear-cli issues get "$issue" -o json -q 2>/dev/null \
-      | jq -r '" — [\(.state.name // "?")] \(.title // "")"' 2>/dev/null || true)
-  fi
-  printf -- '- **%s**%s\n  branch `%s`%s\n' "$issue" "$linear_bit" "$branch" "${owner:+ · session $owner}"
-done < <(git -C "$main_checkout" worktree list --porcelain 2>/dev/null | awk '/^worktree /{print substr($0,10)}')
-[ "$wt_count" -eq 0 ] && printf '_No live worktrees — nothing is mid-issue right now._\n'
-printf '\n'
 
 # ---------- shipped ledger vs git ----------
 
@@ -543,14 +553,7 @@ if [ -n "$fc_entries" ]; then
   fi
 fi
 
-# ---------- merge queue ----------
-
-queue=$( (cd "$main_checkout" && "$SCRIPT_DIR/merge-queue.sh" list 2>/dev/null) || true)
-if [ -n "$queue" ] && ! printf '%s' "$queue" | grep -Eq "queue empty|no repos registered"; then
-  printf '### Merge queue\n\n```text\n%s\n```\n\n' "$queue"
-fi
-
-# ---------- attention (Linear flags) ----------
+# ---------- team (for the runway; the attention sweep runs once per team after every fleet's section) ----------
 
 team=""
 if [ -n "${LINEAR_TEAM:-}" ]; then
@@ -565,13 +568,7 @@ else
 fi
 # A scoped fleet names its own team — the epic's prefix — when nothing else did.
 [ -z "$team" ] && [ -n "$scope" ] && team="${scope%%-*}"
-if [ "$have_linear" -eq 1 ] && [ -n "$team" ]; then
-  stalled=$(linear-cli issues list --team "$team" -l stalled -o json 2>/dev/null \
-    | jq -r '.[] | "- **\(.identifier)** [\(.state.name // "?")] \(.title)"' 2>/dev/null || true)
-  if [ -n "$stalled" ]; then
-    printf '### Needs attention — `stalled` (abandoned mid-flight)\n\n%s\n\n' "$stalled"
-  fi
-fi
+[ -n "$team" ] && teams_seen="$teams_seen $team"
 
 # ---------- runway ----------
 
@@ -598,5 +595,54 @@ if [ "$no_runway" -eq 0 ] && [ "$have_linear" -eq 1 ] && [ -n "$team" ]; then
 elif [ "$no_runway" -eq 1 ]; then
   printf '### Runway\n\n_Skipped (--no-runway)._\n\n'
 fi
+}
 
-printf -- '---\n_Live session view: `claude agents` · wind down: `/fleet-launch stop` · post-mortem when quiet: `/fleet-retro`_\n'
+if [ "${#markers[@]}" -eq 0 ]; then
+  render_fleet ""
+else
+  for mk in "${markers[@]}"; do render_fleet "$mk"; done
+fi
+
+# ---------- in-flight (live worktrees) — checkout-wide ----------
+
+printf '### In flight\n\n'
+wt_count=0
+while IFS= read -r wt; do
+  case "$wt" in "$main_checkout"/.claude/worktrees/*) ;; *) continue ;; esac
+  [ -d "$wt" ] || continue
+  wt_count=$((wt_count + 1))
+  issue=$(basename "$wt" | tr '[:lower:]' '[:upper:]')
+  branch=$(git -C "$wt" branch --show-current 2>/dev/null || echo "?")
+  owner=""
+  sidecar="$main_checkout/.claude/worktree-identity/wt-identity-$(basename "$wt").env"
+  [ -f "$sidecar" ] && owner=$(sed -n 's/^WT_IDENTITY_OWNER=//p' "$sidecar" | head -1)
+  linear_bit=""
+  if [ "$have_linear" -eq 1 ]; then
+    linear_bit=$(linear-cli issues get "$issue" -o json -q 2>/dev/null \
+      | jq -r '" — [\(.state.name // "?")] \(.title // "")"' 2>/dev/null || true)
+  fi
+  printf -- '- **%s**%s\n  branch `%s`%s\n' "$issue" "$linear_bit" "$branch" "${owner:+ · session $owner}"
+done < <(git -C "$main_checkout" worktree list --porcelain 2>/dev/null | awk '/^worktree /{print substr($0,10)}')
+[ "$wt_count" -eq 0 ] && printf '_No live worktrees — nothing is mid-issue right now._\n'
+printf '\n'
+
+# ---------- merge queue ----------
+
+queue=$( (cd "$main_checkout" && "$SCRIPT_DIR/merge-queue.sh" list 2>/dev/null) || true)
+if [ -n "$queue" ] && ! printf '%s' "$queue" | grep -Eq "queue empty|no repos registered"; then
+  printf '### Merge queue\n\n```text\n%s\n```\n\n' "$queue"
+fi
+
+# ---------- attention (Linear flags), once per team the fleets touch ----------
+
+if [ "$have_linear" -eq 1 ]; then
+  for team in $(printf '%s\n' $teams_seen | awk 'NF' | sort -u); do
+    stalled=$(linear-cli issues list --team "$team" -l stalled -o json 2>/dev/null \
+      | jq -r '.[] | "- **\(.identifier)** [\(.state.name // "?")] \(.title)"' 2>/dev/null || true)
+    if [ -n "$stalled" ]; then
+      printf '### Needs attention — `stalled` (abandoned mid-flight)%s\n\n%s\n\n' "$([ "$(printf '%s\n' $teams_seen | awk 'NF' | sort -u | wc -l | tr -d ' ')" -gt 1 ] && printf ' — %s' "$team")" "$stalled"
+    fi
+  done
+fi
+
+printf -- '---\n_Live session view: `claude agents` · wind down: `/fleet-stop` · post-mortem when quiet: `/fleet-retro`_\n'

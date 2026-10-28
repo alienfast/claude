@@ -100,9 +100,10 @@ main_checkout_of() { # <dir> — the main checkout: the fleet markers live in IT
   dirname "$c"
 }
 # rc 0 and a reason when a fleet whose picks fork from the checkout's own branch is running out of it; rc 1 otherwise.
-# Only the explicit fleet-deadline marker counts: an /auto ledger's mtime says nothing about liveness (the heartbeat
-# never touches it, and a killed loop leaves it "active"), and a lone loop — or a /fleet-sequence, whose runner steers
-# each session with a per-issue start.<id>.wt-source-branch key and never parks the checkout — keeps its work in
+# Only the explicit fleet markers count — tmp/fleet-deadline-<slug>.json, one per running fleet (lib/fleet-markers.sh); an
+# archived run (fleet-deadline-<slug>.<epoch>.json) gates nothing. An /auto ledger's mtime says nothing about liveness (the
+# heartbeat never touches it, and a killed loop leaves it "active"), and a lone loop — or a /fleet-sequence, whose runner
+# steers each session with a per-issue start.<id>.wt-source-branch key and never parks the checkout — keeps its work in
 # worktrees and merges by ref, so a main-checkout switch does not move its tree. An epic fleet (a marker recording an
 # integration `branch`) is steered the same way — each session's /auto sets the per-issue key from the marker
 # (auto-fork-key.sh) — so it gates nothing either, as long as that branch still exists (one deleted mid-fleet puts
@@ -110,17 +111,22 @@ main_checkout_of() { # <dir> — the main checkout: the fleet markers live in IT
 # the fast-forward path, which the clean-tree condition covers. The clean-tree condition is what protects a
 # same-checkout session's edits.
 automation_live() { # <dir>
-  local main m dl now b
+  local main m dl now b files
   main=$(main_checkout_of "$1") || { echo "the main checkout of $1 cannot be resolved"; return 0; }
-  m="$main/tmp/fleet-deadline.json"
-  if [ -s "$m" ] && [ "$(jq -r '.stopped // false' "$m" 2>/dev/null)" != "true" ]; then
+  # `set -f` is on for the whole hook; the glob runs in a subshell with it off.
+  files=$(set +f; ls -1 "$main"/tmp/fleet-deadline-*.json 2>/dev/null) || files=""
+  now=$(date +%s)
+  while IFS= read -r m; do
+    [ -n "$m" ] && [ -s "$m" ] || continue
+    case "${m##*/}" in fleet-deadline-*.*.json) continue ;; esac
+    [ "$(jq -r '.stopped // false' "$m" 2>/dev/null)" != "true" ] || continue
     b=$(jq -r '.branch // empty' "$m" 2>/dev/null)
-    [ -n "$b" ] && git -C "$main" rev-parse --verify --quiet "refs/heads/$b" >/dev/null 2>&1 && return 1
-    dl=$(jq -r '.deadline_epoch // empty' "$m" 2>/dev/null); now=$(date +%s)
+    [ -n "$b" ] && git -C "$main" rev-parse --verify --quiet "refs/heads/$b" >/dev/null 2>&1 && continue
+    dl=$(jq -r '.deadline_epoch // empty' "$m" 2>/dev/null)
     if ! [[ "$dl" =~ ^[0-9]+$ ]] || [ "$dl" -gt "$now" ]; then
-      echo "a fleet is running out of $main (tmp/fleet-deadline.json; /fleet-stop ends it)"; return 0
+      echo "a fleet is running out of $main (tmp/${m##*/}; /fleet-stop ends it)"; return 0
     fi
-  fi
+  done <<<"$files"
   return 1
 }
 linked_worktrees() { # <dir> — how many worktrees besides the main checkout

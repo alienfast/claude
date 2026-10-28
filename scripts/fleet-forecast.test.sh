@@ -8,7 +8,7 @@
 # horizon cuts (past-deadline in-flight finishes, capacity vs unlocks-past-deadline UNREACHED),
 # claimed/epic exclusion from the pool, POOL-DRAINED as out-of-pickable-work, the STAGE
 # Planned→Backlog crossover line, hours-per-issue calibration from fleet-metrics history, estimate
-# weighting, sessions/horizon defaults from fleet-recommendation.json, and --backlog (2026-10-01: a
+# weighting, sessions/horizon defaults from the fleet's recommendation file, and --backlog (2026-10-01: a
 # session with nothing Planned/Todo pickable takes Backlog instead of idling, Planned/Todo still first
 # at every pick, nothing WITHHELD). The FORECAST line makes an empty result distinguishable from a
 # broken run.
@@ -148,7 +148,7 @@ ck "G exit" 0 "$rc"
 ck_has "G light issue" "PICK t=0.0h: TT-81 → s1 (~1.0h)" "$WORK/g.out"
 ck_has "G heavy issue" "PICK t=0.0h: TT-82 → s2 (~3.0h)" "$WORK/g.out"
 
-# ---- Defaults from fleet-recommendation.json; hard error when neither source names a count ----
+# ---- Defaults from the fleet's recommendation file; hard error when neither source names a count ----
 cat > "$WORK/rec.json" <<'EOF'
 {"sessions":3,"duration_h":6}
 EOF
@@ -158,7 +158,10 @@ ck_has "H rec defaults" "FORECAST: 3 sessions × 6.0h horizon" "$WORK/h.out"
 python3 "$SCRIPT" --fixture "$WORK/b.json" --me me@x.com \
   --recommendation "$WORK/no-rec.json" --history "$WORK/no-history.jsonl" > "$WORK/i.out" 2> "$WORK/i.err"
 ck "I no-count exit" 1 "$?"
-ck_has "I no-count error" "no --sessions and no usable tmp/fleet-recommendation.json" "$WORK/i.err"
+ck_has "I no-count error" "no --sessions and no usable $WORK/no-rec.json — run /auto-prep or pass a count" "$WORK/i.err"
+# Without --recommendation the default is the fleet's own file: the team's, or the epic's under --root.
+python3 "$SCRIPT" --fixture "$WORK/b.json" --me me@x.com --history "$WORK/no-history.jsonl" > "$WORK/i2.out" 2> "$WORK/i2.err"
+ck_has "I2 team default named" "no usable tmp/fleet-recommendation-team.json — run /auto-prep" "$WORK/i2.err"
 
 # ---- An In Review blocker is completed-in-substance: dependent free at t=0, no in-flight modeling ----
 cat > "$WORK/k.json" <<'EOF'

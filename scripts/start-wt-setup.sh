@@ -144,14 +144,17 @@ git rev-parse --verify --quiet "refs/heads/$source_branch" >/dev/null || {
   exit 1
 }
 
-# Safety net for an epic fleet's steering: the fleet marker records the integration branch its picks must fork
-# from, and a fleet session points the per-issue key at it before dispatching (auto-fork-key.sh). When this issue
-# is a recorded member about to fork from some other branch, either that step was skipped (a fleet session — the
-# fork and merge would land on the checkout's branch, splitting the epic's code across two branches) or this is a
-# human's interactive /start wt for a member (allowed: their work forks from their branch by design). Warn; never
-# redirect — the resolution order above is the contract, and which case this is only the caller knows.
-fleet_marker="$repo_root/tmp/fleet-deadline.json"
-if [ -s "$fleet_marker" ] && [ "$(jq -r '.stopped // false' "$fleet_marker" 2>/dev/null)" != "true" ]; then
+# Safety net for an epic fleet's steering: each running epic fleet's marker (tmp/fleet-deadline-<slug>.json,
+# lib/fleet-markers.sh) records the integration branch its picks must fork from, and a fleet session points the
+# per-issue key at it before dispatching (auto-fork-key.sh). When this issue is a recorded member about to fork from
+# some other branch, either that step was skipped (a fleet session — the fork and merge would land on the checkout's
+# branch, splitting the epic's code across two branches) or this is a human's interactive /start wt for a member
+# (allowed: their work forks from their branch by design). Warn; never redirect — the resolution order above is the
+# contract, and which case this is only the caller knows.
+for fleet_marker in "$repo_root"/tmp/fleet-deadline-*.json; do
+  [ -s "$fleet_marker" ] || continue
+  case "${fleet_marker##*/}" in fleet-deadline-*.*.json) continue ;; esac   # an archived run, not a running fleet
+  [ "$(jq -r '.stopped // false' "$fleet_marker" 2>/dev/null)" != "true" ] || continue
   fleet_branch=$(jq -r '.branch // empty' "$fleet_marker" 2>/dev/null || true)
   fleet_deadline=$(jq -r '.deadline_epoch // empty' "$fleet_marker" 2>/dev/null || true)
   if [[ "$fleet_deadline" =~ ^[0-9]+$ ]] && [ "$fleet_deadline" -le "$(date +%s)" ]; then fleet_branch=""; fi
@@ -163,10 +166,10 @@ if [ -s "$fleet_marker" ] && [ "$(jq -r '.stopped // false' "$fleet_marker" 2>/d
       echo "  A fleet session must run '~/.claude/scripts/auto-fork-key.sh set $issue_id $fleet_scope' before dispatching, so the issue forks from and merges into '$fleet_branch'." >&2
       echo "  An interactive /start wt forks from the checkout's branch by design — fine, but this issue's code then lands on '$source_branch', not on the epic's PR." >&2
     else
-      echo "  That branch no longer exists locally (dropped mid-fleet?) — the fleet is landing on the checkout's branch; strip branch/base from tmp/fleet-deadline.json if that is intended." >&2
+      echo "  That branch no longer exists locally (dropped mid-fleet?) — the fleet is landing on the checkout's branch; strip branch/base from tmp/$(basename "$fleet_marker") if that is intended." >&2
     fi
   fi
-fi
+done
 
 # Advisory (never blocks): if the main checkout is parked on the branch this
 # worktree will fork from / merge back into, AND other worktrees already exist

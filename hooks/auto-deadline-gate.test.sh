@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Regression harness for auto-deadline-gate.sh. Builds a throwaway checkout with a real-shaped
-# tmp/fleet-deadline.json and real-shaped transcripts, then asserts BLOCK/ALLOW.
+# per-fleet markers (tmp/fleet-deadline-<slug>.json) and real-shaped transcripts, then asserts BLOCK/ALLOW.
 #
 # EVERY FIXTURE IS SNAPSHOTTED FROM A LIVE FEED, not written from memory — the auto-stall-watch
 # lesson (a hand-written agent-list fixture kept its suite green through 371 ticks of a watcher
@@ -10,7 +10,7 @@
 #   /fleet-retro delivery  session aeea872a — the retro that found it, which runs
 #                          next-candidates.sh itself and MUST NOT be blocked
 #   targeted /auto         session 6f28784f — human-typed `/auto BF-1266`
-#   fleet-deadline.json    tmp/fleet-deadline.json as /fleet-launch writes it
+#   fleet marker           tmp/fleet-deadline-<slug>.json as /fleet-launch writes it
 #
 # Command deliveries are {"type":"user","message":{"content":"<string>"}} — a plain STRING — while
 # the SKILL BODY the invocation loads lands in the NEXT user record as a block array
@@ -39,9 +39,12 @@ mkdir -p "$CHECKOUT/tmp" "$CHECKOUT/.claude/worktrees/bf-997" "$TMPROOT/transcri
 PAST=$(( $(date +%s) - 3600 ))     # deadline an hour ago
 FUTURE=$(( $(date +%s) + 3600 ))   # an hour of budget left
 
-# Real shape, from /fleet-launch (count/launch_epoch carried verbatim from the 2026-08-18 run).
-write_deadline() { # epoch
-  cat > "$CHECKOUT/tmp/fleet-deadline.json" <<EOF
+# Real shape, from /fleet-launch (count/launch_epoch carried verbatim from the 2026-08-18 run). The team fleet's marker;
+# an epic fleet's is tmp/fleet-deadline-<epic-lower>.json (lib/fleet-markers.sh).
+TEAM_MARKER="$CHECKOUT/tmp/fleet-deadline-team.json"
+EPIC_MARKER="$CHECKOUT/tmp/fleet-deadline-bf-1826.json"
+write_deadline() { # epoch [marker path]
+  cat > "${2:-$TEAM_MARKER}" <<EOF
 {
   "deadline_epoch": $1,
   "deadline": "2026-08-19 06:49 CDT",
@@ -133,6 +136,27 @@ with open(sys.argv[1], "w") as fh:
     for r in rows: fh.write(json.dumps(r) + "\n")
 PY
 
+# An epic-scoped loop — the shape /fleet-launch epic:<ID> dispatches (the scope implies `backlog`) — in both delivery forms.
+LOOP_EPIC="$TMPROOT/transcripts/loop-epic.jsonl"
+python3 - "$LOOP_EPIC" <<'PY'
+import json, sys
+rows = [
+  {"type":"user","message":{"role":"user","content":"<command-message>loop</command-message>\n<command-name>/loop</command-name>\n<command-args>/auto epic:BF-1826 backlog</command-args>"}},
+]
+with open(sys.argv[1], "w") as fh:
+    for r in rows: fh.write(json.dumps(r) + "\n")
+PY
+skill_body_record auto >> "$LOOP_EPIC"
+RAW_EPIC="$TMPROOT/transcripts/raw-epic.jsonl"
+python3 - "$RAW_EPIC" <<'PY'
+import json, sys
+rows = [
+  {"type":"user","message":{"role":"user","content":"/loop /auto epic:bf-1826 backlog"}},
+]
+with open(sys.argv[1], "w") as fh:
+    for r in rows: fh.write(json.dumps(r) + "\n")
+PY
+
 CORRUPT="$TMPROOT/transcripts/corrupt.jsonl"
 printf 'not json at all\n{"type":"user"\n' > "$CORRUPT"
 
@@ -193,21 +217,57 @@ t ALLOW "14 in-budget pick is exactly what the fleet is for" \
   '~/.claude/scripts/next-candidates.sh --label specified' "$LOOP_AUTO" "$CHECKOUT"
 
 echo "  must ALLOW (no gate in play):"
-rm -f "$CHECKOUT/tmp/fleet-deadline.json"
+rm -f "$TEAM_MARKER"
 t ALLOW "15 no deadline file — untimed run" \
   '~/.claude/scripts/next-candidates.sh --label specified' "$LOOP_AUTO" "$CHECKOUT"
-echo '{"count":3}' > "$CHECKOUT/tmp/fleet-deadline.json"
+echo '{"count":3}' > "$TEAM_MARKER"
 t ALLOW "16 deadline file with no epoch fails OPEN" \
   '~/.claude/scripts/next-candidates.sh --label specified' "$LOOP_AUTO" "$CHECKOUT"
-echo '{"deadline_epoch":"soon"}' > "$CHECKOUT/tmp/fleet-deadline.json"
+echo '{"deadline_epoch":"soon"}' > "$TEAM_MARKER"
 t ALLOW "17 non-numeric epoch fails OPEN" \
   '~/.claude/scripts/next-candidates.sh --label specified' "$LOOP_AUTO" "$CHECKOUT"
-printf 'not json\n' > "$CHECKOUT/tmp/fleet-deadline.json"
+printf 'not json\n' > "$TEAM_MARKER"
 t ALLOW "18 unparseable deadline file fails OPEN" \
   '~/.claude/scripts/next-candidates.sh --label specified' "$LOOP_AUTO" "$CHECKOUT"
 
+# --- which fleet: a session is gated by its own fleet's marker alone -----------------------------
+# Several fleets run side by side in one checkout (one marker per slug, lib/fleet-markers.sh); the slug comes from the same
+# /loop delivery that identifies the session as a loop. An archived marker (an ended run a later launch displaced) gates nobody.
+echo "  must BLOCK / ALLOW by fleet:"
+rm -f "$CHECKOUT"/tmp/fleet-deadline*.json
+write_deadline "$PAST"
+t ALLOW "18a team deadline passed, but this loop is epic BF-1826's — no marker for it" \
+  '~/.claude/scripts/next-candidates.sh --root BF-1826 --label specified' "$LOOP_EPIC" "$CHECKOUT"
+write_deadline "$PAST" "$EPIC_MARKER"
+t BLOCK "18b the epic's own marker passed" \
+  '~/.claude/scripts/next-candidates.sh --root BF-1826 --label specified' "$LOOP_EPIC" "$CHECKOUT"
+t BLOCK "18c raw agent-spawn form with the epic token, lowercased" \
+  '~/.claude/scripts/next-candidates.sh --root BF-1826 --label specified' "$RAW_EPIC" "$CHECKOUT"
+rm -f "$TEAM_MARKER"
+t ALLOW "18d epic marker passed, but this loop is the team's — no team marker" \
+  '~/.claude/scripts/next-candidates.sh --label specified' "$LOOP_AUTO" "$CHECKOUT"
+write_deadline "$FUTURE" "$EPIC_MARKER"
+write_deadline "$PAST"
+t ALLOW "18e epic budget ahead while the team's has passed" \
+  '~/.claude/scripts/next-candidates.sh --root BF-1826 --label specified' "$LOOP_EPIC" "$CHECKOUT"
+t BLOCK "18f and the team loop beside it is blocked" \
+  '~/.claude/scripts/next-candidates.sh --label specified' "$LOOP_AUTO" "$CHECKOUT"
+rm -f "$CHECKOUT"/tmp/fleet-deadline*.json
+write_deadline "$PAST" "$CHECKOUT/tmp/fleet-deadline-bf-1826.1790000000.json"
+t ALLOW "18g an archived marker of the epic's slug gates nobody" \
+  '~/.claude/scripts/next-candidates.sh --root BF-1826 --label specified' "$LOOP_EPIC" "$CHECKOUT"
+rm -f "$CHECKOUT"/tmp/fleet-deadline*.json
+write_deadline "$PAST"
+out=$(jq -n --arg c '~/.claude/scripts/next-candidates.sh --label specified' --arg t "$LOOP_AUTO" --arg w "$CHECKOUT" \
+      '{tool_input:{command:$c}, transcript_path:$t, cwd:$w}' | ./auto-deadline-gate.sh 2>&1)
+if grep -qF -- "delete tmp/fleet-deadline-team.json" <<<"$out"; then
+  PASS=$((PASS + 1)); printf '  ok   %-6s %s\n' "BLOCK" "18h the recovery names this fleet's marker"
+else
+  FAIL=$((FAIL + 1)); printf '  FAIL  18h the recovery names this fleet'"'"'s marker\n       %s\n' "$(grep -F 'delete' <<<"$out" | head -1)"
+fi
+
 # --- retiring sessions (fleet-launch.sh marks sessions carried out of a wound-down marker) -------
-# The marker is the key set of the live basefund tmp/fleet-deadline.json (2026-10-11), plus `retiring`; the hook input carries
+# The marker is the key set of the live basefund team marker (2026-10-11), plus `retiring`; the hook input carries
 # session_id, which is the ledger key's full form (b2bb1003 is the session whose leg-1 token outlived its fleet's deadline).
 RETIRING_SID="b2bb1003-5683-4b0d-8b3d-b1201abbdc38"
 SIBLING_SID="1cc250ad-ee0f-493c-b8d0-47b3acf10a52"
@@ -215,7 +275,7 @@ write_live_marker() { # <deadline-epoch | none> <retiring-json-array>
   jq -n --arg d "$1" --argjson r "$2" '{count: 3, launch_epoch: 1791601120,
       fleet_sessions: ["1492b0e1","1cc250ad","3b566c2a","8c16860d","b2bb1003"]}
     + (if $d == "none" then {} else {deadline_epoch: ($d | tonumber), deadline: "2026-10-11 06:09 CDT"} end)
-    + (if ($r | length) > 0 then {retiring: $r} else {} end)' > "$CHECKOUT/tmp/fleet-deadline.json"
+    + (if ($r | length) > 0 then {retiring: $r} else {} end)' > "$TEAM_MARKER"
 }
 ts() { # want desc session-id transcript [message-needle]
   local want="$1" desc="$2" sid="$3" tr="$4" needle="${5:-}" out rc got
@@ -254,7 +314,7 @@ write_live_marker "$FUTURE" '["loop-aut"]'
 ts ALLOW "29b a key that is not a hex run key fails OPEN even when the marker names it" "" "$LOOP_AUTO"
 write_live_marker "$FUTURE" '[]'
 ts ALLOW "30 a marker with no retiring list gates nobody before the deadline" "$RETIRING_SID" "$LOOP_AUTO"
-printf '{"retiring":"b2bb1003","deadline_epoch":%s}\n' "$FUTURE" > "$CHECKOUT/tmp/fleet-deadline.json"
+printf '{"retiring":"b2bb1003","deadline_epoch":%s}\n' "$FUTURE" > "$TEAM_MARKER"
 ts ALLOW "31 a malformed retiring field (not an array) fails OPEN" "$RETIRING_SID" "$LOOP_AUTO"
 
 echo

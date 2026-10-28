@@ -59,9 +59,9 @@ team scope.
   `backlog`, which the scope implies. At most
   one, and it MUST validate: `~/.claude/scripts/epic-graph.sh --ids <ID> >/dev/null` — exit 1 means no such issue or
   no `epic` label; emit its stderr and STOP. Composes with `pr` and a team scope (which only widens the fetch). Record
-  it as `scope` in the run state (Step 4). When `tmp/fleet-deadline.json` records an integration `branch` for this
-  scope, Steps 1 and 3 set a per-issue fork key before each dispatch, so the pick forks from and merges into the epic
-  branch by ref while the main checkout stays wherever its human left it.
+  it as `scope` in the run state (Step 4). When the epic's fleet marker (`tmp/fleet-deadline-<id-lower>.json`) records
+  an integration `branch`, Steps 1 and 3 set a per-issue fork key before each dispatch, so the pick forks from and
+  merges into the epic branch by ref while the main checkout stays wherever its human left it.
 - An issue ID selects targeted mode (`/auto BF-123`, `/auto pr BF-123`): ship exactly that issue, skipping Step 2. At
   most one; with a team or epic scope or `backlog` it is an error:
   `Targeted mode takes no team or epic scope and no backlog token — /auto <ISSUE-ID> ships exactly that issue.`
@@ -208,13 +208,16 @@ Clean tree and no resumable worktree → Step 2.
 
 **Targeted mode skips this step** — the typed ID is the pick, already validated. Proceed to Step 3.
 
-**Fleet gates** apply when `<main-checkout>/tmp/fleet-deadline.json` exists (every `/fleet-launch` and `/fleet-stop`
-writes it; absent outside fleets). Read `references/fleet-gates.md` for both gates' mechanics; the rules:
+**Fleet gates** apply when a fleet marker exists — `<main-checkout>/tmp/fleet-deadline-<slug>.json`, one per fleet,
+written by every `/fleet-launch` and `/fleet-stop` and absent outside fleets. **This run's own marker** is the slug its
+arguments name: the lowercased epic id of its `epic:` scope, else `team`; an archived `fleet-deadline-<slug>.<epoch>.json`
+is never read. The deadline gate reads that marker alone (a sibling fleet's deadline is not this run's budget); the
+headroom gate applies while any marker exists. Read `references/fleet-gates.md` for both gates' mechanics; the rules:
 
 1. **Deadline.** If `date +%s` ≥ the marker's `deadline_epoch`, or this session's run key is in its `retiring` list,
    the budget is spent: run `~/.claude/scripts/auto-push-main.sh` from the main checkout, set `status: "drained"` with
    `reason`, and emit
-   `NO-CANDIDATES: fleet deadline reached (<deadline field>) — <shipped>/<canceled>/<skipped>/<failed> this run; push: <the script's line>. Delete tmp/fleet-deadline.json (or re-run /fleet-launch) and delete tmp/auto-state-<runKey>.json to run again.`
+   `NO-CANDIDATES: fleet deadline reached (<deadline field>) — <shipped>/<canceled>/<skipped>/<failed> this run; push: <the script's line>. Delete tmp/fleet-deadline-<slug>.json (or re-run /fleet-launch for this fleet) and delete tmp/auto-state-<runKey>.json to run again.`
    (`ScheduleWakeup(stop: true)` under self-paced `/loop`). The gate is the deadline's only point of contact with the
    run: a picked issue runs its full pipeline however far past the deadline that lands, and the marker is never deleted
    from this skill. `hooks/auto-deadline-gate.sh` backs it.
@@ -272,12 +275,15 @@ note, or when the top candidate's blocker must be live in production rather than
 
 ### Step 3: Ship — dispatch /full auto wt
 
-**Epic-scoped run: point the fork key first.** `~/.claude/scripts/auto-fork-key.sh set <ISSUE-ID> <EPIC-ID>`; carry
-its `FORK-KEY:` line into the summary sentence. With an integration `branch` in the fleet marker it sets
+**Point the fork key first, in every mode.** Epic-scoped: `~/.claude/scripts/auto-fork-key.sh set <ISSUE-ID> <EPIC-ID>`
+reads that epic's marker. Team-scoped or targeted: `~/.claude/scripts/auto-fork-key.sh set <ISSUE-ID>` scans the live
+epic markers for the fleet whose `members` list the issue, so a member this run claims before the epic's own fleet does
+still lands on the epic's branch (first picker wins; `skills/fleet-launch/SKILL.md` § Several fleets in one checkout).
+Carry its `FORK-KEY:` line into the summary sentence. With an integration `branch` recorded it sets
 `start.<id-lower>.wt-source-branch`, so `/start wt` forks from that branch's ref and `/finish merge` advances it
-ref-only; the main checkout never moves. `FORK-KEY: none …` (no marker, another scope, no branch, or a `WARN` that the
-recorded branch is missing locally) is not an error — the pick forks from the checkout's branch. Exit 1 (a
-`/fleet-sequence` holds this issue's key) → do not dispatch; a transient `SKIPPED-BLOCKED` with the script's message.
+ref-only; the main checkout never moves. `FORK-KEY: none …` (no marker, no fleet listing the issue, no branch, or a
+`WARN` that the recorded branch is missing locally) is not an error — the pick forks from the checkout's branch. Exit 1
+(a `/fleet-sequence` holds this issue's key) → do not dispatch; a transient `SKIPPED-BLOCKED` with the script's message.
 
 Call `Skill(skill: "full", args: "auto wt [pr] <ISSUE-ID>")` — `pr` only when the invocation carried the literal
 token. `/full auto` runs `/start auto`, `/quality-review auto`, and `/finish auto`, and terminates with exactly one

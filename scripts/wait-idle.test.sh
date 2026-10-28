@@ -32,7 +32,7 @@ ck_has() { # ck_has <name> <needle> <haystack>
 once() { OUT=$("$SCRIPT" --once 2>&1); RC=$?; }
 reset() { rm -f "$MAIN"/tmp/*.json(N); echo '[]' > "$REG"; }
 ledger() { printf '{"status":"%s","shipped":[]}\n' "$2" > "$MAIN/tmp/auto-state-$1.json"; }
-marker() { jq -n --arg s "$1" '{fleet_sessions: ($s | split(" ")), count: 1, launch_epoch: 1}' > "$MAIN/tmp/fleet-deadline.json"; }
+marker() { jq -n --arg s "$1" '{fleet_sessions: ($s | split(" ")), count: 1, launch_epoch: 1}' > "$MAIN/tmp/fleet-deadline-${2:-team}.json"; }
 row_live()    { printf '{"id":"%s","cwd":"%s","kind":"background","sessionId":"%s-0000-4000-8000-000000000000","name":"loop auto backlog","status":"idle","state":"working","pid":1}' "$1" "$MAIN" "$1"; }
 row_stopped() { printf '{"id":"%s","cwd":"%s","kind":"background","sessionId":"%s-0000-4000-8000-000000000000","name":"loop auto backlog","state":"working"}' "$1" "$MAIN" "$1"; }
 row_done()    { printf '{"id":"%s","cwd":"%s","kind":"background","sessionId":"%s-0000-4000-8000-000000000000","name":"n","status":"idle","state":"done"}' "$1" "$MAIN" "$1"; }

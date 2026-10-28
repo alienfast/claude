@@ -1,9 +1,15 @@
 # Fleet gates at pick time
 
-Read from `/auto` Step 2 when `tmp/fleet-deadline.json` exists. The marker's fields are the deadline contract in
-`skills/fleet-launch/SKILL.md` § The deadline contract (shared with /auto); this file is how `/auto` applies it.
+Read from `/auto` Step 2 when a fleet marker exists. Markers are per fleet — `tmp/fleet-deadline-<slug>.json`, the slug
+being the lowercased epic id of this run's `epic:` scope, else `team` (`lib/fleet-markers.sh`) — and the marker's fields
+are the deadline contract in `skills/fleet-launch/SKILL.md` § The deadline contract (shared with /auto); this file is how
+`/auto` applies it.
 
 ## Deadline gate
+
+Reads this run's own marker only: a sibling fleet's deadline is not this run's budget, and an archived
+`fleet-deadline-<slug>.<epoch>.json` (an ended run a later launch displaced) is never read. No marker for this run's slug
+→ no time budget.
 
 - Read `deadline_epoch` with `jq -r '.deadline_epoch // empty'`. Absent → no time budget, nothing to gate or note.
   Present but non-numeric → ignore it and say so in the iteration's summary sentence; a malformed marker must not end
@@ -27,14 +33,16 @@ Read from `/auto` Step 2 when `tmp/fleet-deadline.json` exists. The marker's fie
   in-flight issues running to completion).
 - Never delete the marker from this skill — sibling sessions still mid-issue need to see it at their own next pick.
 - `hooks/auto-deadline-gate.sh` backs the gate: it refuses a `next-candidates.sh` invocation from a `/loop /auto`
-  session once `deadline_epoch` has passed, because this gate is prose and a session that read the marker on every
-  earlier iteration can still skip the step. It fires only inside a `/loop /auto` session, so interactive `/next`,
-  `/auto-prep`, `/fleet-status` and `/fleet-retro` — byte-identical commands — are unaffected, and targeted mode stays
-  exempt by the same rule that exempts it here.
+  session once its fleet's `deadline_epoch` has passed, because this gate is prose and a session that read the marker on
+  every earlier iteration can still skip the step. It reads the slug from the same `/loop` delivery that identifies the
+  session as a loop, so it gates by the same marker this step reads. It fires only inside a `/loop /auto` session, so
+  interactive `/next`, `/auto-prep`, `/fleet-status` and `/fleet-retro` — byte-identical commands — are unaffected, and
+  targeted mode stays exempt by the same rule that exempts it here.
 
 ## Headroom gate
 
-Fleet mode only (the marker exists, dated or not), and it governs every pick Step 2 makes, the hot handoff included.
+Fleet mode only — any fleet marker exists in the checkout, this run's or a sibling fleet's, dated or not, because every
+fleet draws on the same account windows — and it governs every pick Step 2 makes, the hot handoff included.
 Why the count is settled at 3 per account with room and why parking between issues is the protection rather than a
 smaller fleet: `skills/fleet-launch/SKILL.md` § The count — 3 per account with room.
 

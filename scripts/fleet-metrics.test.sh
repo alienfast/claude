@@ -1048,7 +1048,7 @@ M12="$(git -C "$CK12" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
 mkdir -p "$WORK/projects/$M12"
 
 LAUNCH=$(python3 -c "import time; print(int(time.time()) - 7200)")
-cat > "$CK12/tmp/fleet-deadline.json" <<EOF
+cat > "$CK12/tmp/fleet-deadline-team.json" <<EOF
 {"deadline_epoch": $((LAUNCH + 43200)), "deadline": "test", "count": 1, "launch_epoch": $LAUNCH}
 EOF
 
@@ -1324,9 +1324,9 @@ ck_has "single: --sessions row present"               "| \`tgt00001\`" "$MD15"
 ck_lacks "single: no exclusion note under --sessions" "Not fleet members" "$MD15"
 
 # The launch's recorded set is the default scope when no flag scopes the run; an explicit window wins.
-jq -n '{count: 1, launch_epoch: 1, fleet_sessions: ["loop0001"]}' > "$CK15/tmp/fleet-deadline.json"
+jq -n '{count: 1, launch_epoch: 1, fleet_sessions: ["loop0001"]}' > "$CK15/tmp/fleet-deadline-team.json"
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK15" > "$MD15" 2>&1
-ck_has "recorded set: scope named"                    "scope: fleet_sessions from tmp/fleet-deadline.json (1)" "$MD15"
+ck_has "recorded set: scope named"                    "scope: fleet_sessions from tmp/fleet-deadline-team.json (1)" "$MD15"
 ck_has "recorded set: member measured"                "| \`loop0001\`" "$MD15"
 ck_lacks "recorded set: single run not swept in"      "\`tgt00003\`" "$MD15"
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK15" --hours 24 > "$MD15" 2>&1
@@ -1346,7 +1346,7 @@ M16="$(git -C "$CK16" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
 T16="$WORK/projects/$M16"; mkdir -p "$T16"
 NOW16=$(python3 -c "import time; print(int(time.time()))")
 DL16=$((NOW16 - 3600))   # the deadline passed an hour ago
-echo "{\"deadline_epoch\": $DL16, \"deadline\": \"test\", \"count\": 3, \"launch_epoch\": $((DL16 - 43200))}" > "$CK16/tmp/fleet-deadline.json"
+echo "{\"deadline_epoch\": $DL16, \"deadline\": \"test\", \"count\": 3, \"launch_epoch\": $((DL16 - 43200))}" > "$CK16/tmp/fleet-deadline-team.json"
 
 # Session A recorded two ships; its transcript tags only TT-100 (5h before the deadline) while TT-101
 # exists only as a commit landing 2h before it — the untagged shape. A transcript-only tail reads 5h here.
@@ -1392,11 +1392,11 @@ ck "pool: no held sessions, nothing forfeited" "{} None" "$(q16 "str(d['pool_exh
 ck_has "pool: trend column"                    "| idle% |" "$MD16"
 ck_has "pool: trend cell"                      "| 23% |" "$MD16"
 # A 20-minute tail after the last landing is the deadline doing its job, not an exhausted pool.
-echo "{\"deadline_epoch\": $((DL16 - 7200 + 1200)), \"count\": 3, \"launch_epoch\": $((DL16 - 43200))}" > "$CK16/tmp/fleet-deadline.json"
+echo "{\"deadline_epoch\": $((DL16 - 7200 + 1200)), \"count\": 3, \"launch_epoch\": $((DL16 - 43200))}" > "$CK16/tmp/fleet-deadline-team.json"
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK16" --hours 24 > "$MD16" 2>&1
 ck_lacks "pool: a 20-minute tail is not exhaustion" "**Pool exhausted**" "$MD16"
 # No marker, no deadline to measure against: nulls in the JSON and no line in the report.
-rm "$CK16/tmp/fleet-deadline.json"
+rm "$CK16/tmp/fleet-deadline-team.json"
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK16" --hours 24 --json > "$J16" 2>/dev/null
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK16" --hours 24 > "$MD16" 2>&1
 ck "pool: no marker, no number"   "None" "$(q16 "d['pool_exhausted']['hours_before_deadline']")"
@@ -1414,7 +1414,7 @@ git -C "$CK16H" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "ini
 M16H="$(git -C "$CK16H" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
 T16H="$WORK/projects/$M16H"; mkdir -p "$T16H"
 DL16H=$(( $(python3 -c "import time; print(int(time.time()))") - 3600 ))   # the deadline passed an hour ago
-echo "{\"deadline_epoch\": $DL16H, \"deadline\": \"test\", \"count\": 3, \"launch_epoch\": $((DL16H - 43200))}" > "$CK16H/tmp/fleet-deadline.json"
+echo "{\"deadline_epoch\": $DL16H, \"deadline\": \"test\", \"count\": 3, \"launch_epoch\": $((DL16H - 43200))}" > "$CK16H/tmp/fleet-deadline-team.json"
 HOLD_WAKE='{"type":"tool_use","id":"tu_h","name":"ScheduleWakeup","input":{"delaySeconds":1800,"prompt":"/loop /auto","reason":"PLANNED-HOLD with only keeper-owned entries; re-checking in 30 minutes.","noop":true}}'
 
 # pxh00001 HELD: shipped 6h before the deadline, then held on noop wakeups; its last turn is 4h before the deadline
@@ -1468,7 +1468,7 @@ ck_has "held: ... forfeited"    "Its last turn was 4.0h before the fleet deadlin
 ck_has "held: the delegate-wait flag forfeits without a held clause" "Its last turn was 4.0h before the fleet deadline — FORFEITED session-hours, a session fault. Check for" "$MD16H"
 ck_has "held: the flag points at the daemon log" "\`~/.claude/daemon.log\` separates the two" "$MD16H"
 # A deadline still in the FUTURE proves nothing about a dead-looking session: admit no one, forfeit nothing.
-echo "{\"deadline_epoch\": $((DL16H + 7200)), \"count\": 3, \"launch_epoch\": $((DL16H - 43200))}" > "$CK16H/tmp/fleet-deadline.json"
+echo "{\"deadline_epoch\": $((DL16H + 7200)), \"count\": 3, \"launch_epoch\": $((DL16H - 43200))}" > "$CK16H/tmp/fleet-deadline-team.json"
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK16H" --hours 24 --json > "$J16H" 2>/dev/null
 ck "held: a future deadline admits no held session" "{} None" "$(q16h "str(d['pool_exhausted']['held_sessions']) + ' ' + str(d['pool_exhausted']['forfeited_session_hours'])")"
 
@@ -1485,7 +1485,7 @@ M17="$(git -C "$CK17" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
 T17="$WORK/projects/$M17"; mkdir -p "$T17"
 NOW17=$(python3 -c "import time; print(int(time.time()))")
 DL17=$((NOW17 - 1800))
-echo "{\"deadline_epoch\": $DL17, \"count\": 2, \"launch_epoch\": $((NOW17 - 43200))}" > "$CK17/tmp/fleet-deadline.json"
+echo "{\"deadline_epoch\": $DL17, \"count\": 2, \"launch_epoch\": $((NOW17 - 43200))}" > "$CK17/tmp/fleet-deadline-team.json"
 drained17() { # drained17 <reason> — dr000001's ledger
   echo "{\"status\":\"drained\",\"reason\":\"$1\",\"mode\":\"loop\",\"shipped\":[],\"canceled\":[],\"skipped\":[],\"failed\":[]}" > "$CK17/tmp/auto-state-dr000001.json"
 }
@@ -1525,13 +1525,13 @@ run17
 ck_lacks "early drain: deadline reason never flags" "drained 1.5h before the deadline while siblings" "$MD17"
 drained17 "TT backlog drained of certified issues — 1/0/0/0 this run"
 # No marker: the horizon is the siblings' last activity, and the line says so.
-mv "$CK17/tmp/fleet-deadline.json" "$CK17/tmp/fleet-deadline.json.off"
+mv "$CK17/tmp/fleet-deadline-team.json" "$CK17/tmp/fleet-deadline-team.json.off"
 run17
 ck_has "early drain: sibling horizon without a marker" "drained 1.5h before its siblings' last activity while siblings picked and shipped 1 more issue(s)" "$MD17"
 ck "early drain: horizon recorded as siblings"   "siblings" "$(q17 "[s for s in d['sessions'] if s['run_key']=='dr000001'][0]['drain_horizon']")"
 ck_has "early drain: no deadline is the siblings' own run, not a forfeit" "No deadline: these 1.5h are the siblings' own remaining run, including the 1 issue(s) they picked after this drain — not forfeited capacity" "$MD17"
 ck_lacks "early drain: no deadline never says forfeited" "Forfeited ≈" "$MD17"
-mv "$CK17/tmp/fleet-deadline.json.off" "$CK17/tmp/fleet-deadline.json"
+mv "$CK17/tmp/fleet-deadline-team.json.off" "$CK17/tmp/fleet-deadline-team.json"
 # Drop TT-42: the sibling's single after-T landing is its in-flight issue, not a pick after the drain.
 grep -v 'TT-42' "$T17/sb000001-0000.jsonl" > "$T17/sb.tmp" && mv "$T17/sb.tmp" "$T17/sb000001-0000.jsonl"
 run17
@@ -1769,7 +1769,7 @@ M21="$(git -C "$CK21" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
 T21="$WORK/projects/$M21"; mkdir -p "$T21"
 NOW21=$(python3 -c "import time; print(int(time.time()))")
 DL21=$((NOW21 - 3600))
-echo "{\"deadline_epoch\": $DL21, \"deadline\": \"test\", \"count\": 1, \"launch_epoch\": $((DL21 - 43200))}" > "$CK21/tmp/fleet-deadline.json"
+echo "{\"deadline_epoch\": $DL21, \"deadline\": \"test\", \"count\": 1, \"launch_epoch\": $((DL21 - 43200))}" > "$CK21/tmp/fleet-deadline-team.json"
 echo '{"status":"drained","reason":"fleet deadline reached (test)","mode":"loop","shipped":["TT-200"],"canceled":[],"skipped":[],"failed":[]}' > "$CK21/tmp/auto-state-thr00001.json"
 probe21() { # probe21 <epoch> <n> <THROTTLE|PICK-OK> <session|snapshot|none> — the probe's tool_use and its result
   local body rc=0
@@ -1828,7 +1828,7 @@ git -C "$CK22" init -q 2>/dev/null
 git -C "$CK22" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "init"
 M22="$(git -C "$CK22" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
 T22="$WORK/projects/$M22"; mkdir -p "$T22"
-echo "{\"deadline_epoch\": $DL21, \"deadline\": \"test\", \"count\": 1, \"launch_epoch\": $((DL21 - 43200))}" > "$CK22/tmp/fleet-deadline.json"
+echo "{\"deadline_epoch\": $DL21, \"deadline\": \"test\", \"count\": 1, \"launch_epoch\": $((DL21 - 43200))}" > "$CK22/tmp/fleet-deadline-team.json"
 echo '{"status":"drained","reason":"fleet deadline reached (test)","mode":"loop","shipped":[],"canceled":[],"skipped":[],"failed":[]}' > "$CK22/tmp/auto-state-bli00001.json"
 {
   printf '{"type":"user","timestamp":"%s","isSidechain":false,"message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto backlog</command-args>"}}\n' "$(at_epoch $((DL21 - 36000)))"
@@ -1939,7 +1939,7 @@ for run in 8c16860d b2bb1003 cbc11f9e; do
 {"status": "drained", "reason": "fleet deadline reached", "shipped": [], "canceled": [], "skipped": [], "failed": []}
 EOF
 done
-echo '{"deadline_epoch": 1791628818}' > "$CKW/tmp/fleet-deadline.json"
+echo '{"deadline_epoch": 1791628818}' > "$CKW/tmp/fleet-deadline-team.json"
 JW="$WORK/outw.json"; MDW="$WORK/outw.md"
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CKW" --sessions 8c16860d,b2bb1003,cbc11f9e --json > "$JW" 2>/dev/null
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CKW" --sessions 8c16860d,b2bb1003,cbc11f9e > "$MDW" 2>&1
@@ -2034,7 +2034,7 @@ git -C "$CKH" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "init"
 MH="$(git -C "$CKH" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
 mkdir -p "$WORK/projects/$MH"
 cp "$FIXH"/auto-state-*.json "$CKH/tmp/"
-echo '{"deadline_epoch": 1791716948, "deadline": "2026-10-11 06:09 CDT"}' > "$CKH/tmp/fleet-deadline.json"
+echo '{"deadline_epoch": 1791716948, "deadline": "2026-10-11 06:09 CDT"}' > "$CKH/tmp/fleet-deadline-team.json"
 JH="$WORK/outh.json"; MDH="$WORK/outh.md"
 qh() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$JH"; }
 runh() {
@@ -2219,11 +2219,11 @@ cp "$WORK/open-0000.jsonl" "$WORK/projects/$MH/1cc250ad-0000.jsonl"
 runh
 ck "holds: a run nothing closes ends at the session's last activity" "2.45 2" "$(qh "' '.join(str(x) for x in (lambda h: (h['hours'], h['ticks']))([s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['held']))")"
 # A deadline at 10:00Z (earlier than the last two ticks): ticks past it are neither hours nor counted.
-echo '{"deadline_epoch": 1791712800, "deadline": "2026-10-11 05:00 CDT"}' > "$CKH/tmp/fleet-deadline.json"
+echo '{"deadline_epoch": 1791712800, "deadline": "2026-10-11 05:00 CDT"}' > "$CKH/tmp/fleet-deadline-team.json"
 cp "$FIXH/1cc250ad-0000.jsonl" "$WORK/projects/$MH/"
 runh
 ck "holds: the deadline clips the hours and the tick count" "8.95 2" "$(qh "' '.join(str(x) for x in (lambda h: (h['hours'], h['ticks']))([s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['held']))")"
-echo '{"deadline_epoch": 1791716948, "deadline": "2026-10-11 06:09 CDT"}' > "$CKH/tmp/fleet-deadline.json"
+echo '{"deadline_epoch": 1791716948, "deadline": "2026-10-11 06:09 CDT"}' > "$CKH/tmp/fleet-deadline-team.json"
 # Every iteration-ending tag closes a hold the same way: the pick record's SHIPPED-MERGE prefix swapped for each of the others.
 for tag in AUTO-CONTINUE AUTO-HALTED NO-CANDIDATES SHIPPED-PR RELEASED DEFERRED-MERGE CANCELED SKIPPED-BLOCKED BLOCKED-ON-REVIEW BLOCKED-ON-RECOVERY ABANDONED; do
   python3 - "$FIXH/1cc250ad-0000.jsonl" "$WORK/projects/$MH/1cc250ad-0000.jsonl" "$tag" <<'MK_TAGS'
@@ -2606,7 +2606,7 @@ git -C "$CK30" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "init
 M30="$(git -C "$CK30" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
 mkdir -p "$WORK/projects/$M30"
 H30="$CK30/tmp/fleet-metrics-history.jsonl"
-echo "{\"launch_epoch\": $(( $(date +%s) - 1800 )), \"deadline_epoch\": $(( $(date +%s) + 3600 ))}" > "$CK30/tmp/fleet-deadline.json"
+echo "{\"launch_epoch\": $(( $(date +%s) - 1800 )), \"deadline_epoch\": $(( $(date +%s) + 3600 ))}" > "$CK30/tmp/fleet-deadline-team.json"
 cat > "$CK30/tmp/auto-state-ee300001.json" <<'EOF'
 {"mode": "loop", "status": "drained", "reason": "deadline", "shipped": ["TT-300"], "canceled": [], "skipped": [], "failed": []}
 EOF
@@ -2658,6 +2658,49 @@ rm -f "$H30"
 run30 --no-record
 ck "rerun: --no-record writes no ledger"               "absent" "$([ -f "$H30" ] && echo present || echo absent)"
 ck "rerun: --no-record still renders"                  "1" "$(python3 -c "import json,sys; print(len(json.load(open(sys.argv[1]))['sessions']))" "$J30")"
+
+# ---- which fleet: one marker per fleet (lib/fleet-markers.sh) — a bare run over several un-retro'd fleets asks, --fleet names one ----
+CK31="$WORK/ck31"; mkdir -p "$CK31/tmp"; git -C "$CK31" init -q; git -C "$CK31" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "init"
+M31="$(git -C "$CK31" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"; mkdir -p "$WORK/projects/$M31"
+NOW31=$(python3 -c "import time; print(int(time.time()))")
+echo "{\"launch_epoch\": $((NOW31 - 7200)), \"deadline_epoch\": $((NOW31 + 3600)), \"fleet_sessions\": [\"fa310001\"]}" > "$CK31/tmp/fleet-deadline-team.json"
+echo "{\"launch_epoch\": $((NOW31 - 3600)), \"fleet_sessions\": [\"fb310001\"], \"scope\": \"TT-9\"}" > "$CK31/tmp/fleet-deadline-tt-9.json"
+echo "{\"launch_epoch\": 1700000000, \"deadline_epoch\": 1700003600, \"fleet_sessions\": [\"fc310001\"]}" > "$CK31/tmp/fleet-deadline-team.1700000000.json"
+for k in fa310001 fb310001 fc310001; do
+  echo '{"mode":"loop","status":"drained","reason":"test","shipped":["TT-1"],"canceled":[],"skipped":[],"failed":[]}' > "$CK31/tmp/auto-state-$k.json"
+  printf '{"type":"user","timestamp":"%s","isSidechain":false,"message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}\n' "$(at_epoch $((NOW31 - 1800)))" > "$WORK/projects/$M31/$k-0000.jsonl"
+done
+E31="$WORK/err31"; O31="$WORK/out31"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK31" --list-fleets > "$O31" 2>&1
+ck "list-fleets: exits 0"                      "0" "$?"
+ck_has "list-fleets: live team marker"         "team           launched" "$O31"
+ck_has "list-fleets: live epic marker"         "tt-9           launched" "$O31"
+ck_has "list-fleets: archived run named for --fleet" "--fleet team@1700000000" "$O31"
+ck_has "list-fleets: nothing retro'd yet"      "NOT retro-d" "$O31"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK31" --no-record > "$O31" 2> "$E31"
+ck "bare run over several un-retro'd fleets exits 2" "2" "$?"
+ck_has "ambiguity: asks for --fleet"           "Several un-retro'd fleets here — name one with --fleet <slug>[@<launch_epoch>]" "$E31"
+ck_has "ambiguity: lists the candidates"       "[fleet-deadline-tt-9.json]" "$E31"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK31" --fleet TT-9 --no-record > "$O31" 2> "$E31"
+ck "--fleet by slug exits 0"                   "0" "$?"
+ck_has "--fleet: scope names that marker"      "scope: fleet_sessions from tmp/fleet-deadline-tt-9.json (1)" "$O31"
+ck_has "--fleet: its session measured"         "| \`fb310001\`" "$O31"
+ck_lacks "--fleet: the other fleet's session not swept in" "\`fa310001\`" "$O31"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK31" --fleet team@1700000000 --no-record > "$O31" 2> "$E31"
+ck "--fleet by slug@epoch exits 0"             "0" "$?"
+ck_has "--fleet archived: scope names the archive" "scope: fleet_sessions from tmp/fleet-deadline-team.1700000000.json (1)" "$O31"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK31" --fleet nope --no-record > "$O31" 2> "$E31"
+ck "--fleet unknown exits 2"                   "2" "$?"
+ck_has "--fleet unknown: lists what exists"    "Recorded fleets:" "$E31"
+# Once the history names every fleet but one, the bare run measures that one.
+printf '{"session_set":["fa310001"]}\n{"session_set":["fc310001"]}\n' > "$CK31/tmp/fleet-metrics-history.jsonl"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK31" --no-record > "$O31" 2> "$E31"
+ck "bare run with one un-retro'd fleet exits 0" "0" "$?"
+ck_has "bare run picks the un-retro'd fleet"   "scope: fleet_sessions from tmp/fleet-deadline-tt-9.json (1)" "$O31"
+printf '{"session_set":["fb310001"]}\n' >> "$CK31/tmp/fleet-metrics-history.jsonl"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK31" --no-record > "$O31" 2> "$E31"
+ck "bare run with every fleet retro'd exits 2" "2" "$?"
+ck_has "all retro'd: says so"                  "Every recorded fleet here is already in tmp/fleet-metrics-history.jsonl" "$E31"
 
 echo
 echo "$PASS passed / $FAIL failed / $SKIP skipped"

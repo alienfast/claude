@@ -225,9 +225,11 @@ State the binding term: "7 lanes available, capped to 6 (2 accounts with room)" 
 "4 — the forecast gains nothing at 5" names the chain structure (`floor`); a lane-bound "2 sessions" names the real lever
 (certify more work, or say when chains release it).
 
-**Persist the recommendation** in the project's main checkout — a count-less `/fleet-launch` reads exactly this file and
-warns when it is older than 24h. Read `references/sizing-block.md` to fill `rate`, `peak5h` and `fits` (the block
-`/fleet-retro` audits the projection against):
+**Persist the recommendation** in the project's main checkout as the team fleet's own file,
+`tmp/fleet-recommendation-team.json` (`lib/fleet-markers.sh`; an epic's prep writes `tmp/fleet-recommendation-<id>.json`
+beside it) — a count-less bare `/fleet-launch` reads exactly this file and warns when it is older than 24h. Read
+`references/sizing-block.md` to fill `rate`, `peak5h` and `fits` (the block `/fleet-retro` audits the projection
+against):
 
 ```bash
 jq -n --argjson sessions <N> --arg team <KEY> --argjson e "$(date +%s)" \
@@ -237,7 +239,7 @@ jq -n --argjson sessions <N> --arg team <KEY> --argjson e "$(date +%s)" \
   '{sessions: $sessions, team: $team, generated_epoch: $e, generated: (now | todate),
     bound_by: $bound_by, cap: $cap, duration_h: $duration_h,
     sizing: {rate_tok_per_session_hour: $rate, peak_5h_observed: $peak5h, five_hour_fits_sessions: $fits}}' \
-  > tmp/fleet-recommendation.json
+  > tmp/fleet-recommendation-team.json
 ```
 
 Launch checklist for the report:

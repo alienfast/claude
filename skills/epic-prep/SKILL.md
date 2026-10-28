@@ -214,9 +214,12 @@ post-deploy step at the tail — is not a gate.
 
 Persist the recommendation with the scope fields `fleet-launch.sh` and `fleet-status.sh` read — `scope`, `members` (the
 prep-time membership: the burn-down baseline), `branch`, `base` — alongside the sizing block `/auto-prep` writes
-(`skills/auto-prep/references/sizing-block.md`):
+(`skills/auto-prep/references/sizing-block.md`). The file is the epic's own, `tmp/fleet-recommendation-<id-lower>.json`
+(`lib/fleet-markers.sh`): a prep never disturbs the team's recommendation or a running fleet's, and the epic launches
+beside whatever else is running.
 
 ```bash
+slug=$(printf '%s' <ID> | tr '[:upper:]' '[:lower:]')
 jq -n --argjson sessions <N> --arg team <KEY> --argjson e "$(date +%s)" \
       --arg scope <ID> --argjson members "$(jq -c '[.members[].identifier]' tmp/epic-graph.json)" \
       --arg branch "$branch" --arg base "$base" \
@@ -226,13 +229,15 @@ jq -n --argjson sessions <N> --arg team <KEY> --argjson e "$(date +%s)" \
     scope: $scope, members: $members, branch: $branch, base: $base,
     bound_by: $bound_by, cap: $cap, duration_h: $duration_h,
     sizing: {rate_tok_per_session_hour: $rate, peak_5h_observed: $peak5h}}' \
-  > tmp/fleet-recommendation.json
+  > "tmp/fleet-recommendation-$slug.json"
 ```
 
-Written in the project's main checkout. A bare `/fleet-launch` stops on the recorded scope (`SCOPE-CONFIRM`) and asks
-whether to launch it or go team-wide; `/fleet-launch epic:<ID>` launches directly, and `/fleet-status` reports the burn-down
-against `members`. An epic fleet ends itself once only keeper-gated members remain, so the report says "expected to end
-after N", not "idles after N".
+Written in the project's main checkout. `/fleet-launch epic:<ID>` reads exactly this file (a bare `/fleet-launch` is
+the team fleet and never reads it), and `/fleet-status` reports the burn-down against `members`. A fleet already running
+in the checkout is no reason to wait: the launch writes the epic's own marker and counts the other fleet's sessions
+against the cap ([`/fleet-launch`](../fleet-launch/SKILL.md) § Several fleets in one checkout) — a shared member goes to
+the first picker and lands on this epic's branch either way. An epic fleet ends itself once only keeper-gated members
+remain, so the report says "expected to end after N", not "idles after N".
 
 ## Report
 
@@ -242,8 +247,9 @@ run, declined (holding the gate), terminal, nested epics closed by the sweep. Th
 batch, the critical path and any priority changes, and the audit's remaining `FOCUS` rows. When Step 8 found a deploy
 gate, say before the launch line that this epic will not ship as one PR, name the gates, and carry the operator's
 release-shape choice into the launch command. Then the launch command, **printed literally on every run — the epic
-token, this prep's count and its duration filled in; never a bare `/fleet-launch`, which stops on `SCOPE-CONFIRM` and
-asks again, and never a placeholder**:
+token, this prep's count and its duration filled in; never a bare `/fleet-launch`, which launches the team fleet, and
+never a placeholder**. Another fleet running in the checkout changes nothing about the command — say what it is and
+that the cap line will count its sessions:
 
 ```text
 /fleet-launch 4 6h epic:BF-2839

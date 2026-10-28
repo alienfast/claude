@@ -66,8 +66,11 @@ keep|d|never keep-hatch
 fleet-metrics-history.jsonl||never metrics-history
 fleet-linear-window.json||never retro-inputs
 fleet-shipped-issues.json||never retro-inputs
-fleet-deadline.json||never fleet-marker
-fleet-recommendation.json||never fleet-recommendation
+fleet-deadline-team.json||never fleet-marker
+fleet-deadline-bf-2948.json||never fleet-marker
+fleet-deadline-bf-2948.1793221071.json||never fleet-marker
+fleet-recommendation-team.json||never fleet-recommendation
+fleet-recommendation-bf-2948.json||never fleet-recommendation
 auto-state-3eeea4c4.json||never auto-ledger
 auto-state.json||scratch legacy-auto-state
 triage-proposals|d|never triage-proposals
@@ -215,7 +218,7 @@ out=$($SCRIPT reap "$r" 2>&1)
 
 echo "== verdicts: a fleet window is held until /fleet-retro measures it =="
 r=$(mk_repo fleetwindow)
-mkfile "$r/tmp/fleet-deadline.json" $((10*D)) "{\"launch_epoch\": $((NOW - 10*D)), \"stopped\": true, \"fleet_sessions\": [\"abc12345\"]}"
+mkfile "$r/tmp/fleet-deadline-team.json" $((10*D)) "{\"launch_epoch\": $((NOW - 10*D)), \"stopped\": true, \"fleet_sessions\": [\"abc12345\"]}"
 mkfile "$r/tmp/quality-review-verdict-bf-200.md" $((8*D))     # written after the launch
 mkfile "$r/tmp/quality-review-verdict-bf-201.md" $((12*D))    # written before it
 out=$($SCRIPT list "$r" 2>&1)
@@ -224,6 +227,11 @@ ck "pre-window verdict is not held"                  'ELIGIBLE  quality-review-v
 mkfile "$r/tmp/fleet-metrics-history.jsonl" $((1*D)) "{\"session_set\":[\"abc12345\"],\"fleet_start\":\"x\"}"
 out=$($SCRIPT list "$r" 2>&1)
 ck "retro row releases the in-window verdict"       'ELIGIBLE  quality-review-verdict-bf-200.md — no local branch for bf-200' "$out"
+# A second, un-retro'd fleet beside it — an archived run of another slug — holds the verdicts written since ITS launch.
+mkfile "$r/tmp/fleet-deadline-bf-9.$((NOW - 9*D)).json" $((9*D)) "{\"launch_epoch\": $((NOW - 9*D)), \"fleet_sessions\": [\"def67890\"]}"
+out=$($SCRIPT list "$r" 2>&1)
+ck "another fleet's window holds the verdict again" 'KEEP      quality-review-verdict-bf-200.md — written during the fleet launched' "$out"
+ck "an archived marker is itself kept"              "KEEP      fleet-deadline-bf-9.$((NOW - 9*D)).json — fleet-marker" "$out"
 
 echo "== sequence markers =="
 r=$(mk_repo sequences)
@@ -310,22 +318,42 @@ ck "reap removes the dry-run directory"              'REAPED    test-sweep-propo
 
 echo "== a running fleet widens the fresh guard to its launch =="
 r=$(mk_repo fleetrun)
-mkfile "$r/tmp/fleet-deadline.json" $((40*H)) "{\"launch_epoch\": $((NOW - 40*H)), \"fleet_sessions\": [\"s1\"]}"
+mkfile "$r/tmp/fleet-deadline-team.json" $((40*H)) "{\"launch_epoch\": $((NOW - 40*H)), \"fleet_sessions\": [\"s1\"]}"
 mkfile "$r/tmp/linear-context-bf-9.md" $((30*H))
 mkfile "$r/tmp/old.log" $((8*D))
 out=$($SCRIPT list "$r" 2>&1)
 ck "file written since the launch is kept"           'KEEP      linear-context-bf-9.md — written since the running fleet launched' "$out"
 ck "older scratch is still eligible during a fleet"  'ELIGIBLE  old.log' "$out"
-ckno "a running marker is not flagged stale"         'FLAG      fleet-deadline.json' "$out"
+ckno "a running marker is not flagged stale"         'FLAG      fleet-deadline-team.json' "$out"
+# A second fleet launched earlier widens the guard to ITS launch; an archived run does not count as running.
+mkfile "$r/tmp/fleet-deadline-bf-2.json" $((45*H)) "{\"launch_epoch\": $((NOW - 45*H)), \"fleet_sessions\": [\"s2\"], \"scope\": \"BF-2\"}"
+mkfile "$r/tmp/linear-context-bf-10.md" $((42*H))
+out=$($SCRIPT list "$r" 2>&1)
+ck "the earlier running fleet's launch widens the guard" 'KEEP      linear-context-bf-10.md — written since the running fleet launched' "$out"
+mv "$r/tmp/fleet-deadline-bf-2.json" "$r/tmp/fleet-deadline-bf-2.$((NOW - 45*H)).json"
+out=$($SCRIPT list "$r" 2>&1)
+ck "an archived run does not widen the guard"        'ELIGIBLE  linear-context-bf-10.md — presence-cache' "$out"
 
-echo "== flags: stale markers that hold gates up =="
+echo "== flags: stale markers that hold gates up, and ended fleets nobody measured =="
 r=$(mk_repo flags)
-mkfile "$r/tmp/fleet-recommendation.json" $((2*D)) '{"sessions": 3, "scope": "BF-1826"}'
-mkfile "$r/tmp/fleet-deadline.json" $((5*D)) "{\"launch_epoch\": $((NOW - 5*D)), \"fleet_sessions\": [\"s1\"]}"
+mkfile "$r/tmp/fleet-recommendation-bf-1826.json" $((2*D)) '{"sessions": 3, "scope": "BF-1826"}'
+mkfile "$r/tmp/fleet-deadline-team.json" $((5*D)) "{\"launch_epoch\": $((NOW - 5*D)), \"fleet_sessions\": [\"s1\"]}"
 out=$($SCRIPT reap "$r" 2>&1)
-ck "scoped recommendation older than a day is flagged" 'FLAG      fleet-recommendation.json — carries scope BF-1826 and is 2d old' "$out"
-ck "deadline marker with no deadline, never stopped, past the fleet horizon is flagged" 'FLAG      fleet-deadline.json — no deadline, never stopped' "$out"
-[ -e "$r/tmp/fleet-recommendation.json" ] && [ -e "$r/tmp/fleet-deadline.json" ] && ck "flagged files are never deleted" OK OK || ck "flagged files are never deleted" OK GONE
+ckno "a recommendation is no longer flagged for its scope — a launch reads only its own slug's" 'FLAG      fleet-recommendation' "$out"
+ck "deadline marker with no deadline, never stopped, past the fleet horizon is flagged" 'FLAG      fleet-deadline-team.json — no deadline, never stopped' "$out"
+ckno "a 5d-old un-retro'd fleet is not yet flagged as unmeasured" 'never measured' "$out"
+[ -e "$r/tmp/fleet-recommendation-bf-1826.json" ] && [ -e "$r/tmp/fleet-deadline-team.json" ] && ck "flagged files are never deleted" OK OK || ck "flagged files are never deleted" OK GONE
+# An ended fleet (stopped, or an archived run) that no history row names is flagged once UNKNOWN_D days old; a measured one is not.
+mkfile "$r/tmp/fleet-deadline-bf-3.json" $((31*D)) "{\"launch_epoch\": $((NOW - 31*D)), \"stopped\": true, \"fleet_sessions\": [\"s3\"], \"scope\": \"BF-3\"}"
+mkfile "$r/tmp/fleet-deadline-bf-4.$((NOW - 32*D)).json" $((32*D)) "{\"launch_epoch\": $((NOW - 32*D)), \"fleet_sessions\": [\"s4\"], \"scope\": \"BF-4\"}"
+mkfile "$r/tmp/fleet-deadline-bf-5.$((NOW - 33*D)).json" $((33*D)) "{\"launch_epoch\": $((NOW - 33*D)), \"fleet_sessions\": [\"s5\"], \"scope\": \"BF-5\"}"
+mkfile "$r/tmp/fleet-metrics-history.jsonl" $((1*D)) '{"session_set":["s5"]}'
+out=$($SCRIPT list "$r" 2>&1)
+ck "a stopped un-retro'd fleet past 30d is flagged"  "FLAG      fleet-deadline-bf-3.json — ended, launched $(date -r $((NOW - 31*D)) +%Y-%m-%d 2>/dev/null || date -d @$((NOW - 31*D)) +%Y-%m-%d) and never measured — fleet-metrics.py --fleet bf-3 (/fleet-retro)" "$out"
+ck "an archived un-retro'd run past 30d is flagged, by slug@epoch" "FLAG      fleet-deadline-bf-4.$((NOW - 32*D)).json — ended, launched" "$out"
+ck "the flag names the archived run for --fleet"     "fleet-metrics.py --fleet bf-4@$((NOW - 32*D)) (/fleet-retro)" "$out"
+ckno "a measured archived run is not flagged"        'FLAG      fleet-deadline-bf-5' "$out"
+[ -e "$r/tmp/fleet-deadline-bf-3.json" ] && [ -e "$r/tmp/fleet-deadline-bf-4.$((NOW - 32*D)).json" ] && ck "unmeasured fleets are flagged, never deleted" OK OK || ck "unmeasured fleets are flagged, never deleted" OK GONE
 
 if command -v lsof >/dev/null 2>&1; then
   echo "== open handles =="

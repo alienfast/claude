@@ -10,12 +10,13 @@
 # the PR it reports.
 #
 # Resolution, first hit wins and is named in EPIC_SOURCE / BASE_SOURCE:
-#   epic    the argument; else the checkout's branch when it is `epic/<id>`; else the fleet marker's scope
-#           (tmp/fleet-deadline.json); else the recommendation's scope (tmp/fleet-recommendation.json); else the one
-#           local `epic/*` branch. Several such branches, or none, is ASK=epic (exit 3) with the candidates listed.
-#   branch  --branch; else the recommendation's or marker's when its scope is this epic; else `epic/<id-lowercased>`,
-#           which must exist locally.
-#   base    --base; else the recommendation's or marker's when its scope is this epic; else `start.wt-source-branch`;
+#   epic    the argument; else the checkout's branch when it is `epic/<id>`; else the one epic a running fleet's marker
+#           names (tmp/fleet-deadline-<slug>.json — several fleets run side by side, lib/fleet-markers.sh); else the one
+#           epic a recommendation names (tmp/fleet-recommendation-<slug>.json); else the one local `epic/*` branch.
+#           Several candidates at any step, or none at the end, is ASK=epic (exit 3) with the candidates listed.
+#   branch  --branch; else the epic's recommendation's or marker's (its live marker, else the newest archived run);
+#           else `epic/<id-lowercased>`, which must exist locally.
+#   base    --base; else the epic's recommendation's or marker's; else `start.wt-source-branch`;
 #           else the checkout's current branch — unless that is the integration branch itself, which is ASK=base.
 #   roster  every member of the live graph (epic-graph.sh: the epic's descendants and their blockers, terminal
 #           included) except the root, nested `epic` containers, and Canceled/Duplicate members, split by whether a
@@ -48,8 +49,7 @@ done
 
 main_checkout=$(git worktree list --porcelain 2>/dev/null | awk '/^worktree /{print substr($0,10); exit}')
 [ -n "$main_checkout" ] || { echo "ERROR: not inside a git repository" >&2; exit 1; }
-rec="$main_checkout/tmp/fleet-recommendation.json"
-marker="$main_checkout/tmp/fleet-deadline.json"
+. "$script_dir/../lib/fleet-markers.sh"
 checkout_branch=$(git -C "$main_checkout" branch --show-current 2>/dev/null || true)
 
 upper() { printf '%s' "$1" | tr '[:lower:]' '[:upper:]'; }
@@ -57,6 +57,14 @@ lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 is_id() { [[ "$1" =~ ^[A-Z0-9]+-[0-9]+$ ]]; }
 json_field() { # json_field <file> <jq-path> — empty when the file is missing or the field null
   [ -f "$1" ] && jq -r "$2 // empty" "$1" 2>/dev/null || true
+}
+scopes_of() { # <file>... → the distinct epics the files name, uppercased, one per line; always exits 0 (set -e)
+  local f
+  for f in "$@"; do if [ -f "$f" ]; then upper "$(json_field "$f" '.scope')"; echo; fi; done | awk 'NF' | sort -u
+  return 0
+}
+ask_epic() { # <candidates, one per line> <reason>
+  echo "ASK=epic"; echo "CANDIDATES=$(printf '%s\n' "$1" | paste -sd, -)"; echo "$2" >&2; exit 3
 }
 
 # ---- epic ----
@@ -67,9 +75,16 @@ if [ -n "$epic_arg" ]; then
 elif [[ "$checkout_branch" =~ ^epic/([a-zA-Z0-9]+-[0-9]+)$ ]]; then
   epic=$(upper "${BASH_REMATCH[1]}"); epic_source="branch"
 else
-  marker_scope=$(json_field "$marker" '.scope'); rec_scope=$(json_field "$rec" '.scope')
-  if [ -n "$marker_scope" ]; then epic=$(upper "$marker_scope"); epic_source="marker"
-  elif [ -n "$rec_scope" ]; then epic=$(upper "$rec_scope"); epic_source="recommendation"
+  live_markers=()
+  while IFS= read -r f; do [ -n "$f" ] && live_markers+=("$f"); done < <(fleet_live_markers "$main_checkout")
+  marker_scopes=$(scopes_of ${live_markers[@]+"${live_markers[@]}"})
+  rec_scopes=$(scopes_of "$main_checkout"/tmp/fleet-recommendation-*.json)
+  n_m=$(printf '%s\n' "$marker_scopes" | awk 'NF' | wc -l | tr -d ' ')
+  n_r=$(printf '%s\n' "$rec_scopes" | awk 'NF' | wc -l | tr -d ' ')
+  if [ "$n_m" = 1 ]; then epic="$marker_scopes"; epic_source="marker"
+  elif [ "$n_m" -gt 1 ]; then ask_epic "$marker_scopes" "Several running fleets name an epic; name the one."
+  elif [ "$n_r" = 1 ]; then epic="$rec_scopes"; epic_source="recommendation"
+  elif [ "$n_r" -gt 1 ]; then ask_epic "$rec_scopes" "Several recommendations name an epic; name the one."
   else
     candidates=$(git -C "$main_checkout" for-each-ref --format='%(refname:short)' 'refs/heads/epic/' 2>/dev/null | paste -sd, - || true)
     case "$candidates" in
@@ -79,10 +94,16 @@ else
     esac
   fi
 fi
+slug=$(fleet_slug "$epic")
+rec=$(fleet_rec_path "$main_checkout" "$slug")
+marker=$(fleet_marker_path "$main_checkout" "$slug")
 
-# ---- branch and base: a recorded pair is taken only when it was recorded for THIS epic ----
+# ---- branch and base: a recorded pair is taken only when it was recorded for THIS epic — its recommendation, its live
+# marker, then its archived runs newest first (an ended fleet's PR is opened after a later launch displaced its marker) ----
 rec_branch=""; rec_base=""; rec_kind=""
-for f in "$rec" "$marker"; do
+recorded=("$rec" "$marker")
+while IFS= read -r f; do [ -n "$f" ] && recorded+=("$f"); done < <(ls -1r "$main_checkout"/tmp/fleet-deadline-"$slug".*.json 2>/dev/null)
+for f in "${recorded[@]}"; do
   [ -f "$f" ] || continue
   if [ "$(upper "$(json_field "$f" '.scope')")" = "$epic" ]; then
     rec_branch=$(json_field "$f" '.branch'); rec_base=$(json_field "$f" '.base')

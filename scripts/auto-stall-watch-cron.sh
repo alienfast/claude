@@ -61,7 +61,8 @@ fi
   echo
 } >> "$LOG" 2>&1
 
-# BLINDNESS CANARY: an ACTIVE fleet (a fleet-deadline.json whose deadline is still ahead) with ZERO
+# BLINDNESS CANARY: an ACTIVE fleet (a live fleet marker tmp/fleet-deadline-<slug>.json whose deadline is still
+# ahead — lib/fleet-markers.sh; an archived run's fleet-deadline-<slug>.<epoch>.json is skipped) with ZERO
 # in-scope sessions for 3 consecutive ticks is the watcher-is-blind signature — the exact state the
 # 2026-08-17 schema drift produced overnight (deadline in the future, three live /auto sessions, 371
 # ticks of "0 flagged"). The future-deadline test is the PRIMARY condition: auto-state files persist
@@ -71,9 +72,10 @@ now_epoch=$(date +%s)
 active_deadline=""
 while IFS= read -r df; do
   [ -n "$df" ] || continue
+  case "${df##*/}" in fleet-deadline-*.*.json) continue ;; esac
   dl=$(jq -r '.deadline_epoch // empty' "$df" 2>/dev/null)
   [[ "$dl" =~ ^[0-9]+$ ]] && [ "$dl" -gt "$now_epoch" ] && { active_deadline="$dl"; break; }
-done < <(find "$HOME/projects" -maxdepth 3 -name fleet-deadline.json -type f 2>/dev/null)
+done < <(find "$HOME/projects" -maxdepth 3 -name 'fleet-deadline-*.json' -type f 2>/dev/null)
 
 if [ -n "$active_deadline" ] && [ "$in_scope" = "0" ]; then
   prev=$(cat "$BLIND" 2>/dev/null || echo "0 0")

@@ -28,8 +28,9 @@ Usage:
   SCOPE line leads the output. Fails closed: a root that is not an epic exits 1 with the reason.
   The scope implies --backlog (keeper ruling 2026-10-23, as next-candidates.sh --root does): the
   epic's own Backlog members are picked once nothing Planned/Todo in the scope is pickable.
-  --sessions / --horizon-h default from tmp/fleet-recommendation.json (sessions / duration_h);
-  horizon falls back to 12. --hours-per-issue overrides the calibration from
+  --sessions / --horizon-h default from the fleet's own recommendation (sessions / duration_h):
+  tmp/fleet-recommendation-<root-lower>.json under --root, else tmp/fleet-recommendation-team.json
+  (one per fleet, lib/fleet-markers.sh); horizon falls back to 12. --hours-per-issue overrides the calibration from
   tmp/fleet-metrics-history.jsonl (mean session_hours/shipped over recent runs, rows above
   MAX_PLAUSIBLE_HOURS_PER_ISSUE ignored with a NOTE on stderr; default 2.0).
   --flat disables estimate-point weighting of per-issue duration. --fixture bypasses the Linear
@@ -389,7 +390,9 @@ def main():
     ap.add_argument("--horizon-h", type=float)
     ap.add_argument("--hours-per-issue", type=float)
     ap.add_argument("--flat", action="store_true")
-    ap.add_argument("--recommendation", default="tmp/fleet-recommendation.json")
+    ap.add_argument("--recommendation", default=None,
+                    help="the prep's recommendation; defaults to the fleet's own file — tmp/fleet-recommendation-<root-lower>.json "
+                         "under --root, else tmp/fleet-recommendation-team.json")
     ap.add_argument("--history", default="tmp/fleet-metrics-history.jsonl")
     ap.add_argument("--me")
     ap.add_argument("--fixture")
@@ -398,6 +401,9 @@ def main():
     args = ap.parse_args()
     if args.root:
         args.backlog = True  # the scope implies the fallback (docstring); the member cut keeps it to the epic's own Backlog
+    if args.recommendation is None:
+        # One recommendation per fleet (lib/fleet-markers.sh): the epic's own under --root, the team's otherwise.
+        args.recommendation = f"tmp/fleet-recommendation-{args.root.lower() if args.root else 'team'}.json"
 
     rec = {}
     try:
@@ -406,7 +412,8 @@ def main():
         pass
     n_sessions = args.sessions or rec.get("sessions")
     if not n_sessions:
-        print("ERROR: no --sessions and no usable tmp/fleet-recommendation.json — run /auto-prep or pass a count", file=sys.stderr)
+        prep = f"/epic-prep {args.root}" if args.root else "/auto-prep"
+        print(f"ERROR: no --sessions and no usable {args.recommendation} — run {prep} or pass a count", file=sys.stderr)
         return 1
     horizon = args.horizon_h or rec.get("duration_h") or 12.0
 

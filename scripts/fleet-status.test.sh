@@ -54,16 +54,22 @@ run_fs() {
   RC=$?
 }
 stamp() { python3 -c 'import time,sys; print(time.strftime("%Y%m%d%H%M.%S", time.localtime(int(sys.argv[1]))))' "$1"; }
+TM="$REPO/tmp/fleet-deadline-team.json"      # the team fleet's marker; an epic's is fleet-deadline-<slug>.json (lib/fleet-markers.sh)
 write_marker() { # write_marker <launch_epoch> [deadline_epoch] [stopped]
   jq -n --argjson le "$1" --argjson de "${2:-0}" --argjson st "${3:-false}" \
     '{deadline: "test-deadline", count: 3, launch_epoch: $le, stopped: $st}
-     + (if $de > 0 then {deadline_epoch: $de} else {} end)' > "$REPO/tmp/fleet-deadline.json"
+     + (if $de > 0 then {deadline_epoch: $de} else {} end)' > "$TM"
 }
 
 echo "== 1. usage"
 run_fs --bogus
 ck "unknown flag exits 1" "1" "$RC"
 ck_has "  usage line printed" "usage: fleet-status.sh" "$ERR"
+run_fs epic:XX-1 team
+ck "two fleet tokens exit 1" "1" "$RC"
+run_fs epic:XX-404 --no-runway
+ck "a token with no marker exits 1" "1" "$RC"
+ck_has "  names the missing marker" "no fleet marker for epic:XX-404" "$ERR"
 
 echo "== 2. bare repo — every empty-state line"
 run_fs --no-runway
@@ -116,7 +122,8 @@ ck_has "  failed row survives Linear-down" "- XX-4 — recorded failed (session 
 ck_has "  canceled row survives Linear-down" "- XX-5 — recorded canceled (session sess-a); Linear state unavailable" "$OUT"
 ck_has "  team inferred, stalled surfaced" '### Needs attention — `stalled`' "$OUT"
 ck_has "  stalled issue named" "**XX-9**" "$OUT"
-ck_lacks "  nothing hidden by scoping" "prior-run ledger" "$OUT"
+ck_lacks "  nothing hidden by scoping" "ledger(s) hidden" "$OUT"
+ck_has "  wind-down names the fleet" '`/fleet-stop team`' "$OUT"
 
 echo "== 4. passed deadline"
 write_marker $((NOW - 500)) $((NOW - 100))
@@ -143,7 +150,7 @@ touch -t "$(stamp "$T")" "$REPO/tmp/auto-state-tie.json"
 # deterministic regardless of how long the sections took.
 touch -t "$(stamp "$NOW")" "$REPO/tmp/auto-state-sess-a.json" "$REPO/tmp/auto-state-sess-b.json"
 run_fs --no-runway
-ck_has "  both prior-run ledgers hidden, with count" "_2 prior-run ledger(s) hidden" "$OUT"
+ck_has "  both prior-run ledgers hidden, with count" "_2 ledger(s) hidden" "$OUT"
 ck_lacks "  hidden ledger has no row" "| old |" "$OUT"
 # The tie (mtime == launch_epoch) is HIDDEN: launch_epoch is stamped at dispatch, so a ledger whose
 # last write lands in that same second was written by a session not yet dispatched — prior-run
@@ -155,7 +162,7 @@ echo "== 7. future launch_epoch — all ledgers prior-run"
 write_marker $((NOW + 1000)) $((NOW + 3600))
 run_fs --no-runway
 ck_has "  fleet-has-no-ledger wording" "_No ledger from this fleet yet" "$OUT"
-ck_has "  all four hidden" "_4 prior-run ledger(s) hidden" "$OUT"
+ck_has "  all four hidden" "_4 ledger(s) hidden" "$OUT"
 
 echo "== 8. linear-cli absent — joins degrade, never lie"
 write_marker $((NOW - 500)) $((NOW + 3600))
@@ -270,7 +277,7 @@ echo "== 14. a marker carrying fleet_sessions scopes by membership; single-run l
 # Every launch since 2026-08-29 records the set. sess-a is a member; sess-b (a loop ledger newer than
 # launch_epoch) is not — under the mtime scope it rowed as a fleet session, which is how a 3-session
 # fleet retro'd as 21. sess-z is a member with no ledger yet (preflight). c0ffee02 is a single run.
-jq -n --argjson le "$((NOW - 500))" '{count: 2, launch_epoch: $le, fleet_sessions: ["sess-a", "sess-z"]}' > "$REPO/tmp/fleet-deadline.json"
+jq -n --argjson le "$((NOW - 500))" '{count: 2, launch_epoch: $le, fleet_sessions: ["sess-a", "sess-z"]}' > "$TM"
 jq -n '{status: "active", mode: "single", shipped: ["XX-9"], canceled: [], failed: [], reviewBlocks: 0}' > "$REPO/tmp/auto-state-c0ffee02.json"
 write_agents '[{"id":"sess-a","cwd":"/x","kind":"background","sessionId":"sess-a-full","name":"n","state":"working"},
                {"id":"sess-z","cwd":"/x","kind":"background","sessionId":"sess-z-full","name":"n","state":"working"},
@@ -281,7 +288,7 @@ ck_has "  undated marker reads as no deadline, with the set size" "**Deadline:**
 ck_has "  member rowed"                       "| sess-a | ALIVE (working) |" "$OUT"
 ck_lacks "  non-member loop ledger not rowed" "| sess-b |" "$OUT"
 # old, tie and sess-b: every ledger outside the set, whatever its mtime.
-ck_has "  non-members counted as hidden"      "3 prior-run ledger(s) hidden" "$OUT"
+ck_has "  non-members counted as hidden"      "3 ledger(s) hidden" "$OUT"
 ck_lacks "  single-run ledger not rowed"      "| c0ffee02 |" "$OUT"
 ck_has "  single-run ledger disclosed"        "1 single-run ledger(s) not listed" "$OUT"
 ck_has "  member without a ledger rowed"      "| sess-z | ALIVE (working) | **no ledger** |" "$OUT"
@@ -345,23 +352,26 @@ case "\${1:-} \${2:-}" in
 esac
 EOF
 chmod +x "$STUB/linear-cli"
-jq -n --argjson le "$((NOW - 500))" '{count: 1, launch_epoch: $le, fleet_sessions: ["sess-a"], scope: "XX-100", members: ["XX-100","XX-1","XX-2","XX-3"], branch: "epic/xx-e", base: "main"}' > "$REPO/tmp/fleet-deadline.json"
+EM="$REPO/tmp/fleet-deadline-xx-100.json"
+rm -f "$TM"
+jq -n --argjson le "$((NOW - 500))" '{count: 1, launch_epoch: $le, fleet_sessions: ["sess-a"], scope: "XX-100", members: ["XX-100","XX-1","XX-2","XX-3"], branch: "epic/xx-e", base: "main"}' > "$EM"
 run_fs --no-runway
 ck "clean exit" "0" "$RC"
 ck_has "  scope line with the branch posture" '**Scope:** epic XX-100 — integration branch `epic/xx-e` (forked from `main`; ships as one PR onto it)' "$OUT"
+ck_has "  wind-down names the epic fleet" '`/fleet-stop epic:XX-100`' "$OUT"
 ck_has "  burn-down: shipped / remaining / in flight / added since prep" "**Members:** 4 shipped · 3 remaining (1 in flight: XX-3) · 3 added since prep: XX-10, XX-11 [Done], XX-13 [Canceled]" "$OUT"
 ck_has "  shipped members named with state" "shipped: XX-1 [Done], XX-11 [Done], XX-0 [Done], XX-13 [Canceled]" "$OUT"
 grep '^\*\*Members:\*\*' "$OUT" > "$ROOT/members.line"
 ck_lacks "  a member already terminal at prep is not added" "XX-0" "$ROOT/members.line"
 
 echo "== 17. a scoped marker without a snapshot, an unreadable epic, and no linear-cli"
-jq 'del(.members) | del(.branch) | del(.base)' "$REPO/tmp/fleet-deadline.json" > "$ROOT/m.tmp" && mv "$ROOT/m.tmp" "$REPO/tmp/fleet-deadline.json"
+jq 'del(.members) | del(.branch) | del(.base)' "$EM" > "$ROOT/m.tmp" && mv "$ROOT/m.tmp" "$EM"
 run_fs --no-runway
 ck "clean exit" "0" "$RC"
 ck_has "  scope line without a branch" "**Scope:** epic XX-100" "$OUT"
 ck_lacks "  no branch clause" "integration branch" "$OUT"
 ck_has "  added-since-prep declared unknown" "no prep snapshot in the marker, so added-since-prep is unknown" "$OUT"
-jq '.scope = "XX-404"' "$REPO/tmp/fleet-deadline.json" > "$ROOT/m.tmp" && mv "$ROOT/m.tmp" "$REPO/tmp/fleet-deadline.json"
+jq '.scope = "XX-404"' "$EM" > "$ROOT/m.tmp" && mv "$ROOT/m.tmp" "$EM"
 run_fs --no-runway
 ck "clean exit on an unreadable epic" "0" "$RC"
 ck_has "  burn-down failure disclosed, never a fabricated count" "_Member burn-down unavailable — \`epic-graph.sh XX-404\` failed" "$OUT"
@@ -373,8 +383,9 @@ ck_has "  burn-down skipped without linear-cli" "_Member burn-down skipped — l
 echo "== 18. failed rows read the issue's routing label and surface a preserved worktree"
 # Three `failed` ledger entries, three outward markings: a human-gated park (Planned, `human`) whose worktree still holds
 # the work, a genuine stall (In Progress, `stalled`) with no worktree, and an In Progress issue carrying neither label.
+rm -f "$EM"
 write_marker $((NOW - 500)) $((NOW + 7230))
-jq '.fleet_sessions = ["sess-p"]' "$REPO/tmp/fleet-deadline.json" > "$ROOT/m.tmp" && mv "$ROOT/m.tmp" "$REPO/tmp/fleet-deadline.json"
+jq '.fleet_sessions = ["sess-p"]' "$TM" > "$ROOT/m.tmp" && mv "$ROOT/m.tmp" "$TM"
 jq -n '{pid: 999999999, pidStart: "never", status: "active", shipped: [], canceled: [], failed: ["XX-4","XX-6","XX-7"], reviewBlocks: 3}' \
   > "$REPO/tmp/auto-state-sess-p.json"
 mkdir -p "$REPO/.claude/worktrees/xx-4"
@@ -424,7 +435,7 @@ ck_lacks "  no reading is not a THROTTLE" "Headroom: THROTTLE" "$OUT"
 # With a session set, each member is probed on its own history: a1's 95% throttles while the snapshot says 10, and a member with
 # no history (b2) reads the snapshot. One member's history is a reading, so the gate is not blind even without the snapshot.
 rl_snapshot 10
-jq '. + {fleet_sessions: ["a1a1a1a1", "b2b2b2b2"]}' "$REPO/tmp/fleet-deadline.json" > "$REPO/tmp/fd.tmp" && mv "$REPO/tmp/fd.tmp" "$REPO/tmp/fleet-deadline.json"
+jq '. + {fleet_sessions: ["a1a1a1a1", "b2b2b2b2"]}' "$TM" > "$REPO/tmp/fd.tmp" && mv "$REPO/tmp/fd.tmp" "$TM"
 rl_history a1a1a1a1-0000-4000-8000-000000000000 95
 run_fs --no-runway
 ck_has "  a member's own history throttles" "THROTTLE five_hour=95% used" "$OUT"
@@ -438,8 +449,8 @@ ck_lacks "  one member's history: not blind" "Headroom gate is blind" "$OUT"
 rm -rf "$FHOME/.claude/local/rate-limits"
 run_fs --no-runway
 ck_has "  no history, no snapshot: blind" "Headroom gate is blind" "$OUT"
-# A copy of the script beside no probe: the header says nothing about headroom.
-mkdir -p "$ROOT/noprobe"; cp "$SCRIPT" "$ROOT/noprobe/fleet-status.sh"
+# A copy of the script beside no probe (its marker library copied alongside): the header says nothing about headroom.
+mkdir -p "$ROOT/noprobe" "$ROOT/lib"; cp "$SCRIPT" "$ROOT/noprobe/fleet-status.sh"; cp "$(dirname "$SCRIPT")/../lib/fleet-markers.sh" "$ROOT/lib/"
 (cd "$REPO" && env HOME="$FHOME" PATH="$RUNPATH" bash "$ROOT/noprobe/fleet-status.sh" --no-runway > "$OUT" 2> "$ERR"); RC=$?
 ck "no probe: clean exit" "0" "$RC"
 ck_lacks "  no probe: silent" "Headroom" "$OUT"
@@ -453,7 +464,7 @@ echo "== 20. an object ledger entry (the real b2bb1003 ledger) is read as its .i
 FIXH="$(cd "$(dirname "$0")" && pwd)/fixtures/fleet-metrics-holds"
 rm -f "$REPO"/tmp/auto-state-*.json
 write_marker $((NOW - 500)) $((NOW + 7230))
-jq '.fleet_sessions = ["b2bb1003","mal00001","1cc250ad"]' "$REPO/tmp/fleet-deadline.json" > "$ROOT/m.tmp" && mv "$ROOT/m.tmp" "$REPO/tmp/fleet-deadline.json"
+jq '.fleet_sessions = ["b2bb1003","mal00001","1cc250ad"]' "$TM" > "$ROOT/m.tmp" && mv "$ROOT/m.tmp" "$TM"
 cp "$FIXH/auto-state-b2bb1003.json" "$FIXH/auto-state-1cc250ad.json" "$REPO/tmp/"
 jq '.shipped += [{"tag": "SHIPPED-MERGE"}, 42, null]
     | .canceled += [{"issue": "XX-80", "tag": "CANCELED"}] | .failed += [{"issue": "XX-81", "tag": "BLOCKED-ON-REVIEW"}]' "$FIXH/auto-state-b2bb1003.json" > "$REPO/tmp/auto-state-mal00001.json"
@@ -468,6 +479,41 @@ ck_has "  canceled and failed lists read .issue too" "| BF-2277, BF-1601, BF-253
 ck_has "  the malformed ledger's row survives" "| mal00001 | " "$OUT"
 ck_lacks "  schema-clean ledger not warned" "WARN: session 1cc250ad" "$OUT"
 ck_has "  the normalized id reaches the git cross-check" "- BF-2531 — ⚠️ recorded shipped but no commit found" "$OUT"
+
+echo "== 21. two fleets side by side: one section each, each scoped to its own sessions; a token reads one alone"
+# A team fleet (sess-t) and an epic fleet (sess-e, scope XX-100) run in the same checkout. Without a token both render,
+# each table rows only its own member and hides the other's ledger; the checkout-wide sections print once. The epic's
+# token renders it alone; an archived marker of a third fleet is never a section.
+rm -f "$REPO"/tmp/auto-state-*.json "$REPO"/tmp/fleet-deadline*.json
+jq -n --argjson le "$((NOW - 500))" --argjson de "$((NOW + 7230))" '{count: 1, launch_epoch: $le, deadline_epoch: $de, deadline: "t", fleet_sessions: ["sess-t"]}' > "$TM"
+jq -n --argjson le "$((NOW - 400))" '{count: 1, launch_epoch: $le, fleet_sessions: ["sess-e"], scope: "XX-100", members: ["XX-100","XX-2"], branch: "epic/xx-e", base: "main"}' > "$EM"
+jq -n --argjson le "$((NOW - 900))" '{count: 1, launch_epoch: $le, fleet_sessions: ["sess-old"], scope: "XX-7"}' > "$REPO/tmp/fleet-deadline-xx-7.1700000000.json"
+jq -n '{status: "active", shipped: ["XX-1"], canceled: [], failed: [], reviewBlocks: 0}' > "$REPO/tmp/auto-state-sess-t.json"
+jq -n '{status: "active", shipped: ["XX-2"], canceled: [], failed: [], reviewBlocks: 0}' > "$REPO/tmp/auto-state-sess-e.json"
+jq -n '{status: "drained", shipped: [], canceled: [], failed: [], reviewBlocks: 0}' > "$REPO/tmp/auto-state-sess-old.json"
+write_agents '[{"id":"sess-t","cwd":"/x","kind":"background","sessionId":"sess-t-full","name":"n","state":"working"},
+               {"id":"sess-e","cwd":"/x","kind":"background","sessionId":"sess-e-full","name":"n","state":"working"}]'
+run_fs --no-runway
+ck "clean exit" "0" "$RC"
+ck_has "  fleet count line"                   "_2 fleets in this checkout — one section each: team, epic:XX-100." "$OUT"
+ck_has "  team section"                       "### Fleet team" "$OUT"
+ck_has "  epic section"                       "### Fleet epic:XX-100" "$OUT"
+ck_lacks "  archived marker is not a section" "Fleet epic:XX-7" "$OUT"
+ck_has "  team member rowed"                  "| sess-t | ALIVE (working) |" "$OUT"
+ck_has "  epic member rowed"                  "| sess-e | ALIVE (working) |" "$OUT"
+ck "  each table hides the other two ledgers" "2" "$(grep -c '_2 ledger(s) hidden' "$OUT")"
+ck "  in-flight printed once"                 "1" "$(grep -c '^### In flight' "$OUT")"
+ck_has "  team deadline shown"                "2h00m remaining" "$OUT"
+ck_has "  epic scope shown"                   '**Scope:** epic XX-100' "$OUT"
+run_fs epic:xx-100 --no-runway
+ck "token exit" "0" "$RC"
+ck_lacks "  token: no fleet count line"       "fleets in this checkout" "$OUT"
+ck_lacks "  token: no team row"               "| sess-t |" "$OUT"
+ck_has "  token: epic member rowed"           "| sess-e | ALIVE (working) |" "$OUT"
+run_fs team --no-runway
+ck "team token exit" "0" "$RC"
+ck_has "  team token: team member rowed"      "| sess-t | ALIVE (working) |" "$OUT"
+ck_lacks "  team token: no epic row"          "| sess-e |" "$OUT"
 
 echo ""
 echo "$PASS passed / $FAIL failed"

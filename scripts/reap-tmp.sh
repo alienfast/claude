@@ -11,8 +11,10 @@
 # first and applies a per-lane rule:
 #
 #   never     kept whatever its age: keep/ (the user's hatch), fleet-metrics-history.jsonl, the retro inputs,
-#             fleet-deadline.json, fleet-recommendation.json, auto-state-<runKey>.json (expiry is
-#             /fleet-launch's, against the agents registry), triage-proposals/ and test-sweep-proposals/ (the next
+#             fleet-deadline-<slug>.json (one per fleet, live or an archived fleet-deadline-<slug>.<epoch>.json),
+#             fleet-recommendation-<slug>.json, auto-state-<runKey>.json (expiry is /fleet-launch's: a fleet's marker
+#             and ledgers go once /fleet-retro has measured it — lib/fleet-markers.sh; a fleet never measured is
+#             flagged here once it has sat UNKNOWN_D days), triage-proposals/ and test-sweep-proposals/ (the next
 #             scan's skip check reads applied/), test-sweep-rules.md (a project's hand-written governing-rule
 #             citations), and any registered git worktree parked under tmp/ (/reap-worktrees owns it).
 #   state     deleted only when the owner's own state says consumed, and never inside SCRATCH_D days:
@@ -37,8 +39,8 @@
 #
 # Guards that outrank every lane:
 #   • FRESH: nothing modified within FRESH_H hours is touched — another session may be mid-write. While a
-#     fleet is running (tmp/fleet-deadline.json not stopped, deadline in the future or launched within
-#     FLEET_MAX_H hours) the guard widens to everything written since the launch.
+#     fleet is running (a live tmp/fleet-deadline-<slug>.json not stopped, deadline in the future or launched
+#     within FLEET_MAX_H hours) the guard widens to everything written since the earliest such launch.
 #   • OPEN: a file some process holds open (lsof) is kept; a detached job's log is being written however
 #     old its mtime looks. Without lsof the guard stands down for the pass, with one WARN.
 #   • SYMLINK: never followed, never removed.
@@ -64,6 +66,8 @@ set -uo pipefail
 
 SELF="$HOME/.claude/scripts/reap-tmp.sh"
 LOCK_HELPER="$HOME/.claude/scripts/with-repo-lock.py"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/../lib/fleet-markers.sh"
 WT_REGISTRY="$HOME/.claude/worktree-repos.txt"
 MQ_REGISTRY="$HOME/.claude/merge-queue-repos.txt"
 
@@ -121,8 +125,8 @@ classify() {
     fleet-metrics-history.jsonl)       echo "never metrics-history"; return ;;
     fleet-linear-window.json|fleet-shipped-issues.json)
                                        echo "never retro-inputs"; return ;;
-    fleet-deadline.json)               echo "never fleet-marker"; return ;;
-    fleet-recommendation.json)         echo "never fleet-recommendation"; return ;;
+    fleet-deadline-*.json)             echo "never fleet-marker"; return ;;
+    fleet-recommendation-*.json)       echo "never fleet-recommendation"; return ;;
     auto-state-*.json)                 echo "never auto-ledger"; return ;;
     auto-state.json)                   echo "scratch legacy-auto-state"; return ;;
     triage-proposals)                  echo "never triage-proposals"; return ;;
@@ -183,47 +187,51 @@ default_branch_for() {
   echo main
 }
 
-# Globals the walker fills once per root.
-NOW=0; FRESH_CUTOFF=0; FLEET_RUNNING=0; FLEET_LAUNCH=0; FLEET_RETROD=1; IS_GIT=0; DEFAULT_BRANCH=main
+# Globals the walker fills once per root. FLEET_LAUNCH is the earliest launch among the RUNNING fleets (the fresh-guard
+# widening); UNRETROD_LAUNCHES the launch epochs of every fleet, running or ended, that /fleet-retro has not measured
+# (the verdict hold).
+NOW=0; FRESH_CUTOFF=0; FLEET_RUNNING=0; FLEET_LAUNCH=0; UNRETROD_LAUNCHES=""; IS_GIT=0; DEFAULT_BRANCH=main
 OPEN_PATHS=""; WT_PATHS=""; BRANCHES=""; REAL_TMP=""
 LSOF_WARNED=0
 
+marker_launch() { # <marker> → launch_epoch, else the file's mtime
+  local le
+  le=$(jq -r '.launch_epoch // empty' "$1" 2>/dev/null)
+  case "$le" in ''|*[!0-9]*) mtime_of "$1" ;; *) echo "$le" ;; esac
+}
+# <marker> → 0 while the fleet still picks: a live marker (no launch-epoch suffix), not stopped, its deadline ahead or —
+# undated — launched within FLEET_MAX_H hours (the lib's fleet_marker_running has no age window; a marker nobody stopped
+# or dated would otherwise read as running forever).
+marker_running() {
+  local stopped dl
+  fleet_marker_archived "$1" && return 1
+  stopped=$(jq -r '.stopped // false' "$1" 2>/dev/null)
+  [ "$stopped" != true ] || return 1
+  dl=$(jq -r '.deadline_epoch // empty' "$1" 2>/dev/null)
+  if [ -n "$dl" ]; then [ "$dl" -gt "$NOW" ] 2>/dev/null; return; fi
+  [ "$(marker_launch "$1")" -gt $((NOW - FLEET_MAX_H * 3600)) ]
+}
+
 load_root_state() {
-  local root="$1" tmp="$2" f stopped dl sessions hist_sessions s h
+  local root="$1" tmp="$2" f launch
   NOW=$(date +%s)
   REAL_TMP=$(cd "$tmp" 2>/dev/null && pwd -P); [ -n "$REAL_TMP" ] || REAL_TMP="$tmp"
   FRESH_CUTOFF=$((NOW - FRESH_H * 3600))
-  FLEET_RUNNING=0; FLEET_LAUNCH=0; FLEET_RETROD=1
-  f="$tmp/fleet-deadline.json"
-  if [ -f "$f" ] && have_jq; then
-    stopped=$(jq -r '.stopped // false' "$f" 2>/dev/null)
-    dl=$(jq -r '.deadline_epoch // empty' "$f" 2>/dev/null)
-    FLEET_LAUNCH=$(jq -r '.launch_epoch // empty' "$f" 2>/dev/null)
-    case "$FLEET_LAUNCH" in ''|*[!0-9]*) FLEET_LAUNCH=$(mtime_of "$f") ;; esac
-    if [ "$stopped" != true ]; then
-      if [ -n "$dl" ] && [ "$dl" -gt "$NOW" ] 2>/dev/null; then FLEET_RUNNING=1
-      elif [ -z "$dl" ] && [ "$FLEET_LAUNCH" -gt $((NOW - FLEET_MAX_H * 3600)) ]; then FLEET_RUNNING=1
-      fi
+  FLEET_RUNNING=0; FLEET_LAUNCH=0; UNRETROD_LAUNCHES=""
+  # One marker per fleet, live or archived (lib/fleet-markers.sh); every one is read.
+  for f in "$tmp"/fleet-deadline-*.json; do
+    [ -f "$f" ] || continue
+    if have_jq; then
+      launch=$(marker_launch "$f")
+      fleet_marker_retrod "$f" "$tmp/fleet-metrics-history.jsonl" || UNRETROD_LAUNCHES="$UNRETROD_LAUNCHES $launch"
+      marker_running "$f" || continue
+    else
+      launch=$(mtime_of "$f"); UNRETROD_LAUNCHES="$UNRETROD_LAUNCHES $launch"   # no jq: fail closed, every marker runs
     fi
-    [ "$FLEET_RUNNING" = 1 ] && [ "$FLEET_LAUNCH" -lt "$FRESH_CUTOFF" ] && FRESH_CUTOFF=$FLEET_LAUNCH
-    # Retro'd iff some history row's session_set shares a session with the marker's fleet_sessions.
-    # Ids may be recorded as prefixes on either side, so match by prefix in both directions.
-    FLEET_RETROD=0
-    sessions=$(jq -r '.fleet_sessions[]? // empty' "$f" 2>/dev/null)
-    if [ -z "$sessions" ]; then FLEET_RETROD=1   # nothing to scope by: no window to protect
-    elif [ -f "$tmp/fleet-metrics-history.jsonl" ]; then
-      hist_sessions=$(jq -r '.session_set[]? // empty' "$tmp/fleet-metrics-history.jsonl" 2>/dev/null)
-      for s in $sessions; do
-        for h in $hist_sessions; do
-          case "$s" in "$h"*) FLEET_RETROD=1 ;; esac
-          case "$h" in "$s"*) FLEET_RETROD=1 ;; esac
-        done
-      done
-    fi
-  elif [ -f "$f" ]; then
-    FLEET_RUNNING=1; FLEET_LAUNCH=$(mtime_of "$f"); FLEET_RETROD=0   # no jq: fail closed
-    [ "$FLEET_LAUNCH" -lt "$FRESH_CUTOFF" ] && FRESH_CUTOFF=$FLEET_LAUNCH
-  fi
+    FLEET_RUNNING=1
+    if [ "$FLEET_LAUNCH" = 0 ] || [ "$launch" -lt "$FLEET_LAUNCH" ]; then FLEET_LAUNCH=$launch; fi
+  done
+  [ "$FLEET_RUNNING" = 1 ] && [ "$FLEET_LAUNCH" -lt "$FRESH_CUTOFF" ] && FRESH_CUTOFF=$FLEET_LAUNCH
 
   OPEN_PATHS=""
   if command -v lsof >/dev/null 2>&1; then
@@ -274,9 +282,12 @@ verdict_state() {
   local root="$1" rel="$2" mtime="$3" issue b found=0 unmerged=""
   issue="${rel#quality-review-verdict-}"; issue="${issue%.md}"
   [ "$IS_GIT" = 1 ] || { echo "KEEP not a git repo — cannot tell whether $issue is consumed"; return; }
-  if [ "$FLEET_LAUNCH" -gt 0 ] && [ "$mtime" -ge "$FLEET_LAUNCH" ] && [ "$FLEET_RETROD" = 0 ]; then
-    echo "KEEP written during the fleet launched $(fmt_date "$FLEET_LAUNCH"), not yet measured by /fleet-retro"; return
-  fi
+  local l
+  for l in $UNRETROD_LAUNCHES; do
+    if [ "$mtime" -ge "$l" ]; then
+      echo "KEEP written during the fleet launched $(fmt_date "$l"), not yet measured by /fleet-retro"; return
+    fi
+  done
   while IFS= read -r b; do
     [ -n "$b" ] || continue
     case "$b" in "$issue"|"$issue"-*|*/"$issue"|*/"$issue"-*) ;; *) continue ;; esac
@@ -324,14 +335,18 @@ evaluate_entry() {
   case "$lane" in
     never)
       case "$rule" in
-        fleet-recommendation)
-          if have_jq && [ "$(jq -r '.scope // empty' "$abs" 2>/dev/null)" != "" ] && [ "$mtime" -lt $((NOW - 86400)) ]; then
-            printf 'FLAG\t%s\t%s\n' "$rel" "carries scope $(jq -r .scope "$abs") and is ${age_d}d old — a bare /fleet-launch would relaunch that epic; re-run /auto-prep or /epic-prep to refresh"
-          fi ;;
         fleet-marker)
-          if [ "$FLEET_RUNNING" = 0 ] && have_jq && [ "$(jq -r '.stopped // false' "$abs" 2>/dev/null)" != true ] \
-             && [ -z "$(jq -r '.deadline_epoch // empty' "$abs" 2>/dev/null)" ]; then
-            printf 'FLAG\t%s\t%s\n' "$rel" "no deadline, never stopped, launched $(fmt_date "$FLEET_LAUNCH") — a stale marker holds the git-permissions gate up; rm it or re-run /fleet-launch"
+          if have_jq; then
+            # A live, undated, never-stopped marker past the fleet horizon holds the git-permissions gate up forever.
+            if ! fleet_marker_archived "$abs" && ! marker_running "$abs" && [ "$(jq -r '.stopped // false' "$abs" 2>/dev/null)" != true ] \
+               && [ -z "$(jq -r '.deadline_epoch // empty' "$abs" 2>/dev/null)" ]; then
+              printf 'FLAG\t%s\t%s\n' "$rel" "no deadline, never stopped, launched $(fmt_date "$(marker_launch "$abs")") — a stale marker holds the git-permissions gate up; rm it or re-run /fleet-launch"
+            fi
+            # An ended fleet nobody measured keeps its marker and ledgers until a retro — or until the operator decides.
+            if ! marker_running "$abs" && ! fleet_marker_retrod "$abs" "$tmp/fleet-metrics-history.jsonl" \
+               && [ "$(marker_launch "$abs")" -le $((NOW - UNKNOWN_D * 86400)) ]; then
+              printf 'FLAG\t%s\t%s\n' "$rel" "ended, launched $(fmt_date "$(marker_launch "$abs")") and never measured — fleet-metrics.py --fleet $(fleet_marker_stem "$abs" | sed 's/\./@/') (/fleet-retro) measures it, or rm it with the auto-state ledgers it names"
+            fi
           fi ;;
       esac
       printf 'KEEP\t%s\t%s\n' "$rel" "$rule"; return ;;

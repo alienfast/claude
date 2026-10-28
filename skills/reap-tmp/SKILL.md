@@ -20,15 +20,16 @@ First match wins; the manifest is the `classify` function in the script.
 
 - **never** — kept whatever its age: `keep/` (the operator's hatch — move a file there to keep it),
   `fleet-metrics-history.jsonl`, `fleet-linear-window.json` and `fleet-shipped-issues.json` (retro inputs),
-  `fleet-deadline.json`, `fleet-recommendation.json`, `auto-state-<runKey>.json` (ledger expiry is
-  `/fleet-launch`'s, against the agents registry), `triage-proposals/` and `test-sweep-proposals/` (the next
+  `fleet-deadline-<slug>.json` (one marker per fleet, live or an archived `fleet-deadline-<slug>.<epoch>.json`),
+  `fleet-recommendation-<slug>.json`, `auto-state-<runKey>.json` (expiry is `/fleet-launch`'s: a fleet's marker and
+  ledgers go once `/fleet-retro` has measured it), `triage-proposals/` and `test-sweep-proposals/` (the next
   scan's skip check reads `applied/`), `test-sweep-rules.md` (a project's hand-written governing-rule
   citations for `/test-sweep`), and any registered git worktree parked under `tmp/` (`/reap-worktrees` owns it).
 - **state** — deleted only when the owner's own state says consumed, and never inside 7 days:
   - `quality-review-verdict-<issue>.md`: every local branch of that issue (`<user>/<issue>-…`) is merged into
     the default branch, or none exists; and the file was not written during a fleet window that
-    `/fleet-retro` has not measured yet (`fleet_sessions` in the deadline marker ∩ a history row's
-    `session_set` is empty). `quality-review-verdict-no-issue.md` is plain scratch.
+    `/fleet-retro` has not measured yet (`fleet_sessions` in any fleet's marker, running or ended, ∩ a history
+    row's `session_set` is empty). `quality-review-verdict-no-issue.md` is plain scratch.
   - `fleet-sequence*.json` (+ its `.log`/`.pid`): not `running` under a live runner pid, and its
     integration branch is gone — resume needs the branch.
 - **handoff** (30 days) — the scan-time inputs and reports the interactive apply sessions read later: the triage
@@ -50,8 +51,8 @@ First match wins; the manifest is the `classify` function in the script.
 ## Guards that outrank every lane
 
 - **Fresh**: nothing modified in the last 24h is touched — another session may be mid-write. While a fleet
-  is running (`fleet-deadline.json` not stopped, deadline in the future or launched within 48h) the guard
-  widens to everything written since the launch.
+  is running (a live `fleet-deadline-<slug>.json` not stopped, deadline in the future or launched within 48h)
+  the guard widens to everything written since the earliest such launch.
 - **Open**: a file some process holds open (`lsof`) is kept — a detached job's log is being written however
   old its mtime looks. Without `lsof` the guard stands down for the pass, with one `WARN`.
 - **Symlink**: never followed, never removed. **`tmp/` itself** is never removed, and `rm -rf` is issued
@@ -59,10 +60,11 @@ First match wins; the manifest is the `classify` function in the script.
 - **Lock**: `reap` serializes per repo on the same common-git-dir lock `/finish merge` and
   `/reap-worktrees` take, so a sweep never runs while a merge is landing.
 
-Two `FLAG` lines call out files that are never deleted but hold a gate up when stale: a
-`fleet-recommendation.json` carrying an epic `scope` and older than a day (a bare `/fleet-launch` would
-relaunch that epic — re-run `/auto-prep` or `/epic-prep`), and a `fleet-deadline.json` with no deadline, never
-stopped, past the fleet horizon (it keeps the git-permissions gate up — `rm` it or re-run `/fleet-launch`).
+Two `FLAG` lines call out fleet markers that are never deleted but need a human: a live `fleet-deadline-<slug>.json`
+with no deadline, never stopped, past the fleet horizon (it keeps the git-permissions gate up — `rm` it or re-run
+`/fleet-launch`), and an ended fleet — stopped, past its deadline, or an archived run — that no history row names and
+that has sat 30 days (`fleet-metrics.py --fleet <slug>[@<epoch>]` through `/fleet-retro` measures it, after which the
+next launch expires it; or `rm` it with the ledgers it names).
 
 ## Usage
 
