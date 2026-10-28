@@ -142,7 +142,8 @@
       "mcp__mui",
       "Bash(~/.claude/scripts/wait-idle.sh:*)",
       "Bash(~/.claude/skills/pr-claude/scripts/pr-claude.sh:*)",
-      "ClaudeInChromeDomain(linear.app)"
+      "ClaudeInChromeDomain(linear.app)",
+      "ClaudeInChromeDomain(riskos.sandbox.socure.com)"
     ],
     "deny": [],
     "ask": [],
@@ -151,7 +152,6 @@
       "/private/tmp"
     ]
   },
-  "model": "opus",
   "hooks": {
     "PreToolUse": [
       {
