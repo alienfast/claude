@@ -232,13 +232,21 @@ Launch checklist for the report:
   blockers regardless of the quiet window.
 - The decisions (Step 2 flags, `needs decision` issues) that would refill the pool once made.
 - **What will hold the Planned gate once the pickable Planned work ships** — the `PLANNED-HOLD` note's *need the keeper*
-  entries. Each one left in the column idles the whole fleet at that point (it will not spend on Backlog around it).
-  Decide, `/spec`, or move it out of Planned before launch — or state that the fleet is expected to idle after N issues
-  (an epic fleet ends itself on `EPIC-DRAINED`, so `/epic-prep` says "expected to end after N").
+  entries. Each one left in the column idles the whole fleet at that point (without `backlog` it will not spend on
+  Backlog around it). Decide, `/spec`, or move it out of Planned before launch — or state that the fleet is expected to
+  idle after N issues (an epic fleet ends itself on `EPIC-DRAINED`, so `/epic-prep` says "expected to end after N").
 - **A fleet mints its own gate holders, so that projection is an upper bound.** The filing recipe
   (`standards/linear-filing.md`) routes a priority 1–2 or `security` deferred filing into Planned at birth, and `/auto`'s
   park writes `-s Planned` when it declines or abandons a pick, so a column drained at launch can re-close hours in.
-  Report "idles after N issues *or sooner*"; a security sweep or hardening batch erodes its own runway.
+  Report "idles after N issues *or sooner*"; a security sweep or hardening batch erodes its own runway. It mints Backlog
+  candidates too: every other certified filing lands in Backlog, where a fleet launched without `backlog` reaches it
+  only through its filer's hot handoff, an ancestor still in Planned lending it the stage, or the column draining, so
+  "Backlog is empty" at launch does not mean a held fleet has nothing to work. When the report expects the fleet to idle
+  well before its deadline, name the opt-in without recommending it: `/fleet-launch … backlog` would let held sessions
+  work those filings, the human's call for a day with spare usage (`standards/linear-workflow.md` § Stage Priorities;
+  `/fleet-forecast --backlog` projects it). The 2026-10-27 fleet: two certified `bug` filings made about an hour in
+  waited behind a column nine keeper-only issues held until the deadline, while its three sessions sat idle 7.8–10h
+  each after their last ship.
 - Remaining `FLEET-BLOCKED` rows — each a candidate the fleet will NOT reach this run.
 
 ## Report

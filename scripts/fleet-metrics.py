@@ -153,6 +153,9 @@ TERMINAL_TAG = re.compile(r"^\s*(NO-CANDIDATES|AUTO-HALTED):", re.M)
 HOLD_TICK = re.compile(r"^[ \t]*AUTO-CONTINUE: no pick\b[^\n]*?(PLANNED-HOLD|BLOCKED-HOLD)", re.M)
 # next-candidates.sh's clause under --backlog-fallback when Backlog is as empty as the gated column: the pool ran out.
 BACKLOG_EMPTY_TICK = re.compile(r"backlog fallback is on but Backlog has nothing pickable either")
+# The count every PLANNED-HOLD note states (since the 2026-08-28 stage gate), zero included. /auto sometimes abbreviates the note
+# and drops it, so an absent count proves nothing; a stated one does, either way.
+BACKLOG_WAITING = re.compile(r"(\d+) Backlog candidate\(s\) wait behind the gate")
 # Every other way an iteration ends: a pick or ship (`AUTO-CONTINUE: <ID> …`, or the bare tag line — a session can end on its
 # closing prose with no AUTO-CONTINUE line, as 1cc250ad did after BF-2131), a halt, a drain. These close a hold interval.
 OUTCOME_LINE = re.compile(
@@ -598,7 +601,9 @@ def scan_transcript(path, agg, agent_type="main", description=""):
                 if t and emitted and agent_type == "main" and not r.get("isSidechain"):
                     holds = HOLD_TICK.findall(body)
                     if holds:
-                        agg["hold_ticks"].append((t, holds[-1], bool(BACKLOG_EMPTY_TICK.search(body))))
+                        waiting = BACKLOG_WAITING.findall(body)
+                        agg["hold_ticks"].append((t, holds[-1], (bool(BACKLOG_EMPTY_TICK.search(body)),
+                                                                 int(waiting[-1]) if waiting else None)))
                     elif OUTCOME_LINE.search(body):
                         agg["outcome_times"].append(t)
                 for kind in LIMIT_HIT.findall(body):
@@ -771,9 +776,15 @@ def hold_gauge(agg, deadline):
     and closes where the next iteration begins after the run's last tick, once any other iteration-ending outcome line
     follows; an interval nothing closes runs to the session's last activity. Every interval is clipped at the fleet deadline,
     past which a quiet session is wound down rather than holding. Returns hours, tick count, ticks per kind, how many ticks said
-    Backlog had nothing pickable either (the `backlog` fallback's own clause — the pool ran out), and the intervals."""
-    ticks = sorted(agg["hold_ticks"])
-    events = sorted([(t, 0, None) for t in agg["outcome_times"]] + [(t, 1, (kind, empty)) for t, kind, empty in ticks])
+    Backlog had nothing pickable either (the `backlog` fallback's own clause), whether the pool ran out, the most Backlog
+    candidates any PLANNED-HOLD tick said were waiting behind the gate, and the intervals. The pool ran out when every PLANNED-HOLD
+    tick proved Backlog dry — that clause, or a stated count of zero, which a session launched without `backlog` prints in its
+    place. A tick whose note was abbreviated states neither and proves nothing. A BLOCKED-HOLD tick is a by-design wait on a
+    sibling's in-flight issue and prints neither, so it neither proves nor contradicts the drain (2026-10-26: one such tick per
+    session on an empty pool read as a mixed launch twice)."""
+    ticks = sorted(agg["hold_ticks"], key=lambda tick: tick[0])
+    events = sorted([(t, 0, None) for t in agg["outcome_times"]]
+                    + [(t, 1, (kind, empty, waiting)) for t, kind, (empty, waiting) in ticks], key=lambda e: e[:2])
     # The firing, not `turn_openers`: mods/loop-boundary injects a user record right after every iteration ends, which would close
     # an interval seconds after its last tick instead of where the next iteration begins.
     openers = sorted(agg["loop_starts"])
@@ -797,6 +808,7 @@ def hold_gauge(agg, deadline):
         cur[1] = max(agg["last"] or cur[2][-1][0], cur[2][-1][0])
         spans.append(cur)
     intervals, kinds, n_ticks, n_empty, seconds = [], Counter(), 0, 0, 0.0
+    planned_dry, waiting_max = 0, None
     for start, end, span_ticks in spans:
         if deadline is not None:
             end = min(end, deadline)
@@ -804,12 +816,18 @@ def hold_gauge(agg, deadline):
             continue
         intervals.append((start, end))
         seconds += (end - start).total_seconds()
-        for tick_t, kind, empty in span_ticks:
+        for tick_t, kind, empty, waiting in span_ticks:
             if tick_t <= end:
                 n_ticks += 1
                 n_empty += empty
                 kinds[kind] += 1
+                if kind == "PLANNED-HOLD":
+                    planned_dry += empty or waiting == 0
+                    if waiting is not None:
+                        waiting_max = max(waiting_max or 0, waiting)
+    planned = kinds["PLANNED-HOLD"]
     return {"hours": seconds / 3600, "ticks": n_ticks, "backlog_empty_ticks": n_empty, "kinds": dict(kinds),
+            "pool_ran_out": planned > 0 and planned_dry == planned, "backlog_waiting_max": waiting_max,
             "intervals": intervals}
 
 
@@ -1597,9 +1615,29 @@ def linear_issue_index(paths):
     return idx, read
 
 
-def record_history(checkout, headline, record, allow_overlap=False):
-    """Record `headline` in tmp/fleet-metrics-history.jsonl; return (rows, overlaps) — the full history, and the
-    rows of a DIFFERENT session set that share a session with this one.
+def kept_row_reason(stored, headline, launch_epoch):
+    """Why a re-run must not replace `stored`, its own set's trend row, or None. A row written before the `reviews` count
+    existed carries review figures but no count, so a non-null findings_per_review stands for at least one review."""
+    try:
+        at = datetime.strptime(stored.get("recorded_at") or "", "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        at = None
+    if isinstance(launch_epoch, (int, float)) and at is not None and at.timestamp() < launch_epoch:
+        return ("it was recorded before the current launch, and this run read that fleet through the newer launch's "
+                "verdict filter and deadline")
+    held = stored.get("reviews")
+    if held is None:
+        held = 1 if stored.get("findings_per_review") is not None else 0
+    found = headline.get("reviews") or 0
+    if found < held:
+        return f"this run found {found} review verdict(s) where the stored row measured {held}"
+    return None
+
+
+def record_history(checkout, headline, record, allow_overlap=False, launch_epoch=None, rerecord=False):
+    """Record `headline` in tmp/fleet-metrics-history.jsonl; return (rows, overlaps, kept) — the full history, the
+    rows of a DIFFERENT session set that share a session with this one, and (stored row, reason) when a replace of
+    this set's own row was refused.
 
     The whole point of this script's fixed schema is that runs can be diffed — and until this ledger
     existed the diff step was manual, so it never happened: the 2026-08-14 cost-per-issue regression
@@ -1613,7 +1651,11 @@ def record_history(checkout, headline, record, allow_overlap=False):
     sessions into the next fleet's set, so their earlier hours and ships are already in the earlier fleet's row.
     2026-10-11: two carried sessions (5 ships, recorded in a 48.8h/8-ship row) were re-counted inside a
     96.6h/37-ship set. `record=False` (the --all sweep: an all-time pool is not a fleet, and one row of it
-    would dwarf the trend) still returns the stored history so the trend renders, and reports no overlap."""
+    would dwarf the trend; --no-record) still returns the stored history so the trend renders, and reports no overlap.
+    The identical-set replace is refused, keeping the stored row, when kept_row_reason names a reason (`rerecord`
+    forces it): parse_verdicts drops every verdict older than the CURRENT launch and /reap-tmp ages verdict files
+    out, so re-running an older fleet rebuilds its row without its reviews. 2026-10-28: re-running the 2026-10-19
+    fleet nulled four review columns and zeroed filed_per_shipped."""
     path = checkout / "tmp" / "fleet-metrics-history.jsonl"
     rows = []
     try:
@@ -1625,8 +1667,13 @@ def record_history(checkout, headline, record, allow_overlap=False):
     except OSError:
         pass
     mine = headline["session_set"]
-    overlaps = []
-    if record and not any(r.get("session_set") == mine for r in rows):
+    overlaps, kept = [], None
+    stored = next((r for r in rows if r.get("session_set") == mine), None)
+    if record and stored is not None and not rerecord:
+        reason = kept_row_reason(stored, headline, launch_epoch)
+        if reason:
+            kept, record = (stored, reason), False
+    if record and stored is None:
         keys = {k for k in mine.split(",") if k}
         overlaps = [r for r in rows if keys & set((r.get("session_set") or "").split(","))]
         if overlaps and not allow_overlap:
@@ -1640,7 +1687,7 @@ def record_history(checkout, headline, record, allow_overlap=False):
             path.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in rows), encoding="utf-8")
         except OSError as e:
             print(f"WARN: could not write {path}: {e}", file=sys.stderr)
-    return rows, overlaps
+    return rows, overlaps, kept
 
 
 def parse_verdicts(checkout, cutoff, launch_epoch=None, until=None):
@@ -1897,6 +1944,12 @@ def main():
                     help="Persist a trend row even when its session set shares a session with an "
                          "existing row of a different set (a top-up carried that session out of an "
                          "already-recorded fleet, so its earlier hours and ships are counted twice).")
+    ap.add_argument("--no-record", action="store_true",
+                    help="Measure and report without writing the cross-run trend ledger: the comparison run over "
+                         "an older fleet, whose row this run could only rebuild from what survives.")
+    ap.add_argument("--rerecord", action="store_true",
+                    help="Replace this set's trend row even when it was recorded before the current launch or "
+                         "measured more reviews than this run finds.")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--linear-issues", nargs="*", default=None,
                     help="Linear issue export(s) — a GraphQL response or bare node list with "
@@ -2469,6 +2522,7 @@ def main():
         "output_tokens_per_shipped": out_per_shipped,
         "usd_per_mtok_output": round(fleet_cost / total_out * 1e6, 2) if total_out else None,
         "subagent_final_row_share": sub_final_share,
+        "reviews": len(verdicts),
         "avg_cycles": round(sum(cyc_all) / len(cyc_all), 2) if cyc_all else None,
         "findings_per_review": round(resolved_all / len(verdicts), 1) if verdicts else None,
         "crit_high_per_review": round(sum(v["sev"]["CRIT"] + v["sev"]["HIGH"] for v in verdicts)
@@ -2572,8 +2626,14 @@ def main():
     headline["peak_5h_output_tokens"] = peak_5h
     headline["output_tokens_per_session_hour_at_peak"] = peak_5h_rate
     headline["output_tokens_per_in_window_session_hour"] = peak_5h_in_window_rate
-    history, overlaps = record_history(checkout, headline, record=not args.all and not partial_scope,
-                                       allow_overlap=args.allow_overlap)
+    history, overlaps, kept = record_history(checkout, headline,
+                                             record=not args.all and not partial_scope and not args.no_record,
+                                             allow_overlap=args.allow_overlap, launch_epoch=launch_epoch,
+                                             rerecord=args.rerecord)
+    if kept:
+        stored, reason = kept
+        print(f"NOTE: kept the stored trend row for {stored.get('session_set')} (recorded {stored.get('recorded_at')}): "
+              f"{reason}. --rerecord overwrites it; --no-record skips the write.", file=sys.stderr)
     for r in overlaps:
         shared = ",".join(sorted(set(headline["session_set"].split(","))
                                  & set((r.get("session_set") or "").split(","))))
@@ -2666,6 +2726,8 @@ def main():
                 "held": {
                     "hours": round(holds[s["run_key"]]["hours"], 2), "ticks": holds[s["run_key"]]["ticks"],
                     "backlog_empty_ticks": holds[s["run_key"]]["backlog_empty_ticks"],
+                    "pool_ran_out": holds[s["run_key"]]["pool_ran_out"],
+                    "backlog_waiting_max": holds[s["run_key"]]["backlog_waiting_max"],
                     "kinds": holds[s["run_key"]]["kinds"],
                     "in_idle_tail_h": round(holds[s["run_key"]]["in_idle_tail_h"], 2),
                     "intervals": [{"start": f"{lo:%Y-%m-%dT%H:%M:%SZ}", "end": f"{hi:%Y-%m-%dT%H:%M:%SZ}"}
@@ -3426,13 +3488,16 @@ def main():
                      f"is at most the wait on those picks (compare each one's Linear createdAt with the drain time)."))
         # The mid-run hold: >=1h in PLANNED-HOLD / BLOCKED-HOLD while a sibling landed ships inside the hold intervals. A fleet
         # launched with mixed `backlog` tokens produces it, and neither idle% nor the drained-early flag can see it. Not a hold
-        # whose every tick said Backlog had nothing pickable either: next-candidates.sh prints that clause only under the
-        # fallback, so the ticks themselves prove the token (the ledger's `backlog` does not survive the next launch), and the
-        # hold is the pool running out — the landings inside it are siblings finishing in-flight work, and the hours already
-        # sit in `held` and idle% (2026-10-20: four `backlog` sessions on an empty pool, three flags, each read as a mixed launch).
+        # whose every PLANNED-HOLD tick said Backlog had nothing pickable either (hold_gauge's `pool_ran_out`): next-candidates.sh
+        # prints that clause only under the fallback, so the ticks themselves prove the token (the ledger's `backlog` does not
+        # survive the next launch), and the hold is the pool running out — the landings inside it are siblings finishing in-flight
+        # work, and the hours already sit in `held` and idle% (2026-10-20: four `backlog` sessions on an empty pool, three flags,
+        # each read as a mixed launch). A BLOCKED-HOLD tick never prints the clause and does not count against the proof.
+        # A hold whose ticks state Backlog candidates waiting flags with or without a landing, and says so: those ticks prove the
+        # session ran without `backlog`, so a uniform launch reaches the same lever a mixed one does (2026-10-28: three sessions
+        # held behind 2 candidates their own fleet filed, flagged only where a sibling's landing fell inside, read as mixed).
         hg = holds[s["run_key"]]
-        pool_ran_out = hg["ticks"] > 0 and hg["backlog_empty_ticks"] == hg["ticks"]
-        if hg["hours"] >= 1 and not pool_ran_out:
+        if hg["hours"] >= 1 and not hg["pool_ran_out"]:
             landed = {}
             for o in sessions:
                 if o is s:
@@ -3441,7 +3506,8 @@ def main():
                            if any(lo <= when <= hi for lo, hi in hg["intervals"]))
                 if n_in:
                     landed[o["run_key"]] = n_in
-            if landed:
+            waiting = hg["backlog_waiting_max"]
+            if landed or waiting:
                 flagged = True
                 kinds = ", ".join(f"{k} x{n}" for k, n in sorted(hg["kinds"].items()))
                 who = ", ".join(f"`{k}` x{n}" + (" (carries `backlog`)" if sessions_by_key[k]["state"].get("backlog") else "")
@@ -3450,8 +3516,12 @@ def main():
                          "that is gated parks only the sessions launched without the token."
                          if not st.get("backlog") and not s["ledger_missing"]
                          and any(sessions_by_key[k]["state"].get("backlog") for k in landed) else "")
-                print(f"- **`{s['run_key']}` held {hg['hours']:.1f}h while siblings landed {sum(landed.values())} ship(s)** — "
-                      f"{hg['ticks']} no-pick tick(s) ({kinds}); landings inside the hold: {who}.{mixed}"
+                gated = (f" Its PLANNED-HOLD ticks named up to {waiting} Backlog candidate(s) waiting behind the gate, withheld "
+                         "because it ran without `backlog`: a `backlog` launch would have worked them." if waiting else "")
+                head = (f"held {hg['hours']:.1f}h while siblings landed {sum(landed.values())} ship(s)" if landed
+                        else f"held {hg['hours']:.1f}h with Backlog candidates waiting behind the gate")
+                print(f"- **`{s['run_key']}` {head}** — {hg['ticks']} no-pick tick(s) ({kinds})"
+                      + (f"; landings inside the hold: {who}." if landed else ".") + mixed + gated
                       + (" `BLOCKED-HOLD` waits on a sibling's in-flight issue by design, so read its hours against that."
                          if "BLOCKED-HOLD" in hg["kinds"] else ""))
         if a["dangling"]:

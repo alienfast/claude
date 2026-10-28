@@ -68,8 +68,13 @@ flight.
 ```bash
 ~/.claude/scripts/fleet-metrics.py --checkout <repo>                      # scopes to the launch's recorded session set
 ~/.claude/scripts/fleet-metrics.py --checkout <repo> --sessions a,b,c     # an older fleet, or a marker without the set
+~/.claude/scripts/fleet-metrics.py --checkout <repo> --sessions a,b,c --no-record   # compare against an already-recorded fleet
 ~/.claude/scripts/fleet-metrics.py --checkout <repo> --since YYYY-MM-DD   # last resort: a time window (or --hours N, --all)
 ```
+
+A re-run of an already-recorded fleet reads it through the current launch's verdict filter and deadline, after
+`/reap-tmp` has aged its verdicts out, so its review columns come back empty. The analyzer keeps the stored row in that
+case and says so (`--rerecord` overwrites it); pass `--no-record` to make the comparison run write nothing at all.
 
 **A fleet is a session set, not a time window — scope by the set.** `/fleet-launch` records `fleet_sessions` in
 `tmp/fleet-deadline.json` (the short id each `claude --bg` prints, which is the ledger key; the marker's fields are
@@ -154,7 +159,7 @@ full meaning and where to chase it. The flags and what each usually means:
 | latent-heavy origin mix | pre-existing defects the change surfaced — not a lever; expect it to decay as the pool drains |
 | high filed-per-shipped rate | each shipped issue spawns near or above one new issue — the backlog cannot drain |
 | drained early, siblings kept picking | the ranking reported an empty pool for a transient reason and the session latched sticky `drained` |
-| held N.Nh while siblings landed K ship(s) | a mixed launch: sessions without `backlog` parked in `PLANNED-HOLD` while `backlog` siblings shipped; not raised when every tick said Backlog had nothing pickable either |
+| held N.Nh while siblings landed K ship(s), or with Backlog candidates waiting behind the gate | Backlog held work a session launched without `backlog` could not reach: a mixed launch (`backlog` siblings shipped from Backlog), or a uniform one whose ticks named candidates waiting — often the fleet's own filings; not raised when every `PLANNED-HOLD` tick proved Backlog dry (the fallback's empty clause, or a stated zero; a `BLOCKED-HOLD` tick prints neither) |
 | ledger carries N off-schema entries | /auto Step 4 (or a hand edit) wrote objects where the ledger takes bare ids; the counts hold, the writer drifted |
 | rewakes classified spurious | `hooks/auto-rewake.sh` woke a live session — a regression of a guarded shape, or a third one |
 | Headroom gate ran blind | every `fleet-headroom.sh` probe answered `source=none`: no mods/rate-limits reading, so the gate failed open; no capacity lost, but the protection was off |

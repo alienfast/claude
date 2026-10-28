@@ -38,7 +38,10 @@ leaves in the trend ledger.
 
 Every windowed run records its headline row in `tmp/fleet-metrics-history.jsonl`, keyed by session set: an identical
 set replaces its row, a set sharing no session with any row appends, and a set sharing a session with a different row is
-refused (`--allow-overlap` forces it), since those sessions' hours and ships are already in that row. The report's tail
+refused (`--allow-overlap` forces it), since those sessions' hours and ships are already in that row. The replace is
+itself refused, keeping the stored row, when that row was recorded before the current launch or measured more reviews
+than the re-run finds (`--rerecord` forces it, and `--no-record` writes nothing): a re-run of an older fleet can rebuild
+only what survives, which drops its review columns. The report's tail
 diffs the last six fleets. This is where drift lives: a cost-per-issue climb across consecutive fleets sits in
 individually saved reports that nothing compares. Read $/issue through its two factors — ktok/issue (work per issue) x
 $/Mtok out (context weight per unit of work) — before proposing levers, since they route differently (churn/specs vs

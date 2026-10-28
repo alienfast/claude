@@ -2072,6 +2072,9 @@ grep -v 'BF-1601' "$FIXH/b2bb1003-0000.jsonl" > "$WORK/projects/$MH/b2bb1003-000
 runh
 ck "holds: the hold itself is unchanged without the sibling ship" "10.1" "$(qh "[s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['held']['hours']")"
 ck_lacks "holds: ships outside the interval do not flag" "held 10.1h while siblings landed" "$MDH"
+# Its real ticks still state 125 Backlog candidates waiting, which proves it ran without `backlog`: flagged under its own head.
+ck "holds: the largest stated waiting count"   "125" "$(qh "[s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['held']['backlog_waiting_max']")"
+ck_has "holds: waiting candidates flag without a landing" '**`1cc250ad` held 10.1h with Backlog candidates waiting behind the gate** — 4 no-pick tick(s) (PLANNED-HOLD x4). Its PLANNED-HOLD ticks named up to 125 Backlog candidate(s) waiting behind the gate, withheld because it ran without `backlog`: a `backlog` launch would have worked them.' "$MDH"
 cp "$FIXH/b2bb1003-0000.jsonl" "$WORK/projects/$MH/"
 # A hold whose every tick says Backlog had nothing pickable either is the pool running out, not a gate, and the sibling's
 # landing inside it is in-flight work finishing (2026-10-20: four such sessions, three false flags). The clause is printed only
@@ -2100,6 +2103,73 @@ runh
 ck "holds: a partial clause count"              "4 1"  "$(qh "' '.join(str([s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['held'][k]) for k in ('ticks','backlog_empty_ticks'))")"
 ck_has "holds: the flag stays when only some ticks said Backlog was empty" "held 10.1h while siblings landed 1 ship(s)" "$MDH"
 cp "$FIXH/1cc250ad-0000.jsonl" "$WORK/projects/$MH/"
+# One BLOCKED-HOLD tick among clause-carrying PLANNED-HOLD ticks: the empty-pool proof stands. The tick is the line session
+# ac66b3fb emitted on 2026-10-26 (snapshotted verbatim), a by-design wait on a sibling's in-flight issue that never prints
+# the clause; counting it against the proof fired the mixed-launch flag on two sessions of a fleet whose pool had run out.
+sed 's/waiting for the Planned\/Todo column to drain\./0 Backlog candidate(s) wait behind the gate; backlog fallback is on but Backlog has nothing pickable either - wait._ waiting for the Planned\/Todo column to drain./' \
+  "$FIXH/1cc250ad-0000.jsonl" > "$WORK/holds-empty.jsonl"
+python3 - "$WORK/holds-empty.jsonl" "$WORK/projects/$MH/1cc250ad-0000.jsonl" <<'MK_BLOCKED_AMONG_EMPTY'
+import json, sys
+blocked = ("AUTO-CONTINUE: no pick — BLOCKED-HOLD: 1 issue(s) hidden behind unresolved blockers — 1 will release on their own "
+           "(BF-2887 behind BF-2886 [In Progress]). 6/0/0/0 this run; waiting for a sibling to ship.")
+src, dest = sys.argv[1:3]
+lines = open(src).readlines()
+# The analyzer counts a tick only on the assistant's own record; the loop-boundary user record quotes the same line.
+def is_tick(line):
+    rec = json.loads(line) if "AUTO-CONTINUE: no pick" in line else {}
+    return rec.get("type") == "assistant" and isinstance(rec.get("message", {}).get("content"), list)
+last = max(i for i, line in enumerate(lines) if is_tick(line))
+rec = json.loads(lines[last])
+for block in rec["message"]["content"]:
+    if block.get("type") == "text":
+        block["text"] = "\n".join(blocked if l.startswith("AUTO-CONTINUE: no pick") else l for l in block["text"].split("\n"))
+lines[last] = json.dumps(rec, ensure_ascii=False) + "\n"
+open(dest, "w").write("".join(lines))
+MK_BLOCKED_AMONG_EMPTY
+runh
+ck "holds: a BLOCKED-HOLD tick among empty-Backlog PLANNED-HOLD ticks" "{'PLANNED-HOLD': 3, 'BLOCKED-HOLD': 1}" "$(qh "[s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['held']['kinds']")"
+ck "holds: the clause count excludes the BLOCKED-HOLD tick" "4 3" "$(qh "' '.join(str([s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['held'][k]) for k in ('ticks','backlog_empty_ticks'))")"
+ck "holds: the pool still read as run out"      "True" "$(qh "[s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['held']['pool_ran_out']")"
+ck "holds: the hours stand with the BLOCKED-HOLD tick" "10.1" "$(qh "[s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['held']['hours']")"
+ck_lacks "holds: no mixed-launch flag for a BLOCKED-HOLD tick on an empty pool" "held 10.1h while siblings landed" "$MDH"
+cp "$FIXH/1cc250ad-0000.jsonl" "$WORK/projects/$MH/"
+# A launch with no `backlog` anywhere (2026-10-28, BFP): every tick replaced by a line session a4bff3f6 emitted, snapshotted
+# verbatim, and the sibling's ledger stripped of the token. Its sessions held behind 2 candidates their own fleet had filed,
+# and the flag read them as mixed launches; the stated count names what the held session could not reach instead.
+TICK_UNIFORM='AUTO-CONTINUE: no pick — PLANNED-HOLD: Backlog withheld — the Planned/Todo column is not drained (9 issue(s) hold the gate: 0 pickable now; 9 need the keeper — BFP-376 [needs decision], BFP-373 [human], BFP-340 [blocked by BFP-339 [human]], BFP-325 [solo], BFP-289 [epic — certify per child; it closes itself when they release], BFP-244 [human], BFP-235 [epic — certify per child; it closes itself when they release], BFP-105 [human], BFP-32 [epic — certify per child; it closes itself when they release]). 2 Backlog candidate(s) wait behind the gate; it opens when the column drains — pass --no-stage-gate to list them. 5/0/0/0 this run; waiting for the Planned/Todo column to drain.'
+retick() {
+  python3 - "$FIXH/1cc250ad-0000.jsonl" "$WORK/projects/$MH/1cc250ad-0000.jsonl" "$1" <<'MK_RETICK'
+import json, sys
+src, dest, tick = sys.argv[1:4]
+out = []
+for line in open(src):
+    rec = json.loads(line)
+    content = rec.get("message", {}).get("content") if rec.get("type") == "assistant" else None
+    if isinstance(content, list):
+        for block in content:
+            if block.get("type") == "text":
+                block["text"] = "\n".join(tick if l.startswith("AUTO-CONTINUE: no pick") else l for l in block["text"].split("\n"))
+        line = json.dumps(rec, ensure_ascii=False) + "\n"
+    out.append(line)
+open(dest, "w").write("".join(out))
+MK_RETICK
+}
+python3 -c "import json,sys; d=json.load(open(sys.argv[1])); d.pop('backlog'); json.dump(d, open(sys.argv[2], 'w'))" \
+  "$FIXH/auto-state-b2bb1003.json" "$CKH/tmp/auto-state-b2bb1003.json"
+retick "$TICK_UNIFORM"
+runh
+ck "holds: the stated count on every tick"      "2 4" "$(qh "' '.join(str([s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['held'][k]) for k in ('backlog_waiting_max','ticks'))")"
+ck "holds: a nonzero count is no drain"         "False" "$(qh "[s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['held']['pool_ran_out']")"
+ck_has "holds: a uniform launch names the withheld candidates" '**`1cc250ad` held 10.1h while siblings landed 1 ship(s)** — 4 no-pick tick(s) (PLANNED-HOLD x4); landings inside the hold: `b2bb1003` x1. Its PLANNED-HOLD ticks named up to 2 Backlog candidate(s) waiting behind the gate, withheld because it ran without `backlog`: a `backlog` launch would have worked them.' "$MDH"
+ck_lacks "holds: a uniform launch is not read as mixed" "while a sibling that landed ships carries it" "$MDH"
+# The same ticks stating zero: a launch without `backlog` on an empty pool. The landing inside it is in-flight work finishing.
+retick "${TICK_UNIFORM/2 Backlog candidate/0 Backlog candidate}"
+runh
+ck "holds: a stated zero proves the drain"      "True" "$(qh "[s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['held']['pool_ran_out']")"
+ck "holds: the hours stand on a stated-zero drain" "10.1" "$(qh "[s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['held']['hours']")"
+ck_lacks "holds: no flag when every tick stated zero waiting" "**\`1cc250ad\` held" "$MDH"
+cp "$FIXH/1cc250ad-0000.jsonl" "$WORK/projects/$MH/"
+cp "$FIXH/auto-state-b2bb1003.json" "$CKH/tmp/"
 # BLOCKED-HOLD: the same real ticks with the kind and the waiting clause swapped for the BLOCKED-HOLD contract's.
 sed -e 's/PLANNED-HOLD/BLOCKED-HOLD/g' -e 's/waiting for the Planned\/Todo column to drain\./waiting for a sibling to ship./g' \
   "$FIXH/1cc250ad-0000.jsonl" > "$WORK/projects/$MH/1cc250ad-0000.jsonl"
@@ -2524,6 +2594,70 @@ echo '{"status": "drained", "reason": "deadline", "shipped": ["BF-960"], "cancel
 sed 's/msg_t29/msg_t29m/' "$WORK/projects/$M29/29000001-0000.jsonl" > "$WORK/projects/$M29M/29000003-0000.jsonl"
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK29M" --sessions 29000003 > "$WORK/out29m.md" 2>&1
 ck_has "tests: a net removal keeps its sign" "Tests per shipped issue: -2.0 rspec examples, +0.0 vitest tests, +0.0 story exports (net declarations across 1 of 1 landed ships" "$WORK/out29m.md"
+
+# ---- 30. a re-run never rebuilds an older fleet's trend row from what survives ----
+# fleet-retro Step 1 re-runs an older fleet's set to compare a column its row does not carry. parse_verdicts drops every
+# verdict older than the CURRENT launch and /reap-tmp ages verdict files out, so the identical-set replace rebuilt the row
+# without its reviews: 2026-10-28, re-running the 2026-10-19 BFP fleet nulled avg_cycles, findings_per_review,
+# crit_high_per_review and plan_origin_share and zeroed filed_per_shipped. The seed is section 26's real row, re-keyed.
+CK30="$WORK/ck30"; mkdir -p "$CK30/tmp"
+git -C "$CK30" init -q 2>/dev/null
+git -C "$CK30" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "init"
+M30="$(git -C "$CK30" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
+mkdir -p "$WORK/projects/$M30"
+H30="$CK30/tmp/fleet-metrics-history.jsonl"
+echo "{\"launch_epoch\": $(( $(date +%s) - 1800 )), \"deadline_epoch\": $(( $(date +%s) + 3600 ))}" > "$CK30/tmp/fleet-deadline.json"
+cat > "$CK30/tmp/auto-state-ee300001.json" <<'EOF'
+{"mode": "loop", "status": "drained", "reason": "deadline", "shipped": ["TT-300"], "canceled": [], "skipped": [], "failed": []}
+EOF
+cat > "$WORK/projects/$M30/ee300001-0000.jsonl" <<EOF
+{"type":"user","timestamp":"$(ts_ago 1200)","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"$(ts_ago 600)","message":{"role":"assistant","id":"msg_300","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-300 done"}]}}
+EOF
+seed30() { # seed30 <recorded_at> [reviews] — section 26's real row, re-keyed to this set
+  python3 - "$H30" "$@" <<'MK_ROW30'
+import json, sys
+path, recorded_at = sys.argv[1:3]
+row = {"avg_cycles":2.22,"cost_per_shipped_usd":87.83,"crit_high_per_review":1.56,"ctx_share_ge150k":0.97,"ctx_share_ge200k":0.915,"est_cost_usd":702.66,"filed_per_shipped":0.88,"findings_per_review":11.2,"fleet_start":"2026-10-09T22:40:20Z","forfeited_session_hours":None,"fresh_shipped_share":0.875,"idle_tail_session_hours":None,"idle_tail_share":None,"non_judgment_token_share":0.117,"output_tokens_per_session_hour_at_peak":86550,"output_tokens_per_shipped":191106,"peak_5h_output_tokens":1298244,"plan_origin_share":0.257,"pool_exhausted_h":None,"recorded_at":"2026-10-10T14:57:09Z","rewritten_request_share":0.145,"session_hours":48.8,"session_set":"8c16860d,b2bb1003,cbc11f9e","sessions":3,"shipped":8,"subagent_final_row_share":0.063,"throttle_session_hours":0.0,"throttle_share":0.0,"usd_per_mtok_output":459.6}
+row.update(session_set="ee300001", recorded_at=recorded_at)
+if len(sys.argv) > 3:
+    row["reviews"] = int(sys.argv[3])
+open(path, "w").write(json.dumps(row, sort_keys=True) + "\n")
+MK_ROW30
+}
+J30="$WORK/out30.json"; E30="$WORK/err30"
+run30() { CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK30" --sessions ee300001 "$@" --json > "$J30" 2>"$E30"; }
+row30() { python3 -c "import json,sys; r=[json.loads(l) for l in open(sys.argv[1])]; print(len(r), $1)" "$H30"; }
+# A row recorded before the current launch: kept, and the run says why.
+seed30 "2026-10-10T14:57:09Z"
+run30
+ck "rerun: a row from before the launch is kept"       "1 11.2 2026-10-10T14:57:09Z" "$(row30 "r[0]['findings_per_review'], r[0]['recorded_at']")"
+ck_has "rerun: the kept row is named, with its reason" "NOTE: kept the stored trend row for ee300001 (recorded 2026-10-10T14:57:09Z): it was recorded before the current launch" "$E30"
+ck_has "rerun: the remedies are named"                 "--rerecord overwrites it; --no-record skips the write." "$E30"
+ck "rerun: the trend renders the stored row"           "11.2" "$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print([r for r in d['history'] if r['session_set']=='ee300001'][0]['findings_per_review'])" "$J30")"
+# --rerecord forces the replace, and the rebuilt row carries this run's review count.
+run30 --rerecord
+ck "rerun: --rerecord replaces"                        "1 None 0" "$(row30 "r[0]['findings_per_review'], r[0]['reviews']")"
+ck_lacks "rerun: a forced replace notes nothing"       "kept the stored trend row" "$E30"
+# That row now postdates the launch and matches this run's count: the current fleet's own re-run still replaces.
+run30
+ck_lacks "rerun: the current fleet's re-run replaces"  "kept the stored trend row" "$E30"
+ck "rerun: still one row"                              "1 0" "$(row30 "r[0]['reviews']")"
+# Recorded after the launch but holding more reviews than this run finds (/reap-tmp aged the verdicts out): kept.
+seed30 "$(ts_ago 300)" 3
+run30
+ck "rerun: a row with more reviews is kept"            "1 3" "$(row30 "r[0]['reviews']")"
+ck_has "rerun: the review shortfall is the reason"     "this run found 0 review verdict(s) where the stored row measured 3" "$E30"
+# A row written before the count existed: its review figures stand for at least one review.
+seed30 "$(ts_ago 300)"
+run30
+ck "rerun: a count-less row with review figures is kept" "1 11.2" "$(row30 "r[0]['findings_per_review']")"
+ck_has "rerun: inferred as one review"                 "where the stored row measured 1" "$E30"
+# --no-record measures and writes nothing.
+rm -f "$H30"
+run30 --no-record
+ck "rerun: --no-record writes no ledger"               "absent" "$([ -f "$H30" ] && echo present || echo absent)"
+ck "rerun: --no-record still renders"                  "1" "$(python3 -c "import json,sys; print(len(json.load(open(sys.argv[1]))['sessions']))" "$J30")"
 
 echo
 echo "$PASS passed / $FAIL failed / $SKIP skipped"

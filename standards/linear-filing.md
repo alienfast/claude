@@ -15,8 +15,12 @@ Probe for an open issue already covering the defect: `linear-cli search issues "
 distinctive identifiers, the file's basename when it is distinctive and the predicate or operation, **one token per
 call**, two or three calls, never several words in one. `search issues` matches a contiguous phrase, so two identifiers
 that are not adjacent in the target match nothing and exit 0, indistinguishable from a clean result, and a query worded
-as a description of the defect is a guaranteed empty one (linear skill gotcha #14). Also check the current run's
-already-filed list. On a hit:
+as a description of the defect is a guaranteed empty one (linear skill gotcha #14). Make one of those calls the shared
+module the fix depends on (the store, read guard or fold its Evidence names), not only the surface where the symptom
+shows: a sibling filed from another issue's review shares that module and need not share one surface identifier.
+Search the module's stem, the shortest token its file family shares, since the sibling may cite another file of the
+family: a sibling citing `historyLoadStore.ts` is found by `historyLoad` and missed by `historyLoadRead`. Also check
+the current run's already-filed list. On a hit:
 
 - **Same root cause** → do not create. Append the evidence as a comment (`~/.claude/scripts/linear-post.sh comment`),
   raise its priority or labels if the new evidence warrants it, and record `<ID> (existing — evidence appended)`; a
