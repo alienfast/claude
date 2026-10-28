@@ -141,7 +141,8 @@
       "mcp__ide__getDiagnostics",
       "mcp__mui",
       "Bash(~/.claude/scripts/wait-idle.sh:*)",
-      "Bash(~/.claude/skills/pr-claude/scripts/pr-claude.sh:*)"
+      "Bash(~/.claude/skills/pr-claude/scripts/pr-claude.sh:*)",
+      "ClaudeInChromeDomain(linear.app)"
     ],
     "deny": [],
     "ask": [],
@@ -150,6 +151,7 @@
       "/private/tmp"
     ]
   },
+  "model": "opus",
   "hooks": {
     "PreToolUse": [
       {
@@ -264,6 +266,5 @@
   "autoMemoryEnabled": false,
   "theme": "dark",
   "agentPushNotifEnabled": true,
-  "skipAutoPermissionPrompt": true,
-  "model": "opus"
+  "skipAutoPermissionPrompt": true
 }
