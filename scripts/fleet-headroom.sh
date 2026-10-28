@@ -38,7 +38,9 @@
 # active account is already at the threshold (the engine mid-move) keeps the local THROTTLE but re-probes in
 # 3 minutes rather than at the reset: the next request lands on the new account. --stale <seconds> (900)
 # bounds the age of a figure that counts as room — after the usage endpoint refuses a refresh, cswap serves
-# the last good figure as `ok` for up to two hours.
+# the last good figure as `ok` for up to two hours. The --json `cswap` object also carries `with_room` and
+# `room` (every account with room, the active one included): fleet-cap.sh sizes the fleet's concurrency cap on
+# that count, so the one predicate for "room" lives here.
 #
 # Exit: 0 = pick OK (headroom >= reserve, or no reading — FAIL OPEN: a missing mod must not halt a healthy
 # fleet; the stall watcher remains the backstop, and the line says `source=none` so /fleet-status and
@@ -116,13 +118,16 @@ if [ "$rotating" = true ]; then
     else
       # The binding window is the higher of 5h and 7d, as cswap's own headroomPct computes it (scoped windows such as Fable
       # are not in it). Among the accounts with room, consume-first lands on the soonest weekly reset, so that one is named.
+      # `with_room`/`room` count every account with room, the active one included: fleet-cap.sh sizes the fleet cap on them.
       verdict=$(printf '%s' "$list" | jq -c --argjson t "$threshold" --argjson stale "$STALE" '
         def binding: ([(.usage.fiveHour.pct // 0), (.usage.sevenDay.pct // 0)] | max) + 0;
+        def has_room: .usageStatus == "ok" and .usageAgeSeconds != null and .usageAgeSeconds <= $stale and binding < $t;
         def row: {email, binding_pct: binding, status: .usageStatus, age_s: .usageAgeSeconds, weekly_resets_at: .usage.sevenDay.resetsAt};
         (.accounts | map(select(.active == true)) | .[0]) as $a
-        | (.accounts | map(select(.active != true and .usageStatus == "ok" and .usageAgeSeconds != null and .usageAgeSeconds <= $stale and binding < $t))
-           | sort_by(.usage.sevenDay.resetsAt // "9") | .[0]) as $g
-        | {threshold: $t, accounts: (.accounts | length), active: (if $a == null then null else ($a | row) end), target: (if $g == null then null else ($g | row) end)}')
+        | (.accounts | map(select(.active != true and has_room)) | sort_by(.usage.sevenDay.resetsAt // "9") | .[0]) as $g
+        | (.accounts | map(select(has_room))) as $room
+        | {threshold: $t, accounts: (.accounts | length), with_room: ($room | length), room: ($room | map(.email)),
+           active: (if $a == null then null else ($a | row) end), target: (if $g == null then null else ($g | row) end)}')
       a_email=$(jq -r '.active.email // empty' <<<"$verdict")
       a_pct=$(jq -r '.active.binding_pct // empty' <<<"$verdict")
       g_email=$(jq -r '.target.email // empty' <<<"$verdict")

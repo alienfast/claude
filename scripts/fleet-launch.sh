@@ -8,7 +8,10 @@
 #   [count]     Number of /loop /auto sessions to launch (1-12). Omitted → read the
 #               recommendation /auto-prep persisted to tmp/fleet-recommendation.json
 #               (error if absent — run /auto-prep first, or pass a count). An explicit
-#               count is the quota throttle: auto-prep recommends from lane math alone.
+#               count is the quota throttle: auto-prep recommends from lane math under the
+#               concurrency cap fleet-cap.sh computes (3 per account with room: 3 on a
+#               single-account machine, 3 × the accounts with room on a cswap-rotating one,
+#               at most 12), which this script prints and WARNs above, never refuses on.
 #   [epic:<ID>] Scope the fleet to one epic's graph: every session runs `/loop /auto epic:<ID> backlog`
 #               (next-candidates.sh --root — the epic, its descendants, and their blockers, and
 #               nothing else). The scope implies the Backlog fallback (keeper ruling 2026-10-23):
@@ -225,9 +228,13 @@ if [ -z "$count" ]; then
   fi
 fi
 { [ "$count" -ge 1 ] && [ "$count" -le 12 ]; } 2>/dev/null || { echo "ERROR: count must be 1-12 (got '$count')" >&2; exit 1; }
-# The measured concurrency cap (skills/fleet-launch/SKILL.md "5h burst -> concurrency").
-concurrency_cap=3
-[ "$count" -gt "$concurrency_cap" ] && echo "WARN: >$concurrency_cap sessions reliably exhausts a 5h burst window at any duration (n=4 measured cut off 4.9h into a 12h deadline; auto-prep caps its recommendation at 3) — an explicit count is your override" >&2
+# The concurrency cap: 3 per account with room — fleet-cap.sh owns the arithmetic and the reason (skills/fleet-launch/SKILL.md
+# § The count — 3 per account with room). Advice, never a refusal: an explicit count is the user's override.
+cap_line=$("$script_dir/fleet-cap.sh" 2>/dev/null) || cap_line=""
+concurrency_cap=$(printf '%s' "$cap_line" | awk '/^CAP /{print $2}')
+[[ "$concurrency_cap" =~ ^[0-9]+$ ]] || { concurrency_cap=3; cap_line="CAP 3  (fleet-cap.sh gave no answer — the single-account figure)"; }
+echo "Concurrency cap: ${cap_line#CAP }"
+[ "$count" -gt "$concurrency_cap" ] && echo "WARN: $count sessions is over the cap of $concurrency_cap — more than the account pool's 5h windows refill for at any duration (3 per account with room; n=4 on one account measured cut off 4.9h into a 12h deadline). The preps recommend under the cap; an explicit count is your override" >&2
 
 # ---- epic scope: token, else the recommendation's; validated before anything is written ----
 scope=""
@@ -441,7 +448,7 @@ fi
 if [ -n "$active_carried" ]; then
   echo "Concurrency: $n_active carried session(s) + $count new = $(( n_active + count )) running against the cap of $concurrency_cap"
   [ $(( n_active + count )) -gt "$concurrency_cap" ] \
-    && echo "WARN: $(( n_active + count )) non-retiring sessions will run, over the measured cap of $concurrency_cap (more reliably exhausts a 5h burst window) — stop the carried session(s) (${active_carried# }) or relaunch with a smaller count" >&2
+    && echo "WARN: $(( n_active + count )) non-retiring sessions will run, over the cap of $concurrency_cap (more than the account pool's 5h windows refill for) — stop the carried session(s) (${active_carried# }) or relaunch with a smaller count" >&2
   for k in $active_carried; do
     sf="$main_checkout/tmp/auto-state-$k.json"
     [ -f "$sf" ] || continue

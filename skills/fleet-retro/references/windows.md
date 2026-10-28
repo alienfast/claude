@@ -5,9 +5,10 @@ readings` line and its Headroom verdict.
 
 ## What is not asked
 
-Do not ask for `/usage` readings. The weekly allowance is handled by account rotation and concurrency is settled at 3
-(`skills/fleet-launch/SKILL.md` § The count is settled at 3 — no capacity readings at dispatch), so no launch/close
-quota bracket is calibrated and no `tmp/fleet-quota-launch.json` exists to close. The weekly window still ends a fleet
+Do not ask for `/usage` readings. The weekly allowance is handled by account rotation and concurrency is settled before
+launch at 3 per account with room (`skills/fleet-launch/SKILL.md` § The count — 3 per account with room;
+`scripts/fleet-cap.sh`), so no launch/close quota bracket is calibrated and no `tmp/fleet-quota-launch.json` exists to
+close. The weekly window still ends a fleet
 whose account has less of its week left than the run burns — which is why `/fleet-launch` prints the active account's
 `seven_day` reading at dispatch; a retro that finds a `weekly` cutoff reports it as a rotation miss, never as a sizing
 input.
@@ -30,9 +31,11 @@ All four are in the `windows` block already emitted.
 4. When a stall group exists, `peak_5h_output_tokens` is a CEILING, not a floor — the run was cut off at that volume,
    so it bounds the limit from above where every un-throttled observation bounds it from below. Say plainly which kind
    of observation the run produced. It is a ceiling on the limit named in `limit_kind` only; a weekly cutoff leaves the
-   5h burst ceiling unobserved. A `session`/`5-hour` cutoff at n≤3 re-opens the concurrency cap;
-   `skills/fleet-launch/SKILL.md` § The count is settled at 3 owns the count, the 5h-window reason and the
-   headroom-probe rule; check the recovery mechanism before touching n. n=3 runs near the refill rate and hits the
+   5h burst ceiling unobserved. A `session`/`5-hour` cutoff at n within the cap re-opens the per-account bracket on a
+   single-account machine and, on a cswap-rotating one, points first at the swap landing late (the threshold is the
+   lever there); `skills/fleet-launch/SKILL.md` § The count — 3 per account with room owns the count, the 5h-window
+   reason, the rotation arithmetic and the headroom-probe rule; check the recovery mechanism before touching n. n=3 on
+   one account runs near the refill rate and hits the
    ceiling about once per 5h window by construction, which costs minutes of reset wait when recovery is automatic and
    hours when it is not, while shrinking to n=2 forfeits about a third of the allowance to fix a stall that costs
    minutes.

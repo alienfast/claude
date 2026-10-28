@@ -466,7 +466,7 @@ ck "passed deadline: new sessions recorded"   "3" "$(jq -r '[.fleet_sessions[] |
 ck "passed deadline: new deadline in force"   "true" "$(jq -r '.deadline_epoch > now' "$REPO/tmp/fleet-deadline.json")"
 ck_has "retiring named"                       "Retiring session(s): 8c16860d b2bb1003 — carried from a marker that was winding down; each finishes its in-flight issue, then stops picking" "$WORK/out"
 ck_lacks "retiring: no concurrency line"      "Concurrency:" "$WORK/out"
-ck_lacks "retiring: no cap warning"           "over the measured cap" "$WORK/out"
+ck_lacks "retiring: no cap warning"           "over the cap of" "$WORK/out"
 ck_lacks "retiring: no backlog warning"       "carried session" "$WORK/out"
 
 # case 18a: `stopped: true` retires on its own, even with the deadline still ahead.
@@ -505,15 +505,15 @@ ck "ledger-less, live: preflight carried"     "8c16860d b2bb1003" "$(jq -r '.fle
 retire_setup "$ledger_pl" "$ledger_pl"; old_marker "$ahead"
 ck "cap: 2+3 launch exits 0"                  "0" "$(run 3 19h)"
 ck_has "cap: total printed"                   "Concurrency: 2 carried session(s) + 3 new = 5 running against the cap of 3" "$WORK/out"
-ck_has "cap: 2+3 warned"                      "WARN: 5 non-retiring sessions will run, over the measured cap of 3" "$WORK/out"
+ck_has "cap: 2+3 warned"                      "WARN: 5 non-retiring sessions will run, over the cap of 3" "$WORK/out"
 ck_has "cap: warning names the carried"       "stop the carried session(s) (8c16860d b2bb1003)" "$WORK/out"
 retire_setup "$ledger_pl" "$ledger_pl"; old_marker "$ahead"; live_rows b2bb1003
 ck "cap: 1+2 launch exits 0"                  "0" "$(run 2 19h)"
 ck_has "cap: 1+2 printed"                     "Concurrency: 1 carried session(s) + 2 new = 3" "$WORK/out"
-ck_lacks "cap: 1+2 is at the cap, silent"     "over the measured cap" "$WORK/out"
+ck_lacks "cap: 1+2 is at the cap, silent"     "over the cap of" "$WORK/out"
 retire_setup "$ledger_pl" "$ledger_pl"; echo '[]' > "$WORK/agents.json"
 ck "cap: 0+3 launch exits 0"                  "0" "$(run 3 19h)"
-ck_lacks "cap: 0+3 silent"                    "over the measured cap" "$WORK/out"
+ck_lacks "cap: 0+3 silent"                    "over the cap of" "$WORK/out"
 
 # case 20: a carried session's backlog mode against this launch's — both mismatches warn, a match is silent.
 retire_setup "$ledger_bl" "$ledger_pl"; old_marker "$ahead"
@@ -673,6 +673,39 @@ ck_lacks "burst: reset passed no warn"   "WARN: the 5h window" "$WORK/out"
 echo 'not json' > "$WORK/home/.claude/local/rate-limits.json"
 ck "weekly: unreadable launches"         "0" "$(run 1)"
 ck_has "weekly: unreadable explained"    "is not readable JSON)" "$WORK/out"
+
+# ---- the cap: 3 per account with room (fleet-cap.sh → fleet-headroom.sh's cswap verdict), printed on every launch ----
+# Single-account HOME so far: every launch above printed the single-account cap. A rotating fixture — cswap's backup root, a
+# live engine event, and a stub `cswap` with two accounts under the threshold — lifts it to 6, so 4 launches silently and 7
+# warns; an engine idle for ten minutes drops it back to 3 with the reason on the line.
+ck_has "cap: single-account line"        "Concurrency cap: 3  per_account=3  accounts_with_room=1/1  single-account machine" "$WORK/out"
+cat > "$BIN/cswap" <<'EOF'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "list --json") cat "$CSWAP_STUB_LIST" ;;
+  "config get")  echo 95 ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x "$BIN/cswap"
+export CSWAP_STUB_LIST="$WORK/cswap-list.json"
+acct() { printf '{"number":%s,"email":"%s","active":%s,"usageStatus":"ok","usage":{"fiveHour":{"pct":%s},"sevenDay":{"pct":%s,"resetsAt":"2026-10-22T05:00:00+00:00"}},"usageAgeSeconds":30}' "$@"; }
+printf '{"schemaVersion":1,"activeAccountNumber":1,"accounts":[%s,%s]}\n' "$(acct 1 a@x true 40 20)" "$(acct 2 b@x false 0 0)" > "$CSWAP_STUB_LIST"
+mkdir -p "$WORK/home/.claude-swap-backup" "$WORK/home/.claude/logs"
+beat() { printf '{"schemaVersion": 1, "event": "poll", "ts": "%s", "threshold": 95.0}\n' "$(iso_at "$1")" > "$WORK/home/.claude/logs/cswap-auto.log"; }
+beat "$(date +%s)"
+: > "$WORK/dispatches"
+ck "cap: rotating 4 launches"            "0" "$(run 4 5h)"
+ck "cap: rotating 4 dispatched"          "4" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
+ck_has "cap: rotating line"              "Concurrency cap: 6  per_account=3  accounts_with_room=2/2  2 of 2 enrolled accounts have room (a@x, b@x)" "$WORK/out"
+ck_lacks "cap: 4 under 6 is silent"      "over the cap of" "$WORK/out"
+ck "cap: rotating 7 launches"            "0" "$(run 7 5h)"
+ck_has "cap: 7 over 6 warns"             "WARN: 7 sessions is over the cap of 6 — more than the account pool's 5h windows refill for at any duration (3 per account with room" "$WORK/out"
+beat $(( $(date +%s) - 600 ))
+ck "cap: idle engine launches"           "0" "$(run 4 5h)"
+ck_has "cap: idle engine is one account" "Concurrency cap: 3  per_account=3  accounts_with_room=1/?  cswap is enrolled but its engine is idle (last engine event 10m ago)" "$WORK/out"
+ck_has "cap: idle engine warns at 4"     "WARN: 4 sessions is over the cap of 3" "$WORK/out"
+rm -f "$BIN/cswap"; rm -rf "$WORK/home/.claude-swap-backup"
 rm -rf "$WORK/home/.claude"
 
 echo

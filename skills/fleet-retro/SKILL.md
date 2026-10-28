@@ -123,8 +123,9 @@ Seven gauges ride the same run and the retro reads all seven, not just the table
 
 ### Windows and quota
 
-Do not ask for `/usage` readings: the weekly allowance is handled by account rotation and concurrency is settled at 3
-(`skills/fleet-launch/SKILL.md` § The count is settled at 3 — no capacity readings at dispatch). Report the four
+Do not ask for `/usage` readings: the weekly allowance is handled by account rotation and concurrency is settled before
+launch at 3 per account with room (`skills/fleet-launch/SKILL.md` § The count — 3 per account with room;
+`scripts/fleet-cap.sh`). Report the four
 numbers in the `windows` block — `peak_5h_output_tokens` with `peak_5h_concurrency`,
 `output_tokens_per_session_hour_at_peak` (with `output_tokens_per_in_window_session_hour` beside it), any
 `quota_stall_groups`, and whether the peak is a floor or a ceiling — then read the `Window readings` line and its

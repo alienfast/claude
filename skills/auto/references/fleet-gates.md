@@ -35,8 +35,8 @@ Read from `/auto` Step 2 when `tmp/fleet-deadline.json` exists. The marker's fie
 ## Headroom gate
 
 Fleet mode only (the marker exists, dated or not), and it governs every pick Step 2 makes, the hot handoff included.
-Why the count is settled at 3 and why parking between issues is the protection rather than a smaller fleet:
-`skills/fleet-launch/SKILL.md` § The count is settled at 3.
+Why the count is settled at 3 per account with room and why parking between issues is the protection rather than a
+smaller fleet: `skills/fleet-launch/SKILL.md` § The count — 3 per account with room.
 
 - Run `~/.claude/scripts/fleet-headroom.sh --session "$RUN_KEY"` (the identity Step 0 resolved). It reads this
   session's own `rate-limits` meter — the account it runs on, so a multi-account machine reads the right one — and

@@ -184,18 +184,22 @@ on every chain member — the head and each successor, since each competes again
 first: Urgent outranks label classes across the whole team. Set each with `linear-cli issues update <ID> --priority 1`,
 read `.priority` back (linear gotcha #8), and record the change in one comment on the epic, as Step 4 does.
 
-Then forecast the prepped graph at a few counts:
+Then read the cap this machine's account pool sustains and forecast the prepped graph at every count up to it:
 
 ```bash
-for n in 2 3 4 5; do ~/.claude/scripts/fleet-forecast.py --root <ID> --sessions $n --horizon-h 24 >| tmp/forecast-$n.txt; grep -E '^FORECAST|^UNREACHED' tmp/forecast-$n.txt; grep '^SHIP' tmp/forecast-$n.txt | tail -1; grep -E '^PICK .*: <HEAD> ' tmp/forecast-$n.txt; done
+cap=$(~/.claude/scripts/fleet-cap.sh --json | jq -r .cap)     # 3 per account with room: 3 on one account, up to 12 rotating
+for n in $(seq 2 "$cap"); do ~/.claude/scripts/fleet-forecast.py --root <ID> --sessions $n --horizon-h 24 >| tmp/forecast-$n.txt; grep -E '^FORECAST|^UNREACHED' tmp/forecast-$n.txt; grep '^SHIP' tmp/forecast-$n.txt | tail -1; grep -E '^PICK .*: <HEAD> ' tmp/forecast-$n.txt; done
 ```
 
 Confirm the head's `PICK` is at `t=0.0h`. Recommend the smallest count past which neither the ship count nor the last
-`SHIP` time improves, capped at 3 ([`/fleet-launch`](../fleet-launch/SKILL.md) § The count is settled at 3). The
-simulation does not model file collisions, and one epic's members share files by construction: when the last session
-added gains only by running `related` members side by side, take the count below it. State the binding term — the chain's
-serial floor (`floor`), which no count moves; lanes; or the cap. An explicit `/fleet-launch <count>` remains the user's
-override.
+`SHIP` time improves, capped at `cap` ([`/fleet-launch`](../fleet-launch/SKILL.md) § The count — 3 per account with
+room; the script's line is the whole capacity input — never a `/cswap quota` table or a usage reading). The simulation does
+not model file collisions, and one epic's members share files by construction: when the last session added gains only by
+running `related` members side by side, take the count below it. State the binding term — the chain's serial floor
+(`floor`), which no count moves; lanes; or the cap with its accounts-with-room reading. The duration is the last `SHIP`
+time at the recommended count rounded up to the next whole hour: an epic fleet ends itself on `EPIC-DRAINED`, so the
+deadline is the upper bound, reached only when the forecast ran short. An explicit `/fleet-launch <count>` remains the
+user's override.
 
 **One PR or more.** List every `human` member that holds a non-`human`, non-`epic` member — directly or through other
 members, on the graph's `blocks` edges — and read its body for a step that needs the epic's code running outside a
@@ -216,11 +220,11 @@ prep-time membership: the burn-down baseline), `branch`, `base` — alongside th
 jq -n --argjson sessions <N> --arg team <KEY> --argjson e "$(date +%s)" \
       --arg scope <ID> --argjson members "$(jq -c '[.members[].identifier]' tmp/epic-graph.json)" \
       --arg branch "$branch" --arg base "$base" \
-      --arg bound_by '<floor|lanes|cap>' --argjson duration_h <D> \
+      --arg bound_by '<floor|lanes|cap>' --argjson cap "$cap" --argjson duration_h <D> \
       --argjson rate <TOK_PER_SESSION_HOUR> --argjson peak5h <PEAK_5H_OBSERVED> \
   '{sessions: $sessions, team: $team, generated_epoch: $e, generated: (now | todate),
     scope: $scope, members: $members, branch: $branch, base: $base,
-    bound_by: $bound_by, duration_h: $duration_h,
+    bound_by: $bound_by, cap: $cap, duration_h: $duration_h,
     sizing: {rate_tok_per_session_hour: $rate, peak_5h_observed: $peak5h}}' \
   > tmp/fleet-recommendation.json
 ```
@@ -237,9 +241,17 @@ body match or as a decision record, since both are judgment passes in a no-waive
 run, declined (holding the gate), terminal, nested epics closed by the sweep. Then the boundary decisions, the promotion
 batch, the critical path and any priority changes, and the audit's remaining `FOCUS` rows. When Step 8 found a deploy
 gate, say before the launch line that this epic will not ship as one PR, name the gates, and carry the operator's
-release-shape choice into the launch line. Then the launch line: `/fleet-launch` (bare) with the recommended count and
-duration, which term bound it, the integration branch and its base, and the post-fleet step (`scripts/epic-pr.sh`, then `/pr-update`). Every Linear
-write is reversible — say so once.
+release-shape choice into the launch command. Then the launch command, **printed literally on every run — the epic
+token, this prep's count and its duration filled in; never a bare `/fleet-launch`, which stops on `SCOPE-CONFIRM` and
+asks again, and never a placeholder**:
+
+```text
+/fleet-launch 4 6h epic:BF-2839
+```
+
+with which term bound the count (floor, lanes, or the cap with its accounts-with-room reading), the integration branch and
+its base, and the post-fleet step (`scripts/epic-pr.sh`, then `/pr-update`). Every Linear write is reversible — say so
+once.
 
 ## What this skill must NOT do
 

@@ -79,8 +79,8 @@ Run from the project the fleet should work on (a worktree cwd is fine):
 ~/.claude/scripts/fleet-launch.sh 5 10 hours
 ```
 
-Surface the script's output: the deadline (if any), each dispatch line, each claim-landed/timeout line, and the closing
-`claude agents` pointer. A claim-wait timeout is a WARN, not a failure — the session may be in preflight, resuming a
+Surface the script's output: the `Concurrency cap:` line with its reason, the deadline (if any), each dispatch line, each
+claim-landed/timeout line, and the closing `claude agents` pointer. A claim-wait timeout is a WARN, not a failure — the session may be in preflight, resuming a
 dead worktree, or the pool may have drained mid-launch.
 
 ### Scope confirmation — an inherited epic scope is asked about, never assumed
@@ -111,19 +111,30 @@ Relay the commits, then ask (AskUserQuestion): run `/update`, then re-launch (re
 refuse (…) — run /keeper first`, a local edit or commit would stop `/update`'s `--ff-only` pull: say `/keeper` comes
 first.
 
-### The count is settled at 3 — no capacity readings at dispatch
+### The count — 3 per account with room, settled before launch
 
-**Concurrency is capped at 3, settled before launch — the count is never derived from the account's meter at dispatch.** The account
-meters a 5h burst window and a weekly window, and they resolve so:
+**Concurrency is capped at 3 sessions per account with room, settled before launch: `scripts/fleet-cap.sh` owns the
+arithmetic, `/auto-prep` and `/epic-prep` recommend under it, and the launch prints its line (`Concurrency cap: <n>
+per_account=3 accounts_with_room=<k>/<total> <why>`) and WARNs above it, never refusing — an explicit count remains the
+user's override.** The count is never derived from how full a window reads at dispatch. The account meters a 5h burst
+window and a weekly window, and they resolve so:
 
-- **The 5h burst window constrains concurrency, and 3 is the measured answer.** Burn per window is `n × 5 × rate` —
+- **The 5h burst window is per account, and 3 per account is the measured answer.** Burn per window is `n × 5 × rate` —
   duration never appears, so no deadline choice relieves it — and at opus/xhigh on this workload 3 sessions run for any
-  duration without reliably exhausting a window while 4 do not. Saturating the window throttles every session at once
-  (same wall-clock, less shipped, worktrees still held), so the cap is a ceiling to respect, not a target to creep past.
-  The script warns above 3; an explicit count remains the user's override. A materially different workload (another
-  backlog's burn rate, a lower-tier model mix) voids the bracket, and the account's own meter re-measures it per run:
-  `/fleet-retro`'s Headroom verdict says how many sessions the window fit at the peak reading, and the same answer on
-  consecutive unthrottled runs is the evidence to move the count.
+  duration without reliably exhausting one account's window while 4 do not. Saturating a window throttles every session
+  at once (same wall-clock, less shipped, worktrees still held), so the cap is a ceiling to respect, not a target to creep
+  past. A materially different workload (another backlog's burn rate, a lower-tier model mix) voids the bracket, and the
+  account's own meter re-measures it per run: `/fleet-retro`'s Headroom verdict says how many sessions the window fit at
+  the peak reading, and the same answer on consecutive unthrottled runs is the evidence to move the per-account figure.
+- **A rotating machine multiplies the cap by its accounts with room.** Every session burns on the one account the login
+  names, so on a machine rotating through cswap (`scripts/cswap-setup.sh`) the engine moves the login at its threshold
+  to an account with room, that window fills next, and the first resets 5h after its block began: the pool refills at
+  `accounts with room × one window's rate`, and the cap is `3 × accounts with room`, bounded by the script's count range
+  of 12. "Room" is `fleet-headroom.sh`'s own predicate — an `ok` figure under 15 minutes old, the binding window under the
+  engine's threshold, an engine event within 5 minutes — the active account included while it is under the threshold;
+  `fleet-cap.sh` reads the count from the probe's `--json` verdict. An idle engine or an unreadable cswap is one account's
+  window again, and the line says so (`/cswap log`). Nothing asks for `/cswap quota` to size a fleet: the cap is the pool
+  as the engine sees it, and more sessions than lanes idle whatever the pool holds.
 - **The weekly window is not a sizing input.** The keeper runs multiple accounts, so weekly-remaining sizes neither `n`
   nor duration — rotating to an account with room before launch is the lever. The script prints the active account's
   `Weekly (seven_day)` reading from `~/.claude/local/rate-limits.json` (the `rate-limits` mod's snapshot, last writer
@@ -141,8 +152,11 @@ meters a 5h burst window and a weekly window, and they resolve so:
   unattended long run is `n=2`, which never saturates.
 - **A cutoff is attributed from the harness message, never inferred from the stall's shape** — the limits leave an
   identical synchronized-silence fingerprint. `/fleet-retro`'s `quota_stall_groups[].limit_kind` names it: `5-hour` at
-  n≤3 re-opens the bracket; `weekly` means rotate accounts, not shrink the fleet; `session` IS the 5h window under
-  another name (resets on exact 5h boundaries) and routes as `5-hour`.
+  `n` within the cap re-opens the per-account bracket on a single-account machine, and on a rotating one means the swap
+  landed late — the engine's blind spot is about 90s at the threshold and a fleet's climb rate scales with `n` — so the
+  lever is a lower threshold (`cswap-setup.sh --no-enroll --threshold <N>`), measured by the next retro, before `n`
+  shrinks; `weekly` means rotate accounts, not shrink the fleet; `session` IS the 5h window under another name (resets on
+  exact 5h boundaries) and routes as `5-hour`.
 
 Model, effort and permission-mode defaults are the script's own (added only for flags not already passed) and follow
 `/auto`'s unattended-run prerequisites (`skills/auto/references/launch-prereqs.md`): permission mode `auto`, not
@@ -173,8 +187,9 @@ hides a running sibling; a kept single-run ledger (`mode: single`) does neither.
   token or an epic scope, plus `{retiring: [keys]}` when a top-up carried sessions out of a marker already winding down (deadline passed,
   or `stopped: true`). A retiring session stays in `fleet_sessions` but `hooks/auto-deadline-gate.sh` treats the deadline
   as passed for it whatever the new `deadline_epoch` says, so it finishes its in-flight issue and stops, and stays retired
-  through later top-ups. The launch prints how many carried plus new sessions will run, WARNs above the cap of 3, and
-  WARNs when a carried session's ledger `backlog` differs from the launch's.
+  through later top-ups. The launch prints how many carried plus new sessions will run, WARNs above the cap
+  (`scripts/fleet-cap.sh`, § The count — 3 per account with room), and WARNs when a carried session's ledger `backlog`
+  differs from the launch's.
 - `fleet_sessions` is the session set — the short id each `claude --bg` prints (`backgrounded · <id>`), recorded per
   dispatch and carried across top-ups — and is what `/fleet-status` and `/fleet-retro` scope by; `launch_epoch` is the
   scoping fallback for a marker without the set.

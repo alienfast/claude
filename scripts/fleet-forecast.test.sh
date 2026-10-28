@@ -326,5 +326,33 @@ ck_has "UR child follows" "PICK t=2.0h: TT-301 → s1 (~2.0h) (unblocked by TT-3
 ck_lacks "UR nothing withheld" "WITHHELD" "$WORK/ur.out"
 ck_lacks "UR no hold" "HOLD t=" "$WORK/ur.out"
 
+# ---- THROTTLE-RISK reads the local 5h snapshot under HOME; a cswap landing (fleet-headroom.sh's verdict) turns it into
+# ROTATION, since the probe picks through a full window while another enrolled account has room. ----
+iso_at() { date -u -r "$1" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -d "@$1" '+%Y-%m-%dT%H:%M:%SZ'; }
+mkdir -p "$HOME/.claude/local"
+printf '{"measured_at":"%s","session":"s","windows":[{"kind":"five_hour","percentUsed":90,"resetsAt":"%s"}]}\n' \
+  "$(iso_at "$(date +%s)")" "$(iso_at $(( $(date +%s) + 7200 )))" > "$HOME/.claude/local/rate-limits.json"
+rc=$(run "$WORK/a.json" "$WORK/t.out" --sessions 2 --horizon-h 12 --hours-per-issue 2 --flat)
+ck "T exit" 0 "$rc"
+ck_has "T full window warns" "THROTTLE-RISK: the account's 5h window reads 90% used" "$WORK/t.out"
+ck_lacks "T single account: no rotation line" "ROTATION:" "$WORK/t.out"
+mkdir -p "$HOME/.claude-swap-backup" "$HOME/.claude/logs" "$WORK/bin"
+cat > "$WORK/bin/cswap" <<'EOF'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "list --json") printf '{"schemaVersion":1,"activeAccountNumber":1,"accounts":[{"number":1,"email":"a@x","active":true,"usageStatus":"ok","usage":{"fiveHour":{"pct":90},"sevenDay":{"pct":20,"resetsAt":"2026-10-22T05:00:00+00:00"}},"usageAgeSeconds":30},{"number":2,"email":"b@x","active":false,"usageStatus":"ok","usage":{"fiveHour":{"pct":0},"sevenDay":{"pct":0,"resetsAt":"2026-10-22T05:00:00+00:00"}},"usageAgeSeconds":60}]}\n' ;;
+  "config get")  echo 95 ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x "$WORK/bin/cswap"
+printf '{"schemaVersion": 1, "event": "poll", "ts": "%s", "threshold": 95.0}\n' "$(iso_at "$(date +%s)")" > "$HOME/.claude/logs/cswap-auto.log"
+rc=$(PATH="$WORK/bin:$PATH" run "$WORK/a.json" "$WORK/t2.out" --sessions 2 --horizon-h 12 --hours-per-issue 2 --flat)
+ck "T2 exit" 0 "$rc"
+ck_lacks "T2 landing: no throttle warning" "THROTTLE-RISK" "$WORK/t2.out"
+ck_has "T2 landing named" "ROTATION: the active account's 5h window reads 90% used, but cswap has a landing (b@x at 0% < threshold 95, figure 1m old — the engine's landing when a@x fills) — fleet-headroom.sh picks through it, so no parking is expected" "$WORK/t2.out"
+ck_has "T2 forecast still rendered" "FORECAST: 2 sessions × 12.0h horizon" "$WORK/t2.out"
+rm -rf "$HOME/.claude-swap-backup" "$HOME/.claude/local/rate-limits.json" "$HOME/.claude/logs"
+
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

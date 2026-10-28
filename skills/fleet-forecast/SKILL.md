@@ -67,7 +67,8 @@ weighting); where they disagree, narrate the divergence in the report. Never edi
 
 Lead with the headline: the `FORECAST` line (ships / unreached / stranded), the `STAGE` line (hours to burn Planned/Todo
 and when Backlog picks begin — often the number the user actually wanted), the hours-per-issue basis, and any
-`THROTTLE-RISK` warning. Then:
+`THROTTLE-RISK` warning — or its `ROTATION` form, which says the active account's window is full but cswap has a landing
+the headroom probe picks through, so no parking is expected. Then:
 
 - **Timeline as waves** — group the `PICK`/`SHIP` events into waves and narrate the unlock chains ("TT-1 ships ≈t=2h →
   frees TT-2"), with the `LANE` lines rendered as a compact per-session Gantt.

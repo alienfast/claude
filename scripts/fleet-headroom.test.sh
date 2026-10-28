@@ -160,6 +160,7 @@ t "landing keeps the local meter's fields"    0 'resets_in=7200s  source=session
 t "local PICK-OK keeps its own line + tail"   0 'PICK-OK  five_hour=85% used  headroom=15 >= reserve=10  .* cswap=target(b@x' --session "$SID" --reserve 10
 t "fail-open carries the tail"                0 'source=none  cswap=target(b@x' --session nope0000
 tj "json landing"      0 '.pick_ok == true and .headroom == 15 and .cswap.state == "target" and .cswap.threshold == 95 and .cswap.active.email == "a@x" and .cswap.target.email == "b@x" and .cswap.target.binding_pct == 1' --session "$SID"
+tj "json room counts the active too" 0 '.cswap.with_room == 2 and (.cswap.room | sort) == ["a@x", "b@x"]' --session "$SID"
 
 # consume-first lands on the soonest weekly reset among the accounts with room, so that one is named.
 accounts "$(acct 3 a@x true ok 85 7 20 "$LATER")" "$(acct 2 later@x false ok 0 1 200 "$LATER")" "$(acct 4 soon@x false ok 0 13 200 "$SOON")"
@@ -174,6 +175,7 @@ t "--stale widens what counts as fresh"       0 'cswap=target(b@x at 0% < thresh
 accounts "$(acct 3 a@x true ok 85 7 20 "$SOON")" "$(acct 2 b@x false unavailable 0 0 10 "$LATER")"
 t "a figure cswap stopped trusting is not room" 2 'cswap=no-target(' --session "$SID"
 tj "json no-target"    2 '.pick_ok == false and .cswap.state == "no-target" and .cswap.target == null and .cswap.active.binding_pct == 85' --session "$SID"
+tj "json no-target: the active is the only room" 2 '.cswap.with_room == 1 and .cswap.room == ["a@x"]' --session "$SID"
 
 # The threshold is cswap's, not a constant: at 80 an account at 85% is not room; at 90 it is.
 accounts "$(acct 3 a@x true ok 70 7 20 "$SOON")" "$(acct 2 b@x false ok 85 0 10 "$LATER")"
@@ -184,6 +186,7 @@ CSWAP_STUB_THRESHOLD=90 t "threshold from cswap config: 85 < 90"   0 'cswap=targ
 accounts "$(acct 3 a@x true ok 96 7 20 "$SOON")" "$(acct 2 b@x false ok 0 0 10 "$LATER")"
 t "switching: throttle re-probes in 3m"      2 'THROTTLE five_hour=85% used  headroom=15 < reserve=20  resets=.* resets_in=180s .* cswap=switching(active a@x at 96% >= threshold 95; the engine is moving to b@x at 0%) — re-probe in 3m: cswap is moving the login' --session "$SID"
 tj "json switching"    2 '.pick_ok == false and .resets_in == 180 and .cswap.state == "switching"' --session "$SID"
+tj "json switching: a full active is not room" 2 '.cswap.with_room == 1 and .cswap.room == ["b@x"]' --session "$SID"
 t "switching with a local PICK-OK picks"     0 'PICK-OK  five_hour=85% used  headroom=15 >= reserve=10 .* resets_in=7200s .* cswap=switching(' --session "$SID" --reserve 10
 # The binding window is the higher of 5h and 7d: an active account at 5h 10% but 7d 96% is at the threshold.
 accounts "$(acct 3 a@x true ok 10 96 20 "$SOON")" "$(acct 2 b@x false ok 0 0 10 "$LATER")"

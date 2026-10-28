@@ -1,6 +1,6 @@
 ---
 name: auto-prep
-description: Prepare a team's certified backlog for a fleet of parallel /loop /auto sessions — audit `specified` labels for unattended-shippability, consolidate defect families, wire collision edges, validate the ranking, list what the keeper must unblock, and recommend a session count. Use when the user says 'auto-prep', 'fleet prep', 'prep the backlog for auto', or before launching a fleet.
+description: Prepare a team's certified backlog for a fleet of parallel /loop /auto sessions — audit `specified` labels for unattended-shippability, consolidate defect families, wire collision edges, validate the ranking, list what the keeper must unblock, and recommend a session count and duration from the forecast, printed as the launch command. Use when the user says 'auto-prep', 'fleet prep', 'prep the backlog for auto', or before launching a fleet.
 argument-hint: "[team:KEY | KEY]"
 model: opus
 effort: xhigh
@@ -196,16 +196,34 @@ Count **lanes** from the Step 4 ranking, which already excludes both label gates
 (`standards/linear-workflow.md` § Stage Priorities), is the **Planned stage alone** until that column drains: Backlog
 candidates never count as lanes while anything Planned remains, and a session beyond the Planned lanes idles until a
 chain releases or the keeper acts. Lanes are the immediately-workable candidates minus the decision-gated flags, grouped
-by cluster (chain heads count once; standalones individually). Recommend `min(lanes, 3)`; below 3 lanes, recommend the
-lane count and say when chains release more work.
+by cluster (chain heads count once; standalones individually). Then read the cap this machine's account pool sustains and
+forecast the pool at every count up to it — the lane count is a hand walk at `t=0`, the simulation is the mechanical
+check that each session added still ships something once chains release:
 
-**The cap is 3 and capacity is not a question to ask** — [`/fleet-launch`](../fleet-launch/SKILL.md) § The count is
-settled at 3 owns the count, the 5h-window reason, the weekly-window rule and the headroom-probe rule. Say which other
-window consumers are expected (the operator's own session, an earlier fleet whose window has not rolled off) so the count
-is read against the whole account; a user-driven extra consumer never reduces the recommended count.
+```bash
+cap=$(~/.claude/scripts/fleet-cap.sh --json | jq -r .cap)     # 3 per account with room: 3 on one account, up to 12 rotating
+for n in $(seq 2 "$cap"); do ~/.claude/scripts/fleet-forecast.py --team <KEY> --sessions $n --horizon-h 24 >| tmp/forecast-$n.txt; grep -E '^FORECAST|^STAGE|^POOL-DRAINED|^PLANNED-HOLD|^ROTATION|^THROTTLE' tmp/forecast-$n.txt; grep '^SHIP' tmp/forecast-$n.txt | tail -1; done
+```
 
-State the binding term: "7 lanes available, capped to 3" says the backlog is not the constraint; a lane-bound "2 sessions"
-names the real lever (certify more work, or say when chains release it).
+Recommend the smallest count past which neither the `FORECAST` ship count nor the `STAGE` drain time (`Planned/Todo …
+drains ≈t=`) improves, capped at `cap`; below the cap, say when chains release more work. Cross-check wave 1 against the
+Step 4 ranking as `/fleet-forecast` Step 3 does — the ranking decides pick order, the forecast decides the count. The
+duration is that count's `STAGE` drain time rounded up to the next whole hour: under the Planned gate the fleet holds once
+the column drains, so hours past it buy nothing without `backlog`, and a `STAGE … NOT drained` at the horizon makes the
+horizon the duration with the report saying the column outlasts the run. When the checklist names the `backlog` opt-in,
+re-run the recommended count with `--backlog` and take its `POOL-DRAINED` time (else the horizon) as the opt-in line's
+duration.
+
+**The cap is read, never asked about** — [`/fleet-launch`](../fleet-launch/SKILL.md) § The count — 3 per account with
+room owns the per-account figure, the rotation arithmetic (3 on a single-account machine; 3 × the accounts with room on a
+cswap-rotating one, at most 12), the weekly-window rule and the headroom-probe rule. Never size from a `/cswap quota`
+table or a usage reading; the script's line is the whole input. Say which other window consumers are expected (the
+operator's own session, an earlier fleet whose window has not rolled off) so the count is read against the whole pool; a
+user-driven extra consumer never reduces the recommended count.
+
+State the binding term: "7 lanes available, capped to 6 (2 accounts with room)" says the backlog is not the constraint;
+"4 — the forecast gains nothing at 5" names the chain structure (`floor`); a lane-bound "2 sessions" names the real lever
+(certify more work, or say when chains release it).
 
 **Persist the recommendation** in the project's main checkout — a count-less `/fleet-launch` reads exactly this file and
 warns when it is older than 24h. Read `references/sizing-block.md` to fill `rate`, `peak5h` and `fits` (the block
@@ -213,11 +231,11 @@ warns when it is older than 24h. Read `references/sizing-block.md` to fill `rate
 
 ```bash
 jq -n --argjson sessions <N> --arg team <KEY> --argjson e "$(date +%s)" \
-      --arg bound_by '<lanes|cap>' --argjson duration_h <D> \
+      --arg bound_by '<floor|lanes|cap>' --argjson cap "$cap" --argjson duration_h <D> \
       --argjson rate <TOK_PER_SESSION_HOUR> --argjson peak5h <PEAK_5H_OBSERVED> \
       --argjson fits <FIVE_HOUR_FITS_SESSIONS or null> \
   '{sessions: $sessions, team: $team, generated_epoch: $e, generated: (now | todate),
-    bound_by: $bound_by, duration_h: $duration_h,
+    bound_by: $bound_by, cap: $cap, duration_h: $duration_h,
     sizing: {rate_tok_per_session_hour: $rate, peak_5h_observed: $peak5h, five_hour_fits_sessions: $fits}}' \
   > tmp/fleet-recommendation.json
 ```
@@ -254,10 +272,21 @@ Launch checklist for the report:
 **Lead with the keeper's unblock list for the release scope** — Step 4's FOCUS rows grouped by remedy and ranked by
 fan-out, each action paired with what it releases and its worth; the first line is the single highest-value action.
 Everything unstarted-scoped that needs the keeper — decisions, certifications, human tasks, stalled resumes, the promotion
-batch (required for the stage to drain, never an optional pull-forward) — belongs here. Then the launch line: count **and
-duration**, `/fleet-launch [count] [duration]`, which term bound it, and the projected burn per 5h window beside the
-observed peak. Then the `solo` quiet-window plan in running order: **workable now**, then **blocked** (each with its
-blocker). **Everything Backlog-scoped comes last and stays brief**: changes made (consolidations as absorbed→canonical
+batch (required for the stage to drain, never an optional pull-forward) — belongs here. Then the launch command, **printed
+literally on every run with this prep's count and duration filled in — never a bare `/fleet-launch`, never a
+placeholder**:
+
+```text
+/fleet-launch 6 10h
+```
+
+followed by which term bound the count (`floor` — the forecast gains nothing past it; lanes; or the cap with its
+accounts-with-room reading), the `STAGE` drain time the duration rounds up, and the projected burn per 5h window beside
+the observed peak; when the checklist named the `backlog` opt-in, the same command with ` backlog` appended and its own
+duration from the `--backlog` forecast on a second line, labelled as the opt-in. Then the `solo` quiet-window plan in
+running order: **workable now**,
+then **blocked** (each with its blocker). **Everything Backlog-scoped comes last and stays brief**: changes made
+(consolidations as absorbed→canonical
 with the class named, edges as blocker→blocked with one-line rationale, label ops, priority bumps), decision-gated issues
 gating only Backlog work, remaining FLEET-BLOCKED edges, and the validated top of the ranked pool. Every write is
 reversible — say so once.

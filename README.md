@@ -456,7 +456,10 @@ The `rate-limits` mod pins the active account and its 5-hour and weekly use unde
 a switch landing on a running session is visible. `/auto`'s fleet headroom gate
 ([fleet-headroom.sh](scripts/fleet-headroom.sh)) asks cswap before it parks a session: while another enrolled account
 is under the threshold with a fresh figure, the pick goes ahead and the engine moves the login when the active account
-fills; the gate parks only when no account has room or the engine is idle, and its line says which. From a terminal:
+fills; the gate parks only when no account has room or the engine is idle, and its line says which. The fleet's
+concurrency cap follows the same read ([fleet-cap.sh](scripts/fleet-cap.sh)): 3 sessions per account with room, so
+`/auto-prep`, `/epic-prep` and `/fleet-launch` size a five-account machine at up to 12 where a single account holds 3.
+From a terminal:
 
 ```sh
 cswap list                            # every account's usage and reset times

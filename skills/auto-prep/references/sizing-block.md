@@ -2,7 +2,7 @@
 
 The block records what the recommendation assumed so `/fleet-retro` can compare realized burn against it; a projection
 that missed is then visible rather than silently repeated. It is not a sizing input — the count comes from lanes and the
-cap (`/fleet-launch` § The count is settled at 3).
+cap `scripts/fleet-cap.sh` reads (`/fleet-launch` § The count — 3 per account with room).
 
 Take `rate` and `peak_5h_observed` as the MAX over the recent fleets in `tmp/fleet-metrics-history.jsonl`, never the
 latest retro alone: a peak is a floor on the account's capacity only when the fleet was actually working, and a starved or

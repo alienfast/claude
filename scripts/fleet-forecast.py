@@ -35,7 +35,8 @@ Usage:
   --flat disables estimate-point weighting of per-issue duration. --fixture bypasses the Linear
   fetch with a JSON array of issue nodes (test seam); --me sets the viewer email for claim checks.
 
-Output: verdict lines to stdout — FORECAST / HOURS-PER-ISSUE / THROTTLE-RISK / INFLIGHT /
+Output: verdict lines to stdout — FORECAST / HOURS-PER-ISSUE / THROTTLE-RISK (or ROTATION, when the
+window is full but fleet-headroom.sh reports a cswap landing the picks go through) / INFLIGHT /
 PICK / HOLD / SHIP / POOL-DRAINED / PLANNED-HOLD / LANE / STRANDED / UNREACHED / WITHHELD. Exit 0
 when fetched and simulated (counts may be 0); non-zero on fetch/parse failure. Read-only — no
 Linear writes.
@@ -342,15 +343,36 @@ def unreached_reason(issue, issues, pool, shipped, ship_time, horizon, seen=None
     return "UNREACHED", "capacity — ranked below what the sessions reached before the deadline"
 
 
+def cswap_landing():
+    """fleet-headroom.sh's cswap verdict: the note naming the landing when another enrolled account has room (state `target`),
+    else None. The probe answers PICK-OK on a landing whatever the local meter says, so a full window parks nothing then."""
+    script = Path(__file__).resolve().parent / "fleet-headroom.sh"
+    try:
+        try:
+            out = subprocess.run([str(script), "--json"], capture_output=True, text=True, encoding="utf-8")
+        except OSError as e:
+            if not (isinstance(e, FileNotFoundError) or getattr(e, "winerror", None) == 193):
+                raise
+            out = subprocess.run(["bash", str(script), "--json"], capture_output=True, text=True, encoding="utf-8")
+        cswap = json.loads(out.stdout).get("cswap") or {}
+        return cswap.get("note") if cswap.get("state") == "target" else None
+    except Exception:
+        return None
+
+
 def throttle_line(n_sessions):
     """The account's 5h window as mods/rate-limits last read it: past fleet-headroom.sh's reserve (20 points), every session parks
-    at its first pick until the reset."""
+    at its first pick until the reset — unless cswap has a landing, which the probe picks through."""
     try:
         snap = json.loads((Path.home() / ".claude/local/rate-limits.json").read_text(encoding="utf-8"))
         five = next((w for w in snap.get("windows") or [] if w.get("kind") == "five_hour"), None) or {}
         pct, resets = five.get("percentUsed"), five.get("resetsAt")
         reset_passed = bool(resets) and datetime.fromisoformat(str(resets).replace("Z", "+00:00")) <= datetime.now(timezone.utc)
         if isinstance(pct, (int, float)) and pct > 80 and not reset_passed:
+            landing = cswap_landing()
+            if landing:
+                return (f"ROTATION: the active account's 5h window reads {pct}% used, but cswap has a landing ({landing}) — "
+                        f"fleet-headroom.sh picks through it, so no parking is expected")
             return (f"THROTTLE-RISK: the account's 5h window reads {pct}% used (resets {resets or '?'}, measured "
                     f"{snap.get('measured_at') or '?'}) — {n_sessions} sessions park at their first pick until the reset; "
                     f"expect fleet-headroom parking to stretch this timeline")
