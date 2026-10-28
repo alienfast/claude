@@ -73,7 +73,7 @@ the one type with no mechanical check — say what the work is, so the next run 
 
 Only after the gate passed and the change shipped. For each issue recall marked *cleared*: transition it to the state
 `/finish` left the sweep issue in — read the name from `linear-cli issues get <SWEEP-ID> -o json | jq -r .state.name`
-rather than hardcoding one, so a `pr` finish (issue still In Progress, PR open) and a `merge` finish move it the same way
+rather than hardcoding one, so a `pr` finish (issue Ready For Release, PR open) and a `merge` finish move it the same way
 the sweep moved — add a comment naming the sweep and the measurement that cleared it, and wire `linear-cli relations add
 <DEFERRED> <SWEEP-ID> -r related`. A lift that reddened the gate in Phase 4 goes back to *still blocked* with the new
 evidence instead.

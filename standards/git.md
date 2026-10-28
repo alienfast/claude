@@ -217,6 +217,15 @@ Stage nothing, commit nothing, push nothing. Make edits, run hooks and tests, re
 Pre-commit hooks running on their own are not commits. When unsure, ask: "Want me to commit this, or leave it staged
 for review?" or "Want me to push, or leave the commit local?"
 
+### A push is a request for CI
+
+A push carries work that has already passed the local gate: the project's check, and its test suite where the check does
+not run it ([project-commands.md](project-commands.md)). CI's job is what the gate cannot run on your machine — browser
+suites, container builds, a parallel test split — not what it can; a CI run red on something the gate covers is a local
+run skipped. The tell is a PR branch pushed several times in one session, each build red on something the gate would
+have caught, where one local run would have carried the fix whole. The one push that carries an ungated tree is
+`/checkpoint`'s WIP save, which records the check's result in its Linear comment.
+
 ### Why
 
 Review is the workflow: each commit is an artifact the user inspects before it enters history, and each push is visible

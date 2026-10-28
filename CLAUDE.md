@@ -22,8 +22,10 @@ explicit grant. Read [standards/git.md](standards/git.md) before any git operati
   `standards/shell.md` owns the zsh traps summarized below.
 - Skills load on invocation; the harness listing is the catalog. [skills/README.md](skills/README.md) is the creation
   guide.
-- Lint and type-check before committing ([standards/project-commands.md](standards/project-commands.md)). Type checking
-  is hard-gated in `/quality-review` and re-gated in `/finish`.
+- Lint and type-check before committing ([standards/project-commands.md](standards/project-commands.md)), and run the
+  project's full local gate — its check, plus its test suite where the check does not run it — before every push
+  ([standards/git.md](standards/git.md#a-push-is-a-request-for-ci)). Type checking is hard-gated in `/quality-review`
+  and re-gated in `/finish`.
 
 ## Scratch, local state, files
 

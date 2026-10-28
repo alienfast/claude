@@ -282,8 +282,8 @@ commit, as it does for an unpushed merge.
 
 **Every `<...>` token in a prompt or comment body is a substitution site**, as in Step 4.
 
-**Who performs the transition** — whoever completes the lifecycle, so Linear never shows `Ready For Release` for
-unmerged code:
+**Who performs the transition** — whoever completes the lifecycle, so Linear never shows `Ready For Release` before the
+ship exists (a commit, an open PR, or a landed merge, by `ACTION`):
 
 - `ACTION` empty (standard flow): Step 8 runs `linear-cli issues update <ISSUE-ID> --state "Ready For Release"` itself.
 - `ACTION=merge`: Step 8 is the **gate only**. Step 9 runs `~/.claude/scripts/mark-ready-for-release.sh` after

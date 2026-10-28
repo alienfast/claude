@@ -47,6 +47,14 @@ that depend on it can begin. The remaining steps (review, PR merge, automated de
 implementation dependencies. A review kick-back moves the issue out of In Review, which reinstates its blocks
 automatically.
 
+**The close-out is `/finish`'s, whichever branch carries the code.** A fix tracked as an issue but landed on a branch no
+`/start` created — a Renovate bundle, a hotfix PR, an integration branch — still ends with `/finish <ID> pr`: it checks
+off the satisfied requirements, posts the completion comment, gates on `pnpm check` and on the `/quality-review` verdict
+(a missing verdict prompts `yes` / `re-run` / `abort`; it never passes silently), opens the PR or updates the one the
+branch already has, then moves the issue to Ready For Release — an open PR is work waiting for its release, and the PR
+merging later changes nothing in Linear. An issue still In Progress on a green, mergeable PR is the tell that the
+close-out was done by hand or not at all.
+
 **The one exception is a dependency on the release itself, carried by the `deploy-gated` label**: such an issue waits
 until every blocker reaches one of the project's declared deployed states ([issue-spec.md](issue-spec.md) § The
 `deploy-gated` label).

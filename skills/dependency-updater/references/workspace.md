@@ -39,9 +39,10 @@ Then work the current branch. Finish is `pr` only.
 - **After `/finish merge`** there is nothing to do — `finish-merge.sh` removes the worktree itself. Confirm it did: when
   it could not, it prints a `CLEANUP-FAILED:` line with the blocking paths and the remedy, and `/finish` carries that
   into the tag and a follow-up comment. Surface it rather than assuming the removal happened.
-- **After `/finish pr`** the worktree is still on disk and is this skill's to remove — the one worktree
-  `reap-worktrees.sh` will sit on, since the issue stays In Progress and the branch is unmerged, which is precisely the
-  abandoned-for-resumption shape reap preserves rather than reclaims.
+- **After `/finish pr`** the worktree is still on disk and is this skill's to remove — and not one `reap-worktrees.sh`
+  preserves: the branch is pushed and the issue is Ready For Release, a `completed` state type in the house model
+  (`mark-ready-for-release.sh`), so once the tree is clean and idle past the reaper's grace it passes the evidence test
+  and is reclaimed on the hourly schedule instead of when this run ends.
   1. Delete only the scratch files this run created — the Phase 3 rollback copies under `tmp/`. **Untracked files make
      `git worktree remove` refuse**, and `--force` is blocked by the git-permissions hook, so clearing them is the only
      route. Never `rm -rf tmp/` — it also holds harness-owned session state and cross-skill handoff artifacts.

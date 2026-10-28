@@ -48,6 +48,12 @@ Pass `--base` explicitly, the generated title, the body file, and one `--label` 
 gh pr create --base '<BASE>' --head '<WORKTREE_BRANCH>' --title '<generated title>' --body-file '<path from step 3>' [--label '<label>' ...]
 ```
 
+**A branch that already has an open PR** — a Renovate branch, a PR opened by hand, a re-run after §5 failed — is
+updated, not created: `gh pr list --head '<WORKTREE_BRANCH>' --state open --json number --jq '.[0].number'` prints its
+number, so run `gh pr edit <number> --title '<generated title>' --body-file '<path from step 3>' [--add-label '<label>'
+...]` and continue to §5 with that PR. `gh pr create` refuses a branch with an open PR, and Step 9 has no handler for
+the refusal, so without this branch §5's transition never runs.
+
 ## 5. Transition and close
 
 Run `~/.claude/scripts/mark-ready-for-release.sh <ISSUE-ID>`: the open PR is the ship, and Ready For Release is the

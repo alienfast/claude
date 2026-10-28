@@ -101,7 +101,11 @@ main checkout mid-operation, source under continuous contention. The dirty-tree 
 is actually on source, since otherwise source advances by a ref-only `git update-ref`. A launchd drainer
 (`scripts/drain-merge-queue.sh` → `scripts/merge-queue.sh drain`) retries about every 15 minutes until the merge lands.
 The merge owns the `Ready For Release` transition (`scripts/mark-ready-for-release.sh`): a queued issue stays **In
-Progress** until the merge lands, so Linear never shows a release state for unmerged code. Inspect with `/merge-queue`.
+Progress** until the merge lands, because in `merge` mode the landed merge *is* the ship — no PR exists and the worktree
+branch is deleted on landing, so until then there is nothing for a release state to name. That is the merge queue's
+rule, not a rule about PRs: `Ready For Release` is the state of a ship waiting for its release, an open PR awaiting
+merge included — `/finish pr` marks it the moment the PR opens ([linear-workflow.md](linear-workflow.md) § Terminal
+States). Inspect with `/merge-queue`.
 The drainer never resolves conflicts unattended (it flags them for a human), and nobody stashes, commits or reverts
 another session's WIP to unblock a merge.
 
