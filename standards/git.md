@@ -186,7 +186,18 @@ Commits and pushes are separate, explicit grants. Neither is implied by implemen
 - "implement", "do it", "fix it", "make the change" → no commit.
 - "commit" → the current set of changes only; not a standing grant for the session; no push.
 - "push" → the currently committed state only; no future commits; no commit.
-- "commit and push" / "commit, push, and create a PR" → an explicit multi-action grant; honor as written.
+- "commit and push" / "commit, push, and create a PR" → an explicit multi-action grant; honor as written; on an issue's
+  change set the executor is `/finish` (next bullet).
+- **A user's grant on one open Linear issue's change set runs through `/finish <ID>`** — `commit` → `/finish <ID>`,
+  `commit and push` → `/finish <ID> push`, `… and create a PR` → `/finish <ID> pr` — never a hand `git commit`, whether
+  or not this session `/start`ed the issue (a red-check repair that turned out to be a filed issue's deliverable
+  included: BF-2911, 2026-10-29, shipped by hand and left in Backlog behind an evidence comment). The tell is the subject
+  you are about to write: one that opens with an issue ID names that issue's work. `/finish` makes the same commit and
+  push, gated on `pnpm check` and the `/quality-review` verdict, then closes the issue out; the contract is
+  [linear-workflow.md](linear-workflow.md#terminal-states-for-dependency-resolution) § The close-out is `/finish`'s.
+  Spell the ID out: detection falls back to the branch name, so an integration branch resolves to the epic. Name the
+  mapping before running it, so a user who meant a bare commit can say so. Skill-scoped grants (§ Named exceptions)
+  keep their own commit shapes.
 
 ### Named exceptions: skill-scoped grants
 

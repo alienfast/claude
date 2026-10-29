@@ -22,7 +22,17 @@ Search the module's stem, the shortest token its file family shares, since the s
 family: a sibling citing `historyLoadStore.ts` is found by `historyLoad` and missed by `historyLoadRead`. Also check
 the current run's already-filed list. On a hit:
 
-- **Same root cause** → do not create. Append the evidence as a comment (`~/.claude/scripts/linear-post.sh comment`),
+- **Same root cause, and the change already in your working tree meets its Desired Outcome** → the fix is that
+  issue's deliverable, not an occurrence to record. Say so to the user at once, claim it
+  (`~/.claude/scripts/linear-claim.sh <ID> --state "In Progress"`; `/finish` never claims), and ship it through
+  `/finish <ID>` (`push` only when the user's grant includes one — [git.md](git.md) § Commit and Push Authorization),
+  which checks off the requirements, posts the completion comment and moves the state
+  ([linear-workflow.md](linear-workflow.md) § Terminal States for Dependency Resolution, the close-out paragraph).
+  An evidence comment does none of that, so the issue stays pickable and a later session re-derives the fix. The same
+  hit found before any code is written is `/start <ID>` from the outset. (BF-2911, 2026-10-29: certified two days
+  earlier, re-diagnosed from scratch, fixed, pushed by hand after an evidence comment, and finished only when the
+  user asked why `/finish` had not run.)
+- **Same root cause, fix not in your tree** → do not create. Append the evidence as a comment (`~/.claude/scripts/linear-post.sh comment`),
   raise its priority or labels if the new evidence warrants it, and record `<ID> (existing — evidence appended)`; a
   dedup counts as filed, not dropped.
 - **Adjacent but distinct** → file, then `linear-cli relations add <new> <existing> -r related`. When the hit is open
