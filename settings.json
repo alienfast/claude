@@ -238,7 +238,8 @@
     "effort-phase@alienfast-claude": true,
     "spawn-policy@alienfast-claude": true,
     "loop-boundary@alienfast-claude": true,
-    "rate-limits@alienfast-claude": true
+    "rate-limits@alienfast-claude": true,
+    "typescript-lsp@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {
     "alienfast-claude": {
@@ -266,5 +267,6 @@
   "autoMemoryEnabled": false,
   "theme": "dark",
   "agentPushNotifEnabled": true,
-  "skipAutoPermissionPrompt": true
+  "skipAutoPermissionPrompt": true,
+  "model": "fable"
 }
