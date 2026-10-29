@@ -2,9 +2,10 @@
 name: standardize-tooling
 description: >-
   Converge a TypeScript project's dev tooling onto the house conventions — pnpm 12, Biome (no ESLint/Prettier),
-  markdownlint-cli2, madge, the jscpd clone gate, the parallel `check` suite, tsdown for libraries, `auto` with OIDC
-  publishing — then gate on `pnpm check`. Idempotent; applies only the gaps. Use when the user says 'standardize tooling', 'migrate to
-  pnpm/Biome/tsdown', 'apply house tooling conventions', or asks to convert off yarn/npm + ESLint/Prettier + tsup.
+  markdownlint-cli2, madge, the jscpd clone gate, the parallel `check` suite, self-hosted Renovate (basefund's config and
+  workflow), the project `.claude/update.sh`, tsdown for libraries, `auto` with OIDC publishing — then gate on `pnpm check`.
+  Idempotent; applies only the gaps. Use when the user says 'standardize tooling', 'migrate to pnpm/Biome/tsdown', 'apply
+  house tooling conventions', 'add renovate', or asks to convert off yarn/npm + ESLint/Prettier + tsup.
 ---
 
 # Standardize Tooling
@@ -32,6 +33,13 @@ A standardized project has all of:
   least check-types, check-biome, check-circular, check-clones, check-markdown, test and test-tools; read the current
   lanes live from basefund's `check-unlocked` script (its `check` is a lock wrapper around it).
 - **`.ncurc.cjs`** cooldown aligned to pnpm's 7-day window.
+- **Renovate**, self-hosted — `renovate.json` adapted from basefund's (`config:recommended`, a 7-day `minimumReleaseAge`
+  equal to pnpm's cooldown, `@alienfast/**` exempt, one weekly batch with majors, an immediate `security updates` batch,
+  the workflow's own Renovate pin looked up on npm, replacements off, holds mirroring the target's `.ncurc.cjs` rejects)
+  and `.github/workflows/renovate.yml` running as the org's `basefund-renovate` GitHub App on the same 4-hourly cron.
+- **`.claude/update.sh`** in the house shape — runs `~/.claude/update.sh` (which owns the `~/.claude` pull), then the
+  project's own tool checks, then `lint_and_fix "pnpm check-biome && pnpm check-markdown"`; it no longer pulls `~/.claude`
+  itself.
 - **`.vscode`** wired to the `check-types` task, with **no stale `build:ide` script**.
 - **tsdown** as the bundler *if the project builds a library/CLI*.
 - *If published to npm:* **`auto`** for releases with **OIDC token-less trusted publishing** and
@@ -46,8 +54,10 @@ them** — never reproduce config from memory or freeze a snapshot.
 - **`~/projects/basefund`** — primary. Monorepo, consumes the private `@alienfast` GitHub Packages registry,
   not npm-published. Canonical for `pnpm-workspace.yaml`, `biome.jsonc`, `.markdownlint-cli2.jsonc`,
   `.ncurc.cjs`, the `check` suite, the clone gate (`.jscpd.json`, `.claude/rules/check-clones.mjs`,
-  `tools/scripts/merge-jscpd-baseline.mjs` and their tests), and `.vscode/*`. `~/projects/bfp-control-panel` is the
-  worked example of the clone gate adapted to a target with no CI runner and TypeScript only.
+  `tools/scripts/merge-jscpd-baseline.mjs` and their tests), `renovate.json` + `.github/workflows/renovate.yml`,
+  `.claude/update.sh`, and `.vscode/*`. `~/projects/bfp-control-panel` is the worked example of the clone gate adapted to
+  a target with no CI runner and TypeScript only; `~/projects/basefund-control-panel` is that adaptation plus Renovate
+  and the update script on a single-package Vercel app.
 - **`~/projects/gltfjsx`** — single-package + published + tsdown + OIDC worked example. Canonical for the
   single-package shapes, `.madgerc`, `tsdown.config.ts`, and `publishConfig`.
 - **`~/projects/vite-plugin-i18next-loader`** — the OIDC `auto` release-workflow template (basefund isn't published).
@@ -79,7 +89,8 @@ Key signals: `PACKAGE_MANAGER`, `PACKAGE_MANAGER_PIN`, `LEFTOVER_PM_FILES`, `IS_
 `HAS_ESLINT`, `HAS_PRETTIER`, `HAS_LINT_STAGED`, `HAS_BIOME`, `BUNDLER`, `ALIENFAST_REGISTRY`,
 `IS_PUBLISHED`, `HAS_AUTO`, `HAS_OIDC_WORKFLOW`, `HAS_CHECK_SUITE`, `HAS_BUILD_IDE_SCRIPT`,
 `HAS_MADGE`/`HAS_MADGERC`, `HAS_JSCPD`/`HAS_JSCPD_BASELINE`/`HAS_CHECK_CLONES`/`HAS_JSCPD_MERGE_DRIVER`,
-`HAS_MARKDOWNLINT`, `HAS_COOLDOWN`, `HAS_NCURC`, `VSCODE_TASKS_CHECK_TYPES`.
+`HAS_MARKDOWNLINT`, `HAS_COOLDOWN`, `HAS_NCURC`, `HAS_RENOVATE_CONFIG`/`HAS_RENOVATE_WORKFLOW`,
+`HAS_PROJECT_UPDATE_SH`/`UPDATE_SH_RUNS_GLOBAL`/`UPDATE_SH_PULLS_CLAUDE`/`UPDATE_SH_LINTS`, `VSCODE_TASKS_CHECK_TYPES`.
 
 ### 2. Compute the gap
 
@@ -115,6 +126,10 @@ do these:
 
 - Configure the npmjs **Trusted Publisher** for the package (GitHub Actions; org/repo; workflow filename).
 - Delete now-unused `GH_TOKEN` / `NPM_TOKEN` repo secrets.
+- Wire Renovate in GitHub: add the repo to the `basefund-renovate` App installation, set the `RENOVATE_APP_CLIENT_ID`
+  variable and `RENOVATE_APP_PRIVATE_KEY` secret, create the `security` label, then dispatch the workflow at
+  `dry_run: lookup` ([references/converge.md](references/converge.md) § Renovate names each). An unattended session is
+  refused these writes.
 - Optionally run `/dependency-updater` for a full app-dependency refresh, and `/init` to create/update CLAUDE.md.
 - Commit `.jscpd-baseline.json` with the gate, and read what it records before doing so: every pair is a clone the
   tree carries today, accepted as it stands rather than consolidated. The first `--update` prints no pair listing (it

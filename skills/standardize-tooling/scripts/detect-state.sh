@@ -127,6 +127,24 @@ if [[ -f "$TARGET/.gitattributes" ]] && grep -qE '\.jscpd-baseline\.json[[:space
    && [[ "$(field scripts.prepare)" == *merge.jscpd-baseline.driver* ]]; then driver="true"; fi
 emit HAS_JSCPD_MERGE_DRIVER "$driver"
 
+# --- Renovate ----------------------------------------------------------------
+# Config at any of Renovate's file locations, and the self-hosted job (basefund's shape runs renovatebot/github-action).
+renovate_cfg="$(first_glob "$TARGET"/renovate.json "$TARGET"/renovate.json5 "$TARGET"/.github/renovate.json \
+  "$TARGET"/.github/renovate.json5 "$TARGET"/.renovaterc "$TARGET"/.renovaterc.json)"
+emit HAS_RENOVATE_CONFIG "$([[ -n "$renovate_cfg" ]] && echo true || echo false)"
+renovate_wf="false"
+if [[ -d "$TARGET/.github/workflows" ]] && grep -qE 'renovatebot/github-action' "$TARGET"/.github/workflows/*.y*ml 2>/dev/null; then renovate_wf="true"; fi
+emit HAS_RENOVATE_WORKFLOW "$renovate_wf"
+
+# --- .claude/update.sh -------------------------------------------------------
+# The house shape delegates the ~/.claude pull to the global script (which re-runs itself from the pulled version), so a
+# project copy that still pulls ~/.claude itself is the older shape and reads as a gap (UPDATE_SH_PULLS_CLAUDE=true).
+upd="$TARGET/.claude/update.sh"
+emit HAS_PROJECT_UPDATE_SH "$([[ -f "$upd" ]] && echo true || echo false)"
+emit UPDATE_SH_RUNS_GLOBAL "$({ [[ -f "$upd" ]] && grep -qE '\$HOME/\.claude/update\.sh|~/\.claude/update\.sh' "$upd"; } && echo true || echo false)"
+emit UPDATE_SH_PULLS_CLAUDE "$({ [[ -f "$upd" ]] && grep -qE 'git -C "\$(CLAUDE_DIR|HOME/\.claude)" pull' "$upd"; } && echo true || echo false)"
+emit UPDATE_SH_LINTS "$({ [[ -f "$upd" ]] && grep -q 'lint_and_fix' "$upd"; } && echo true || echo false)"
+
 # --- .vscode -----------------------------------------------------------------
 vscode_ct="false"
 if [[ -f "$TARGET/.vscode/tasks.json" ]] && grep -q 'check-types' "$TARGET/.vscode/tasks.json"; then vscode_ct="true"; fi

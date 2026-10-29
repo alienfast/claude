@@ -32,6 +32,8 @@ npm-published). `~/projects/gltfjsx` is the single-package + published + tsdown 
 | `.vscode/tasks.json` → `check-types` | `gltfjsx/.vscode/tasks.json` (single) or `basefund/.vscode/tasks.json` (mono matchers) |
 | `.jscpd.json`, `.claude/rules/check-clones.mjs`, `tools/scripts/merge-jscpd-baseline.mjs`, `tools/scripts/nodeRuntime.ts`, the two `tools/scripts/*.test.ts`, the `.gitattributes` line, the `prepare` registration | `basefund/…` at the same paths; `bfp-control-panel/…` for the no-CI, TypeScript-only adaptation and its `tools/scripts/vitest.config.ts` |
 | `.jscpd-baseline.json` | **never copied** — generated from the target's own tree by `node .claude/rules/check-clones.mjs --update` |
+| `renovate.json`, `.github/workflows/renovate.yml` | `basefund/…` at the same paths; `basefund-control-panel/…` for the single-package, no-Docker, no-CircleCI reduction |
+| `.claude/update.sh` | `basefund/.claude/update.sh` (the frame); `basefund-control-panel/.claude/update.sh` for a Vercel-deployed app's tool block |
 | tsdown, `auto`, OIDC workflow, `publishConfig` | see [publishing.md](publishing.md) |
 
 ## pnpm 12 + workspace + supply-chain cooldown + allow-builds
@@ -208,12 +210,98 @@ fingerprint baseline, the re-pairing filter, the accepted false greens — and i
   is never invoked as a whole in CI.
 - A worktree entered by hand or by `EnterWorktree` records no `start.source-branch`, so the lane judges against the
   default branch; the output names the base either way (`judged against default branch main`).
+- **Keep `tools/` out of the app tsconfig.** Neither source repo type-checks `tools/scripts` (their root includes stop at
+  `apps/*/src`); a single-package target whose tsconfig includes `**/*.ts` pulls the two suites into the app program, and
+  `next build` type-checks that same program, so a red here breaks the deploy. Measured on basefund-control-panel: Next's
+  global types make `ProcessEnv.NODE_ENV` required, so the tests' `Record<string, string>` env fails against the JS lane's
+  parameter inferred from its `process.env` default, and the lane's inferred result unions never narrow. Add `tools` to the
+  root `exclude` and let vitest transpile the suites, as upstream does; the self-test's fixture paths must also sit under
+  the target's `.jscpd.json` `pattern` roots (basefund's `apps/…`, `packages/plant/…` → the target's `src/…`, `tools/…`,
+  template literals included), or the self-test scans nothing and fails.
 - **The default-branch order follows how the target pushes.** Upstream's `resolveLocalBase` asks `origin/HEAD` before the
   local `main`, which is right where `main` is pushed promptly. A repo that pushes `main` lazily (bfp-control-panel) must
   ask the local `main` first: against `origin/main`, everything merged since the last push reads as changed, and the
   next branch off `main` is charged with the clones those merges carried — measured as 48 vendored story pairs from a
   shared-package sync, red on a branch that touched none of them. Flip the order, the `unfiltered` wording and the base
   test's "ahead of a local main" arm together.
+
+## Renovate
+
+**Met when** `HAS_RENOVATE_CONFIG=true` and `HAS_RENOVATE_WORKFLOW=true`.
+
+**Source** — `basefund/renovate.json` and `basefund/.github/workflows/renovate.yml`. One org-owned GitHub App
+(`basefund-renovate`) drives every repo it is installed on, and the job is self-hosted on GitHub Actions; the Mend-hosted app
+is not used.
+
+### Apply
+
+- Copy `renovate.json` and keep its spine: `config:recommended`, `minimumReleaseAge: "7 days"` (the window
+  `pnpm-workspace.yaml` enforces), the `@alienfast/**` exemption, `separateMajorMinor: false` with the `weekly updates` group
+  over `*`, the `vulnerabilityAlerts` batch (`security updates`, immediate, `security` label), the
+  `ghcr.io/renovatebot/renovate` → npm datasource override that lets the workflow's own `renovate-version` pin clear the
+  cooldown, replacements off, the Wednesday schedule and Chicago timezone, `dependencyDashboard: false`.
+- Drop what the target has no manager for: every `customManagers` entry (CircleCI marker pins, Dockerfile Alpine bases,
+  Pulumi image pins) and every `packageRules` hold that is basefund's own (graphql, redis, mysql, the bundler pin rule, the
+  dockerfile digest rules, traefik and cert-manager). Mirror the target's `.ncurc.cjs` `reject` entries as `allowedVersions`
+  rules, each with a description naming what has to move before it lifts; `reject: []` means none. A runtime the target
+  pins outside `package.json` (a Vercel project's Node setting, `node-version:` in workflows) keeps the `node` hold with
+  the real reason.
+- Copy the workflow, keeping: the SHA-pinned actions as they are (basefund's Renovate bumps them, so re-pin per
+  `~/.claude/standards/github-actions.md` only on a hand bump), the `renovate-version` pin, the cron, the
+  `pull_request_target` rebase-checkbox trigger, `permissions: {}`, the App-token step with its full `permission-*` list (the
+  App's grants; a permission the App lacks fails token creation), the repository-cache steps, `RENOVATE_ONBOARDING: 'false'`
+  and `RENOVATE_EXIT_CODE_FOR_ERRORS: 'true'`. Drop the Docker Hub host rule and `RENOVATE_DOCKER_MAX_PAGES` on a target that
+  builds no images. Point the `notify` job at the target's existing failure-alert channel and secrets: basefund posts through
+  `slackapi/slack-github-action`; a repo whose other workflows `curl` `chat.postMessage` with `SLACK_BOT_TOKEN` keeps that
+  shape and checks Slack's `ok`, since a 200 with `ok: false` is how a bad token or channel answers.
+
+### Gotchas
+
+- The skill writes the two files; the run needs four things in GitHub that an unattended session is refused (measured
+  2026-10-29: the auto-mode classifier denied `gh variable set`, `gh label create` and the installation `PUT`), so they are
+  follow-ups unless the user approves them live: the `basefund-renovate` App added to the repo (org settings → GitHub Apps →
+  the installation's repository list; it is `repository_selection: selected`), the `RENOVATE_APP_CLIENT_ID` repository
+  variable (the same value as basefund's, `gh variable list -R alienfast/basefund`), the `RENOVATE_APP_PRIVATE_KEY` secret
+  (the App's private key, never readable back; generate a new one on the App's settings page if nobody holds the PEM), and
+  the `security` label. Verify with a `workflow_dispatch` run at `dry_run: lookup` before the first scheduled run.
+- `minimumReleaseAge` here and in `pnpm-workspace.yaml` must stay equal, or Renovate opens PRs pnpm refuses
+  (`~/.claude/rules/package-manager.md`). The first weekly PR moves `packageManager` to the newest pnpm older than the
+  window and keeps the `+sha512` suffix only because the pin carries one; never merge a bare pin.
+- Renovate's `github-actions` manager reaches every workflow in the repo, `node-version:` pins included: without the
+  `node` hold a Node major lands in the weekly batch while the Vercel runtime stays where the dashboard set it.
+
+## `.claude/update.sh`
+
+**Met when** `HAS_PROJECT_UPDATE_SH=true`, `UPDATE_SH_RUNS_GLOBAL=true`, `UPDATE_SH_LINTS=true` and
+`UPDATE_SH_PULLS_CLAUDE=false`.
+
+**Source** — `basefund/.claude/update.sh` (the frame; its Sentry and gcloud blocks are its own).
+`basefund-control-panel/.claude/update.sh` holds the Vercel CLI and Application Default Credentials blocks for a
+Vercel-deployed app on Cloud SQL. `bfp-control-panel`'s copy still carries the older `~/.claude` pull and links with
+`--team`, which Vercel CLI 65 deprecates for `--scope`: take its Vercel block, not its frame or that flag.
+
+### Apply
+
+The script is what `/update` runs and what a `SessionStart` hook may run on every session, so it is three parts and nothing
+slow or interactive:
+
+1. `"$HOME/.claude/update.sh"` — the global script pulls `~/.claude` itself (`--ff-only`, then re-runs from the pulled
+   version) and converges pnpm, Claude Code, plugins, skills and the CLI tools. Delete any project copy of the origin check
+   and `git -C ~/.claude pull`: it predates the global script's own pull and now only duplicates it with stale messages.
+2. Project tools, each a check that warns and continues (`set -e` is on, so a failing install is `|| echo "⚠️ …"`): what a
+   developer needs for *this* app that nothing else installs — a Vercel CLI install, login check and repo link for a
+   Vercel-deployed app; an ADC check for a Cloud SQL connector; `brew_ensure` for a CLI the app's skills shell out to.
+   Sign-ins are TTY-gated, so print the exact command instead of prompting; the `/update` skill collects every ⚠️ for the
+   user.
+3. `source "$HOME/.claude/lib/lint.sh"`, `lint_and_fix "pnpm check-biome && pnpm check-markdown"`, the restart notice.
+
+### Gotchas
+
+- No `pnpm install` here: the global script already converges pnpm, and an install on every session start would race a
+  worktree's.
+- `#!/bin/bash` and bash-3.2-clean (`~/.claude/rules/bash.md`): macOS runs it on `/bin/bash`.
+- A `SessionStart` hook in `.claude/settings.json` that runs it (`./.claude/update.sh 2>&1 || true`) is the target's own
+  choice, not part of the house shape; basefund has none.
 
 ## Markdown lint
 
