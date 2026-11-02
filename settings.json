@@ -143,7 +143,8 @@
       "Bash(~/.claude/scripts/wait-idle.sh:*)",
       "Bash(~/.claude/skills/pr-claude/scripts/pr-claude.sh:*)",
       "ClaudeInChromeDomain(linear.app)",
-      "ClaudeInChromeDomain(riskos.sandbox.socure.com)"
+      "ClaudeInChromeDomain(riskos.sandbox.socure.com)",
+      "ClaudeInChromeDomain(app.pr588.stg.basefund.com)"
     ],
     "deny": [],
     "ask": [],
@@ -266,7 +267,7 @@
   "tui": "fullscreen",
   "autoMemoryEnabled": false,
   "theme": "dark",
+  "switchModelsOnFlag": false,
   "agentPushNotifEnabled": true,
-  "skipAutoPermissionPrompt": true,
-  "model": "fable"
+  "skipAutoPermissionPrompt": true
 }
