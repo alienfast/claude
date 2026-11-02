@@ -51,6 +51,9 @@
 #       forced here) they are left in place and named on a `CLEANUP-FAILED:` stdout line with the blocking
 #       paths and the remedy. The exit stays 0 because the merge is done and every consumer keys its landed-
 #       merge bookkeeping on 0 (see the cleanup block); callers carry the line into their own report.
+#       A branch with no commits beyond source has nothing to merge: a `NO-CODE: <ISSUE> — …` stdout line says so,
+#       source is untouched, and the same cleanup runs (the `CLEANUP-FAILED:` sub-case included). Still exit 0: the
+#       issue ships, code-free, and the caller's closing line carries the distinction.
 #   1 — precondition failure (setup issue; the merge was never completed).
 #   2 — worktree needs work before the merge can land, in one of two shapes; the
 #       orchestrator acts IN THE WORKTREE and re-invokes this script:
@@ -422,10 +425,24 @@ else
   orig_tip=$(git rev-parse "$orig_ref")
 fi
 
+# A branch with no commits beyond source has nothing to merge, and the catch-up merge below must not run on it: it
+# fast-forwards the empty branch onto source's tip (an exit-5 round and a project check of source's own tip), the
+# finalize loop then takes its no-op arm, and the run ends on `Merged successfully` above another issue's commit
+# (BF-2697, 2026-10-31, a `deploy-gated` measurement). A `keeper` issue ends the same way by design (skills/start/SKILL.md
+# § Keeper issues). Said on stdout beside CLEANUP-FAILED:, so the caller's closing line and the retro can tell a code-free
+# ship from a merge that never landed. Placed after the preconditions on purpose: forgotten tracked edits still exit 1,
+# and forgotten untracked files still surface as CLEANUP-FAILED: below rather than vanish behind a silent no-code.
+no_code=0
+if [ "$(git rev-list --count "$source_branch..$worktree_branch" 2>/dev/null || echo x)" = 0 ]; then
+  no_code=1
+  issue_upper=$(printf '%s' "$issue_slug" | tr '[:lower:]' '[:upper:]')
+  echo "NO-CODE: $issue_upper — $worktree_branch carries no commits beyond $source_branch; nothing to merge (the issue changed no file, or its work already landed on $source_branch)."
+fi
+
 # Bring the worktree branch up to source's tip, resolving in the worktree if
 # needed. is-ancestor is true when the worktree branch already contains all of
-# source (the common case — nothing to do).
-if ! git merge-base --is-ancestor "$source_branch" "$worktree_branch"; then
+# source (the common case — nothing to do). A NO-CODE branch skips this too.
+if [ "$no_code" = 0 ] && ! git merge-base --is-ancestor "$source_branch" "$worktree_branch"; then
   if ! git -C "$wt_dir" merge --no-edit "$source_branch"; then
     echo "CONFLICT: merging $source_branch into $worktree_branch produced conflicts in the worktree." >&2
     echo "Resolve in the worktree, then: git -C '$wt_dir' add <files> && git -C '$wt_dir' commit -F '$message_file'" >&2
@@ -446,10 +463,11 @@ fi
 # only as a backstop against pathological continuous contention — a clean
 # re-merge exits 5 for the merged-tree gate and the re-invocation converges; it
 # does NOT hard-fail on transient races.
-# (cur_branch was captured in precondition 6.)
+# (cur_branch was captured in precondition 6.) A NO-CODE branch skips the loop
+# whole: there is nothing to advance, and the cleanup below removes it.
 max_finalize_attempts=50
 attempt=0
-while : ; do
+while [ "$no_code" = 0 ]; do
   attempt=$((attempt + 1))
   if [ "$attempt" -gt "$max_finalize_attempts" ]; then
     echo "DEFERRED: source branch kept advancing across $max_finalize_attempts attempts (continuous contention)." >&2
@@ -488,7 +506,8 @@ while : ; do
     target=$(git rev-parse --verify "$worktree_branch")
   elif [ "$(git rev-parse "${worktree_branch}^{tree}")" = "$(git rev-parse "${source_branch}^{tree}")" ]; then
     # The worktree's work is already fully present in source (merged
-    # independently, then source moved). Advancing would create a zero-diff
+    # independently, then source moved; a branch with no commits of its own
+    # never reaches here — NO-CODE above). Advancing would create a zero-diff
     # merge commit — skip it; just clean up.
     target="$src_old"
   else
@@ -586,10 +605,10 @@ if git worktree remove "$wt_dir"; then
     declare -f wt_identity_cleanup >/dev/null 2>&1 || . "$HOME/.claude/scripts/wt-identity.sh"
     wt_identity_cleanup "$wt_dir" "$issue_slug" "$main_root" || true
   fi
-  echo "Merged successfully. Worktree and branch removed."
+  if [ "$no_code" = 1 ]; then echo "Nothing to merge. Worktree and branch removed."; else echo "Merged successfully. Worktree and branch removed."; fi
 else
   blocking=$(git -C "$wt_dir" status --porcelain 2>/dev/null || true)
-  echo "Merged successfully, but the worktree could not be removed."
+  if [ "$no_code" = 1 ]; then echo "Nothing to merge, but the worktree could not be removed."; else echo "Merged successfully, but the worktree could not be removed."; fi
   echo "CLEANUP-FAILED: worktree $wt_dir left in place — git worktree remove refused; branch $worktree_branch and $orig_ref kept."
   if [ -n "$blocking" ]; then
     echo "Blocking paths (git -C '$wt_dir' status --porcelain):"
@@ -599,6 +618,7 @@ else
   echo "  git worktree remove '$wt_dir' && git branch -D '$worktree_branch' && git update-ref -d '$orig_ref'"
   echo "Until then the hourly reaper reports this worktree as merged-but-dirty with the same remedy."
 fi
-# Merge landed — clear any pending merge-queue marker for this issue.
+# Merge landed (or nothing to merge) — clear any pending merge-queue marker for this issue. The landing line is
+# source's tip, which on a NO-CODE run is another issue's commit, so it is not printed there.
 dequeue_self
-git --no-pager log --oneline -1 "$source_branch"
+[ "$no_code" = 1 ] || git --no-pager log --oneline -1 "$source_branch"

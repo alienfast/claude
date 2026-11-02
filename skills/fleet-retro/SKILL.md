@@ -164,7 +164,7 @@ full meaning and where to chase it. The flags and what each usually means:
 | dangling tool calls | unanswered prompt or killed turn |
 | Linear RATELIMITED answers (`linear rl` > 0) | the account's per-user request window ran out, shared by every session, script and launchd job on the machine; the answer is a wait, never a re-rank |
 | high blind-sleep % | agents waiting on background dispatch; correlate with the `bg/sync/ign` column |
-| shipped but no commit | the ledger is wrong, or the merge never landed |
+| shipped but no commit | the ledger is wrong, or the merge never landed — a code-free ship with a `NO-CODE:` witness is listed separately, never flagged |
 | shipped with no persisted verdict | `/quality-review` never persisted its Output block, or the issue shipped outside the review pipeline |
 | plan-heavy origin mix | the posted plans leak requirements/scope — planning is the stage to tune |
 | impl-heavy origin mix | plans were right, code diverged — read the implementing-tier join before routing at model/effort |

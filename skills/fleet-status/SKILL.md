@@ -67,7 +67,8 @@ once. An archived marker (an ended run a later launch displaced) is never a sect
   is leftover, awaiting `/reap-worktrees`.
 - **Shipped, cross-checked** — the union of the fleet's ledgers, each entry verified against commits on the integration
   branch, falling back to the merge queue: merged ✓, deferred (queued — the drainer retries), or ⚠️ recorded-but-unfound
-  (a session may have died between recording and merging).
+  (a session may have died between recording and merging — or the ship was code-free: a `deploy-gated` measurement or a
+  `keeper` issue lands no commit by design, and its session's `SHIPPED-MERGE` line says `carried no commits beyond`).
 - **Failed/canceled, cross-checked** — each recorded failure or cancel joined with the issue's *current* Linear state. A
   ledger entry is a claim about that run only: a later session or an interactive pickup can resolve the issue without
   writing any ledger, so a completed-type state renders as "since shipped" history. Only ⚠️ rows need action.

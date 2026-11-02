@@ -2500,6 +2500,8 @@ cat > "$CK29/tmp/auto-state-29000001.json" <<'EOF'
 EOF
 cat > "$WORK/projects/$M29/29000001-0000.jsonl" <<EOF
 {"type":"user","timestamp":"$(ts_ago 7200)","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto</command-args>"}}
+{"type":"assistant","timestamp":"$(ts_ago 7100)","message":{"role":"assistant","id":"msg_t29m","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":50},"content":[{"type":"tool_use","id":"toolu_t29m","name":"Bash","input":{"command":"cd /repo && ~/.claude/scripts/finish-merge.sh '.claude/worktrees/bf-903' main bf-903 tmp/msg.md"}}]}}
+{"type":"user","timestamp":"$(ts_ago 7090)","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_t29m","is_error":false,"content":"NO-CODE: BF-903 — bf-903 carries no commits beyond main; nothing to merge (the issue changed no file, or its work already landed on main).\nNothing to merge. Worktree and branch removed."}]}}
 {"type":"assistant","timestamp":"$(ts_ago 7000)","message":{"role":"assistant","id":"msg_t29","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"AUTO-HALTED: deadline"}]}}
 EOF
 H29="$CK29/tmp/fleet-metrics-history.jsonl"
@@ -2528,6 +2530,10 @@ print(' '.join(str(r[k]) for k in ('rspec_examples_per_shipped','vitest_tests_pe
 ck_has "tests: report line"        "Tests per shipped issue: +1.5 rspec examples, +2.5 vitest tests, +1.0 story exports (net declarations across 2 of 3 landed ships; previous fleet +1.0 / - / +0.5)" "$WORK/out29a.md"
 ck_has "tests: rising flag fires against the lower row" "- **Tests per shipped issue rose**: rspec +1.5 vs +1.0, vitest +2.5 vs -, stories +1.0 vs +0.5 (summed over the gauges both fleets measured: +2.5 vs +1.5) — ships are adding tests where the issue sits rather than where the mechanism lives; read the project's layer contract and route the duplicate arms to /test-sweep" "$WORK/out29a.md"
 ck_has "tests: trend header columns" "| filed/ship | ex/ship | vt/ship | st/ship | fresh% |" "$WORK/out29a.md"
+# BF-903's finish-merge.sh run printed NO-CODE: (2026-10-31: BF-2697, a deploy-gated measurement, was flagged as a lost merge).
+ck_has   "no-commit flag: a NO-CODE witness lists the ship as code-free" "- Code-free ships — BF-903: finish-merge.sh printed NO-CODE:" "$WORK/out29a.md"
+ck_lacks "no-commit flag: the witnessed ship is not flagged" "Shipped but no commit found" "$WORK/out29a.md"
+ck "no-commit flag: the witness is in the session json" "['BF-903']" "$(q29 "d['sessions'][0]['code_free']")"
 # ex/ship, vt/ship and st/ship cells by header position, per trend row: this fleet, the earlier gauge fleet, and the pre-gauge row.
 ck "tests: trend cells by row" "+1.5,+2.5,+1.0 +1.0,-,+0.5 -,-,-" "$(python3 -c "
 import sys
@@ -2589,6 +2595,9 @@ echo '{"status": "drained", "reason": "deadline", "shipped": ["BF-950"], "cancel
 sed 's/msg_t29/msg_t29n/' "$WORK/projects/$M29/29000001-0000.jsonl" > "$WORK/projects/$M29N/29000002-0000.jsonl"
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK29N" --sessions 29000002 > "$WORK/out29n.md" 2>&1
 ck_has "tests: nothing measurable says why" "Tests per shipped issue: nothing could be measured — none of the 1 shipped issue(s) has a landing commit" "$WORK/out29n.md"
+# The copied transcript's NO-CODE: names BF-903, which this ledger never shipped: the witness binds to its own issue only.
+ck_has   "no-commit flag: fires without a witness for the shipped issue" "- **Shipped but no commit found**: BF-950" "$WORK/out29n.md"
+ck_lacks "no-commit flag: a witness for an unshipped issue lists nothing" "Code-free ships" "$WORK/out29n.md"
 
 # A net removal prints with its sign: a fast-forward commit dropping two examples.
 CK29M="$WORK/ck29m"; mkdir -p "$CK29M/tmp" "$CK29M/spec"

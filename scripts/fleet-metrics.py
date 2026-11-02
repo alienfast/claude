@@ -129,6 +129,9 @@ LINEAR_RATELIMITED = re.compile(r'"RATELIMITED"|Rate limit exceeded\. Only \d+ r
 # The merge path's Ready-For-Release call, at a command position (start, or after ; & | ( ) — a quoted mention
 # inside a grep or a comment body does not count. The path prefix is optional and whatever the session typed.
 SHIP_CALL = re.compile(r"(?:^|[;&|(])\s*(?:[\w~./-]*/)?mark-ready-for-release\.sh\s+([A-Z]+-\d+)", re.M)
+# finish-merge.sh's stdout line for a branch with no commits beyond source (2026-11-02): the ship has no landing commit by
+# design (a `deploy-gated` measurement, a `keeper` issue), so the no-commit flag must not read it as a lost merge.
+NO_CODE_LINE = re.compile(r"^NO-CODE:\s*([A-Z]+-\d+)", re.M)
 # fleet-headroom.sh's text and --json answers; the source of its reading (session|snapshot|none) rides along. Transcripts before
 # 2026-10-13 carry the token-sum form, whose source names the ceiling it parked against (calibration|default|flag).
 HEADROOM_PROBE = re.compile(r"^(THROTTLE|PICK-OK)\s+five_hour=[^\n]*?\bsource=(\w+)", re.M)
@@ -688,6 +691,10 @@ def scan_transcript(path, agg, agent_type="main", description=""):
                         agg["classifier_blocks"].append(label)
                 if LINEAR_RATELIMITED.search(body):
                     agg["linear_ratelimited"] += 1
+                if name == "Bash" and agent_type == "main" and not r.get("isSidechain") \
+                        and "finish-merge" in str(inp.get("command", "")):
+                    for issue in NO_CODE_LINE.findall(body):
+                        agg["no_code"].add(issue)
                 if name == "Bash" and t and agent_type == "main" and not r.get("isSidechain") \
                         and "fleet-headroom" in str(inp.get("command", "")):
                     for m in HEADROOM_PROBE.finditer(body):
@@ -848,6 +855,8 @@ def new_agg():
         # Issues named by a main-loop `mark-ready-for-release.sh <ID>` call, and every fleet-headroom.sh
         # answer as (time, THROTTLE|PICK-OK, source) — main loop only for both.
         "ship_calls": set(), "headroom_probes": [],
+        # Issues whose finish-merge.sh run printed NO-CODE: — shipped with no commit to find, by design.
+        "no_code": set(),
         # issue -> earliest SHIPPED-tag time, and every CANCELED-tag time: the transcript side of
         # "when was this session last productive" (git's committer dates are the primary, see
         # git_merged). SKIPPED/FAILED carry no timestamped tag, so a post-ship skip reads as idle.
@@ -2823,6 +2832,7 @@ def main():
                 "run_key": s["run_key"],
                 "recorded_shipped": s["state"].get("shipped") or [],
                 "observed_shipped": sorted(observed_ships(s["agg"])),
+                "code_free": sorted(s["agg"]["no_code"]),
                 "observed_by": {"tags": sorted(s["agg"]["ship_tags"]), "calls": sorted(s["agg"]["ship_calls"]),
                                 "outcomes": sorted(s["agg"]["ship_outcomes"])},
                 "recorded_canceled": s["state"].get("canceled") or [],
@@ -3716,10 +3726,14 @@ def main():
               + (f"; {tried} boundary attempt(s), none accepted (read the rows' `skipped`/`error`)" if tried else "")
               + f"; looping turns passed through: {passes}. The mod is loaded but never fired, so these sessions had no "
               f"compaction between iterations: read the context gauge as uncapped, not as the mod working.")
-    missing = [i for i, m in merged.items() if not m["commit"]]
+    code_free = sorted({i for s in sessions for i in s["agg"]["no_code"]} & all_shipped)
+    missing = [i for i, m in merged.items() if not m["commit"] and i not in code_free]
     if missing:
         flagged = True
         print(f"- **Shipped but no commit found**: {', '.join(missing)} — verify before trusting the count.")
+    if code_free:
+        print(f"- Code-free ships — {', '.join(code_free)}: finish-merge.sh printed NO-CODE: (no commits beyond source — a "
+              f"deploy-gated measurement or a keeper issue), so there is no landing commit to find; not a missing merge.")
     no_verdict = sorted(i for i in all_shipped if i not in verdict_issues_all)
     if no_verdict:
         flagged = True

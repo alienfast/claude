@@ -397,7 +397,14 @@ of this gate.
    Do not clear it yourself — no deleting the blocking paths, no `--force`, no re-run: scratch or forgotten work is the
    human's call, and the hourly reaper reports the worktree as merged-but-dirty until it is cleared
    (`skills/reap-worktrees/SKILL.md`). Interactively, surface the paths and ask once.
-4. Surface the merge output and emit the `SHIPPED-MERGE` closing message (§ Terminal tags). Standalone: stop. Under
+4. **A `NO-CODE:` line on stdout means nothing merged**: the branch carried no commits beyond source, so the script
+   touched neither source nor its tip and printed no landing line — the expected end of a `deploy-gated` measurement or
+   a `keeper` issue (`skills/start/SKILL.md` § Keeper issues), and the shape BF-2697 (2026-10-31) was misreported in as a
+   merge above another issue's commit. The ship stands (sub-step 2 ran, `/auto` records it), with the tag's merge clause
+   replaced: `SHIPPED-MERGE: <ISSUE-ID> — <WORKTREE_BRANCH> carried no commits beyond <SOURCE_BRANCH>; nothing merged,
+   worktree removed, Ready For Release.` The completion comment says the same (Step 4's *What was done* must not describe
+   repository changes the branch does not carry). Combines with sub-step 3's `CLEANUP-FAILED:` wording.
+5. Surface the merge output and emit the `SHIPPED-MERGE` closing message (§ Terminal tags). Standalone: stop. Under
    `/auto`: continue with `/auto` Step 4.
 
 **Other exit codes** — read `references/merge-exit-codes.md` for the full handler of each:
@@ -451,6 +458,13 @@ message's leading sentence is standalone-only; under `/auto` omit it and continu
 This agent-view session is done — close it and dispatch a new session for the next issue.
 
 SHIPPED-MERGE: <ISSUE-ID> — <WORKTREE_BRANCH> merged into <SOURCE_BRANCH>, worktree removed, Ready For Release.
+```
+
+After a `NO-CODE:` line (Step 9 exit-0 sub-step 4) the merge clause says what happened instead — the tag and the
+`<ISSUE-ID>` right after it are what `full-continue.sh`, `/auto` Step 4 and the retro anchor on, so only the clause moves:
+
+```text
+SHIPPED-MERGE: <ISSUE-ID> — <WORKTREE_BRANCH> carried no commits beyond <SOURCE_BRANCH>; nothing merged, worktree removed, Ready For Release.
 ```
 
 ```text

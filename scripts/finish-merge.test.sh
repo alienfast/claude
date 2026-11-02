@@ -30,6 +30,7 @@
 #     the fixture repo in merge-queue-repos.txt). Cases 1–10 keep the main checkout clean, off source, and
 #     not mid-operation, so 3 is unreachable and a regression that produces one fails its exit-code
 #     assertion loudly. Cases 11–14 put the checkout on source to reach it, under a fake HOME (run_fm_home).
+#     Case 15 (a branch with no commits beyond source) runs off source again.
 
 set -uo pipefail
 
@@ -139,6 +140,8 @@ run_fm
 ck_eq "re-run after the gate: exit 0" 0 "$RC"
 ck_eq "source has wt's gen" g2 "$(blob gen.txt)"
 ck_eq "source kept its src" s1 "$(blob src.txt)"
+ck "a landed merge still says so" "Merged successfully. Worktree and branch removed." "$OUT"
+ck_absent "a landed merge is not a no-code" "NO-CODE" "$OUT"
 [ ! -d "$WT" ] && { pass=$((pass+1)); echo "  PASS  worktree removed"; } || { fail=$((fail+1)); echo "  FAIL  worktree still present"; }
 
 echo "=== case 1b: source-only change to the generated file fast-paths in (no driver, no fire) ==="
@@ -367,6 +370,57 @@ ck "git's message names the untracked path" "new.txt" "$OUT"
 ck_absent "not misreported as contention" "continuous contention" "$OUT"
 ck_eq "source did not move" "$src_before" "$(git -C "$R" rev-parse source)"
 ck_eq "the untracked file is untouched" n-untracked "$(cat "$R/new.txt")"
+
+echo "=== case 15: a branch with no commits beyond source — NO-CODE, nothing merged, no catch-up round, no borrowed landing line ==="
+# The 2026-10-31 shape (BF-2697, a deploy-gated measurement): source moved during the issue and the branch carries nothing.
+# Before the check the empty branch was fast-forwarded onto source (exit 5, then a project check of source's own tip), the
+# re-run took the no-op arm, and the run ended on `Merged successfully` above the latest commit on source — another issue's.
+mk_repo c15
+src_commit src.txt s1
+src_tip=$(git -C "$R" rev-parse source)
+run_fm
+ck_eq "exit 0" 0 "$RC"
+ck "the NO-CODE line names the issue and the branch" "NO-CODE: WT — bf-t carries no commits beyond source; nothing to merge" "$OUT"
+ck_absent "no catch-up merge round" "MERGED-SOURCE" "$OUT"
+ck_absent "not reported as a merge" "Merged successfully" "$OUT"
+ck_absent "source's own commit is not printed as the landing" "source work" "$OUT"
+ck "the cleanup is reported as a no-merge" "Nothing to merge. Worktree and branch removed." "$OUT"
+ck_eq "source did not move" "$src_tip" "$(git -C "$R" rev-parse source)"
+ck_eq "worktree removed" GONE "$([ -d "$WT" ] && echo PRESENT || echo GONE)"
+ck_eq "branch removed" GONE "$(git -C "$R" rev-parse --verify --quiet bf-t >/dev/null 2>&1 && echo PRESENT || echo GONE)"
+ck_eq "orig ref removed" GONE "$(git -C "$R" show-ref --verify --quiet refs/finish-merge/bf-t-orig && echo PRESENT || echo GONE)"
+
+echo "=== case 15b: no commits and source unmoved — the same NO-CODE, not a fast-forward of nothing ==="
+mk_repo c15b
+src_tip=$(git -C "$R" rev-parse source)
+run_fm
+ck_eq "exit 0" 0 "$RC"
+ck "NO-CODE line" "NO-CODE: WT — bf-t carries no commits beyond source" "$OUT"
+ck_absent "not reported as a merge" "Merged successfully" "$OUT"
+ck_eq "source did not move" "$src_tip" "$(git -C "$R" rev-parse source)"
+ck_eq "worktree removed" GONE "$([ -d "$WT" ] && echo PRESENT || echo GONE)"
+
+echo "=== case 15c: no commits but an untracked file — NO-CODE and CLEANUP-FAILED both, the worktree kept ==="
+mk_repo c15c
+src_commit src.txt s1
+printf 'stray\n' > "$WT/AGENTS.md"
+run_fm
+ck_eq "exit 0" 0 "$RC"
+ck "NO-CODE line" "NO-CODE: WT — bf-t carries no commits beyond source" "$OUT"
+ck "the untracked file still surfaces as CLEANUP-FAILED" "CLEANUP-FAILED: worktree $WT" "$OUT"
+ck "the cleanup failure is reported as a no-merge" "Nothing to merge, but the worktree could not be removed." "$OUT"
+ck_absent "not reported as a merge" "Merged successfully" "$OUT"
+ck_eq "worktree left in place (never --force)" PRESENT "$([ -d "$WT" ] && echo PRESENT || echo GONE)"
+ck_eq "the untracked file survives" stray "$(cat "$WT/AGENTS.md")"
+
+echo "=== case 15d: no commits but a forgotten tracked edit — still the precondition failure, never a no-code ==="
+mk_repo c15d
+printf 's-edit\n' > "$WT/src.txt"
+run_fm
+ck_eq "exit 1" 1 "$RC"
+ck "reported as uncommitted tracked changes" "uncommitted tracked changes" "$OUT"
+ck_absent "no NO-CODE on a dirty worktree" "NO-CODE" "$OUT"
+ck_eq "worktree intact" PRESENT "$([ -d "$WT" ] && echo PRESENT || echo GONE)"
 
 echo ""
 echo "finish-merge.test.sh: $pass passed, $fail failed"

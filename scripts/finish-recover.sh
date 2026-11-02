@@ -350,7 +350,7 @@ merge_msg_file="$rec_abs/tmp/git-merge-msg-${issue_lower}-recovered.md"
 printf 'Merge %s\n' "$issue_upper" > "$merge_msg_file"
 
 echo "Merging recovered work into $source_branch ..." >&2
-# The output still goes to stderr; the copy is read for finish-merge's CLEANUP-FAILED: line, which exit 0 can carry.
+# The output still goes to stderr; the copy is read for finish-merge's CLEANUP-FAILED: and NO-CODE: lines, which exit 0 can carry.
 fm_out=$(mktemp)
 set +e
 _WT_SKIP_IDENTITY_CHECK=1 "$SCRIPT_DIR/finish-merge.sh" \
@@ -359,6 +359,8 @@ merge_rc=${PIPESTATUS[0]}
 set -e
 cleanup_note=""
 grep -q '^CLEANUP-FAILED:' "$fm_out" 2>/dev/null && cleanup_note=" The recovered worktree could not be removed — see CLEANUP-FAILED above; it stays at $rec_wt until cleared."
+landed="merged."
+grep -q '^NO-CODE:' "$fm_out" 2>/dev/null && landed="nothing to merge (NO-CODE: the recovered branch carries no commits beyond $source_branch)."
 rm -f "$fm_out"
 
 # --- 6. Cleanup, keyed on the merge outcome. ---
@@ -375,7 +377,7 @@ fi
 if [ "$merge_rc" = "0" ]; then
   # Merge landed: finish-merge removed $rec_wt + $rec_branch, their identity sidecars, and its tmp/ merge msg —
   # or could not and said so (CLEANUP-FAILED), which the RECOVERED line carries so the caller's report does too.
-  echo "RECOVERED: $issue_upper — salvaged via '$diff_strategy', re-forked off $source_branch, merged.$cleanup_note" >&2
+  echo "RECOVERED: $issue_upper — salvaged via '$diff_strategy', re-forked off $source_branch, $landed$cleanup_note" >&2
   exit 0
 fi
 

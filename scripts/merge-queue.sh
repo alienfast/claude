@@ -186,14 +186,15 @@ process_marker() {
     return 0
   fi
 
-  # The output still streams to the drain log; the copy is read for finish-merge's CLEANUP-FAILED: line.
-  local fm_out cleanup_note=""
+  # The output still streams to the drain log; the copy is read for finish-merge's CLEANUP-FAILED: and NO-CODE: lines.
+  local fm_out cleanup_note="" no_code_note=""
   fm_out=$(mktemp)
   set +e
   ( cd "$repo_root" && "$FINISH_MERGE" "$wt_dir" "$source_branch" "$worktree_branch" "$message_file" ) 2>&1 | tee "$fm_out"
   rc=${PIPESTATUS[0]}
   set -e
   grep -q '^CLEANUP-FAILED:' "$fm_out" 2>/dev/null && cleanup_note=" — CLEANUP-FAILED: the worktree could not be removed (blocking paths and remedy above); the hourly reaper reports it until it is cleared"
+  grep -q '^NO-CODE:' "$fm_out" 2>/dev/null && no_code_note=" — NO-CODE: the branch carried no commits beyond source; nothing merged, the issue ships code-free"
   rm -f "$fm_out"
 
   case "$rc" in
@@ -203,9 +204,9 @@ process_marker() {
       # best-effort: the merge already succeeded; a Linear hiccup must not undo it.
       rm -f "$marker"   # finish-merge.sh self-dequeued on success; belt-and-suspenders
       if "$HOME/.claude/scripts/mark-ready-for-release.sh" "$issue" >/dev/null 2>&1; then
-        echo "DRAINED: $issue (marked Ready For Release)$cleanup_note"
+        echo "DRAINED: $issue (marked Ready For Release)$no_code_note$cleanup_note"
       else
-        echo "DRAINED: $issue — WARNING: merged, but could not mark Ready For Release; set it manually$cleanup_note" >&2
+        echo "DRAINED: $issue — WARNING: merged, but could not mark Ready For Release; set it manually$no_code_note$cleanup_note" >&2
         notify "Merge landed: $issue" "Merged, but the Linear state update failed — mark $issue Ready For Release manually."
       fi
       [ -z "$cleanup_note" ] || notify "Merge landed: $issue" "Merged, but the worktree could not be removed — CLEANUP-FAILED in the drain log; clear it by hand."

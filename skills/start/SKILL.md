@@ -80,7 +80,8 @@ probe never disarms it (a hijack can wipe the value, and a broken `EnterWorktree
 **Keeper issues.** A `keeper`-labeled issue's deliverable lives in the shared `~/.claude` repo: the project worktree is the
 process anchor only and correctly ends with **zero** project commits. Edit `~/.claude` directly and leave it
 **uncommitted** (the keeper's review is the gate; `/auto`'s commit grant never extends there). `/quality-review`,
-`/finish` (`already-synced (no-op)`) and `finish-merge.sh` (`already-merged: nothing to advance`) expect that state.
+`/finish` (`already-synced (no-op)`) and `finish-merge.sh` (its `NO-CODE:` line, carried into the `SHIPPED-MERGE` tag's
+merge clause) expect that state.
 
 1. **Run the setup script** — after loading every deferred-tool schema this workflow needs in ONE `ToolSearch` call,
    `select:EnterWorktree,EnterPlanMode,ExitPlanMode` (auto mode needs only `EnterWorktree`). Under a repo lock
