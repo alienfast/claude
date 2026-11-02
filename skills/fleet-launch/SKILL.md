@@ -135,8 +135,9 @@ first.
 **Concurrency is capped at 3 sessions per account with room, settled before launch: `scripts/fleet-cap.sh` owns the
 arithmetic, `/auto-prep` and `/epic-prep` recommend under it, and the launch prints its line (`Concurrency cap: <n>
 per_account=3 accounts_with_room=<k>/<total> <why>`) and WARNs above it, never refusing — an explicit count remains the
-user's override.** The count is never derived from how full a window reads at dispatch. The account meters a 5h burst
-window and a weekly window, and they resolve so:
+user's override.** The count is never derived from how full a window reads at dispatch. The account meters the windows
+its plan has — a 5h burst window and a weekly window, or on Claude Ultra (no `five_hour` since 2026-10-31) the weekly
+alone — and they resolve so:
 
 - **The 5h burst window is per account, and 3 per account is the measured answer.** Burn per window is `n × 5 × rate` —
   duration never appears, so no deadline choice relieves it — and at opus/xhigh on this workload 3 sessions run for any
@@ -145,37 +146,45 @@ window and a weekly window, and they resolve so:
   past. A materially different workload (another backlog's burn rate, a lower-tier model mix) voids the bracket, and the
   account's own meter re-measures it per run: `/fleet-retro`'s Headroom verdict says how many sessions the window fit at
   the peak reading, and the same answer on consecutive unthrottled runs is the evidence to move the per-account figure.
+  On an account with no 5h window the bracket's reason is gone and nothing measured replaces it: 3 stands as the stated
+  default, the Headroom verdict is dark, and an unthrottled fleet at a higher per-account count is the measurement that
+  moves it (the 2026-10-30 fleet ran 4 on one such account for 28h at 0.55 weekly points per session-hour — one point,
+  not a bracket).
 - **A rotating machine multiplies the cap by its accounts with room.** Every session burns on the one account the login
   names, so on a machine rotating through cswap (`scripts/cswap-setup.sh`) the engine moves the login at its threshold
-  to an account with room, that window fills next, and the first resets 5h after its block began: the pool refills at
-  `accounts with room × one window's rate`, and the cap is `3 × accounts with room`, bounded by the script's count range
-  of 12. "Room" is `fleet-headroom.sh`'s own predicate — an `ok` figure under 15 minutes old, the binding window under the
-  engine's threshold, an engine event within 5 minutes — the active account included while it is under the threshold;
+  to an account with room, and that account's window gates next: the pool is the accounts with room, and the cap is
+  `3 × accounts with room`, bounded by the script's count range of 12. "Room" is `fleet-headroom.sh`'s own predicate —
+  an `ok` figure under 15 minutes old, the binding window (the higher of 5h and 7d, so the weekly alone on an account
+  with no 5h window) under the engine's threshold, an engine event within 5 minutes — the active account included while
+  it is under the threshold;
   `fleet-cap.sh` reads the count from the probe's `--json` verdict. An idle engine or an unreadable cswap is one account's
   window again, and the line says so (`/cswap log`). Nothing asks for `/cswap quota` to size a fleet: the cap is the pool
   as the engine sees it, and more sessions than lanes idle whatever the pool holds.
-- **The weekly window is not a sizing input.** The keeper runs multiple accounts, so weekly-remaining sizes neither `n`
-  nor duration — rotating to an account with room before launch is the lever. The script prints the active account's
+- **The weekly window sizes neither `n` nor duration, on any plan.** The keeper runs multiple accounts, so rotating to
+  an account with room before launch is the lever; on an account with no 5h window the weekly is the only window, so it
+  is what `room` and the headroom gate read, still not a count input. The script prints the active account's
   `Weekly (seven_day)` reading from `~/.claude/local/rate-limits.json` (the `rate-limits` mod's snapshot, last writer
   wins), never silently (`… no reading (<why>)`) and never blocking: a warning at 70% used when the reset falls after the
   deadline, a note when it falls inside the run. The `Burst (five_hour)` line warns past 80% used — every session would
-  park at its first pick until the reset; a reset within 15 minutes, or already passed, is a note.
+  park at its first pick until the reset; a reset within 15 minutes, or already passed, is a note. `Burst: none (… no
+  five_hour window)` is the plan's shape, not a missing reading: the Weekly line is the account's only window.
 - **Runs longer than ~5h ride the ceiling deliberately; the protection is `/auto`'s headroom gate, not a smaller `n`.**
-  Sessions probe `scripts/fleet-headroom.sh` at every pick and park with a wakeup pending when the account's 5h reading is
-  within the reserve of full (on a cswap-rotating machine, only when no other account has room), so the fleet grazes the
+  Sessions probe `scripts/fleet-headroom.sh` at every pick and park with a wakeup pending when the account's gated window
+  — its 5h reading, or on an account with no 5h window its weekly reading against the weekly reserve — is within the
+  reserve of full (on a cswap-rotating machine, only when no other account has room), so the fleet grazes the
   limit between issues instead of dying mid-issue (`hooks/auto-rewake.sh` recovers a mid-issue kill, but the killed turn's
   work is redone). The operator's own interactive session and an earlier fleet whose window has not rolled off draw on the
   same window outside the burn arithmetic: disclose them when choosing a duration, never as a reason to shrink `n` —
   parking is the designed response. Staggering does not substitute: saturation is a steady-state rate deficit, so a
   stagger only delays the first cutoff by its own length. If the gate is ever suspect, the zero-code fallback for an
-  unattended long run is `n=2`, which never saturates.
+  unattended long run is `n=2`, which never saturates a 5h window.
 - **A cutoff is attributed from the harness message, never inferred from the stall's shape** — the limits leave an
   identical synchronized-silence fingerprint. `/fleet-retro`'s `quota_stall_groups[].limit_kind` names it: `5-hour` at
   `n` within the cap re-opens the per-account bracket on a single-account machine, and on a rotating one means the swap
   landed late — the engine's blind spot is about 90s at the threshold and a fleet's climb rate scales with `n` — so the
   lever is a lower threshold (`cswap-setup.sh --no-enroll --threshold <N>`), measured by the next retro, before `n`
   shrinks; `weekly` means rotate accounts, not shrink the fleet; `session` IS the 5h window under another name (resets on
-  exact 5h boundaries) and routes as `5-hour`.
+  exact 5h boundaries) and routes as `5-hour`, on a plan that has one.
 
 Model, effort and permission-mode defaults are the script's own (added only for flags not already passed) and follow
 `/auto`'s unattended-run prerequisites (`skills/auto/references/launch-prereqs.md`): permission mode `auto`, not

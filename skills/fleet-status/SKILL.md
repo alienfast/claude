@@ -31,8 +31,9 @@ once. An archived marker (an ended run a later launch displaced) is never a sect
   are [`/fleet-launch`](../fleet-launch/SKILL.md) § The deadline contract; ending a fleet early is
   [`/fleet-stop`](../fleet-stop/SKILL.md), whose token the wind-down line names.
 - **Headroom** (only when it matters) — the pick-time probe `/auto` parks on (`scripts/fleet-headroom.sh`), run once per
-  fleet session on its own `mods/rate-limits` history. `Headroom: THROTTLE` means that account's 5h window is within the
-  reserve of full — and, on a cswap-rotating machine, that no other account has room (the `cswap=` tail says which):
+  fleet session on its own `mods/rate-limits` history. `Headroom: THROTTLE` means that account's gated window (its 5h
+  window, or the weekly on an account with no 5h window) is within its reserve of full — and, on a cswap-rotating
+  machine, that no other account has room (the `cswap=` tail says which):
   sessions park between picks and re-probe at the reset, so a ledger that has gone quiet is likely parked, not dead — wait
   it out rather than reaping. `⚠️ Headroom gate is blind` means no reading exists, so every pick fails open; enable
   `rate-limits@alienfast-claude` before the next launch. Nothing prints when every reading says `PICK-OK`.

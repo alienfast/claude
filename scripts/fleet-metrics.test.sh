@@ -1775,9 +1775,10 @@ probe21() { # probe21 <epoch> <n> <THROTTLE|PICK-OK> <session|snapshot|none|unme
   local body rc=0
   case "$3:$4" in
     PICK-OK:none) body="PICK-OK  five_hour=? (no reading: no mods/rate-limits reading (no history for session thr00001, and /h/.claude/local/rate-limits.json is missing or unreadable))  source=none" ;;
-    # The account reports no five_hour window (Claude Ultra): the gate's answer since 2026-11-01, and the fail-open line the
-    # 2026-10-30 fleet's transcripts carry for the same reading — both are a reading, bucketed `unmetered`, never blind.
-    PICK-OK:unmetered) body="PICK-OK  five_hour=none (the account reports no five_hour window; nothing to gate on)  source=session(thr00001)  measured=2026-11-01T09:38:38.882Z  cswap=target(claude@drinkto.me at 0% < threshold 95, figure 6m old — the engine's landing when kevin@drinkto.me fills)" ;;
+    # The account reports no five_hour window (Claude Ultra): the gate's answer since 2026-11-02 (the weekly gated against its own
+    # reserve), and the fail-open line the 2026-10-30 fleet's transcripts carry for the same reading — both are a reading,
+    # bucketed `unmetered`, never blind.
+    PICK-OK:unmetered) body="PICK-OK  five_hour=none  seven_day=86% used  headroom=14 >= weekly_reserve=3  resets=2026-11-03T07:00:00.000Z  resets_in=150000s  source=session(thr00001)  measured=2026-11-01T09:38:38.882Z  cswap=target(claude@drinkto.me at 0% < threshold 95, figure 6m old — the engine's landing when kevin@drinkto.me fills)" ;;
     PICK-OK:none-no5h) body="PICK-OK  five_hour=? (no reading: the session reading carries no five_hour window)  source=none  cswap=target(claude@drinkto.me at 0% < threshold 95, figure 8m old — the engine's landing when kevin@drinkto.me fills)" ;;
     PICK-OK:*)    body="PICK-OK  five_hour=19% used  headroom=81 >= reserve=20  resets=2026-10-13T19:10:00.000Z  resets_in=12754s  source=$4(thr00001)  measured=2026-10-13T14:55:09.760Z (42m ago)" ;;
     THROTTLE:*)   body="THROTTLE five_hour=85% used  headroom=15 < reserve=20  resets=2026-10-13T19:10:00.000Z  resets_in=7200s  source=$4(thr00001)  measured=2026-10-13T14:55:09.760Z (2m ago) — park with a wakeup until the reset instead of picking"; rc=2 ;;

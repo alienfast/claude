@@ -222,7 +222,8 @@ headroom gate applies while any marker exists. Read `references/fleet-gates.md` 
    run: a picked issue runs its full pipeline however far past the deadline that lands, and the marker is never deleted
    from this skill. `hooks/auto-deadline-gate.sh` backs it.
 2. **Headroom.** Run `~/.claude/scripts/fleet-headroom.sh --session "$RUN_KEY"`. Exit 0 (`PICK-OK`) → proceed. Exit 2
-   (`THROTTLE`) → a pick now would likely be killed mid-issue by the account's 5-hour limit: do not pick. A pause, not
+   (`THROTTLE`) → a pick now would likely be killed mid-issue by the account's gated window (its 5-hour limit, or the
+   weekly on an account with no 5-hour window): do not pick. A pause, not
    an outcome — touch no `status`; end as an `AUTO-CONTINUE` no-pick whose summary is the probe's line, and under
    self-paced `/loop` arm `ScheduleWakeup` (`noop: true`, `delaySeconds` = the line's `resets_in` + 60, clamped to
    [60, 1800]). The probe fails open when no reading exists. It governs every pick, the hot handoff included.

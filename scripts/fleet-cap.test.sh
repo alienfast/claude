@@ -79,7 +79,7 @@ tj "idle engine: json names the state"    '.cap == 3 and .rotating == true and .
 
 # A live engine: 3 per account with room, the active one included while it is under the threshold.
 beat $(( NOW - 30 ))
-t "two accounts with room: cap 6"         'CAP 6  per_account=3  accounts_with_room=2/2  2 of 2 enrolled accounts have room (a@x, b@x): the engine moves the login at threshold 95, so the pool refills at 2 × one window'
+t "two accounts with room: cap 6"         'CAP 6  per_account=3  accounts_with_room=2/2  2 of 2 enrolled accounts have room (a@x, b@x): the engine moves the login at threshold 95, so the pool is 2 accounts. windows'
 tj "two accounts: json"                   '.cap == 6 and .accounts_with_room == 2 and .accounts == 2 and .state == "target" and (.room | sort) == ["a@x", "b@x"]'
 
 # The active account over the threshold (the engine mid-move) is not room.

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # fleet-headroom.sh — may an /auto fleet session pick another issue right now, or would the pick
-# saturate the account's 5-hour window mid-issue?
+# exhaust the account's gated window mid-issue — its 5-hour window, or the weekly on a plan that has no 5-hour window?
 #
 # WHY: the 5h limit itself is cheap to hit (minutes of reset wait) — being killed MID-ISSUE by it is
 # what's expensive. A mid-turn kill fires StopFailure instead of Stop, so no wakeup is armed; before
@@ -14,8 +14,8 @@
 # wakeup fires after the reset. So /auto's fleet mode consults this probe at pick time and parks instead
 # of picking when the window is nearly full.
 #
-# THE METER is the account's own. mods/rate-limits records the engine's `five_hour` reading (`percentUsed`,
-# `resetsAt`) per session under ~/.claude/local/rate-limits/<session-id>.jsonl, one line per move, and the
+# THE METER is the account's own. mods/rate-limits records the engine's windows (`five_hour` where the plan has one,
+# `seven_day`; each with `percentUsed`, `resetsAt`) per session under ~/.claude/local/rate-limits/<session-id>.jsonl, one line per move, and the
 # machine's latest reading in ~/.claude/local/rate-limits.json. `--session <id|run key>` reads the session's
 # own history — the account it runs on, by construction, which is what a multi-account machine needs — and
 # falls back to the snapshot (last writer on this machine). Until 2026-10-13 the probe summed output tokens
@@ -26,6 +26,14 @@
 # about one issue's burn (a 2026-08-14 session burned ~35 points of its window per 5h at ~2h per issue).
 # Unmeasured against this meter; tune with the flag. A reading whose resetsAt has passed counts as 0% used:
 # the window reset after it was taken.
+#
+# WEEKLY RESERVE: an account that reports no `five_hour` window (Claude Ultra, since 2026-10-31 06:29Z — the usage API
+# answers `five_hour: null`, and cswap rotates on the weekly alone) is gated on its `seven_day` window against
+# --weekly-reserve points, default 3. Measured on the 2026-10-30 fleet's weekly-only span: four sessions on one such
+# account burned 62 weekly points over 112 session-hours and 35 ships — 0.55 per session-hour, about 1.8 per ship — so
+# 3 is the same ~1.4 issue-burns the 5h reserve of 20 was. The line reads `five_hour=none  seven_day=<pct>% used`, and
+# a park waits for the weekly reset, days away, which /auto's wakeup rule clamps to its 30-minute re-probe. Until
+# 2026-11-02 such a reading passed every pick (`nothing to gate on`).
 #
 # ROTATION: on a machine that rotates accounts through cswap (opt-in: scripts/cswap-setup.sh) the engine moves
 # the login at its threshold to any enrolled account with room, so a pick dies mid-issue only when NO account
@@ -42,8 +50,8 @@
 # `room` (every account with room, the active one included): fleet-cap.sh sizes the fleet's concurrency cap on
 # that count, so the one predicate for "room" lives here.
 #
-# Exit: 0 = pick OK (headroom >= reserve; or the reading has windows but no five_hour — a Claude Ultra account
-# has no 5h window, so the line says `five_hour=none` with the reading's own source; or no reading at all —
+# Exit: 0 = pick OK (the gated window's headroom >= its reserve; or the reading has windows but neither a five_hour
+# nor a seven_day one, so the line says `five_hour=none` and nothing to gate on; or no reading at all —
 # FAIL OPEN: a missing mod must not halt a healthy fleet; the stall watcher remains the backstop, and the line
 # says `source=none` so /fleet-status and /fleet-retro can see a blind gate). 2 = THROTTLE (headroom < reserve).
 # Run ./fleet-headroom.test.sh after ANY change.
@@ -52,6 +60,7 @@ set -uo pipefail
 
 SESSION=""
 RESERVE=20
+WEEKLY_RESERVE=3
 STALE=900
 AS_JSON=0
 NOW=""   # test seam: fixed epoch clock
@@ -64,6 +73,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --session)  SESSION="$2"; shift 2 ;;
     --reserve)  RESERVE="$2"; shift 2 ;;
+    --weekly-reserve) WEEKLY_RESERVE="$2"; shift 2 ;;
     --stale)    STALE="$2"; shift 2 ;;
     --json)     AS_JSON=1; shift ;;
     --now)      NOW="$2"; shift 2 ;;
@@ -74,6 +84,7 @@ done
 
 [ -n "$NOW" ] || NOW=$(date +%s)
 [[ "$RESERVE" =~ ^[0-9]+([.][0-9]+)?$ ]] || RESERVE=20
+[[ "$WEEKLY_RESERVE" =~ ^[0-9]+([.][0-9]+)?$ ]] || WEEKLY_RESERVE=3
 [[ "$STALE" =~ ^[0-9]+$ ]] || STALE=900
 
 fmt_dur() { if [ "$1" -lt 60 ]; then echo "${1}s"; elif [ "$1" -lt 3600 ]; then echo "$(( $1 / 60 ))m"; else echo "$(( $1 / 3600 ))h$(( ($1 % 3600) / 60 ))m"; fi; }
@@ -164,23 +175,32 @@ if [ -z "$reading" ] && [ -f "$SNAPSHOT" ] && jq -e '.windows' "$SNAPSHOT" >/dev
 fi
 [ -n "$reading" ] || open "no mods/rate-limits reading (${SESSION:+no history for session $SESSION, and }$SNAPSHOT is missing or unreadable)"
 
-parsed=$(printf '%s' "$reading" | jq -c '
-  ((.windows // []) | map(select(.kind == "five_hour")) | .[0]) as $w
-  | {pct: $w.percentUsed, resets_at: ($w.resetsAt // null), measured_at: (.measured_at // null)}' 2>/dev/null) || parsed=""
+# The gated window is the one the plan has: five_hour where the account reports it; seven_day, against --weekly-reserve, on
+# an account that reports none (Claude Ultra has no 5h window — every session on the account lost it within five minutes on
+# 2026-10-31 06:29Z). Neither present → nothing to gate on, said on the line; an empty windows list is no reading at all.
+win() { printf '%s' "$reading" | jq -c --arg k "$1" '((.windows // []) | map(select(.kind == $k)) | .[0]) as $w
+  | {pct: $w.percentUsed, resets_at: ($w.resetsAt // null), measured_at: (.measured_at // null)}' 2>/dev/null; }
+numeric() { [[ "$1" =~ ^[0-9]+([.][0-9]+)?$ ]]; }
+gated=five_hour; reserve="$RESERVE"; reserve_label=reserve
+parsed=$(win five_hour) || parsed=""
 pct=$(jq -r '.pct // empty' <<<"$parsed" 2>/dev/null)
-if ! [[ "$pct" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
-  # A reading with other windows but no five_hour is the account's shape, not a missing mod: a Claude Ultra subscription
-  # has no 5h window (every session on the account lost it within five minutes, 2026-10-31 06:29Z), so nothing to gate on.
+if ! numeric "$pct"; then
   printf '%s' "$reading" | jq -e '(.windows // []) | length > 0' >/dev/null 2>&1 || open "the $source reading carries no five_hour window"
-  ma=$(jq -r '.measured_at // empty' <<<"$parsed")
-  if [ "$AS_JSON" = 1 ]; then
-    jq -n --arg src "$source" --arg w "$writer" --argjson r "$RESERVE" --argjson c "$cswap_json" --arg at "$ma" \
-      '{pick_ok: true, five_hour_pct: null, unmetered: true, reserve: $r, source: $src, writer: $w,
-        measured_at: (if $at == "" then null else $at end), cswap: $c}'
+  parsed=$(win seven_day) || parsed=""
+  pct=$(jq -r '.pct // empty' <<<"$parsed" 2>/dev/null)
+  if numeric "$pct"; then
+    gated=seven_day; reserve="$WEEKLY_RESERVE"; reserve_label=weekly_reserve
   else
-    echo "PICK-OK  five_hour=none (the account reports no five_hour window; nothing to gate on)  source=${source}(${writer:-?})  measured=${ma:-unknown}$(cswap_tail)"
+    ma=$(jq -r '.measured_at // empty' <<<"$parsed")
+    if [ "$AS_JSON" = 1 ]; then
+      jq -n --arg src "$source" --arg w "$writer" --argjson r "$RESERVE" --argjson wr "$WEEKLY_RESERVE" --argjson c "$cswap_json" --arg at "$ma" \
+        '{pick_ok: true, gated: null, five_hour_pct: null, seven_day_pct: null, unmetered: true, reserve: $r, weekly_reserve: $wr,
+          source: $src, writer: $w, measured_at: (if $at == "" then null else $at end), cswap: $c}'
+    else
+      echo "PICK-OK  five_hour=none (the account reports neither a five_hour nor a seven_day window; nothing to gate on)  source=${source}(${writer:-?})  measured=${ma:-unknown}$(cswap_tail)"
+    fi
+    exit 0
   fi
-  exit 0
 fi
 resets_at=$(jq -r '.resets_at // empty' <<<"$parsed")
 measured_at=$(jq -r '.measured_at // empty' <<<"$parsed")
@@ -193,7 +213,7 @@ if [ -n "$resets_epoch" ]; then
 fi
 effective="$pct"; [ "$window_reset" = true ] && effective=0
 headroom=$(jq -rn --argjson p "$effective" '100 - $p')
-local_ok=$(jq -rn --argjson h "$headroom" --argjson r "$RESERVE" '$h >= $r')
+local_ok=$(jq -rn --argjson h "$headroom" --argjson r "$reserve" '$h >= $r')
 
 pick_ok="$local_ok"
 [ "$cswap_state" = target ] && pick_ok=true
@@ -203,23 +223,25 @@ age=""
 if [ -n "$measured_epoch" ]; then a=$(( NOW - measured_epoch )); [ "$a" -lt 0 ] && a=0; age="$(fmt_dur "$a") ago"; fi
 
 if [ "$AS_JSON" = 1 ]; then
-  jq -n --argjson ok "$pick_ok" --argjson pct "$pct" --argjson h "$headroom" --argjson r "$RESERVE" \
+  jq -n --argjson ok "$pick_ok" --arg g "$gated" --argjson pct "$pct" --argjson h "$headroom" --argjson r "$reserve" --argjson wr "$WEEKLY_RESERVE" \
         --arg resets "$resets_at" --argjson rin "$resets_in" --argjson reset "$window_reset" \
         --arg at "$measured_at" --arg src "$source" --arg w "$writer" --argjson c "$cswap_json" \
-        '{pick_ok: $ok, five_hour_pct: $pct, headroom: $h, reserve: $r, resets_at: (if $resets == "" then null else $resets end),
+        '{pick_ok: $ok, gated: $g, five_hour_pct: (if $g == "five_hour" then $pct else null end),
+          seven_day_pct: (if $g == "seven_day" then $pct else null end), unmetered: ($g != "five_hour"),
+          headroom: $h, reserve: $r, weekly_reserve: $wr, resets_at: (if $resets == "" then null else $resets end),
           resets_in: $rin, window_reset: $reset, measured_at: (if $at == "" then null else $at end), source: $src, writer: $w, cswap: $c}'
 else
-  used="five_hour=${pct}% used"
-  [ "$window_reset" = true ] && used="five_hour=${pct}% used before the window reset at $resets_at (counted as 0)"
+  if [ "$gated" = five_hour ]; then used="five_hour=${pct}% used"; else used="five_hour=none  seven_day=${pct}% used"; fi
+  [ "$window_reset" = true ] && used="$used before the window reset at $resets_at (counted as 0)"
   rest="resets=${resets_at:-unknown}  resets_in=${resets_in}s  source=${source}(${writer:-?})  measured=${measured_at:-unknown}${age:+ ($age)}$(cswap_tail)"
   if [ "$pick_ok" = true ] && [ "$local_ok" = true ]; then
-    echo "PICK-OK  $used  headroom=$headroom >= reserve=$RESERVE  $rest"
+    echo "PICK-OK  $used  headroom=$headroom >= $reserve_label=$reserve  $rest"
   elif [ "$pick_ok" = true ]; then
-    echo "PICK-OK  $used  headroom=$headroom < reserve=$RESERVE but cswap has a landing  $rest"
+    echo "PICK-OK  $used  headroom=$headroom < $reserve_label=$reserve but cswap has a landing  $rest"
   elif [ "$cswap_state" = switching ]; then
-    echo "THROTTLE $used  headroom=$headroom < reserve=$RESERVE  $rest — re-probe in 3m: cswap is moving the login, the next request lands on the new account"
+    echo "THROTTLE $used  headroom=$headroom < $reserve_label=$reserve  $rest — re-probe in 3m: cswap is moving the login, the next request lands on the new account"
   else
-    echo "THROTTLE $used  headroom=$headroom < reserve=$RESERVE  $rest — park with a wakeup until the reset instead of picking"
+    echo "THROTTLE $used  headroom=$headroom < $reserve_label=$reserve  $rest — park with a wakeup until the reset instead of picking"
   fi
 fi
 

@@ -142,7 +142,8 @@ launch at 3 per account with room (`skills/fleet-launch/SKILL.md` § The count �
 numbers in the `windows` block — `peak_5h_output_tokens` with `peak_5h_concurrency`,
 `output_tokens_per_session_hour_at_peak` (with `output_tokens_per_in_window_session_hour` beside it), any
 `quota_stall_groups`, and whether the peak is a floor or a ceiling — then read the `Window readings` line and its
-Headroom verdict before sizing anything on the token peaks. Read `references/windows.md` for the reading rules:
+Headroom verdict before sizing anything on the token peaks (dark on an account that reports no `five_hour` window —
+there the weekly meter's movement over the fleet span is the account-side figure; `references/windows.md`). Read `references/windows.md` for the reading rules:
 `limit_kind` as wording rather than scope, `recovery_lag_s` over lost hours, which 5h blocks count, and why a deliberate
 wind-down is not a stall. Compare realized burn against the `sizing.rate_tok_per_session_hour` that the fleet's own
 `tmp/fleet-recommendation-<slug>.json` assumed (the team's, or the epic's): a projection that missed by 2x is the

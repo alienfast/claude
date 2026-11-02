@@ -3712,9 +3712,11 @@ def main():
     if unmetered:
         who = ", ".join(f"`{k}` ({n}/{throttle[k]['probes']})" for k, n in sorted(unmetered.items()))
         print(f"- Headroom gate unmetered — {who}: on these probes the account reported no five_hour window (a subscription with "
-              f"no 5-hour window — Claude Ultra — reports only seven_day), so the 5h gate had nothing to meter and passed the "
-              f"pick. Not a fault, but every 5h-keyed gauge above covers only the hours the meter carried the window "
-              f"(skills/fleet-retro/references/windows.md); the weekly window is cswap's to rotate.")
+              f"no 5-hour window — Claude Ultra — reports only seven_day), so the gate read the weekly window against its own "
+              f"reserve instead (fleet-headroom.sh --weekly-reserve; before 2026-11-02 it passed every such pick). Not a fault, "
+              f"but every 5h-keyed gauge above covers only the hours the meter carried the window "
+              f"(skills/fleet-retro/references/windows.md); the weekly is the account's only window there — cswap rotates on it "
+              f"and the gate parks on it.")
     # fleet-launch.sh checks only that mods/loop-boundary is enabled, not that it fires; its first fleet (2026-10-10) passed
     # every looping turn as `prefix`, and the context gauge read the uncompacted run as the mod working.
     if fleet_boundary and all_shipped and fleet_boundary["accepted"] == 0:

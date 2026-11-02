@@ -363,7 +363,8 @@ def cswap_landing():
 
 def throttle_line(n_sessions):
     """The account's 5h window as mods/rate-limits last read it: past fleet-headroom.sh's reserve (20 points), every session parks
-    at its first pick until the reset — unless cswap has a landing, which the probe picks through."""
+    at its first pick until the reset — unless cswap has a landing, which the probe picks through. An account that reports no
+    five_hour window answers None here: the probe gates its weekly (--weekly-reserve), and this line has no 5h reading to warn on."""
     try:
         snap = json.loads((Path.home() / ".claude/local/rate-limits.json").read_text(encoding="utf-8"))
         five = next((w for w in snap.get("windows") or [] if w.get("kind") == "five_hour"), None) or {}

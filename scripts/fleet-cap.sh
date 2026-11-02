@@ -2,20 +2,25 @@
 # fleet-cap.sh — how many /loop /auto sessions this machine's account pool sustains: the concurrency cap
 # /auto-prep and /epic-prep recommend under and /fleet-launch prints and warns above.
 #
-# WHY: the 5-hour burst window is per account, and the measured bracket at opus/xhigh is 3 sessions per
-# window — 3 run any duration without reliably exhausting it, 4 do not (n=4 cut off 4.9h into a 12h
-# deadline). Every session on the machine burns on the ONE account the login names, so on a machine that
-# rotates accounts through cswap (scripts/cswap-setup.sh) the engine moves the login at its threshold to
-# an account with room, that window fills next, and the first resets 5h after its block began: the pool
-# refills at (accounts with room) × one window's rate, and the cap is 3 × that count, bounded by
+# WHY: every session on the machine burns on the ONE account the login names, and that account's windows are
+# the limit. On a plan with a 5-hour burst window the measured bracket at opus/xhigh is 3 sessions per window —
+# 3 run any duration without reliably exhausting it, 4 do not (n=4 cut off 4.9h into a 12h deadline). An
+# account with no 5h window (Claude Ultra, since 2026-10-31: `five_hour` null, the weekly alone gates it) voids
+# that bracket's reason and nothing measured replaces it: 3 stands as the stated default per account until an
+# unthrottled fleet at a higher per-account count measures otherwise (the 2026-10-30 fleet ran 4 on one such
+# account for 28h at 0.55 weekly points per session-hour — one point, not a bracket). On a machine that rotates
+# accounts through cswap (scripts/cswap-setup.sh) the engine moves the login at its threshold to an account
+# with room and that account's window gates next: the cap is 3 × (accounts with room), bounded by
 # fleet-launch.sh's count range. Until 2026-10-28 the single-account 3 was a constant in every skill and
 # in the launch, so a keeper with five enrolled accounts overrode it by hand on every launch.
 #
 # "Room" is fleet-headroom.sh's own predicate, read through its --json `cswap` verdict (an `ok` figure
-# under --stale old, the binding window under the engine's threshold, an engine event within 5 minutes),
-# the active account included while it is under the threshold. No rotation, an idle engine, an
-# unreadable cswap, or no account with room → 3, and the line says why. Weekly windows are not an input:
-# rotation is the lever (skills/fleet-launch/SKILL.md § The count — 3 per account with room).
+# under --stale old, the binding window — the higher of 5h and 7d, so the weekly alone on an account with no
+# 5h window — under the engine's threshold, an engine event within 5 minutes), the active account included
+# while it is under the threshold. No rotation, an idle engine, an unreadable cswap, or no account with room
+# → 3, and the line says why. The weekly window sizes neither n nor duration: rotation is the lever, and on an
+# account with no 5h window it is what "room" reads (skills/fleet-launch/SKILL.md § The count — 3 per account
+# with room).
 #
 # Output: `CAP <n>  per_account=3  accounts_with_room=<k>/<total>  <why>`; --json for the fields.
 # --now and --stale pass through to fleet-headroom.sh (test seams). Exit 0 always: the cap is advice.
@@ -47,7 +52,7 @@ fi
 # The probe reads `cswap list` only with a live engine, so an idle or unreadable cswap leaves the enrolled total unknown: `?`.
 rotating=false; state=none; note=""; total=1; total_json=1; k=1; room='[]'
 if [ "$cswap" = null ]; then
-  why="single-account machine: no cswap rotation (scripts/cswap-setup.sh is the opt-in), so one account's 5h window governs"
+  why="single-account machine: no cswap rotation (scripts/cswap-setup.sh is the opt-in), so one account's window governs"
 else
   rotating=true
   state=$(jq -r '.state // "unreadable"' <<<"$cswap")
@@ -56,8 +61,8 @@ else
   total_json=$(jq -c '.accounts // null' <<<"$cswap")
   room=$(jq -c '.room // []' <<<"$cswap")
   case "$state" in
-    engine-idle) why="cswap is enrolled but its engine is idle ($note): nothing moves the login, so one account's 5h window governs — /cswap log" ;;
-    unreadable)  why="cswap is enrolled but unreadable ($note): one account's 5h window governs" ;;
+    engine-idle) why="cswap is enrolled but its engine is idle ($note): nothing moves the login, so one account's window governs — /cswap log" ;;
+    unreadable)  why="cswap is enrolled but unreadable ($note): one account's window governs" ;;
     *)
       k=$(jq -r '.with_room // 1' <<<"$cswap")
       [[ "$k" =~ ^[0-9]+$ ]] || k=1
@@ -66,7 +71,7 @@ else
         k=1
         why="no account has room ($note): the window, not the count, is the constraint — launch after a reset, or the first picks park"
       else
-        why="$k of $total enrolled accounts have room ($(jq -r 'join(", ")' <<<"$room")): the engine moves the login at threshold $threshold, so the pool refills at $k × one window"
+        why="$k of $total enrolled accounts have room ($(jq -r 'join(", ")' <<<"$room")): the engine moves the login at threshold $threshold, so the pool is $k accounts' windows"
       fi ;;
   esac
 fi

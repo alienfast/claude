@@ -89,8 +89,21 @@ t "no snapshot file at all: fails open"       0 'source=none'
 # A reading with a seven_day window but no five_hour is the account's shape, not a missing reading: the line is one copied from
 # ~/.claude/local/rate-limits on 2026-11-01 (a Claude Ultra account; every session on it lost five_hour at 06:29Z the day before).
 printf '{"measured_at":"2026-11-01T09:38:38.882Z","account":"kevin@drinkto.me","windows":[{"kind":"seven_day","percentUsed":85,"resetsAt":"2026-11-03T07:00:00.000Z"}]}\n' > "$HIST/only7day0-0000-4000-8000-000000000000.jsonl"
-t "no five_hour window: unmetered, pick OK"   0 'PICK-OK  five_hour=none (the account reports no five_hour window; nothing to gate on)  source=session(only7day)  measured=2026-11-01T09:38:38.882Z' --session only7day0
-tj "no five_hour window: json says unmetered" 0 '.pick_ok == true and .five_hour_pct == null and .unmetered == true and .source == "session" and .writer == "only7day"' --session only7day0
+t "no five_hour window: the weekly is gated, pick OK" 0 'PICK-OK  five_hour=none  seven_day=85% used  headroom=15 >= weekly_reserve=3  resets=2026-11-03T07:00:00.000Z  resets_in=[0-9]*s  source=session(only7day)  measured=2026-11-01T09:38:38.882Z' --session only7day0
+tj "no five_hour window: json gates the weekly" 0 '.pick_ok == true and .gated == "seven_day" and .five_hour_pct == null and .seven_day_pct == 85 and .unmetered == true and .headroom == 15 and .reserve == 3 and .weekly_reserve == 3 and .source == "session" and .writer == "only7day"' --session only7day0
+# The weekly within its reserve of full parks until the weekly reset — days away, which /auto's wakeup rule clamps to its 30-minute re-probe.
+printf '{"measured_at":"2026-11-01T09:48:38.882Z","account":"kevin@drinkto.me","windows":[{"kind":"seven_day","percentUsed":98,"resetsAt":"2026-11-03T07:00:00.000Z"}]}\n' >> "$HIST/only7day0-0000-4000-8000-000000000000.jsonl"
+t "weekly within the reserve: throttle"        2 'THROTTLE five_hour=none  seven_day=98% used  headroom=2 < weekly_reserve=3  resets=2026-11-03T07:00:00.000Z .* — park with a wakeup until the reset instead of picking' --session only7day0
+tj "weekly throttle: json"                      2 '.pick_ok == false and .gated == "seven_day" and .seven_day_pct == 98 and .headroom == 2 and .reserve == 3 and .resets_in > 86400' --session only7day0
+t "--weekly-reserve tunes the weekly gate"      0 'PICK-OK  five_hour=none  seven_day=98% used  headroom=2 >= weekly_reserve=1' --session only7day0 --weekly-reserve 1
+t "--reserve does not touch the weekly gate"    2 'headroom=2 < weekly_reserve=3' --session only7day0 --reserve 1
+# A weekly resetsAt already behind the clock counts as 0% used, as a 5h one does.
+printf '{"measured_at":"%s","windows":[{"kind":"seven_day","percentUsed":98,"resetsAt":"%s"}]}\n' "$(iso $(( NOW - 120 )))" "$(iso $(( NOW - 60 )))" > "$HIST/wkreset00-0000-4000-8000-000000000000.jsonl"
+t "weekly reset passed: counted as 0"           0 'PICK-OK  five_hour=none  seven_day=98% used before the window reset at .* (counted as 0)  headroom=100 >= weekly_reserve=3' --session wkreset00
+# Windows present but neither gated kind: nothing to gate on, and the line says so.
+printf '{"measured_at":"2026-11-01T09:38:38.882Z","windows":[{"kind":"weekly_scoped","percentUsed":40}]}\n' > "$HIST/scoped000-0000-4000-8000-000000000000.jsonl"
+t "neither window: pick OK, nothing to gate on" 0 'PICK-OK  five_hour=none (the account reports neither a five_hour nor a seven_day window; nothing to gate on)  source=session(scoped00)' --session scoped000
+tj "neither window: json"                      0 '.pick_ok == true and .gated == null and .unmetered == true and .seven_day_pct == null' --session scoped000
 # A reading with no windows at all is still no reading.
 printf '{"measured_at":"2026-11-01T09:38:38.882Z","windows":[]}\n' > "$HIST/nowin0000-0000-4000-8000-000000000000.jsonl"
 t "empty windows: fails open"                 0 'no reading: the session reading carries no five_hour window' --session nowin0000
@@ -196,6 +209,19 @@ t "switching with a local PICK-OK picks"     0 'PICK-OK  five_hour=85% used  hea
 # The binding window is the higher of 5h and 7d: an active account at 5h 10% but 7d 96% is at the threshold.
 accounts "$(acct 3 a@x true ok 10 96 20 "$SOON")" "$(acct 2 b@x false ok 0 0 10 "$LATER")"
 t "binding window is max(5h, 7d)"            2 'cswap=switching(active a@x at 96%' --session "$SID"
+
+# An account with no five_hour window on a rotating machine: cswap reports fiveHour null and binds on the weekly, and the probe
+# gates the session's weekly the same way — a landing under the threshold picks through, the engine mid-move re-probes in 3m,
+# and no landing parks until the weekly reset. The session's last reading is the 98% weekly line above.
+acct_ultra() { # <number> <email> <active> <usageStatus> <7d pct> <age seconds> <weekly resetsAt>
+  printf '{"number":%s,"email":"%s","active":%s,"usageStatus":"%s","usage":{"fiveHour":null,"sevenDay":{"pct":%s,"resetsAt":"%s"}},"usageAgeSeconds":%s}' "$1" "$2" "$3" "$4" "$5" "$7" "$6"
+}
+accounts "$(acct_ultra 3 a@x true ok 98 20 "$SOON")" "$(acct_ultra 2 b@x false ok 10 10 "$LATER")"
+CSWAP_STUB_THRESHOLD=99 t "weekly-only, landing under the threshold: picks" 0 'PICK-OK  five_hour=none  seven_day=98% used  headroom=2 < weekly_reserve=3 but cswap has a landing .* cswap=target(b@x at 10% < threshold 99' --session only7day0
+t "weekly-only, engine mid-move: re-probe in 3m"  2 'THROTTLE five_hour=none  seven_day=98% used  headroom=2 < weekly_reserve=3 .* resets_in=180s .* cswap=switching(active a@x at 98% >= threshold 95; the engine is moving to b@x at 10%) — re-probe in 3m' --session only7day0
+accounts "$(acct_ultra 3 a@x true ok 98 20 "$SOON")" "$(acct_ultra 2 b@x false ok 96 10 "$LATER")"
+t "weekly-only, no landing: parks until the weekly reset" 2 'THROTTLE five_hour=none  seven_day=98% used  headroom=2 < weekly_reserve=3 .* cswap=no-target(none of the other 1 accounts is under threshold 95 with an ok figure under 900s old) — park' --session only7day0
+tj "weekly-only, no landing: json"               2 '.pick_ok == false and .gated == "seven_day" and .cswap.state == "no-target" and .cswap.active.binding_pct == 98 and .cswap.with_room == 0' --session only7day0
 
 # Reads the probe cannot trust fall back to the local meter and say so.
 CSWAP_STUB_FAIL=1 t "cswap list fails: local meter" 2 'THROTTLE five_hour=85% .* cswap=unreadable(cswap list --json carried no accounts)' --session "$SID"

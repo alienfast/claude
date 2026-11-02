@@ -11,7 +11,7 @@ when the Planned/Todo stage drains into Backlog, and what a given horizon leaves
 drain).
 
 **This is an estimate, never a plan.** Pick order is decided at pick time by `next-candidates.sh` against live state;
-review churn, file collisions, failures, mid-run filings refilling the pool, and 5h-window headroom parking all move the
+review churn, file collisions, failures, mid-run filings refilling the pool, and headroom parking all move the
 real timeline. Frame every rendering that way — the value is seeing the graph's structure over time, not predicting any
 single pick. Never persist the output anywhere `/auto` or a fleet session might read it as instructions.
 

@@ -35,7 +35,7 @@ All four are in the `windows` block already emitted.
    single-account machine and, on a cswap-rotating one, points first at the swap landing late (the threshold is the
    lever there); `skills/fleet-launch/SKILL.md` § The count — 3 per account with room owns the count, the 5h-window
    reason, the rotation arithmetic and the headroom-probe rule; check the recovery mechanism before touching n. n=3 on
-   one account runs near the refill rate and hits the
+   one account with a 5h window runs near the refill rate and hits the
    ceiling about once per 5h window by construction, which costs minutes of reset wait when recovery is automatic and
    hours when it is not, while shrinking to n=2 forfeits about a third of the allowance to fix a stall that costs
    minutes.
@@ -54,14 +54,16 @@ All four are in the `windows` block already emitted.
   identical synchronized-silence fingerprint. `weekly` caps total session-hours (lever: account rotation — a weekly
   cutoff says nothing about fleet shape). When the field is absent no limit message was found at all — treat the cause
   as unestablished (machine sleep, daemon restart, network) rather than assuming quota.
-- **`session` does NOT mean per-session.** A `session` cutoff is the account-level 5-hour window: its stated resets fall
+- **`session` does NOT mean per-session.** A `session` cutoff is the account-level 5-hour window (on a plan that has one;
+  an account with no `five_hour` window cannot produce it): its stated resets fall
   on exact 5h boundaries, and every session actively making a request hits within seconds of the others, which a
   genuinely per-session cap cannot do to independently launched sessions. A session that misses a cutoff was idle at
   that instant and made no request to be refused — absence from a cutoff is evidence about activity, not about scope —
   so check each session's entry count in the window before concluding a limit spared it. Route a `session` cutoff
   exactly as a `5-hour` one: the levers are **n** and stall recovery.
-- **The ceiling is read, not derived.** `mods/rate-limits` records the account's own `five_hour` reading per session,
-  the headroom probe parks on it, and the `Window readings` line with its Headroom verdict is the sizing evidence. The
+- **The ceiling is read, not derived.** `mods/rate-limits` records the account's own windows per session (`five_hour`
+  where the plan has one, `seven_day`), the headroom probe parks on the one the account reports, and the `Window
+  readings` line with its Headroom verdict is the sizing evidence. The
   cutoff-window token meters stay in the report as cost figures only — a machine-wide token sum maps to no one
   account's window on a multi-account machine, and a probe's and the analyzer's token units can differ by a multiple —
   so carry them forward for cost, never as a ceiling.
@@ -78,8 +80,11 @@ All four are in the `windows` block already emitted.
   per session against the fleet span and say what share it covers:
   `jq -r 'select([.windows[].kind] | index("five_hour")) | .measured_at' ~/.claude/local/rate-limits/<session>.jsonl | tail -1`.
   A lone `seven_day`-only line at a 5h block reset is a transient that has recurred through October with `five_hour` back
-  within minutes, so the account's shape is the persistence, not one line. What binds such an account is unmeasured: size
-  nothing from the 5h gauges there — read the weekly meter and the token peaks.
+  within minutes, so the account's shape is the persistence, not one line. What binds such an account is the weekly: size
+  nothing from the 5h gauges there. Its burn is measured once — the 2026-10-30 fleet's four sessions burned 62 weekly
+  points over 112 session-hours and 35 ships in the account's weekly-only span (0.55 per session-hour, about 1.8 per
+  ship), which is what `fleet-headroom.sh`'s weekly reserve of 3 rests on — so read the weekly meter's movement over the
+  fleet span against that rate, and the token peaks for cost.
 - **Cross-run token comparisons are valid only within one `limit_kind`.** Unrelated ceilings can coincide closely, and
   a 5h window is simply the wrong instrument for a weekly cutoff: trailing-5h totals at a `weekly` and a `5-hour`
   cutoff agreeing to a fraction of a percent is coincidence, not an identified meter.
@@ -95,7 +100,8 @@ project — to say how many sessions a WHOLE block fits at that workload: whethe
 four numbers above can only bracket. Take it as a bracket of one: the meter is account-wide and a session that kept no
 history is invisible to the count, the share assumes burn scales with the count, and a reading moves only when the
 window moves a whole point. It reads `none` for a fleet launched before the mod was enabled on the machine, and such a
-retro can only estimate headroom from a snapshot.
+retro can only estimate headroom from a snapshot; it also reads `none` on an account that reports no `five_hour` window,
+where the weekly burn rate above is the account-side figure.
 
 **Only a 5h block the fleet ran from its start counts.** The meter's blocks are fixed (`resetsAt` steps in whole 5h
 blocks), so a block already running at launch carries what was spent in it before, and the peak, `5h%` and the verdict

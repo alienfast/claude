@@ -59,9 +59,9 @@ two columns (when the figure was read, and its age in minutes) are what say whet
 Present one table, one row per account: account, active, 5h % and time to reset, weekly % and reset as weekday and
 time, Fable weekly %, extra-usage spend against its cap, login expiry, age in minutes. A row older than 15 minutes
 shows its usage cells as OUT OF DATE, never as current values, and no condition below is judged from it (a healthy row
-refreshes within about 10 minutes). An absent figure stays the em dash the read produced — a 5h reset with no window
-open (the window starts on first use), a spend the plan does not report — and is not expanded into words. Reset
-clocks are local time.
+refreshes within about 10 minutes). An absent figure stays the em dash the read produced — a 5h figure on a plan with
+no 5h window (Claude Ultra: `fiveHour` null, the weekly alone gates it), a 5h reset with no window open (the window
+starts on first use), a spend the plan does not report — and is not expanded into words. Reset clocks are local time.
 
 Under the table, one line per condition that holds, and "nothing needs action" when none does:
 

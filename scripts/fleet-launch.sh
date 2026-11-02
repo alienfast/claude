@@ -671,7 +671,7 @@ else
   if [ -n "$reading_at_epoch" ]; then reading_age=$(age_of "$reading_at_epoch"); else reading_age="an unknown time (measured_at '$reading_at' is unreadable)"; fi
   burst_pct=$(jq -r '.five.percentUsed // empty' <<<"$reading_json")
   if [ -z "$burst_pct" ]; then
-    echo "Burst: no reading (the last measurement in $reading_file carried no five_hour window)"
+    echo "Burst: none (the last measurement in $reading_file carries no five_hour window — the plan has none; the Weekly line is the account's only window, and fleet-headroom.sh gates it)"
   else
     burst_reset=$(jq -r '.five.resetsAt // "unknown"' <<<"$reading_json")
     burst_reset_epoch=$(iso_epoch "$burst_reset")

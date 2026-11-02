@@ -27,3 +27,7 @@ jq -s 'map(select(.peak_5h_output_tokens)) | sort_by(.fleet_start) | .[-6:]
   (the 2026-10-30 files carried 27 from the 2026-10-25 fleet; `skills/fleet-retro/references/windows.md`).
 
 The report shows the projected burn per 5h window (`n × 5 × rate`) beside the observed peak so the margin is visible.
+
+On an account with no `five_hour` window there is no 5h margin to show: compare `n × hours × 0.55` weekly points (the
+2026-10-30 fleet's measured burn per session-hour in its weekly-only span — 62 points over 112 session-hours and 35
+ships, about 1.8 per ship) against the active account's weekly room from `/cswap quota`, and say so in the report.

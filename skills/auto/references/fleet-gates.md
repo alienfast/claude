@@ -55,8 +55,10 @@ smaller fleet: `skills/fleet-launch/SKILL.md` § The count — 3 per account wit
   such account, or an idle engine, the local meter governs and the tail says why (`cswap=no-target(…)`,
   `cswap=engine-idle(…)`, `cswap=unreadable(…)`). A `THROTTLE` whose tail reads `cswap=switching(…)` means the engine
   is mid-move: its `resets_in` is 180s, so the delay rule re-probes in four minutes rather than at the reset.
-- Exit 0 (`PICK-OK`) → proceed. Exit 2 (`THROTTLE`) → the account's 5-hour window is within the probe's reserve of
-  full (about one issue's burn), so a pick now would likely be killed mid-issue by the limit: do not pick. This is a
+- Exit 0 (`PICK-OK`) → proceed. Exit 2 (`THROTTLE`) → the account's gated window is within the probe's reserve of full
+  (about one issue's burn: 20 points of the 5-hour window, or on an account with no 5-hour window 3 points of the weekly,
+  `--weekly-reserve`, the line reading `five_hour=none  seven_day=…`), so a pick now would likely be killed mid-issue by
+  the limit: do not pick. This is a
   pause, not an outcome — touch no `status`, emit no terminal tag; end the iteration as an `AUTO-CONTINUE` no-pick
   whose summary sentence is the probe's one-line output, and under self-paced `/loop` arm `ScheduleWakeup` with
   `noop: true`, the reason carrying the reading, and `delaySeconds` = the line's `resets_in` plus 60, clamped to
