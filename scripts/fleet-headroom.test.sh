@@ -86,9 +86,14 @@ t "no reading warns on stderr"                0 'WARN: no mods/rate-limits readi
 rm -f "$SNAP"
 t "no snapshot file at all: fails open"       0 'source=none'
 
-# A reading without a five_hour window is no reading either.
-printf '{"measured_at":"%s","windows":[{"kind":"seven_day","percentUsed":86}]}\n' "$(iso $(( NOW - 60 )))" > "$HIST/only7day0-0000-4000-8000-000000000000.jsonl"
-t "no five_hour window: fails open"           0 'no reading: the session reading carries no five_hour window' --session only7day0
+# A reading with a seven_day window but no five_hour is the account's shape, not a missing reading: the line is one copied from
+# ~/.claude/local/rate-limits on 2026-11-01 (a Claude Ultra account; every session on it lost five_hour at 06:29Z the day before).
+printf '{"measured_at":"2026-11-01T09:38:38.882Z","account":"kevin@drinkto.me","windows":[{"kind":"seven_day","percentUsed":85,"resetsAt":"2026-11-03T07:00:00.000Z"}]}\n' > "$HIST/only7day0-0000-4000-8000-000000000000.jsonl"
+t "no five_hour window: unmetered, pick OK"   0 'PICK-OK  five_hour=none (the account reports no five_hour window; nothing to gate on)  source=session(only7day)  measured=2026-11-01T09:38:38.882Z' --session only7day0
+tj "no five_hour window: json says unmetered" 0 '.pick_ok == true and .five_hour_pct == null and .unmetered == true and .source == "session" and .writer == "only7day"' --session only7day0
+# A reading with no windows at all is still no reading.
+printf '{"measured_at":"2026-11-01T09:38:38.882Z","windows":[]}\n' > "$HIST/nowin0000-0000-4000-8000-000000000000.jsonl"
+t "empty windows: fails open"                 0 'no reading: the session reading carries no five_hour window' --session nowin0000
 
 # --json emits the machine shape, on a throttle and on a fail-open.
 tj "json shape"        0 '.pick_ok == true and .five_hour_pct == 85 and .window_reset == true and .headroom == 100 and .resets_in == 0 and .source == "session" and .writer == "fefdc843"' --session "$SID"

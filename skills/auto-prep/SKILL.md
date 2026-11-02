@@ -46,7 +46,9 @@ run item 5 over every certified issue, failures included.
 
 1. **Mark `needs decision`** — the body itself contradicts unattended shipping: a present-tense "must not ship from an
    unattended run" about *this* issue (a past-tense "was deferred because too big" does not count), or capabilities no
-   agent has (a vendor rep, credentials or console access, a product decision with no testable criteria). Comment naming
+   agent has (a vendor rep, credentials or console access, a product decision with no testable criteria, a write to a
+   shared deployed environment — a measurement against a shared staging database included, which the auto-mode classifier refuses as a
+   shared-resource change; `standards/issue-spec.md` § Quality bar). Comment naming
    the decision or access needed, then `~/.claude/scripts/linear-add-label.sh <ID> 'needs decision'`. The issue keeps
    `specified` — gated, not wrong — and is hidden from every ranking until a human clears the label (directly or via
    `/spec`). When the work is *itself* human-performed — outreach, a console only a person can drive, production data
@@ -59,10 +61,11 @@ run item 5 over every certified issue, failures included.
    (`linear-add-label.sh <ID> solo`; exit 2 → `linear-cli labels create "solo" -t issue`, retry once) and recommend a
    targeted `/auto <ID>` or `/fleet-sequence` while the fleet is quiet. The label hides the issue from every ranking;
    targeted runs still ship it. **It over-triggers, and a false positive parks a workable issue on the one serial
-   resource** — read `references/solo-qualification.md` before marking one. Exactly two grounds qualify, named in the
+   resource** — read `references/solo-qualification.md` before marking one. Exactly three grounds qualify, named in the
    comment: (a) it changes the rules in-flight sessions already play by (merge drivers, the check graph, a shared CI gate,
    a lockfile every worktree's install predates); (b) it collides so broadly that serialization does not scale (more than
-   a handful of Step 3 edges — put the count in the comment). A resolved generated artifact, a sweep confined to one file,
+   a handful of Step 3 edges — put the count in the comment); (c) its acceptance holds a machine-wide resource for hours (a
+   load campaign, repeated cold runs of the browser lane). A resolved generated artifact, a sweep confined to one file,
    and a serial artifact the repo does not resolve are the false positives the reference walks through.
 4. **Pipeline label repair** — `/reflect` filings certify by provenance: ensure `specified` + `reflection`, plus `keeper`
    when the proposal edits `~/.claude`. Duplicate filings of one proposal: keep one canonical,

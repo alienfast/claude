@@ -147,6 +147,13 @@ fi
 err()  { echo "reap-worktrees.sh: $*" >&2; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# Seconds a docker call in the stack sweep may take before it counts as failed (stack-slot bounds its docker probes at 5). Overridable for tests;
+# anything but a small positive integer falls back to the default.
+STACK_DOCKER_BOUND_SECS="${REAP_STACK_DOCKER_BOUND_SECS:-5}"
+case "$STACK_DOCKER_BOUND_SECS" in
+  '' | *[!0-9]* | 0 | 0[0-9]* | ???*) STACK_DOCKER_BOUND_SECS=5 ;;
+esac
+
 # Reuse the shared worktree-identity loader (defines wt_identity_load, which arbitrates the three
 # identity tiers against each other and returns the winner whole). Guarded so a missing library never
 # aborts the reaper — recorded_baseline falls back to a direct git-config read when it is unavailable.
@@ -392,7 +399,7 @@ husk_ledger_name() {
 # once at session start, and until 2026-10-10 that path was the worktree on a session resumed inside one, so every
 # write after /finish removed the worktree recreated the directory. Three sat in basefund for nine days, each printing
 # STRAY on every hourly pass — and a husk is not inert: every `[ -d <owner> ]` liveness test reads it as a live
-# checkout, so the project's stack-slot registry kept two slots and their docker stacks, and the dead-owner gate
+# checkout, so the project's stack-slot registry kept two slots and their docker stacks, and the stack-sweep gate
 # below saw nothing dead (2026-10-19).
 #
 # Candidate iff ALL hold: no .git entry; every entry under the directory is tmp/ itself or a regular file directly
@@ -693,22 +700,82 @@ sweep_signal_victim() {
   fi
 }
 
-# True (exit 0) iff the stack-slot registry names at least one owner that is no longer a checkout -- a genuine
-# orphan to reclaim, as opposed to slots that are all still owned. Registry entries live at
-# $HOME/.basefund/stack-slots/<N>.slot with an `owner=<path>` line (tools/stack-slot's own layout); this
-# reads it directly rather than shelling out, since the check must stay cheap and side-effect-free. A checkout
-# is a directory with a .git entry (a file in a linked worktree, a directory in the main checkout): a husk
-# (reclaim_husk) has the directory and no .git, and under a bare -d it read as a live owner for nine days while
-# its slot and docker stack stayed up (basefund, 2026-10-19). The project tool's own abandonment test makes the
-# final call; this gate only decides whether to invoke it.
-_stack_slot_has_dead_owner() {
-  local reg_dir="$HOME/.basefund/stack-slots" f owner
+# Runs <cmd...> for at most <secs> seconds: its stdout on stdout, its stderr discarded, its own exit status returned, 124 on a timeout. Both docker
+# calls in the stack sweep go through it because they run under the repo lock `/finish merge` shares, and a daemon that answers `docker info` can
+# still wedge the next call. macOS ships no `timeout`, so this is a polling watchdog, as stack-slot's run_bounded is; stdout goes through a file so
+# a killed command's orphaned children cannot hold a pipe open.
+bounded_run() {
+  local secs="$1" out pid ticks=0 rc; shift
+  out=$(mktemp) || return 125
+  "$@" >"$out" 2>/dev/null &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$ticks" -ge $((secs * 10)) ]; then
+      pkill -P "$pid" 2>/dev/null || true
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      rm -f "$out"
+      return 124
+    fi
+    sleep 0.1
+    ticks=$((ticks + 1))
+  done
+  wait "$pid" 2>/dev/null && rc=0 || rc=$?
+  cat "$out"; rm -f "$out"
+  return "$rc"
+}
+
+# The two gate predicates below decide whether `tools/stack-slot reap` has teardown work (its pass 1 or pass 2). They read the registry
+# ($HOME/.basefund/stack-slots/<N>.slot), docker, lsof and git directly rather than invoking `tools/stack-slot`, so the hourly check takes no registry
+# lock and changes nothing. Each mirrors the tool function named on it; change them together.
+#
+# Registry arm, mirroring cmd_reap pass 1. True (exit 0) iff an entry would be torn down: slot >= 2 (FLOOR), not flagged by corrupt_slot_reason
+# (every check mirrored), and an owner that owner_state calls gone or husk -- a well-formed entry with no owner= line reads as gone there too.
+# An owner git cannot resolve is kept and warned about by the tool, so it is no trigger. A husk (reclaim_husk) is a directory with no .git of its
+# own that git resolves to another toplevel. A <N>.slot that is a directory is neither unreadable nor empty and counts no owner= line, so the tool
+# reads it as ownerless (gone) and so does this arm; grep's error on it is silenced.
+_stack_slot_registry_has_reclaimable_entry() {
+  local reg_dir="$HOME/.basefund/stack-slots" f n owner trimmed top owner_lines
   [ -d "$reg_dir" ] || return 1
   for f in "$reg_dir"/*.slot; do
     [ -e "$f" ] || continue
-    owner=$(sed -n 's/^owner=//p' "$f" 2>/dev/null | head -n1) || true
-    [ -n "$owner" ] || continue
-    { [ -d "$owner" ] && [ -e "$owner/.git" ]; } || return 0
+    n=$(basename "$f" .slot)
+    case "$n" in ''|*[!0-9]*) continue ;; esac
+    [ "$n" -le 1 ] && continue
+    { [ -r "$f" ] && [ -s "$f" ]; } || continue
+    owner_lines=$(grep -c '^owner=' "$f" 2>/dev/null || true)
+    [ "${owner_lines:-0}" -le 1 ] || continue
+    owner=$(sed -n 's/^owner=//p' "$f" 2>/dev/null || true)
+    trimmed="${owner#"${owner%%[![:space:]]*}"}"; trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+    [ "$owner" = "$trimmed" ] || continue
+    case "$owner" in ''|/*) ;; *) continue ;; esac
+    { [ -e "$owner" ] && [ ! -d "$owner" ]; } && continue
+    [ -d "$owner" ] || return 0
+    top=$( (unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE; git -C "$owner" rev-parse --show-toplevel) 2>/dev/null || true )
+    [ -n "$top" ] || continue
+    { [ "$top" = "$owner" ] || [ -e "$owner/.git" ]; } || return 0
+  done
+  return 1
+}
+
+# Docker arm, mirroring cmd_reap pass 2 and slot_ingress_https_port. True iff a bf-s<N> compose project (N >= 2) has no registry entry and nothing
+# listening on its slot's ingress port; pass 2 only reports a listening one. The caller has established docker, its daemon and lsof (stack-slot's own
+# listener test reads a missing lsof as nothing listening). A failed or timed-out `compose ls` skips the probe, logged, and is no trigger.
+# The pattern admits no leading zero: a name like bf-s08 would make the port arithmetic below fail on an invalid octal and abort the run, and
+# stack_derive never creates one, so it is deliberately not counted.
+_stack_slot_has_unregistered_orphan() {
+  local reg_dir="$HOME/.basefund/stack-slots" p num projects
+  # -q, not --format '{{.Name}}': compose's ls accepts only table|json for --format; 2>/dev/null would swallow the rejection, so the loop would see nothing.
+  projects=$(bounded_run "$STACK_DOCKER_BOUND_SECS" docker compose ls --all -q) || {
+    err "  (docker compose ls failed or timed out -- unregistered stack probe skipped)"
+    return 1
+  }
+  for p in $(printf '%s\n' "$projects" | grep -E '^bf-s[1-9][0-9]*$' || true); do
+    num=${p#bf-s}
+    [ "$num" -le 1 ] && continue
+    [ -e "$reg_dir/$num.slot" ] && continue
+    lsof -ti tcp:"$(( 8443 + (num - 1) * 100 ))" -sTCP:LISTEN >/dev/null 2>&1 && continue
+    return 0
   done
   return 1
 }
@@ -718,48 +785,61 @@ _stack_slot_has_dead_owner() {
 # after which another checkout can allocate that slot and collide with the still-live containers (and a
 # reallocated slot's db_setup then DROPs the databases the survivor is using). The project's own
 # `tools/stack-slot reap` already tears down exactly that population and skips anything still listening;
-# nothing invoked it automatically, which is the whole of the gap. Delegate rather than reimplement, so the
-# docker knowledge stays in the repo that owns it and this script stays project-agnostic.
+# nothing invoked it automatically, which is the whole of the gap. The teardown stays delegated to the tool; the
+# predicates above mirror only its classification, to choose between a full and a disk-only reap.
 #
-# `stack-slot reap` was designed for interactive, on-demand use; this calls it from an hourly unattended
-# job instead, which changes what its pass 2 (unregistered bf-s* stacks with nothing listening) can hit --
-# a db-only stack never has a listener, so an unregistered one in that shape reads as abandoned. Narrowing
-# the trigger to a registry entry with a confirmed-dead owner keeps that invocation aimed at a genuine
-# orphan; it does not close the residual: an unregistered db-only stack in the same window is invisible to
-# both this check and to `reap`'s own registry scan.
+# `stack-slot reap` was designed for interactive, on-demand use; this calls it from an hourly unattended job
+# instead, so the full reap runs only when the two predicates above find teardown work. Both arms are needed:
+# `allocate` skips a slot whose unregistered containers still run and leaves them to pass 2, so without the
+# docker arm those orphans have no registry entry to trigger on and accumulate until `allocate` dies with
+# "no free stack slot". A db-only stack never has a listener, so pass 2 reads an unregistered one as abandoned.
 #
-# That dead-owner gate is right for the teardown passes and WRONG for the disk pass, which is why the two are
+# That gate is right for the teardown passes and WRONG for the disk pass, which is why the two are
 # split below. Docker VM disk pressure is orthogonal to abandonment -- a machine full of perfectly healthy,
 # actively-owned stacks is exactly the state that fills it, since what accumulates is build cache and images
 # rather than anything a slot owns. Measured 2026-09-25: the VM hit 100%, redis could no longer BGSAVE, and
 # `stop-writes-on-bgsave-error yes` turned every redis write on the machine into MISCONF -- surfacing as 121
-# rspec failures that read as a broken diff. Every slot owner was alive, so a dead-owner-gated sweep would
+# rspec failures that read as a broken diff. Every slot owner was alive, so a gated sweep would
 # have run zero times in the hours it took to build.
 #
 # The disk pass is used only where this checkout's tool parses the flag. A stack-slot from before it dispatches
 # `cmd_reap "$@"` into a function that reads no arguments, so `reap --disk-only` there does not fail -- it
-# silently runs the FULL reap, hourly, on every checkout whose project side has not landed, which is the pass-2
-# exposure the gate above exists to narrow. Probing the source for the parser arm keeps the old behavior on an
-# old tool, and the probe touches neither docker nor the registry lock.
+# silently runs the FULL reap, hourly, on every checkout whose project side has not landed, which is the full-reap
+# run with nothing to reclaim that the gate above exists to avoid. Probing the source for the parser arm keeps the
+# old behavior on an old tool, and the probe touches neither docker nor the registry lock.
+#
+# A failed full reap (the registry lock held past its bound, a stale lock) must not cost the hour's disk pass, so it
+# falls back to `--disk-only` where the tool has it.
 sweep_orphan_stacks() {
-  local repo="$1" mode="$2" slot_tool="$repo/tools/stack-slot" args=()
+  local repo="$1" mode="$2" args=() full_ok=1 disk_ok=0 rc=0
+  local slot_tool="$repo/tools/stack-slot"
   [ -x "$slot_tool" ] || return 0   # repo has no stack-slot registry -- nothing to sweep
   if [ "$mode" = list ]; then
     echo "  (stack sweep available: run '$slot_tool reap')"
     return 0
   fi
-  if _stack_slot_has_dead_owner; then
-    args=(reap)
-  elif grep -q -- '--disk-only)' "$slot_tool" 2>/dev/null; then
-    args=(reap --disk-only)
-  else
-    return 0   # every owner alive and the tool predates the disk pass -- nothing it can do
-  fi
   have docker || { err "  (docker not found -- stack sweep skipped)"; return 0; }
   # An unreachable daemon must skip rather than run: `stack-slot reap` reads docker to decide what is
   # abandoned, and a daemon that answers nothing would make every stack look already-gone.
-  docker info >/dev/null 2>&1 || { err "  (docker daemon unavailable -- stack sweep skipped)"; return 0; }
-  "$slot_tool" "${args[@]}" 2>&1 | sed 's/^/  /' || err "  (stack sweep '${args[*]}' failed -- skipped)"
+  bounded_run "$STACK_DOCKER_BOUND_SECS" docker info >/dev/null || { err "  (docker daemon unavailable -- stack sweep skipped)"; return 0; }
+  # stack-slot's pass 2 reads a missing lsof as nothing listening and tears down a live unregistered stack, so the full reap is never chosen without it.
+  have lsof || { full_ok=0; err "  (lsof not found -- full stack reap skipped)"; }
+  grep -q -- '--disk-only)' "$slot_tool" 2>/dev/null && disk_ok=1
+  if [ "$full_ok" = 1 ] && { _stack_slot_registry_has_reclaimable_entry || _stack_slot_has_unregistered_orphan; }; then
+    args=(reap)
+  elif [ "$disk_ok" = 1 ]; then
+    args=(reap --disk-only)
+  else
+    return 0   # nothing to tear down and the tool predates the disk pass -- nothing it can do
+  fi
+  "$slot_tool" "${args[@]}" 2>&1 | sed 's/^/  /' || rc=$?
+  [ "$rc" -eq 0 ] && return 0
+  if [ "${#args[@]}" -eq 1 ] && [ "$disk_ok" = 1 ]; then
+    err "  (stack sweep 'reap' failed -- running the disk pass)"
+    "$slot_tool" reap --disk-only 2>&1 | sed 's/^/  /' || err "  (stack sweep 'reap --disk-only' failed -- skipped)"
+  else
+    err "  (stack sweep '${args[*]}' failed -- skipped)"
+  fi
 }
 
 sweep_orphan_processes() {

@@ -690,7 +690,14 @@ def scan_transcript(path, agg, agent_type="main", description=""):
                     agg["linear_ratelimited"] += 1
                 if name == "Bash" and t and agent_type == "main" and not r.get("isSidechain") \
                         and "fleet-headroom" in str(inp.get("command", "")):
-                    for kind, src in HEADROOM_PROBE.findall(body) + HEADROOM_PROBE_LEGACY.findall(body):
+                    for m in HEADROOM_PROBE.finditer(body):
+                        # fleet-headroom.sh answers `five_hour=none` with the reading's own source when the account reports
+                        # no five_hour window (Claude Ultra, 2026-10-31): a reading, not a blind probe, so its own bucket.
+                        # Before 2026-11-01 the same reading failed open as `source=none` with this phrase in its note.
+                        span = m.group(0)
+                        src = "unmetered" if "five_hour=none" in span or "carries no five_hour window" in span else m.group(2)
+                        agg["headroom_probes"].append((t, m.group(1), src))
+                    for kind, src in HEADROOM_PROBE_LEGACY.findall(body):
                         agg["headroom_probes"].append((t, kind, src))
                     for ok, src in HEADROOM_PROBE_JSON.findall(body):
                         agg["headroom_probes"].append((t, "PICK-OK" if ok == "true" else "THROTTLE", src))
@@ -1963,14 +1970,16 @@ def marker_history_rows(checkout):
 
 def marker_retrod(data, rows):
     """True when a history row names one of the marker's sessions — ids may be recorded as prefixes on either side,
-    the same test lib/fleet-markers.sh's fleet_marker_retrod makes — or when the marker names no session at all."""
+    the same test lib/fleet-markers.sh's fleet_marker_retrod makes — or when the marker names no session at all.
+    `session_set` is the comma-joined string the history writer records; iterating it unsplit matched single characters,
+    so one shared hex digit read every fleet as retro'd (2026-11-01: three epic fleets never measured)."""
     keys = [str(k).strip() for k in (data.get("fleet_sessions") or []) if str(k).strip()]
     if not keys:
         return True
     for r in rows:
-        for h in (r.get("session_set") or []):
-            h = str(h)
-            if any(k.startswith(h) or h.startswith(k) for k in keys):
+        for h in str(r.get("session_set") or "").split(","):
+            h = h.strip()
+            if h and any(k.startswith(h) or h.startswith(k) for k in keys):
                 return True
     return False
 
@@ -3689,6 +3698,13 @@ def main():
               f"mods/rate-limits reading for the session or the machine), so the gate failed open on every pick and nothing "
               f"would have parked the session short of a mid-issue cutoff. rate-limits@alienfast-claude must be enabled before "
               f"launch; /fleet-launch prints the burst reading, so check that line before the next run.")
+    unmetered = {k: v["sources"]["unmetered"] for k, v in throttle.items() if v["sources"].get("unmetered")}
+    if unmetered:
+        who = ", ".join(f"`{k}` ({n}/{throttle[k]['probes']})" for k, n in sorted(unmetered.items()))
+        print(f"- Headroom gate unmetered — {who}: on these probes the account reported no five_hour window (a subscription with "
+              f"no 5-hour window — Claude Ultra — reports only seven_day), so the 5h gate had nothing to meter and passed the "
+              f"pick. Not a fault, but every 5h-keyed gauge above covers only the hours the meter carried the window "
+              f"(skills/fleet-retro/references/windows.md); the weekly window is cswap's to rotate.")
     # fleet-launch.sh checks only that mods/loop-boundary is enabled, not that it fires; its first fleet (2026-10-10) passed
     # every looping turn as `prefix`, and the context gauge read the uncompacted run as the mod working.
     if fleet_boundary and all_shipped and fleet_boundary["accepted"] == 0:
@@ -3740,14 +3756,17 @@ def main():
     cur_ex, cur_vt, cur_st = (tests["rspec_examples_per_shipped"], tests["vitest_tests_per_shipped"],
                               tests["story_exports_per_shipped"])
 
-    def rose(cur, prev):
-        return cur is not None and prev is not None and cur > prev
-    if rose(cur_ex, prev_ex) or rose(cur_vt, prev_vt) or rose(cur_st, prev_st):
+    # Summed over the gauges both fleets measured: one gauge rising while the others fall is a shift between layers, not more
+    # tests per ship (2026-10-30: vitest +10.8 vs +5.8 fired while rspec fell +53.5 → +7.8 and stories +8.6 → +1.2).
+    pairs = [(c, p) for c, p in ((cur_ex, prev_ex), (cur_vt, prev_vt), (cur_st, prev_st)) if c is not None and p is not None]
+    if pairs and sum(c for c, _ in pairs) > sum(p for _, p in pairs):
         flagged = True
         print(f"- **Tests per shipped issue rose**: rspec {signed_one(cur_ex)} vs {signed_one(prev_ex)}, vitest "
               f"{signed_one(cur_vt)} vs {signed_one(prev_vt)}, stories "
-              f"{signed_one(cur_st)} vs {signed_one(prev_st)} — ships are adding tests where the issue sits rather than where the "
-              f"mechanism lives; read the project's layer contract and route the duplicate arms to /test-sweep")
+              f"{signed_one(cur_st)} vs {signed_one(prev_st)} (summed over the gauges both fleets measured: "
+              f"{signed_one(sum(c for c, _ in pairs))} vs {signed_one(sum(p for _, p in pairs))}) — ships are adding tests where "
+              f"the issue sits rather than where the mechanism lives; read the project's layer contract and route the duplicate "
+              f"arms to /test-sweep")
     no_merge = [i for i, m in merged.items() if m["commit"] and not m["merge"]]
     if no_merge:
         print(f"- Landed without a merge commit of either shape — no `Merge <ID>` and no "

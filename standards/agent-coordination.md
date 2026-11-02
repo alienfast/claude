@@ -112,6 +112,12 @@ process is gone (`pgrep -f`), and end it by process group rather than by its lea
 against one set of test databases, one dev-server port or one lock produce failures that read as real defects but are
 contention.
 
+**End a process by the pid or group you captured when you started it, never by pattern.** `pkill -f "until grep -q"`,
+`pkill -f agent-browser` or a storybook port's pattern matches every session's copy of the same idiom on a shared
+machine, and the auto-mode classifier refuses such a call as interference with other workloads (three of the 2026-10-30
+fleet's seven denials); a pattern scoped to this session's own script path, port or scratch directory is the one form it
+let through.
+
 ## A write-capable delegation that dies mid-task leaves an unknown tree
 
 A `developer` / `debugger` delegation can terminate early (an API error, a timeout, a session limit) after an arbitrary

@@ -65,6 +65,21 @@ All four are in the `windows` block already emitted.
   cutoff-window token meters stay in the report as cost figures only — a machine-wide token sum maps to no one
   account's window on a multi-account machine, and a probe's and the analyzer's token units can differ by a multiple —
   so carry them forward for cost, never as a ceiling.
+- **An account that reports no `five_hour` window darkens every gauge keyed on that reading, and the report does not say
+  so.** From 2026-10-31 06:29Z every reading on `kevin@drinkto.me` carries only `seven_day` (264 readings over the next
+  28h; the operator reports the account moved to Claude Ultra, which has no 5h window). The 2026-10-30 fleet's four
+  sessions took their last `five_hour` reading at 06:24–06:27Z, 8.2h into a 145-session-hour run, and its retro read the
+  68% peak and `five_hour_fits_sessions` 5 as the run's headroom. The gauges keyed on the meter's `five_hour` reading —
+  the `Window readings` five_hour peak and inherited note, the Headroom verdict (`five_hour_fits_sessions`,
+  `peak_five_hour_pct`), the trend's `5h%`, and `thr%`, which reads 0 because `fleet-headroom.sh` answers
+  `PICK-OK five_hour=none … source=session(…)` on such a reading (bucketed `unmetered` by the analyzer, never blind; its
+  `Headroom gate unmetered` line names the probes) — cover only the hours the meter carried the window; the token peaks,
+  cutoff meters and stall groups are transcript-derived and unaffected. Before quoting a 5h gauge, measure its coverage
+  per session against the fleet span and say what share it covers:
+  `jq -r 'select([.windows[].kind] | index("five_hour")) | .measured_at' ~/.claude/local/rate-limits/<session>.jsonl | tail -1`.
+  A lone `seven_day`-only line at a 5h block reset is a transient that has recurred through October with `five_hour` back
+  within minutes, so the account's shape is the persistence, not one line. What binds such an account is unmeasured: size
+  nothing from the 5h gauges there — read the weekly meter and the token peaks.
 - **Cross-run token comparisons are valid only within one `limit_kind`.** Unrelated ceilings can coincide closely, and
   a 5h window is simply the wrong instrument for a weekly cutoff: trailing-5h totals at a `weekly` and a `5-hour`
   cutoff agreeing to a fraction of a percent is coincidence, not an identified meter.

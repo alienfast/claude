@@ -1771,10 +1771,14 @@ NOW21=$(python3 -c "import time; print(int(time.time()))")
 DL21=$((NOW21 - 3600))
 echo "{\"deadline_epoch\": $DL21, \"deadline\": \"test\", \"count\": 1, \"launch_epoch\": $((DL21 - 43200))}" > "$CK21/tmp/fleet-deadline-team.json"
 echo '{"status":"drained","reason":"fleet deadline reached (test)","mode":"loop","shipped":["TT-200"],"canceled":[],"skipped":[],"failed":[]}' > "$CK21/tmp/auto-state-thr00001.json"
-probe21() { # probe21 <epoch> <n> <THROTTLE|PICK-OK> <session|snapshot|none> — the probe's tool_use and its result
+probe21() { # probe21 <epoch> <n> <THROTTLE|PICK-OK> <session|snapshot|none|unmetered|none-no5h> — the probe's tool_use and its result
   local body rc=0
   case "$3:$4" in
     PICK-OK:none) body="PICK-OK  five_hour=? (no reading: no mods/rate-limits reading (no history for session thr00001, and /h/.claude/local/rate-limits.json is missing or unreadable))  source=none" ;;
+    # The account reports no five_hour window (Claude Ultra): the gate's answer since 2026-11-01, and the fail-open line the
+    # 2026-10-30 fleet's transcripts carry for the same reading — both are a reading, bucketed `unmetered`, never blind.
+    PICK-OK:unmetered) body="PICK-OK  five_hour=none (the account reports no five_hour window; nothing to gate on)  source=session(thr00001)  measured=2026-11-01T09:38:38.882Z  cswap=target(claude@drinkto.me at 0% < threshold 95, figure 6m old — the engine's landing when kevin@drinkto.me fills)" ;;
+    PICK-OK:none-no5h) body="PICK-OK  five_hour=? (no reading: the session reading carries no five_hour window)  source=none  cswap=target(claude@drinkto.me at 0% < threshold 95, figure 8m old — the engine's landing when kevin@drinkto.me fills)" ;;
     PICK-OK:*)    body="PICK-OK  five_hour=19% used  headroom=81 >= reserve=20  resets=2026-10-13T19:10:00.000Z  resets_in=12754s  source=$4(thr00001)  measured=2026-10-13T14:55:09.760Z (42m ago)" ;;
     THROTTLE:*)   body="THROTTLE five_hour=85% used  headroom=15 < reserve=20  resets=2026-10-13T19:10:00.000Z  resets_in=7200s  source=$4(thr00001)  measured=2026-10-13T14:55:09.760Z (2m ago) — park with a wakeup until the reset instead of picking"; rc=2 ;;
   esac
@@ -1795,6 +1799,8 @@ legacy21() { # legacy21 <epoch> <n> — the token-sum probe's PICK-OK, as every 
   probe21 $((DL21 - 14400)) 2 THROTTLE session
   probe21 $((DL21 - 12600)) 3 THROTTLE session
   probe21 $((DL21 - 10800)) 4 PICK-OK snapshot
+  probe21 $((DL21 - 7200))  6 PICK-OK unmetered
+  probe21 $((DL21 - 5400))  7 PICK-OK none-no5h
   probe21 $((DL21 - 3600))  5 THROTTLE session
   printf '{"type":"assistant","timestamp":"%s","isSidechain":false,"message":{"role":"assistant","id":"msg_end","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":50},"content":[{"type":"text","text":"NO-CANDIDATES: fleet deadline reached"}]}}\n' "$(at_epoch "$DL21")"
 } > "$T21/thr00001-0000.jsonl"
@@ -1808,15 +1814,16 @@ ck "ship call: witness split"               "{'tags': [], 'calls': ['TT-200'], '
 ck "ship call: quoted mention is not a ship" "False" "$(q21 "'TT-299' in d['sessions'][0]['observed_shipped']")"
 ck_has "ship call: obs agrees with the ledger" "| 1/1 |" "$MD21"
 ck_lacks "ship call: no unrecorded-ship flag" "shipped without recording it" "$MD21"
-ck "throttle: per-session gauge"            "{'probes': 5, 'throttled': 3, 'parked_h': 2.0, 'parked_in_idle_tail_h': 2.0, 'sources': {'calibration': 1, 'session': 3, 'snapshot': 1}}" "$(q21 "d['sessions'][0]['throttle']")"
+ck "throttle: per-session gauge"            "{'probes': 7, 'throttled': 3, 'parked_h': 2.0, 'parked_in_idle_tail_h': 2.0, 'sources': {'calibration': 1, 'session': 3, 'snapshot': 1, 'unmetered': 2}}" "$(q21 "d['sessions'][0]['throttle']")"
 ck_lacks "throttle: a reading is not blind"  "Headroom gate ran blind" "$MD21"
+ck_has "throttle: unmetered probes get their own note" "- Headroom gate unmetered — \`thr00001\` (2/7): on these probes the account reported no five_hour window" "$MD21"
 ck "throttle: fleet total and share"        "2.0 0.2" "$(q21 "str(d['throttle']['parked_session_hours']) + ' ' + str(d['throttle']['share'])")"
 ck "throttle: overlap with the idle tail"   "2.0" "$(q21 "d['pool_exhausted']['throttled_within_tail_session_hours']")"
 ck "throttle: idle tail itself unchanged"   "5.0" "$(q21 "d['pool_exhausted']['idle_tail_session_hours']")"
 ck "throttle: history row carries it"       "2.0 0.2" "$(q21 "str(d['history'][-1]['throttle_session_hours']) + ' ' + str(d['history'][-1]['throttle_share'])")"
 ck_has "throttle: table column"             "| throttled |" "$MD21"
-ck_has "throttle: table cell"               "| 2.0h (3/5) |" "$MD21"
-ck_has "throttle: totals clause"            "headroom-parked 2.0h (20% of fleet; 3/5 probes THROTTLE; source session x3, calibration x1, snapshot x1)" "$MD21"
+ck_has "throttle: table cell"               "| 2.0h (3/7) |" "$MD21"
+ck_has "throttle: totals clause"            "headroom-parked 2.0h (20% of fleet; 3/7 probes THROTTLE; source session x3, unmetered x2, calibration x1, snapshot x1)" "$MD21"
 ck_has "throttle: pool line names the overlap" "\`thr00001\` 5.0h), of which 2.0 session-hours were headroom-parked — a throttle, not an empty pool" "$MD21"
 ck_has "throttle: trend column"             "| thr% |" "$MD21"
 ck_has "throttle: trend cell beside idle%"  "| 50% | 20% |" "$MD21"
@@ -2519,7 +2526,7 @@ import json,sys
 r=[json.loads(l) for l in open(sys.argv[1])][-1]
 print(' '.join(str(r[k]) for k in ('rspec_examples_per_shipped','vitest_tests_per_shipped','story_exports_per_shipped','rspec_examples_net','vitest_tests_net','story_exports_net','measured_ships')))" "$H29")"
 ck_has "tests: report line"        "Tests per shipped issue: +1.5 rspec examples, +2.5 vitest tests, +1.0 story exports (net declarations across 2 of 3 landed ships; previous fleet +1.0 / - / +0.5)" "$WORK/out29a.md"
-ck_has "tests: rising flag fires against the lower row" "- **Tests per shipped issue rose**: rspec +1.5 vs +1.0, vitest +2.5 vs -, stories +1.0 vs +0.5 — ships are adding tests where the issue sits rather than where the mechanism lives; read the project's layer contract and route the duplicate arms to /test-sweep" "$WORK/out29a.md"
+ck_has "tests: rising flag fires against the lower row" "- **Tests per shipped issue rose**: rspec +1.5 vs +1.0, vitest +2.5 vs -, stories +1.0 vs +0.5 (summed over the gauges both fleets measured: +2.5 vs +1.5) — ships are adding tests where the issue sits rather than where the mechanism lives; read the project's layer contract and route the duplicate arms to /test-sweep" "$WORK/out29a.md"
 ck_has "tests: trend header columns" "| filed/ship | ex/ship | vt/ship | st/ship | fresh% |" "$WORK/out29a.md"
 # ex/ship, vt/ship and st/ship cells by header position, per trend row: this fleet, the earlier gauge fleet, and the pre-gauge row.
 ck "tests: trend cells by row" "+1.5,+2.5,+1.0 +1.0,-,+0.5 -,-,-" "$(python3 -c "
@@ -2541,22 +2548,23 @@ EOF
 run29 b
 ck_lacks "tests: no flag when the previous fleet was higher" "Tests per shipped issue rose" "$WORK/out29b.md"
 ck_has   "tests: previous fleet shown on the line" "previous fleet +9.0 / - / +9.0)" "$WORK/out29b.md"
-# Either value rising is enough: rspec falls but stories rise against 0.5, then the reverse.
+# The sum over the gauges both fleets measured decides: rspec falls while vitest rises by more → flag; one gauge rising
+# against a larger fall elsewhere is a shift between layers, not more tests per ship (the 2026-10-30 fleet's false flag).
 cat > "$H29" <<'EOF'
-{"fleet_start": "2026-02-01T00:00:00Z", "session_set": "old00002", "shipped": 4, "sessions": 1, "rspec_examples_per_shipped": 9.0, "story_exports_per_shipped": 0.5}
+{"fleet_start": "2026-02-01T00:00:00Z", "session_set": "old00002", "shipped": 4, "sessions": 1, "rspec_examples_per_shipped": 2.0, "vitest_tests_per_shipped": 1.0}
 EOF
 run29 c
-ck_has   "tests: one rising value flags" "rspec +1.5 vs +9.0, vitest +2.5 vs -, stories +1.0 vs +0.5" "$WORK/out29c.md"
+ck_has   "tests: the sum rising flags though rspec fell" "rspec +1.5 vs +2.0, vitest +2.5 vs +1.0, stories +1.0 vs - (summed over the gauges both fleets measured: +4.0 vs +3.0)" "$WORK/out29c.md"
 cat > "$H29" <<'EOF'
 {"fleet_start": "2026-02-01T00:00:00Z", "session_set": "old00002", "shipped": 4, "sessions": 1, "rspec_examples_per_shipped": 0.5, "story_exports_per_shipped": 9.0}
 EOF
 run29 e
-ck_has   "tests: the rspec value rising alone flags" "rspec +1.5 vs +0.5, vitest +2.5 vs -, stories +1.0 vs +9.0" "$WORK/out29e.md"
+ck_lacks "tests: rspec rising against a larger stories fall does not flag" "Tests per shipped issue rose" "$WORK/out29e.md"
 cat > "$H29" <<'EOF'
 {"fleet_start": "2026-02-01T00:00:00Z", "session_set": "old00002", "shipped": 4, "sessions": 1, "rspec_examples_per_shipped": 9.0, "vitest_tests_per_shipped": 0.5, "story_exports_per_shipped": 9.0}
 EOF
 run29 f
-ck_has   "tests: the vitest value rising alone flags" "rspec +1.5 vs +9.0, vitest +2.5 vs +0.5, stories +1.0 vs +9.0" "$WORK/out29f.md"
+ck_lacks "tests: vitest rising against larger falls elsewhere does not flag" "Tests per shipped issue rose" "$WORK/out29f.md"
 # A previous row carrying only the vitest field is still the previous fleet, and a higher value there is no flag.
 cat > "$H29" <<'EOF'
 {"fleet_start": "2026-02-01T00:00:00Z", "session_set": "old00002", "shipped": 4, "sessions": 1, "vitest_tests_per_shipped": 9.0}
@@ -2693,14 +2701,21 @@ CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK31" --fleet nope -
 ck "--fleet unknown exits 2"                   "2" "$?"
 ck_has "--fleet unknown: lists what exists"    "Recorded fleets:" "$E31"
 # Once the history names every fleet but one, the bare run measures that one.
-printf '{"session_set":["fa310001"]}\n{"session_set":["fc310001"]}\n' > "$CK31/tmp/fleet-metrics-history.jsonl"
+printf '{"session_set":"fa310001"}\n{"session_set":"fc310001"}\n' > "$CK31/tmp/fleet-metrics-history.jsonl"
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK31" --no-record > "$O31" 2> "$E31"
 ck "bare run with one un-retro'd fleet exits 0" "0" "$?"
 ck_has "bare run picks the un-retro'd fleet"   "scope: fleet_sessions from tmp/fleet-deadline-tt-9.json (1)" "$O31"
-printf '{"session_set":["fb310001"]}\n' >> "$CK31/tmp/fleet-metrics-history.jsonl"
+printf '{"session_set":"fb310001"}\n' >> "$CK31/tmp/fleet-metrics-history.jsonl"
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK31" --no-record > "$O31" 2> "$E31"
 ck "bare run with every fleet retro'd exits 2" "2" "$?"
 ck_has "all retro'd: says so"                  "Every recorded fleet here is already in tmp/fleet-metrics-history.jsonl" "$E31"
+# The history keeps `session_set` as one comma-joined string. Iterating it unsplit matched single hex digits, so a marker
+# whose id merely shared a leading digit with a recorded one read as retro'd (every fleet did, 2026-11-01).
+printf '{"session_set":"fa310001,fa76477c"}\n' > "$CK31/tmp/fleet-metrics-history.jsonl"
+echo "{\"launch_epoch\": $((NOW31 - 3600)), \"fleet_sessions\": [\"ffcb43bc\"], \"scope\": \"TT-9\"}" > "$CK31/tmp/fleet-deadline-tt-9.json"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK31" --list-fleets > "$O31" 2>&1
+ck "retro'd: a shared leading digit is not a recorded session" "1" "$(grep -c -E '^  tt-9 .* NOT retro-d ' "$O31")"
+ck "retro'd: the exact id in a comma-joined set still is"      "1" "$(grep -c -E '^  team .*  retro-d ' "$O31")"
 
 echo
 echo "$PASS passed / $FAIL failed / $SKIP skipped"

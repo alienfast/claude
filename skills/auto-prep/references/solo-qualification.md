@@ -2,7 +2,7 @@
 
 Read this before marking an issue `solo` in `/auto-prep` Step 2. The disposition over-triggers, and a false positive is
 expensive: it pulls a workable issue out of the fleet pool and parks it on the one serial resource, the user. Qualify on
-exactly two grounds, and name which one in the comment.
+exactly three grounds, and name which one in the comment.
 
 ## (a) It changes the rules other in-flight sessions are already playing by
 
@@ -16,6 +16,15 @@ A sweep across a directory where much of the certified pool lives. Make it quant
 edges would take more than a handful, one `solo` mark is the same guarantee for a fraction of the wiring — count the
 colliding issues and put the count in the comment. Below that threshold, wire the edges instead; that is what Step 3 is
 for.
+
+## (c) Its acceptance holds a machine-wide resource for hours
+
+A load campaign, repeated cold runs of a lane that takes a machine-wide lock (the storybook browser lane), any criterion
+naming a load level or a run count in the tens. Every sibling pays in every check it runs: BF-3010 (2026-10-31) held the
+machine for twelve hours, and its three siblings' `pnpm check` medians tripled, 15% of their runs hit the 10-minute Bash
+cap and their failure rate doubled. The test is whether the *acceptance*, not the change, is what the siblings would feel.
+This ground applies at filing too: a pipeline filing that certifies itself takes `solo` beside `specified`
+([linear-filing.md](../../../standards/linear-filing.md) § 5), since `/auto-prep` never sees an issue filed mid-run.
 
 ## Not solo, however it sounds
 

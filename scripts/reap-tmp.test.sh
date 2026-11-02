@@ -160,7 +160,8 @@ mkfile "$r/tmp/linear-context-bf-2.md" $((12*H))
 mkfile "$r/tmp/run.done" $((2*D))
 mkfile "$r/tmp/triage-head.sha" $((20*D))
 mkfile "$r/tmp/triage-ls-files.txt" $((40*D))
-mkfile "$r/tmp/fleet-metrics-history.jsonl" $((60*D)) '{"session_set":["zzz"]}'
+# session_set is the comma-joined string fleet-metrics.py writes, never an array (lib/fleet-markers.sh reads only that shape).
+mkfile "$r/tmp/fleet-metrics-history.jsonl" $((60*D)) '{"session_set":"zzz"}'
 mkfile "$r/tmp/auto-state-deadbeef.json" $((60*D)) '{"status":"active"}'
 mkfile "$r/tmp/auto-state.json" $((60*D)) '{}'
 mkfile "$r/tmp/keep/notes.md" $((60*D)); age "$r/tmp/keep" $((60*D))
@@ -224,7 +225,7 @@ mkfile "$r/tmp/quality-review-verdict-bf-201.md" $((12*D))    # written before i
 out=$($SCRIPT list "$r" 2>&1)
 ck "in-window verdict is held before the retro"     'KEEP      quality-review-verdict-bf-200.md — written during the fleet launched' "$out"
 ck "pre-window verdict is not held"                  'ELIGIBLE  quality-review-verdict-bf-201.md — no local branch for bf-201' "$out"
-mkfile "$r/tmp/fleet-metrics-history.jsonl" $((1*D)) "{\"session_set\":[\"abc12345\"],\"fleet_start\":\"x\"}"
+mkfile "$r/tmp/fleet-metrics-history.jsonl" $((1*D)) "{\"session_set\":\"abc12345\",\"fleet_start\":\"x\"}"
 out=$($SCRIPT list "$r" 2>&1)
 ck "retro row releases the in-window verdict"       'ELIGIBLE  quality-review-verdict-bf-200.md — no local branch for bf-200' "$out"
 # A second, un-retro'd fleet beside it — an archived run of another slug — holds the verdicts written since ITS launch.
@@ -347,7 +348,7 @@ ckno "a 5d-old un-retro'd fleet is not yet flagged as unmeasured" 'never measure
 mkfile "$r/tmp/fleet-deadline-bf-3.json" $((31*D)) "{\"launch_epoch\": $((NOW - 31*D)), \"stopped\": true, \"fleet_sessions\": [\"s3\"], \"scope\": \"BF-3\"}"
 mkfile "$r/tmp/fleet-deadline-bf-4.$((NOW - 32*D)).json" $((32*D)) "{\"launch_epoch\": $((NOW - 32*D)), \"fleet_sessions\": [\"s4\"], \"scope\": \"BF-4\"}"
 mkfile "$r/tmp/fleet-deadline-bf-5.$((NOW - 33*D)).json" $((33*D)) "{\"launch_epoch\": $((NOW - 33*D)), \"fleet_sessions\": [\"s5\"], \"scope\": \"BF-5\"}"
-mkfile "$r/tmp/fleet-metrics-history.jsonl" $((1*D)) '{"session_set":["s5"]}'
+mkfile "$r/tmp/fleet-metrics-history.jsonl" $((1*D)) '{"session_set":"s5"}'
 out=$($SCRIPT list "$r" 2>&1)
 ck "a stopped un-retro'd fleet past 30d is flagged"  "FLAG      fleet-deadline-bf-3.json — ended, launched $(date -r $((NOW - 31*D)) +%Y-%m-%d 2>/dev/null || date -d @$((NOW - 31*D)) +%Y-%m-%d) and never measured — fleet-metrics.py --fleet bf-3 (/fleet-retro)" "$out"
 ck "an archived un-retro'd run past 30d is flagged, by slug@epoch" "FLAG      fleet-deadline-bf-4.$((NOW - 32*D)).json — ended, launched" "$out"

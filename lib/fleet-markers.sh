@@ -67,7 +67,8 @@ fleet_marker_retrod() {
   sessions=$(jq -r '.fleet_sessions[]? // empty' "$1" 2>/dev/null) || sessions=""
   [ -n "$sessions" ] || return 0
   [ -f "$2" ] || return 1
-  hist=$(jq -r '.session_set[]? // empty' "$2" 2>/dev/null) || hist=""
+  # session_set is the comma-joined string fleet-metrics.py writes; `.session_set[]?` on it yielded nothing (2026-11-01).
+  hist=$(jq -r '(.session_set // "") | select(type == "string") | split(",")[] | select(length > 0)' "$2" 2>/dev/null) || hist=""
   for s in $sessions; do
     for h in $hist; do
       case "$s" in "$h"*) return 0 ;; esac

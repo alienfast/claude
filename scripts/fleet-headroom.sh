@@ -42,9 +42,10 @@
 # `room` (every account with room, the active one included): fleet-cap.sh sizes the fleet's concurrency cap on
 # that count, so the one predicate for "room" lives here.
 #
-# Exit: 0 = pick OK (headroom >= reserve, or no reading — FAIL OPEN: a missing mod must not halt a healthy
-# fleet; the stall watcher remains the backstop, and the line says `source=none` so /fleet-status and
-# /fleet-retro can see a blind gate). 2 = THROTTLE (headroom < reserve).
+# Exit: 0 = pick OK (headroom >= reserve; or the reading has windows but no five_hour — a Claude Ultra account
+# has no 5h window, so the line says `five_hour=none` with the reading's own source; or no reading at all —
+# FAIL OPEN: a missing mod must not halt a healthy fleet; the stall watcher remains the backstop, and the line
+# says `source=none` so /fleet-status and /fleet-retro can see a blind gate). 2 = THROTTLE (headroom < reserve).
 # Run ./fleet-headroom.test.sh after ANY change.
 
 set -uo pipefail
@@ -167,7 +168,20 @@ parsed=$(printf '%s' "$reading" | jq -c '
   ((.windows // []) | map(select(.kind == "five_hour")) | .[0]) as $w
   | {pct: $w.percentUsed, resets_at: ($w.resetsAt // null), measured_at: (.measured_at // null)}' 2>/dev/null) || parsed=""
 pct=$(jq -r '.pct // empty' <<<"$parsed" 2>/dev/null)
-[[ "$pct" =~ ^[0-9]+([.][0-9]+)?$ ]] || open "the $source reading carries no five_hour window"
+if ! [[ "$pct" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+  # A reading with other windows but no five_hour is the account's shape, not a missing mod: a Claude Ultra subscription
+  # has no 5h window (every session on the account lost it within five minutes, 2026-10-31 06:29Z), so nothing to gate on.
+  printf '%s' "$reading" | jq -e '(.windows // []) | length > 0' >/dev/null 2>&1 || open "the $source reading carries no five_hour window"
+  ma=$(jq -r '.measured_at // empty' <<<"$parsed")
+  if [ "$AS_JSON" = 1 ]; then
+    jq -n --arg src "$source" --arg w "$writer" --argjson r "$RESERVE" --argjson c "$cswap_json" --arg at "$ma" \
+      '{pick_ok: true, five_hour_pct: null, unmetered: true, reserve: $r, source: $src, writer: $w,
+        measured_at: (if $at == "" then null else $at end), cswap: $c}'
+  else
+    echo "PICK-OK  five_hour=none (the account reports no five_hour window; nothing to gate on)  source=${source}(${writer:-?})  measured=${ma:-unknown}$(cswap_tail)"
+  fi
+  exit 0
+fi
 resets_at=$(jq -r '.resets_at // empty' <<<"$parsed")
 measured_at=$(jq -r '.measured_at // empty' <<<"$parsed")
 resets_epoch=""; [ -n "$resets_at" ] && resets_epoch=$(iso_epoch "$resets_at")

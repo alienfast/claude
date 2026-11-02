@@ -139,9 +139,10 @@ so only a session started under an older install leaves a husk; the two diagnost
 session-cwd-relative and would, if enabled. The other cause is a partial removal (Windows locked files or long paths),
 which leaves real content behind.
 
-A husk is not inert. Every `[ -d <owner> ]` liveness test reads it as a live checkout: a project's stack-slot registry
-keeps the slot and its running docker stack for weeks after the merge, and this reaper's own dead-owner trigger sees
-nothing dead unless it requires a `.git` entry — while each hourly pass prints a `STRAY` line to a log nobody reads.
+A husk is not inert. A bare `[ -d <owner> ]` liveness test reads it as a live checkout, so anything gated that way — a
+project's stack-slot claim and its running docker stack, or this reaper's stack-sweep trigger — keeps it alive after the
+merge; both now classify the owner the way `tools/stack-slot`'s `owner_state` does. Meanwhile each hourly pass prints a
+`STRAY` line to a log nobody reads.
 
 So each pass also reclaims a **ledger-only** husk: every entry under it is a regular file directly under `tmp/` whose
 name the `/reap-tmp` ledger and probe lanes classify, the newest is older than the grace, and no live Claude session

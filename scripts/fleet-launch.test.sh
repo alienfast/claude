@@ -603,7 +603,8 @@ jq -n '{count: 1, launch_epoch: 1700000000, fleet_sessions: ["dead0009"], scope:
 jq -n '{count: 1, launch_epoch: 1700000100, fleet_sessions: ["dead0010"], scope: "EP-3", members: ["EP-3"]}' > "$M3"
 jq -n '{count: 1, launch_epoch: 1700000200, fleet_sessions: ["dead0011"]}' > "$TM"
 for k in dead0009 dead0010 dead0011 dead0012; do echo '{"status":"drained","mode":"loop","shipped":["XX-1"]}' > "$REPO/tmp/auto-state-$k.json"; done
-echo '{"session_set":["dead0009"],"shipped":1}' > "$HIST"
+# session_set is the comma-joined string fleet-metrics.py writes, never an array (lib/fleet-markers.sh reads only that shape).
+echo '{"session_set":"dead0009","shipped":1}' > "$HIST"
 : > "$WORK/dispatches"
 ck "expiry: launch exits 0"                      "0" "$(run 1)"
 ck "expiry: retro'd fleet's marker gone"         "no" "$([ -e "$REPO/tmp/fleet-deadline-ep-2.json" ] && echo yes || echo no)"
@@ -621,7 +622,7 @@ ck "expiry: new run lists only its own session"  "1" "$(jq -r '.fleet_sessions |
 ck "expiry: unlisted dead ledger cleared"        "no" "$([ -e "$REPO/tmp/auto-state-dead0012.json" ] && echo yes || echo no)"
 ck_has "expiry: clearing names it"               "Cleared prior-run ledger(s): dead0012" "$WORK/out"
 # Once the archived run is retro'd, the next launch expires it with its ledger; the un-retro'd sibling stays.
-echo '{"session_set":["dead0011"],"shipped":1}' >> "$HIST"
+echo '{"session_set":"dead0011","shipped":1}' >> "$HIST"
 : > "$WORK/dispatches"
 ck "expiry: relaunch exits 0"                    "0" "$(run 1)"
 ck "expiry: retro'd archive gone"                "no" "$([ -e "$REPO/tmp/fleet-deadline-team.1700000200.json" ] && echo yes || echo no)"

@@ -179,6 +179,13 @@ the helper's exit 2 here means "could not confirm": annotate and do not retry. C
 body below [issue-spec.md](issue-spec.md)'s quality bar is rewritten while the evidence is hot (verify the mechanism, or
 write the open empirical question as a directed measurement), and only a genuine human pick withholds the label (step 2).
 
+A certified filing is a pick a fleet makes within hours, and `/auto-prep`'s fleet-hostility test never sees an issue filed
+mid-run, so apply it here: a body whose acceptance holds a machine-wide resource for hours — a load campaign, repeated
+cold runs of a lane that takes a machine-wide lock — takes `solo` beside `specified`, with the comment naming the ground
+([solo-qualification.md](../skills/auto-prep/references/solo-qualification.md) § (c)). BF-3010 (2026-10-31) was filed and
+certified at 17:11Z, picked at 21:20Z, and loaded the machine for twelve hours: its three siblings' `pnpm check` medians
+tripled and 15% of their runs hit the Bash cap.
+
 Every filing ends carrying a routing label some consumer reads, `specified`, `needs decision`, `human` or `keeper`,
 never a class label alone ([issue-spec.md](issue-spec.md) § An agent filing never lands unrouted). Two gates enforce it:
 `quality-review-write-verdict.sh` reads every id on a verdict's `Deferred filed as issues:` line back from Linear and

@@ -582,21 +582,50 @@ ck "unresolvable repo root selects no process" NOPROC \
    "$(printf '%s' "$out" | grep -q -e ORPHAN-PROC -e REAPED-PROC && echo PROC || echo NOPROC)"
 ck "unresolvable repo root kills nothing" ALIVE "$(proc_state "$ghost_pid")"
 
-# ── stack sweep: which invocation the dead-owner gate selects ──────────────────────────────────────────
-# The gate is right for the TEARDOWN passes and wrong for the disk pass, so sweep_orphan_stacks branches on
-# it rather than returning early. Pinning the branch, not merely that something ran: the regression this
+# ── stack sweep: which invocation the teardown gate selects ────────────────────────────────────────────
+# The gate (a reclaimable registry entry, or an unregistered non-listening bf-s<N> project) is right for the
+# TEARDOWN passes and wrong for the disk pass, so sweep_orphan_stacks branches on it rather than returning early.
+# Pinning the branch, not merely that something ran: the regression this
 # guards is silent in the worst way — every slot owner alive is the NORMAL state of a busy machine, and a
 # gate that skips the disk pass there simply never reclaims anything, while the VM fills to 100% and redis
 # stops accepting writes machine-wide (measured 2026-09-25: 121 rspec failures that read as a broken diff).
 stack_stub="$ROOT/stack-stub"; mkdir -p "$stack_stub"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$stack_stub/docker"; chmod +x "$stack_stub/docker"
+# docker answers `info` (down when FAKE_DOCKER_DOWN is set, wedged when FAKE_DOCKER_INFO_HANG is) and EXACTLY
+# `compose ls --all -q` from FAKE_COMPOSE_LS, a space-separated project list (failing when FAKE_COMPOSE_LS_FAIL is set,
+# wedged when FAKE_COMPOSE_LS_HANG is); any other `compose ls` spelling exits 1 printing nothing, as compose rejects a
+# --format Go template. lsof answers only the listener probe, from FAKE_LISTEN_PORTS, and passes every other
+# invocation to the real one so the orphan-process sweep keeps working under the same PATH.
+cat > "$stack_stub/docker" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1" = info ]; then
+  [ -n "${FAKE_DOCKER_DOWN:-}" ] && exit 1
+  [ -n "${FAKE_DOCKER_INFO_HANG:-}" ] && sleep 30
+fi
+if [ "$1" = compose ] && [ "${2:-}" = ls ]; then
+  [ "$*" = "compose ls --all -q" ] || exit 1
+  [ -n "${FAKE_COMPOSE_LS_FAIL:-}" ] && exit 1
+  [ -n "${FAKE_COMPOSE_LS_HANG:-}" ] && sleep 30
+  for p in ${FAKE_COMPOSE_LS:-}; do printf '%s\n' "$p"; done
+fi
+exit 0
+EOF
+cat > "$stack_stub/lsof" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = -ti ] && [ "\${3:-}" = -sTCP:LISTEN ]; then
+  for p in \${FAKE_LISTEN_PORTS:-}; do [ "tcp:\$p" = "\$2" ] && { echo 1; exit 0; }; done
+  exit 1
+fi
+exec $(command -v lsof) "\$@"
+EOF
+chmod +x "$stack_stub/docker" "$stack_stub/lsof"
 r=$(build_case sweep_stack BF-941 started 1 1 fresh)   # dirty + active issue => worktree kept, no reap noise
 mkdir -p "$r/tools"
 # The stub carries the real tool's parser arm, which is what the reaper probes for before it uses the flag.
-stack_slot_stub() {   # stack_slot_stub <with-disk-only|pre-disk-only>
+stack_slot_stub() {   # stack_slot_stub <with-disk-only|pre-disk-only> [fail-full]: a bare `reap` exits non-zero, as when the registry lock is held
   { printf '#!/usr/bin/env bash\n'
     [ "$1" = with-disk-only ] && printf 'case "${2:-}" in --disk-only) ;; esac\n'
     printf 'echo "STACK-SLOT args=[$*]"\n'
+    [ "${2:-}" = fail-full ] && printf '[ "${1:-}" = reap ] && [ -z "${2:-}" ] && exit 3\nexit 0\n'
   } > "$r/tools/stack-slot"
   chmod +x "$r/tools/stack-slot"
 }
@@ -624,8 +653,8 @@ ck "stack sweep: a dead owner runs the full reap, not the disk pass" 'STACK-SLOT
 # A husk owner -- the directory exists with no .git entry, recreated by a session's ledger writes after the worktree
 # was removed -- is dead too: under a bare -d it read alive and kept two basefund slots and their stacks for nine days
 # (2026-10-19). The linked worktree beside it, whose .git is a FILE, is the control.
-mkdir -p "$ROOT/husk-owner/tmp"; : > "$ROOT/husk-owner/tmp/effort-ledger-h.jsonl"
-printf 'owner=%s\nmode=test\n' "$ROOT/husk-owner" > "$REG/3.slot"
+mkdir -p "$r/husk-owner/tmp"; : > "$r/husk-owner/tmp/effort-ledger-h.jsonl"
+printf 'owner=%s\nmode=test\n' "$r/husk-owner" > "$REG/3.slot"
 out=$(PATH="$stack_stub:$PATH" $SCRIPT reap "$r" 2>&1)
 ck "stack sweep: a husk owner (directory, no .git) runs the full reap" 'STACK-SLOT args=\[reap\]' "$out"
 printf 'owner=%s\nmode=test\n' "$r/.claude/worktrees/bf-941" > "$REG/3.slot"
@@ -635,11 +664,180 @@ ck "stack sweep: a linked-worktree owner (.git file) is alive, disk pass only" '
 # An unreachable daemon must skip BOTH, the same way it always skipped the teardown: `reap` reads docker to
 # decide what is abandoned AND to read the VM's disk, so a daemon answering nothing makes every stack look
 # gone and every disk reading undeterminable.
-printf '#!/usr/bin/env bash\n[ "$1" = info ] && exit 1\nexit 0\n' > "$stack_stub/docker"
-out=$(PATH="$stack_stub:$PATH" $SCRIPT reap "$r" 2>&1)
+out=$(FAKE_DOCKER_DOWN=1 FAKE_COMPOSE_LS="bf-s5" PATH="$stack_stub:$PATH" $SCRIPT reap "$r" 2>&1)
 ck "stack sweep: an unreachable daemon skips the sweep entirely" 'daemon unavailable' "$out"
 ck "stack sweep: an unreachable daemon calls stack-slot not at all" NOCALL \
    "$(printf '%s' "$out" | grep -q 'STACK-SLOT args=' && echo CALLED || echo NOCALL)"
+
+# An owner git cannot resolve (a plain directory outside any repository) is kept and warned about by stack-slot, so the
+# gate must not read it as dead: the old `-d` plus `.git` test did, and fired a full reap every hour.
+# GIT_CEILING_DIRECTORIES keeps git from discovering a repository above $ROOT, so a TMPDIR inside a checkout cannot make this owner resolve.
+mkdir -p "$ROOT/plain-owner"
+ck "fixture: the plain owner is outside any repository" UNRESOLVABLE \
+   "$(GIT_CEILING_DIRECTORIES="$ROOT" git -C "$ROOT/plain-owner" rev-parse --show-toplevel >/dev/null 2>&1 && echo RESOLVES || echo UNRESOLVABLE)"
+printf 'owner=%s\nmode=test\n' "$ROOT/plain-owner" > "$REG/4.slot"
+out=$(GIT_CEILING_DIRECTORIES="$ROOT" PATH="$stack_stub:$PATH" $SCRIPT reap "$r" 2>&1)
+ck "stack sweep: an owner git cannot resolve is not dead, disk pass only" 'STACK-SLOT args=\[reap --disk-only\]' "$out"
+rm -f "$REG/4.slot"
+
+# stack-slot's pass 1 skips the reserved slots, so a gone owner on slot 1 reclaims nothing.
+printf 'owner=%s\nmode=test\n' "$ROOT/checkout-that-is-gone" > "$REG/1.slot"
+out=$(PATH="$stack_stub:$PATH" $SCRIPT reap "$r" 2>&1)
+ck "stack sweep: a gone owner on reserved slot 1 is no trigger" 'STACK-SLOT args=\[reap --disk-only\]' "$out"
+rm -f "$REG/1.slot"
+
+# An entry corrupt_slot_reason flags (here a non-absolute owner) is kept and warned about, never torn down.
+printf 'owner=relative/checkout\nmode=test\n' > "$REG/4.slot"
+out=$(PATH="$stack_stub:$PATH" $SCRIPT reap "$r" 2>&1)
+ck "stack sweep: a corrupt entry is no trigger" 'STACK-SLOT args=\[reap --disk-only\]' "$out"
+# A well-formed entry with no owner= line reads as gone to pass 1, which reclaims it.
+printf 'mode=test\n' > "$REG/4.slot"
+out=$(PATH="$stack_stub:$PATH" $SCRIPT reap "$r" 2>&1)
+ck "stack sweep: an entry with no owner line runs the full reap" 'STACK-SLOT args=\[reap\]' "$out"
+rm -f "$REG/4.slot"
+
+# Each corrupt_slot_reason check has a shape that would otherwise read as gone and fire the full reap: the gate keeps all of them.
+# The gone owner makes the shape the only thing separating "kept" from "torn down".
+gone="$ROOT/checkout-that-is-gone"
+: > "$REG/4.slot"
+out=$(PATH="$stack_stub:$PATH" $SCRIPT reap "$r" 2>&1)
+ck "stack sweep: an empty entry is corrupt, no trigger" 'STACK-SLOT args=\[reap --disk-only\]' "$out"
+printf 'owner=%s\nowner=\n' "$gone" > "$REG/4.slot"
+out=$(PATH="$stack_stub:$PATH" $SCRIPT reap "$r" 2>&1)
+ck "stack sweep: a doubled owner= line is corrupt, no trigger" 'STACK-SLOT args=\[reap --disk-only\]' "$out"
+printf 'owner=%s \nmode=test\n' "$gone" > "$REG/4.slot"
+out=$(PATH="$stack_stub:$PATH" $SCRIPT reap "$r" 2>&1)
+ck "stack sweep: an owner with trailing whitespace is corrupt, no trigger" 'STACK-SLOT args=\[reap --disk-only\]' "$out"
+: > "$ROOT/owner-is-a-file"
+printf 'owner=%s\nmode=test\n' "$ROOT/owner-is-a-file" > "$REG/4.slot"
+out=$(PATH="$stack_stub:$PATH" $SCRIPT reap "$r" 2>&1)
+ck "stack sweep: an owner that is a regular file is corrupt, no trigger" 'STACK-SLOT args=\[reap --disk-only\]' "$out"
+if [ "$(id -u)" != 0 ]; then
+  printf 'owner=%s\nmode=test\n' "$gone" > "$REG/4.slot"; chmod 000 "$REG/4.slot"
+  out=$(PATH="$stack_stub:$PATH" $SCRIPT reap "$r" 2>&1)
+  ck "stack sweep: an unreadable entry is corrupt, no trigger" 'STACK-SLOT args=\[reap --disk-only\]' "$out"
+  chmod 600 "$REG/4.slot"
+fi
+rm -f "$REG/4.slot"
+# A <N>.slot that is a directory passes every corrupt_slot_reason check (grep's error on it leaves the owner-line count empty), so the tool
+# reads it as ownerless and reclaims it; the gate agrees and keeps grep's and test's complaints out of the hourly log.
+mkdir "$REG/4.slot"
+out=$(PATH="$stack_stub:$PATH" $SCRIPT reap "$r" 2>&1)
+ck "stack sweep: a directory entry reads as ownerless, runs the full reap" 'STACK-SLOT args=\[reap\]' "$out"
+ck "stack sweep: a directory entry leaves no grep or test noise" NONOISE \
+   "$(printf '%s' "$out" | grep -q -e 'Is a directory' -e 'integer expression' && echo NOISE || echo NONOISE)"
+rmdir "$REG/4.slot"
+
+# Pass 2 reclaims a bf-s<N> compose project (N >= 2) with no registry entry and nothing listening on its ingress port
+# 8443 + (N-1)*100. Every registered owner here is alive, so only the docker arm can fire.
+out=$(FAKE_COMPOSE_LS="local bf-s1 bf-s5" PATH="$stack_stub:$PATH" $SCRIPT reap "$r" 2>&1)
+ck "stack sweep: an unregistered non-listening bf-s5 runs the full reap" 'STACK-SLOT args=\[reap\]' "$out"
+out=$(FAKE_COMPOSE_LS="local bf-s1 bf-s5" FAKE_LISTEN_PORTS="8843" PATH="$stack_stub:$PATH" $SCRIPT reap "$r" 2>&1)
+ck "stack sweep: an unregistered but listening bf-s5 is only reported, disk pass only" 'STACK-SLOT args=\[reap --disk-only\]' "$out"
+out=$(FAKE_COMPOSE_LS="local bf-s1" PATH="$stack_stub:$PATH" $SCRIPT reap "$r" 2>&1)
+ck "stack sweep: the reserved local and bf-s1 projects never count" 'STACK-SLOT args=\[reap --disk-only\]' "$out"
+out=$(FAKE_COMPOSE_LS="bf-s2 other-project bf-s7x" PATH="$stack_stub:$PATH" $SCRIPT reap "$r" 2>&1)
+ck "stack sweep: a registered bf-s2 and non-slot project names never count" 'STACK-SLOT args=\[reap --disk-only\]' "$out"
+stack_slot_stub pre-disk-only
+out=$(FAKE_COMPOSE_LS="bf-s5" PATH="$stack_stub:$PATH" $SCRIPT reap "$r" 2>&1)
+ck "stack sweep: an unregistered orphan runs the full reap on a tool without --disk-only" 'STACK-SLOT args=\[reap\]' "$out"
+stack_slot_stub with-disk-only
+
+# A leading-zero project name is never created by stack_derive and would abort the port arithmetic (invalid octal) before the sweep reached
+# stack-slot at all; it must be skipped, not crash the run.
+out=$(FAKE_COMPOSE_LS="bf-s08" PATH="$stack_stub:$PATH" $SCRIPT reap "$r" 2>&1)
+ck "stack sweep: a leading-zero bf-s08 is not counted, and the run goes on to the disk pass" 'STACK-SLOT args=\[reap --disk-only\]' "$out"
+
+# A failing `compose ls` (no compose plugin) or a wedged one probes nothing: no trigger, and the skipped probe is logged.
+out=$(FAKE_COMPOSE_LS="bf-s5" FAKE_COMPOSE_LS_FAIL=1 PATH="$stack_stub:$PATH" $SCRIPT reap "$r" 2>&1)
+ck "stack sweep: a failing compose ls is no trigger" 'STACK-SLOT args=\[reap --disk-only\]' "$out"
+ck "stack sweep: a failing compose ls logs the skipped probe" 'unregistered stack probe skipped' "$out"
+# The hang cases also time the run: the stub sleeps 30s, so a bound that stops killing the wedged call still reports 124 and passes every
+# other assertion — only after waiting the wedge out under the repo lock.
+t0=$SECONDS
+out=$(FAKE_COMPOSE_LS="bf-s5" FAKE_COMPOSE_LS_HANG=1 REAP_STACK_DOCKER_BOUND_SECS=1 PATH="$stack_stub:$PATH" $SCRIPT reap "$r" 2>&1)
+el=$((SECONDS - t0))
+ck "stack sweep: a compose ls that outlasts the bound is no trigger" 'STACK-SLOT args=\[reap --disk-only\]' "$out"
+ck "stack sweep: a compose ls that outlasts the bound logs the skipped probe" 'unregistered stack probe skipped' "$out"
+ck "stack sweep: a compose ls that outlasts the bound is killed, not waited out" FAST "$([ "$el" -lt 15 ] && echo FAST || echo "SLOW ${el}s")"
+# The daemon answers nothing before the bound: the sweep is skipped like an unreachable one rather than hanging under the repo lock.
+t0=$SECONDS
+out=$(FAKE_DOCKER_INFO_HANG=1 FAKE_COMPOSE_LS="bf-s5" REAP_STACK_DOCKER_BOUND_SECS=1 PATH="$stack_stub:$PATH" $SCRIPT reap "$r" 2>&1)
+el=$((SECONDS - t0))
+ck "stack sweep: a docker info that outlasts the bound skips the sweep" 'daemon unavailable' "$out"
+ck "stack sweep: a docker info that outlasts the bound is killed, not waited out" FAST "$([ "$el" -lt 15 ] && echo FAST || echo "SLOW ${el}s")"
+ck "stack sweep: a docker info that outlasts the bound calls stack-slot not at all" NOCALL \
+   "$(printf '%s' "$out" | grep -q 'STACK-SLOT args=' && echo CALLED || echo NOCALL)"
+
+# stack-slot's pass 2 reads a missing lsof as "nothing listening" and tears down a live unregistered stack, so with lsof absent the full
+# reap is never chosen, whichever arm fired: both do here (a dead owner on slot 3, an unregistered bf-s5).
+nolsof_path=""; _n=0
+IFS=: read -r -a _dirs <<< "$PATH"
+for _d in "${_dirs[@]}"; do
+  if [ -e "$_d/lsof" ]; then
+    _n=$((_n+1)); _m="$ROOT/nolsof-$_n"; mkdir -p "$_m"
+    for _f in "$_d"/*; do [ "${_f##*/}" = lsof ] || ln -s "$_f" "$_m/"; done
+    _d="$_m"
+  fi
+  nolsof_path="$nolsof_path:$_d"
+done
+nolsof_stub="$ROOT/stack-stub-nolsof"; mkdir -p "$nolsof_stub"; ln -sf "$stack_stub/docker" "$nolsof_stub/docker"
+NOLSOF_PATH="$nolsof_stub$nolsof_path"
+ck "fixture: lsof is absent from the restricted PATH" ABSENT "$(PATH="$NOLSOF_PATH" command -v lsof >/dev/null && echo PRESENT || echo ABSENT)"
+printf 'owner=%s\nmode=test\n' "$gone" > "$REG/3.slot"
+out=$(FAKE_COMPOSE_LS="bf-s5" PATH="$NOLSOF_PATH" $SCRIPT reap "$r" 2>&1)
+ck "stack sweep: without lsof both arms would fire, yet only the disk pass runs" 'STACK-SLOT args=\[reap --disk-only\]' "$out"
+ck "stack sweep: without lsof the full stack reap is logged as skipped" 'lsof not found -- full stack reap skipped' "$out"
+ck "stack sweep: without lsof the full reap is never called" NOFULL \
+   "$(printf '%s' "$out" | grep -q 'STACK-SLOT args=\[reap\]' && echo FULL || echo NOFULL)"
+stack_slot_stub pre-disk-only
+out=$(FAKE_COMPOSE_LS="bf-s5" PATH="$NOLSOF_PATH" $SCRIPT reap "$r" 2>&1)
+ck "stack sweep: without lsof a tool lacking --disk-only calls nothing" NOCALL \
+   "$(printf '%s' "$out" | grep -q 'STACK-SLOT args=' && echo CALLED || echo NOCALL)"
+stack_slot_stub with-disk-only
+
+# A full reap that dies (the registry lock held past its bound, a stale lock) must not cost the hour's disk pass.
+stack_slot_stub with-disk-only fail-full
+out=$(PATH="$stack_stub:$PATH" $SCRIPT reap "$r" 2>&1)
+ck "stack sweep: a failed full reap is followed by the disk pass" 'STACK-SLOT args=\[reap --disk-only\]' "$out"
+ck "stack sweep: a failed full reap logs the fallback" "stack sweep 'reap' failed -- running the disk pass" "$out"
+stack_slot_stub pre-disk-only fail-full
+out=$(PATH="$stack_stub:$PATH" $SCRIPT reap "$r" 2>&1)
+ck "stack sweep: a failed full reap on a tool without --disk-only is logged and skipped" "stack sweep 'reap' failed -- skipped" "$out"
+ck "stack sweep: a failed full reap on a tool without --disk-only runs nothing more" NODISK \
+   "$(printf '%s' "$out" | grep -q 'reap --disk-only' && echo DISK || echo NODISK)"
+stack_slot_stub with-disk-only
+rm -f "$REG/3.slot"
+
+# The registry arm is driven directly for the two properties the end-to-end run cannot show: it is not saved by running inside an `if`
+# (an unresolvable owner makes git fail, a directory entry makes grep fail, and neither may abort a caller under set -e), and it ignores a
+# GIT_DIR / GIT_WORK_TREE inherited from a hook or `rebase --exec`, which would otherwise answer for every -C. plain mode prints FIRED or QUIET;
+# errexit mode prints FIRED only when the arm fired and ran to the end.
+registry_gate() {   # registry_gate <errexit|plain> <KEY=VALUE>...
+  local mode="$1"; shift
+  bash -c '. "$1" list "$2" >/dev/null 2>&1; mode=$3; shift 3; export "$@"
+    if [ "$mode" = errexit ]; then set -e; _stack_slot_registry_has_reclaimable_entry; echo FIRED
+    else set +e; _stack_slot_registry_has_reclaimable_entry && echo FIRED || echo QUIET; fi' _ "$REAPER" "$ghost" "$mode" "$@" 2>&1
+}
+printf 'owner=%s\nmode=test\n' "$ROOT/plain-owner" > "$REG/5.slot"      # git cannot resolve it: kept, and git exits non-zero
+printf 'owner=%s\nmode=test\n' "$gone" > "$REG/6.slot"                  # the entry after it must still be reached
+ck "registry arm: an unresolvable owner does not stop the scan under set -e" FIRED \
+   "$(registry_gate errexit GIT_CEILING_DIRECTORIES="$ROOT")"
+rm -f "$REG/5.slot" "$REG/6.slot"
+mkdir "$REG/5.slot"
+ck "registry arm: a directory entry does not stop the scan under set -e" FIRED "$(registry_gate errexit REAP_TEST=1)"
+rmdir "$REG/5.slot"
+# The owner is spelled physically: an inherited variable makes git answer with the owner's own toplevel, and a symlinked spelling ($TMPDIR is one on
+# macOS) would read as husk anyway, hiding the effect.
+husk_phys=$(cd "$r/husk-owner" && pwd -P)
+printf 'owner=%s\nmode=test\n' "$husk_phys" > "$REG/5.slot"
+ck "registry arm: a husk owner fires" FIRED "$(registry_gate plain REAP_TEST=1)"
+ck "registry arm: an inherited GIT_DIR does not turn the husk into its own toplevel" FIRED "$(registry_gate plain GIT_DIR="$r/.git")"
+ck "registry arm: an inherited GIT_WORK_TREE does not turn the husk into its own toplevel" FIRED \
+   "$(registry_gate plain GIT_WORK_TREE="$husk_phys")"
+ck "registry arm: an inherited GIT_COMMON_DIR does not make git fail on the husk" FIRED \
+   "$(registry_gate plain GIT_COMMON_DIR="$ROOT/no-such-common-dir")"
+rm -f "$REG/5.slot"
 rm -f "$REG/2.slot" "$REG/3.slot"
 
 echo "== merged by content: the finish-merge.sh shape, whose branch tip is a sibling of source and never its ancestor =="
