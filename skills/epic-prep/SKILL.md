@@ -187,13 +187,14 @@ read `.priority` back (linear gotcha #8), and record the change in one comment o
 Then read the cap this machine's account pool sustains and forecast the prepped graph at every count up to it:
 
 ```bash
-cap=$(~/.claude/scripts/fleet-cap.sh --json | jq -r .cap)     # 3 per account with room: 3 on one account, up to 12 rotating
+cap=$(~/.claude/scripts/fleet-cap.sh --json | jq -r .cap)     # 3 per account with room on 5h-window accounts; the count range bounded by the weekly room on weekly-only ones
 for n in $(seq 2 "$cap"); do ~/.claude/scripts/fleet-forecast.py --root <ID> --sessions $n --horizon-h 24 >| tmp/forecast-$n.txt; grep -E '^FORECAST|^UNREACHED' tmp/forecast-$n.txt; grep '^SHIP' tmp/forecast-$n.txt | tail -1; grep -E '^PICK .*: <HEAD> ' tmp/forecast-$n.txt; done
 ```
 
 Confirm the head's `PICK` is at `t=0.0h`. Recommend the smallest count past which neither the ship count nor the last
-`SHIP` time improves, capped at `cap` ([`/fleet-launch`](../fleet-launch/SKILL.md) § The count — 3 per account with
-room; the script's line is the whole capacity input — never a `/cswap quota` table or a usage reading). The simulation does
+`SHIP` time improves, capped at `cap` ([`/fleet-launch`](../fleet-launch/SKILL.md) § The count; the script's line is
+the whole capacity input — never a `/cswap quota` table or a usage reading — re-read with `--hours <duration>` once the
+duration is chosen on a weekly-only pool). The simulation does
 not model file collisions, and one epic's members share files by construction: when the last session added gains only by
 running `related` members side by side, take the count below it. State the binding term — the chain's serial floor
 (`floor`), which no count moves; lanes; or the cap with its accounts-with-room reading. The duration is the last `SHIP`

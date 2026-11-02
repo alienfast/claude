@@ -47,8 +47,9 @@
 # 3 minutes rather than at the reset: the next request lands on the new account. --stale <seconds> (900)
 # bounds the age of a figure that counts as room — after the usage endpoint refuses a refresh, cswap serves
 # the last good figure as `ok` for up to two hours. The --json `cswap` object also carries `with_room` and
-# `room` (every account with room, the active one included): fleet-cap.sh sizes the fleet's concurrency cap on
-# that count, so the one predicate for "room" lives here.
+# `room` (every account with room, the active one included) and `weekly_room` (their weekly points to the threshold,
+# summed): fleet-cap.sh sizes the fleet's concurrency cap on the count, and on a weekly-only pool on the points, so
+# the one predicate for "room" lives here; each `active`/`target` row says whether its plan has a 5h window (`weekly_only`).
 #
 # Exit: 0 = pick OK (the gated window's headroom >= its reserve; or the reading has windows but neither a five_hour
 # nor a seven_day one, so the line says `five_hour=none` and nothing to gate on; or no reading at all —
@@ -134,11 +135,14 @@ if [ "$rotating" = true ]; then
       verdict=$(printf '%s' "$list" | jq -c --argjson t "$threshold" --argjson stale "$STALE" '
         def binding: ([(.usage.fiveHour.pct // 0), (.usage.sevenDay.pct // 0)] | max) + 0;
         def has_room: .usageStatus == "ok" and .usageAgeSeconds != null and .usageAgeSeconds <= $stale and binding < $t;
-        def row: {email, binding_pct: binding, status: .usageStatus, age_s: .usageAgeSeconds, weekly_resets_at: .usage.sevenDay.resetsAt};
+        def weekly_only: (.usage.fiveHour.pct // null) == null;
+        def row: {email, binding_pct: binding, status: .usageStatus, age_s: .usageAgeSeconds, weekly_resets_at: .usage.sevenDay.resetsAt,
+                  weekly_only: weekly_only};
         (.accounts | map(select(.active == true)) | .[0]) as $a
         | (.accounts | map(select(.active != true and has_room)) | sort_by(.usage.sevenDay.resetsAt // "9") | .[0]) as $g
         | (.accounts | map(select(has_room))) as $room
         | {threshold: $t, accounts: (.accounts | length), with_room: ($room | length), room: ($room | map(.email)),
+           weekly_room: ($room | map($t - (.usage.sevenDay.pct // 0)) | add // 0),
            active: (if $a == null then null else ($a | row) end), target: (if $g == null then null else ($g | row) end)}')
       a_email=$(jq -r '.active.email // empty' <<<"$verdict")
       a_pct=$(jq -r '.active.binding_pct // empty' <<<"$verdict")

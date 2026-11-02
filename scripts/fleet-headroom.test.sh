@@ -179,6 +179,7 @@ t "local PICK-OK keeps its own line + tail"   0 'PICK-OK  five_hour=85% used  he
 t "fail-open carries the tail"                0 'source=none  cswap=target(b@x' --session nope0000
 tj "json landing"      0 '.pick_ok == true and .headroom == 15 and .cswap.state == "target" and .cswap.threshold == 95 and .cswap.active.email == "a@x" and .cswap.target.email == "b@x" and .cswap.target.binding_pct == 1' --session "$SID"
 tj "json room counts the active too" 0 '.cswap.with_room == 2 and (.cswap.room | sort) == ["a@x", "b@x"]' --session "$SID"
+tj "json weekly room sums the points to the threshold over the accounts with room" 0 '.cswap.weekly_room == 182 and .cswap.active.weekly_only == false and .cswap.target.weekly_only == false' --session "$SID"
 
 # consume-first lands on the soonest weekly reset among the accounts with room, so that one is named.
 accounts "$(acct 3 a@x true ok 85 7 20 "$LATER")" "$(acct 2 later@x false ok 0 1 200 "$LATER")" "$(acct 4 soon@x false ok 0 13 200 "$SOON")"
@@ -221,7 +222,7 @@ CSWAP_STUB_THRESHOLD=99 t "weekly-only, landing under the threshold: picks" 0 'P
 t "weekly-only, engine mid-move: re-probe in 3m"  2 'THROTTLE five_hour=none  seven_day=98% used  headroom=2 < weekly_reserve=3 .* resets_in=180s .* cswap=switching(active a@x at 98% >= threshold 95; the engine is moving to b@x at 10%) — re-probe in 3m' --session only7day0
 accounts "$(acct_ultra 3 a@x true ok 98 20 "$SOON")" "$(acct_ultra 2 b@x false ok 96 10 "$LATER")"
 t "weekly-only, no landing: parks until the weekly reset" 2 'THROTTLE five_hour=none  seven_day=98% used  headroom=2 < weekly_reserve=3 .* cswap=no-target(none of the other 1 accounts is under threshold 95 with an ok figure under 900s old) — park' --session only7day0
-tj "weekly-only, no landing: json"               2 '.pick_ok == false and .gated == "seven_day" and .cswap.state == "no-target" and .cswap.active.binding_pct == 98 and .cswap.with_room == 0' --session only7day0
+tj "weekly-only, no landing: json"               2 '.pick_ok == false and .gated == "seven_day" and .cswap.state == "no-target" and .cswap.active.binding_pct == 98 and .cswap.with_room == 0 and .cswap.weekly_room == 0 and .cswap.active.weekly_only == true' --session only7day0
 
 # Reads the probe cannot trust fall back to the local meter and say so.
 CSWAP_STUB_FAIL=1 t "cswap list fails: local meter" 2 'THROTTLE five_hour=85% .* cswap=unreadable(cswap list --json carried no accounts)' --session "$SID"

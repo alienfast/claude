@@ -806,6 +806,24 @@ beat $(( $(date +%s) - 600 ))
 ck "cap: idle engine launches"           "0" "$(run 4 5h)"
 ck_has "cap: idle engine is one account" "Concurrency cap: 3  per_account=3  accounts_with_room=1/?  cswap is enrolled but its engine is idle (last engine event 10m ago)" "$WORK/out"
 ck_has "cap: idle engine warns at 4"     "WARN: 4 sessions is over the cap of 3" "$WORK/out"
+# A weekly-only pool (no five_hour window anywhere): no per-account bracket — the cap is the count range bounded by the weekly
+# room for the duration, the budget line sits beside the weekly reading, and the burst line names the plan's shape.
+acct_ultra() { printf '{"number":%s,"email":"%s","active":%s,"usageStatus":"ok","usage":{"fiveHour":null,"sevenDay":{"pct":%s,"resetsAt":"2026-10-22T05:00:00+00:00"}},"usageAgeSeconds":30}' "$@"; }
+printf '{"schemaVersion":1,"activeAccountNumber":1,"accounts":[%s,%s]}\n' "$(acct_ultra 1 a@x true 90)" "$(acct_ultra 2 b@x false 5)" > "$CSWAP_STUB_LIST"
+printf '{"measured_at":"%s","session":"s","windows":[{"kind":"seven_day","percentUsed":90,"resetsAt":"%s"}]}\n' "$(iso_at "$(date +%s)")" "$(iso_at "$far")" > "$WORK/home/.claude/local/rate-limits.json"
+beat "$(date +%s)"
+ck "cap: weekly-only 9 launches"          "0" "$(run 9 10h)"
+ck_has "cap: weekly-only line"            "Concurrency cap: 12  per_account=machine  accounts_with_room=2/2  2 of 2 enrolled accounts have room (a@x, b@x): the engine moves the login at threshold 95, so the pool is 2 accounts' windows. Weekly-only accounts (no five_hour window): no burst window to saturate, so the machine and the backlog's lanes bound the count, not the account — the pool's weekly room of 95 points to the engine's threshold across the accounts with room covers ~172.7 session-hours at 0.55 points per session-hour; 10h at that rate fits 17 sessions, so the count range of 12 bounds the cap" "$WORK/out"
+ck_lacks "cap: weekly-only 9 under 12 is silent" "over the cap of" "$WORK/out"
+ck_has "cap: weekly-only burst line"      "Burst: none (the last measurement in" "$WORK/out"
+ck_has "cap: weekly-only budget line"     "Weekly budget: 9 sessions × 10h × 0.55 points per session-hour ≈ 49.5 points against 95 points of room" "$WORK/out"
+ck_lacks "cap: weekly-only budget fits"   "projected weekly burn" "$WORK/out"
+ck "cap: weekly-only 9 for 40h launches"  "0" "$(run 9 40h)"
+ck_has "cap: weekly-only 40h room bounds" "Concurrency cap: 4  per_account=machine" "$WORK/out"
+ck_has "cap: weekly-only 40h warns"       "WARN: 9 sessions is over the cap of 4 — on a weekly-only account pool the cap is the launch's count range bounded by the weekly room for this duration" "$WORK/out"
+ck_has "cap: weekly-only 40h budget warns" "WARN: the fleet's projected weekly burn (198 points) exceeds the pool's room (95 points)" "$WORK/out"
+ck "cap: weekly-only, no duration"        "0" "$(run 2)"
+ck_has "cap: weekly-only, no duration budget" "Weekly budget: 2 sessions burn ≈ 1.1 points per hour against 95 points of room (~86.3h)" "$WORK/out"
 rm -f "$BIN/cswap"; rm -rf "$WORK/home/.claude-swap-backup"
 rm -rf "$WORK/home/.claude"
 

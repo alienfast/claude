@@ -204,7 +204,7 @@ forecast the pool at every count up to it — the lane count is a hand walk at `
 check that each session added still ships something once chains release:
 
 ```bash
-cap=$(~/.claude/scripts/fleet-cap.sh --json | jq -r .cap)     # 3 per account with room: 3 on one account, up to 12 rotating
+cap=$(~/.claude/scripts/fleet-cap.sh --json | jq -r .cap)     # 3 per account with room on 5h-window accounts; the count range bounded by the weekly room on weekly-only ones
 for n in $(seq 2 "$cap"); do ~/.claude/scripts/fleet-forecast.py --team <KEY> --sessions $n --horizon-h 24 >| tmp/forecast-$n.txt; grep -E '^FORECAST|^STAGE|^POOL-DRAINED|^PLANNED-HOLD|^ROTATION|^THROTTLE' tmp/forecast-$n.txt; grep '^SHIP' tmp/forecast-$n.txt | tail -1; done
 ```
 
@@ -217,9 +217,10 @@ horizon the duration with the report saying the column outlasts the run. When th
 re-run the recommended count with `--backlog` and take its `POOL-DRAINED` time (else the horizon) as the opt-in line's
 duration.
 
-**The cap is read, never asked about** — [`/fleet-launch`](../fleet-launch/SKILL.md) § The count — 3 per account with
-room owns the per-account figure, the rotation arithmetic (3 on a single-account machine; 3 × the accounts with room on a
-cswap-rotating one, at most 12), the weekly-window rule and the headroom-probe rule. Never size from a `/cswap quota`
+**The cap is read, never asked about** — [`/fleet-launch`](../fleet-launch/SKILL.md) § The count owns the per-account
+figure, the rotation arithmetic (3 × the accounts with room on accounts with a 5h window, at most 12; on weekly-only
+accounts the count range bounded by the pool's weekly room for the duration — re-read it with `--hours <duration>`
+once the duration is chosen), the weekly-window rule and the headroom-probe rule. Never size from a `/cswap quota`
 table or a usage reading; the script's line is the whole input. Say which other window consumers are expected (the
 operator's own session, an earlier fleet whose window has not rolled off) so the count is read against the whole pool; a
 user-driven extra consumer never reduces the recommended count.

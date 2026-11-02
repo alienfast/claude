@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Regression suite for fleet-cap.sh.
 #
-# The cap is 3 per account with room, read through fleet-headroom.sh's cswap verdict, so the fixtures are the ones that
+# The cap is 3 per account with room on accounts with a 5h window, and on a weekly-only pool the count range bounded by the
+# weekly room, read through fleet-headroom.sh's cswap verdict, so the fixtures are the ones that
 # suite uses: a stub `cswap` on PATH answering `list --json` and `config get`, cswap's backup root and the engine's event log
 # under a fixture HOME, and a fixed clock through --now. No rate-limits reading exists under the fixture HOME, so the probe
 # fails open on every case — the cap must not depend on the local meter.
@@ -117,6 +118,46 @@ if [ "$rc" = 0 ] && printf '%s' "$out" | grep -q 'cswap is enrolled but unreadab
 else
   echo "  FAIL  cswap binary missing: cap 3 — got rc=$rc: $out"; FAIL=$((FAIL+1))
 fi
+
+# ---- weekly-only accounts (Claude Ultra: fiveHour null) ----
+# No window a count can saturate: the per-account factor is gone, the cap is the count range, and with --hours the pool's
+# weekly room (points to the threshold over the accounts with room) bounds it at 0.55 points per session-hour. With no local
+# reading under the fixture HOME the probe fails open, so the plan shape comes from cswap's active row.
+acct_ultra() { # <number> <email> <active> <usageStatus> <7d pct> <age seconds>
+  printf '{"number":%s,"email":"%s","active":%s,"usageStatus":"%s","usage":{"fiveHour":null,"sevenDay":{"pct":%s,"resetsAt":"2026-10-22T05:00:00.190415+00:00"}},"usageAgeSeconds":%s}' "$@"
+}
+beat $(( NOW - 30 ))
+accounts "$(acct_ultra 1 a@x true ok 90 30)" "$(acct_ultra 2 b@x false ok 5 60)"
+t "weekly-only: the count range, not 3 per account" 'CAP 12  per_account=machine  accounts_with_room=2/2  2 of 2 enrolled accounts have room (a@x, b@x): the engine moves the login at threshold 95, so the pool is 2 accounts. windows. Weekly-only accounts (no five_hour window): no burst window to saturate, so the machine and the backlog.s lanes bound the count, not the account — the pool.s weekly room of 95 points to the engine.s threshold across the accounts with room covers ~172.7 session-hours at 0.55 points per session-hour; bounded by fleet-launch.sh.s count range of 12'
+tj "weekly-only: json"                     '.cap == 12 and .per_account == null and .weekly_only == true and .weekly_room == 95 and .weekly_session_hours == 172.7 and .burn_per_session_hour == 0.55 and .hours == null and (.line | startswith("CAP 12  per_account=machine"))'
+t "weekly-only, 10h: the range still bounds" 'CAP 12  per_account=machine .* 10h at that rate fits 17 sessions, so the count range of 12 bounds the cap' --hours 10
+t "weekly-only, 40h: the room bounds"       'CAP 4  per_account=machine .* 40h at that rate fits 4 sessions, which bounds the cap' --hours 40
+tj "weekly-only, 40h: json"                '.cap == 4 and .hours == 40 and .weekly_room == 95' --hours 40
+t "weekly-only, 400h: nothing fits, cap 1"  'CAP 1  per_account=machine .* 400h at that rate fits no session for the full run — the first picks park at the weekly reset' --hours 400
+t "weekly-only, 90h: one session"           'CAP 1  per_account=machine .* 90h at that rate fits 1 session, which bounds the cap' --hours 90
+FLEET_WEEKLY_BURN=1.1 t "weekly-only: the burn rate is overridable" 'covers ~86.3 session-hours at 1.1 points per session-hour; 40h at that rate fits 2 sessions, which bounds the cap' --hours 40
+FLEET_WEEKLY_BURN=abc t "weekly-only: a bad burn rate falls back" 'at 0.55 points per session-hour' --hours 40
+t "weekly-only: a bad --hours is ignored"   'bounded by fleet-launch.sh.s count range of 12' --hours -3
+# The engine mid-move: the full active account is not room, so the pool's room is the landing's alone.
+accounts "$(acct_ultra 1 a@x true ok 97 30)" "$(acct_ultra 2 b@x false ok 5 60)"
+t "weekly-only, switching: the landing's room" 'CAP 12  per_account=machine  accounts_with_room=1/2  1 of 2 enrolled accounts have room (b@x): .* the pool.s weekly room of 90 points'
+# No account under the threshold: no room, and with a duration nothing fits.
+accounts "$(acct_ultra 1 a@x true ok 97 30)" "$(acct_ultra 2 b@x false ok 96 60)"
+t "weekly-only, no room: says so"           'CAP 12  per_account=machine  accounts_with_room=1/2  no account has room (none of the other 1 accounts is under threshold 95 .* the pool.s weekly room of 0 points .* covers ~0 session-hours'
+t "weekly-only, no room, 10h: cap 1"        'CAP 1  per_account=machine .* fits no session for the full run' --hours 10
+# A mixed pool whose active account has a 5h window keeps the per-account bracket.
+accounts "$(acct 1 a@x true ok 40 20 30)" "$(acct_ultra 2 b@x false ok 5 60)"
+t "mixed pool, active on a 5h plan: 3 per account" 'CAP 6  per_account=3  accounts_with_room=2/2'
+# An idle engine on a weekly-only account: one account's window governs, and its own reading gives the room.
+mkdir -p "$FHOME/.claude/local"
+printf '{"measured_at":"%s","session":"s","windows":[{"kind":"seven_day","percentUsed":90,"resetsAt":"2026-11-03T07:00:00.000Z"}]}\n' "$(iso $(( NOW - 60 )))" > "$FHOME/.claude/local/rate-limits.json"
+beat $(( NOW - 900 ))
+t "weekly-only, idle engine: the active account's room" 'CAP 12  per_account=machine  accounts_with_room=1/?  cswap is enrolled but its engine is idle (last engine event 15m ago): nothing moves the login, so one account.s window governs — /cswap log. Weekly-only accounts (no five_hour window): .* the active account.s weekly room of 7 points to the gate.s weekly reserve covers ~12.7 session-hours'
+# A single-account machine on a weekly-only plan: the probe's own reading says so.
+rm -rf "$FHOME/.claude-swap-backup"
+t "single account, weekly-only: the count range" 'CAP 12  per_account=machine  accounts_with_room=1/1  single-account machine: no cswap rotation (scripts/cswap-setup.sh is the opt-in), so one account.s window governs. Weekly-only accounts (no five_hour window): .* the active account.s weekly room of 7 points to the gate.s weekly reserve covers ~12.7 session-hours at 0.55 points per session-hour; bounded by fleet-launch.sh.s count range of 12'
+t "single account, weekly-only, 10h: cap 1"  'CAP 1  per_account=machine .* 10h at that rate fits 1 session, which bounds the cap' --hours 10
+tj "single account, weekly-only: json"      '.cap == 12 and .weekly_only == true and .rotating == false and .weekly_room == 7 and .weekly_session_hours == 12.7'
 
 echo ""
 echo "  $PASS passed, $FAIL failed"

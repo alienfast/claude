@@ -6,8 +6,9 @@ readings` line and its Headroom verdict.
 ## What is not asked
 
 Do not ask for `/usage` readings. The weekly allowance is handled by account rotation and concurrency is settled before
-launch at 3 per account with room (`skills/fleet-launch/SKILL.md` § The count — 3 per account with room;
-`scripts/fleet-cap.sh`), so no launch/close quota bracket is calibrated and no `tmp/fleet-quota-launch.json` exists to
+launch by `scripts/fleet-cap.sh` (3 per account with room on accounts with a 5h window; the count range bounded by the
+weekly room on weekly-only ones — `skills/fleet-launch/SKILL.md` § The count), so no launch/close quota bracket is
+calibrated and no `tmp/fleet-quota-launch.json` exists to
 close. The weekly window still ends a fleet
 whose account has less of its week left than the run burns — which is why `/fleet-launch` prints the active account's
 `seven_day` reading at dispatch; a retro that finds a `weekly` cutoff reports it as a rotation miss, never as a sizing
@@ -33,7 +34,7 @@ All four are in the `windows` block already emitted.
    of observation the run produced. It is a ceiling on the limit named in `limit_kind` only; a weekly cutoff leaves the
    5h burst ceiling unobserved. A `session`/`5-hour` cutoff at n within the cap re-opens the per-account bracket on a
    single-account machine and, on a cswap-rotating one, points first at the swap landing late (the threshold is the
-   lever there); `skills/fleet-launch/SKILL.md` § The count — 3 per account with room owns the count, the 5h-window
+   lever there); `skills/fleet-launch/SKILL.md` § The count owns the count, the 5h-window
    reason, the rotation arithmetic and the headroom-probe rule; check the recovery mechanism before touching n. n=3 on
    one account with a 5h window runs near the refill rate and hits the
    ceiling about once per 5h window by construction, which costs minutes of reset wait when recovery is automatic and

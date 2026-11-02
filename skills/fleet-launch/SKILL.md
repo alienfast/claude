@@ -130,12 +130,13 @@ Relay the commits, then ask (AskUserQuestion): run `/update`, then re-launch (re
 refuse (…) — run /keeper first`, a local edit or commit would stop `/update`'s `--ff-only` pull: say `/keeper` comes
 first.
 
-### The count — 3 per account with room, settled before launch
+### The count — settled before launch
 
-**Concurrency is capped at 3 sessions per account with room, settled before launch: `scripts/fleet-cap.sh` owns the
-arithmetic, `/auto-prep` and `/epic-prep` recommend under it, and the launch prints its line (`Concurrency cap: <n>
-per_account=3 accounts_with_room=<k>/<total> <why>`) and WARNs above it, never refusing — an explicit count remains the
-user's override.** The count is never derived from how full a window reads at dispatch. The account meters the windows
+**Concurrency is capped before launch: `scripts/fleet-cap.sh` owns the arithmetic — 3 per account with room on accounts
+with a 5h window, the launch's count range bounded by the pool's weekly room for the duration on weekly-only accounts —
+`/auto-prep` and `/epic-prep` recommend under it, and the launch prints its line (`Concurrency cap: <n>
+per_account=<3|machine> accounts_with_room=<k>/<total> <why>`) and WARNs above it, never refusing — an explicit count
+remains the user's override.** The count is never derived from how full a window reads at dispatch. The account meters the windows
 its plan has — a 5h burst window and a weekly window, or on Claude Ultra (no `five_hour` since 2026-10-31) the weekly
 alone — and they resolve so:
 
@@ -146,10 +147,14 @@ alone — and they resolve so:
   past. A materially different workload (another backlog's burn rate, a lower-tier model mix) voids the bracket, and the
   account's own meter re-measures it per run: `/fleet-retro`'s Headroom verdict says how many sessions the window fit at
   the peak reading, and the same answer on consecutive unthrottled runs is the evidence to move the per-account figure.
-  On an account with no 5h window the bracket's reason is gone and nothing measured replaces it: 3 stands as the stated
-  default, the Headroom verdict is dark, and an unthrottled fleet at a higher per-account count is the measurement that
-  moves it (the 2026-10-30 fleet ran 4 on one such account for 28h at 0.55 weekly points per session-hour — one point,
-  not a bracket).
+- **An account with no 5h window has no window a count can saturate, so the per-account factor is gone.** The cap there
+  is the launch's count range (12) bounded by the pool's weekly room for the duration: `n × hours × 0.55` points (the
+  2026-10-30 fleet's measured burn, 62 weekly points over 112 session-hours on one such account) against the weekly
+  points to cswap's threshold summed over the accounts with room; pass the duration and the script does the bound, and
+  the launch prints the budget beside the weekly reading. What bounds the count on this machine is the machine and the
+  backlog's lanes, which no script measures: the operator has run 9, and the retro's Slowest calls and the siblings'
+  check durations are the evidence to lower it (under one twelve-hour load on 2026-10-31 sibling `pnpm check` medians
+  tripled and 15% of runs hit the 600s Bash cap). The Headroom verdict is dark there.
 - **A rotating machine multiplies the cap by its accounts with room.** Every session burns on the one account the login
   names, so on a machine rotating through cswap (`scripts/cswap-setup.sh`) the engine moves the login at its threshold
   to an account with room, and that account's window gates next: the pool is the accounts with room, and the cap is
@@ -157,7 +162,9 @@ alone — and they resolve so:
   an `ok` figure under 15 minutes old, the binding window (the higher of 5h and 7d, so the weekly alone on an account
   with no 5h window) under the engine's threshold, an engine event within 5 minutes — the active account included while
   it is under the threshold;
-  `fleet-cap.sh` reads the count from the probe's `--json` verdict. An idle engine or an unreadable cswap is one account's
+  `fleet-cap.sh` reads the count from the probe's `--json` verdict. On weekly-only accounts rotation adds room rather than
+  multiplying a per-account count: the pool's room is the sum of each with-room account's points to the threshold, and
+  the line says how many session-hours it covers. An idle engine or an unreadable cswap is one account's
   window again, and the line says so (`/cswap log`). Nothing asks for `/cswap quota` to size a fleet: the cap is the pool
   as the engine sees it, and more sessions than lanes idle whatever the pool holds.
 - **The weekly window sizes neither `n` nor duration, on any plan.** The keeper runs multiple accounts, so rotating to
@@ -233,7 +240,7 @@ ends so the operator and `/fleet-retro` can read them; a launch is where they ex
   passed, or `stopped: true`). A retiring session stays in `fleet_sessions` but `hooks/auto-deadline-gate.sh` treats the
   deadline as passed for it whatever the new `deadline_epoch` says, so it finishes its in-flight issue and stops, and
   stays retired through later top-ups. The launch prints how many carried, other-fleet and new sessions will run, WARNs
-  above the cap (`scripts/fleet-cap.sh`, § The count — 3 per account with room), and WARNs when a carried session's
+  above the cap (`scripts/fleet-cap.sh`, § The count), and WARNs when a carried session's
   ledger `backlog` differs from the launch's.
 - `fleet_sessions` is the session set — the short id each `claude --bg` prints (`backgrounded · <id>`), recorded per
   dispatch and carried across top-ups, every member the running fleet already listed included — and is what

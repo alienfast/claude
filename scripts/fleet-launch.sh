@@ -17,9 +17,9 @@
 #               (tmp/fleet-recommendation-team.json from /auto-prep, tmp/fleet-recommendation-<epic>.json
 #               from /epic-prep <ID>; error if absent — run the prep, or pass a count). An explicit
 #               count is the quota throttle: the preps recommend from lane math under the
-#               concurrency cap fleet-cap.sh computes (3 per account with room: 3 on a
-#               single-account machine, 3 × the accounts with room on a cswap-rotating one,
-#               at most 12), which this script prints and WARNs above — counting the live sessions
+#               concurrency cap fleet-cap.sh computes (3 per account with room on accounts with a 5h
+#               window; on a weekly-only pool the count range bounded by the weekly room for this
+#               duration, at most 12), which this script prints and WARNs above — counting the live sessions
 #               of every other fleet in the checkout — never refuses on.
 #   [epic:<ID>] Scope the fleet to one epic's graph: every session runs `/loop /auto epic:<ID> backlog`
 #               (next-candidates.sh --root — the epic, its descendants, and their blockers, and
@@ -295,14 +295,6 @@ if [ -f "$rec" ]; then
   fi
 fi
 { [ "$count" -ge 1 ] && [ "$count" -le 12 ]; } 2>/dev/null || { echo "ERROR: count must be 1-12 (got '$count')" >&2; exit 1; }
-# The concurrency cap: 3 per account with room — fleet-cap.sh owns the arithmetic and the reason (skills/fleet-launch/SKILL.md
-# § The count — 3 per account with room). Advice, never a refusal: an explicit count is the user's override.
-cap_line=$("$script_dir/fleet-cap.sh" 2>/dev/null) || cap_line=""
-concurrency_cap=$(printf '%s' "$cap_line" | awk '/^CAP /{print $2}')
-[[ "$concurrency_cap" =~ ^[0-9]+$ ]] || { concurrency_cap=3; cap_line="CAP 3  (fleet-cap.sh gave no answer — the single-account figure)"; }
-echo "Concurrency cap: ${cap_line#CAP }"
-[ "$count" -gt "$concurrency_cap" ] && echo "WARN: $count sessions is over the cap of $concurrency_cap — more than the account pool's 5h windows refill for at any duration (3 per account with room; n=4 on one account measured cut off 4.9h into a 12h deadline). The preps recommend under the cap; an explicit count is your override" >&2
-
 # ---- epic scope: the typed token, with the slug's recommendation supplying the prep snapshot; validated before anything is written ----
 scope="$scope_token"
 scope_members='[]'
@@ -365,6 +357,24 @@ if [ ${#dur_tokens[@]} -gt 0 ]; then
   fi
   deadline_epoch=$(( $(date +%s) + secs ))
   deadline_human=$(date -r "$deadline_epoch" '+%Y-%m-%d %H:%M %Z' 2>/dev/null || date -d "@$deadline_epoch" '+%Y-%m-%d %H:%M %Z')
+fi
+
+# The concurrency cap — fleet-cap.sh owns the arithmetic and the reason (skills/fleet-launch/SKILL.md § The count). Advice,
+# never a refusal: an explicit count is the user's override. The duration goes along so a weekly-only pool's room bounds it;
+# that is why this sits after the duration parse.
+cap_hours=""; [ -n "${secs:-}" ] && cap_hours=$(jq -rn --argjson s "$secs" '$s / 3600')
+cap_json=$("$script_dir/fleet-cap.sh" --json ${cap_hours:+--hours "$cap_hours"} 2>/dev/null) || cap_json=""
+cap_line=$(printf '%s' "$cap_json" | jq -r '.line // empty' 2>/dev/null) || cap_line=""
+concurrency_cap=$(printf '%s' "$cap_json" | jq -r '.cap // empty' 2>/dev/null) || concurrency_cap=""
+[[ "$concurrency_cap" =~ ^[0-9]+$ ]] || { concurrency_cap=3; cap_line="CAP 3  (fleet-cap.sh gave no answer — the single-account figure)"; cap_json=""; }
+cap_weekly_only=$(printf '%s' "$cap_json" | jq -r '.weekly_only // false' 2>/dev/null) || cap_weekly_only=false
+echo "Concurrency cap: ${cap_line#CAP }"
+if [ "$count" -gt "$concurrency_cap" ]; then
+  if [ "$cap_weekly_only" = true ]; then
+    echo "WARN: $count sessions is over the cap of $concurrency_cap — on a weekly-only account pool the cap is the launch's count range bounded by the weekly room for this duration (the line above says how many session-hours the room covers). The preps recommend under the cap; an explicit count is your override" >&2
+  else
+    echo "WARN: $count sessions is over the cap of $concurrency_cap — more than the account pool's 5h windows refill for at any duration (3 per account with room; n=4 on one account measured cut off 4.9h into a 12h deadline). The preps recommend under the cap; an explicit count is your override" >&2
+  fi
 fi
 
 # Preflight: a dirty main checkout no longer stops the fleet — /auto Step 1 picks past dirt it cannot attribute, and
@@ -693,6 +703,21 @@ else
     weekly_reset=$(jq -r '.week.resetsAt // "unknown"' <<<"$reading_json")
     weekly_reset_epoch=$(iso_epoch "$weekly_reset")
     echo "Weekly (seven_day): ${weekly_pct}% used, resets $weekly_reset, measured $reading_age ago"
+    # On a weekly-only pool the weekly is the budget: the fleet's projected burn beside the pool's room (fleet-cap.sh's figures).
+    if [ "$cap_weekly_only" = true ]; then
+      cap_room=$(printf '%s' "$cap_json" | jq -r '.weekly_room // empty' 2>/dev/null) || cap_room=""
+      cap_burn=$(printf '%s' "$cap_json" | jq -r '.burn_per_session_hour // 0.55' 2>/dev/null) || cap_burn=0.55
+      if [ -n "$cap_room" ] && [ -n "$cap_hours" ]; then
+        need=$(jq -rn --argjson n "$count" --argjson h "$cap_hours" --argjson b "$cap_burn" '(($n * $h * $b) * 10 | round) / 10')
+        echo "Weekly budget: $count sessions × ${cap_hours}h × $cap_burn points per session-hour ≈ $need points against $cap_room points of room"
+        if [ "$(jq -rn --argjson a "$need" --argjson r "$cap_room" '$a > $r')" = true ]; then
+          echo "WARN: the fleet's projected weekly burn ($need points) exceeds the pool's room ($cap_room points): once every account is at cswap's threshold, sessions park at the gate's weekly reserve until a weekly reset. Shorten the run, lower the count, or accept the park." >&2
+        fi
+      elif [ -n "$cap_room" ]; then
+        per_h=$(jq -rn --argjson n "$count" --argjson b "$cap_burn" '(($n * $b) * 100 | round) / 100')
+        echo "Weekly budget: $count sessions burn ≈ $per_h points per hour against $cap_room points of room (~$(jq -rn --argjson r "$cap_room" --argjson p "$per_h" 'if $p > 0 then (($r / $p) * 10 | floor) / 10 else 0 end')h)"
+      fi
+    fi
     if [ "$(jq -rn --argjson p "$weekly_pct" '$p >= 70' 2>/dev/null)" = "true" ]; then
       if [ -n "$deadline_epoch" ] && [ -n "$weekly_reset_epoch" ] && [ "$weekly_reset_epoch" -le "$deadline_epoch" ]; then
         echo "NOTE: the weekly window is ${weekly_pct}% used but resets before this fleet's deadline, so it should not end the run."

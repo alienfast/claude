@@ -43,8 +43,9 @@ Reads this run's own marker only: a sibling fleet's deadline is not this run's b
 
 Fleet mode only — any fleet marker exists in the checkout, this run's or a sibling fleet's, dated or not, because every
 fleet draws on the same account windows — and it governs every pick Step 2 makes, the hot handoff included.
-Why the count is settled at 3 per account with room and why parking between issues is the protection rather than a
-smaller fleet: `skills/fleet-launch/SKILL.md` § The count — 3 per account with room.
+Why the count is settled before launch (3 per account with room on accounts with a 5h window; the count range bounded by
+the weekly room on weekly-only ones) and why parking between issues is the protection rather than a smaller fleet:
+`skills/fleet-launch/SKILL.md` § The count.
 
 - Run `~/.claude/scripts/fleet-headroom.sh --session "$RUN_KEY"` (the identity Step 0 resolved). It reads this
   session's own `rate-limits` meter — the account it runs on, so a multi-account machine reads the right one — and
