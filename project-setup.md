@@ -149,17 +149,21 @@ sideways or stops partway, it is safe to paste the same prompt again — it pick
 ```text
 Set up this machine for working on this repository with Claude Code. I'm not a developer and I won't be
 writing code — I describe work in Linear and the agents implement it. Explain what you're doing in plain
-language, one thing at a time, and when a step needs me to sign in or run something myself, give me the
-exact thing to do and wait until I say it's done.
+language, one thing at a time. When a step needs me to type something in a terminal myself, give me the
+exact thing to do and wait until I say it's done; a sign-in that only opens a browser window for me to
+approve is yours to run.
 
 1. Configure git globally: user.name "<Your Name>", user.email "<your.email@foo.com>".
 2. Install Node and pnpm via Homebrew, then run `pnpm setup`. Verify with: node --version and
    pnpm --version.
 3. Make ~/.claude a checkout of https://github.com/alienfast/claude.git on branch main, and pull the
    latest. It may already exist with files in it — set it up in place; don't delete anything.
-4. Run: bash ~/.claude/update.sh — and get it to finish successfully. If it stops for an interactive
-   sign-in (gh auth login, or the Linear browser OAuth), tell me exactly what to do, wait for my
-   confirmation, then re-run the script. Repeat until it ends with "Done!".
+4. Run: bash ~/.claude/update.sh — and get it to finish successfully. When you run it, it can't stop to
+   ask for a sign-in, so one it needs shows up as a ⚠️ warning line and the script keeps going. Resolve
+   each one yourself: the Linear sign-in is linear-cli auth oauth — run it from here, and a
+   browser window opens for me to approve. Only a sign-in that asks questions in the terminal
+   (gh auth login, which I did in Terminal already) comes to me. Re-run the script until it ends
+   with "Done!" and no sign-in warning.
 5. Verify Linear: linear-cli teams list — it should list my team, <TEAM>. If it doesn't, run
    linear-cli auth oauth (a browser window opens for me to approve) and check again.
 6. Bring my Linear team's issue statuses, labels, and saved views to the house model with the
