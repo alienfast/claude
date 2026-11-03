@@ -144,7 +144,8 @@
       "Bash(~/.claude/skills/pr-claude/scripts/pr-claude.sh:*)",
       "ClaudeInChromeDomain(linear.app)",
       "ClaudeInChromeDomain(riskos.sandbox.socure.com)",
-      "ClaudeInChromeDomain(app.pr588.stg.basefund.com)"
+      "ClaudeInChromeDomain(app.pr588.stg.basefund.com)",
+      "ClaudeInChromeDomain(www.figma.com)"
     ],
     "deny": [],
     "ask": [],
