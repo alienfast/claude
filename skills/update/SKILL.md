@@ -61,12 +61,16 @@ bash ~/.claude/update.sh
 
 When the project *is* `~/.claude`, Step 1 already handled the pull; the script's own pull is then a no-op.
 
-The script's sign-in steps (`gh auth login`, the Linear browser OAuth) are TTY-gated, and run from this tool there is no
-TTY — so it never stops to prompt. It prints a ⚠️ with the exact command and keeps going, which means **a run can end
-with `Done!` and still need the user**. Treat `Done!` as the end of the script, not proof of success: collect every ⚠️
-from the output, hand the user the exact commands to run in their own terminal, and re-run the script after they
-confirm, until the auth checks print `✓`. Platform-gap warnings (a missing prebuilt binary, an unsupported
-`claude update`) are report-only — name them and move on rather than looping on them.
+The script skips every sign-in step when it has no TTY, and run from this tool it has none — so it never stops to
+prompt. It prints a ⚠️ with the fix and keeps going, which means **a run can end with `Done!` and still need a
+sign-in**. Treat `Done!` as the end of the script, not proof of success: collect every ⚠️ from the output and resolve
+each one yourself before reporting. That the script skipped a sign-in says nothing about who runs it; what decides is
+what the fix needs once started. A sign-in that opens a browser and blocks on the redirect completes from this tool —
+`gcloud auth login` does, and a project's `.claude/update.sh` may name a skill that wraps it — so invoke it, verify, and
+report the result; never hand the user a command you can run and verify. `linear-cli auth oauth` is the browser shape
+too: try it from here first. Only a sign-in that reads answers from stdin (`gh auth login`) goes to the user's own
+terminal; re-run the script after they confirm, until its auth checks print `✓`. Platform-gap warnings (a missing
+prebuilt binary, an unsupported `claude update`) are report-only — name them and move on rather than looping.
 
 Three failure shapes are worth naming rather than retrying blindly. `/update` detects and routes; the recovery itself
 belongs to `/keeper`, never to this skill — do not commit, stash, reset, or discard anything here.
@@ -95,8 +99,8 @@ belongs to `/keeper`, never to this skill — do not commit, stash, reset, or di
 Report, in this order:
 
 1. What the project pull did — commits pulled, already current, or skipped and why.
-2. Whether the update script finished (`Done!`) and whether any ⚠️ in its output still needs the user — with the exact
-   command if so.
+2. Whether the update script finished (`Done!`), each ⚠️ you resolved and its verified result, and any ⚠️ that still
+   needs the user — only a stdin-driven sign-in — with the exact command.
 3. **Restart VS Code.** The script says this and it is easy to skip: new skills and configuration are read at startup, so
    until the restart the session is still running the old ones.
 
