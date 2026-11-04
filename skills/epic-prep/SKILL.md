@@ -198,9 +198,12 @@ duration is chosen on a weekly-only pool). The simulation does
 not model file collisions, and one epic's members share files by construction: when the last session added gains only by
 running `related` members side by side, take the count below it. State the binding term — the chain's serial floor
 (`floor`), which no count moves; lanes; or the cap with its accounts-with-room reading. The duration is the last `SHIP`
-time at the recommended count rounded up to the next whole hour: an epic fleet ends itself on `EPIC-DRAINED`, so the
-deadline is the upper bound, reached only when the forecast ran short. An explicit `/fleet-launch <count>` remains the
-user's override.
+time at the recommended count **plus two `HOURS-PER-ISSUE`**, rounded up to the next whole hour: an epic fleet ends
+itself on `EPIC-DRAINED`, so the deadline is only the upper bound and a long one costs nothing, while a tight one strands
+the chain's tail — the forecast is flat per issue (no member carries an estimate), its calibration is an average per
+issue and not a tail bound, and the 2026-11-03 BF-2982 fleet's 11h deadline (last forecast `SHIP` 10.3h) lost BF-3045
+when BF-3044 on the critical chain took 7.3h against the 2.58h assumed and landed 1.1h past the deadline, where no
+session may pick. An explicit `/fleet-launch <count>` remains the user's override.
 
 **One PR or more.** List every `human` member that holds a non-`human`, non-`epic` member — directly or through other
 members, on the graph's `blocks` edges — and read its body for a step that needs the epic's code running outside a
