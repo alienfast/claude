@@ -103,7 +103,8 @@ For each **distinct target file** in the batch (cap at ~5 searches on a large ba
 in body order), search on a distinctive token: a distinctive basename (`issue-spec.md`, `next-candidates.sh`) directly;
 a generic basename every skill or project shares (`SKILL.md`, `CLAUDE.md`, `README.md`) needs a substitute — the skill's
 directory name (`spec` for `skills/spec/SKILL.md`), the full repo-relative path for a nested `README.md`
-(`skills/README.md`), or the project name for a project `CLAUDE.md` or a repo-root `README.md`. One token per call,
+(`skills/README.md`), or the project name for a project `CLAUDE.md` or a repo-root `README.md`. One token per call
+(`~/.claude/scripts/linear-dedup-search.sh <token>...` does this, keeps stderr and tags terminal hits `prior-art:`),
 never a composed phrase — `search issues` matches a contiguous token, and the JSON payload
 (`linear-cli search issues "<token>" -o json`) carries only `{id, identifier, priority, state, title}`, no description,
 while matches are frequently on body text. So split hits by `state`. For each OPEN hit, `linear-cli issues get <ID>

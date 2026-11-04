@@ -11,7 +11,10 @@ failed and never-attempted.
 
 ## 1. Search before filing
 
-Probe for an open issue already covering the defect: `linear-cli search issues "<token>"` with the finding's most
+Probe for an open issue already covering the defect: `linear-cli search issues "<token>"` (the helper
+`~/.claude/scripts/linear-dedup-search.sh <token>...` runs exactly that search one token per call, refuses phrases
+(`--phrase` for verbatim title text), keeps stderr and stops on RATELIMITED (exit 3 = wait), and tags terminal hits
+`prior-art:` for the body's `Prior art:` line) with the finding's most
 distinctive identifiers, the file's basename when it is distinctive and the predicate or operation, **one token per
 call**, two or three calls, never several words in one. `search issues` matches a contiguous phrase, so two identifiers
 that are not adjacent in the target match nothing and exit 0, indistinguishable from a clean result, and a query worded

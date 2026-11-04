@@ -42,7 +42,9 @@ could have matched.
 
 **Search single tokens only** — code identifiers, symbol/method/field names, `snake_case`, `camelCase`, error strings
 — one per query, several queries. Never a phrase you composed to describe the defect. If a multi-word query is
-unavoidable, it must be text you have *seen verbatim* in an existing title.
+unavoidable, it must be text you have *seen verbatim* in an existing title. `~/.claude/scripts/linear-dedup-search.sh
+[--phrase "<verbatim title text>"]... <token>...` gets this one-token-per-call discipline mechanically: it refuses a
+composed phrase, keeps stderr (exit 3 on a rate limit) and tags terminal hits `prior-art:`.
 
 **Search the target FILE's basename too, and search it first when the defect is a flake, a fixture, or anything else
 whose identifiers are descriptions rather than symbols.** Near-duplicates routinely share zero identifier tokens —

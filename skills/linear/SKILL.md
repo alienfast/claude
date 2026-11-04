@@ -95,6 +95,7 @@ All under `~/.claude/scripts/`. Each header carries the usage line, exit codes a
 | `linear-remove-label.sh` | Remove one label, preserving the rest (#7, #17). |
 | `linear-set-state.sh` | Verified state transition for one or many issues: update → `--no-cache` read-back → raw-mutation fallback (#8). |
 | `linear-claim.sh` | Assignee-and-state claim with a verdict on the first stdout line (`CLAIMED` / `NOT-CLAIMED` / `UNCONFIRMED`) (#8). |
+| `linear-dedup-search.sh` | Pre-filing duplicate search, one `search issues` call per token: refuses a composed phrase, keeps stderr (exit 3 on a rate limit), tags terminal hits `prior-art:` (#14, #26). |
 | `linear-file-improvement.sh` | File a `/reflect` improvement issue (`specified`+`reflection`, or `reflection`+`keeper` uncertified). |
 | `mark-ready-for-release.sh` | Move to Ready For Release and unassign, verified; then closes an `epic` parent whose every child is terminal (#8). |
 | `epic-graph.sh` | An epic's working set as JSON — members, blockers, terminal nodes, edges, and the boundary report. |

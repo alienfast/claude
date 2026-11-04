@@ -231,7 +231,8 @@ options rather than carrying it silently into the draft.
    `linear-cli search issues "<token>"` probes on the change's most distinctive single tokens (method or predicate
    names, distinctive basenames; for a generic basename like `SKILL.md`, `CLAUDE.md` or `README.md` substitute the
    skill's directory name, the full repo-relative path of a nested file, or the project name), one token per call, never
-   a composed phrase (matches are contiguous substrings), and read the non-terminal hits for file overlap. Calibrate per
+   a composed phrase (matches are contiguous substrings; `~/.claude/scripts/linear-dedup-search.sh <token>...` runs them that
+   way, keeps stderr and tags terminal hits `prior-art:`), and read the non-terminal hits for file overlap. Calibrate per
    [standards/issue-spec.md](../../standards/issue-spec.md) § Certification includes collision edges — `blocks` only for a
    prerequisite, a same-method collision (both edits in one region of a function body; disjoint branches are `related`,
    an edit every branch runs under collides with each), or a deliberate increment, blocker first (no discernible order →

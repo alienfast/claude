@@ -271,7 +271,8 @@ the approval UI (in VS Code a side pane that supports annotation); inline text b
    file, predicate or resolver without a relation edge — routinely a duplicate, the systemic fix your point fix instances,
    or in-flight overlapping work; `/quality-review`'s search-before-filing runs after scope is fixed. Run two or three
    `linear-cli search issues "<token>"` calls on the change's most distinctive identifiers, **one token per call** — it
-   matches a contiguous phrase, so a composed multi-word query matches nothing and exits 0 (linear skill gotcha #14).
+   matches a contiguous phrase, so a composed multi-word query matches nothing and exits 0 (linear skill gotcha #14);
+   `~/.claude/scripts/linear-dedup-search.sh <token>...` runs them one per call, keeps stderr and tags terminal hits `prior-art:`.
    Read every open hit, then set scope knowing what is filed: dedup, narrow, or record the overlap in the Step 7 comment.
 3. **Read an either/or Desired Outcome as ordered, not as a menu** (`standards/issue-spec.md` § An either/or Desired
    Outcome is ordered): plan the stronger arm and record which arm and why. It binds mid-implementation too — when the
