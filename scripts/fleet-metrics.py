@@ -28,7 +28,9 @@ churn and `avg_cycles` / `findings_per_review` / `crit_high_per_review` / `plan_
 narrowed the same day to verdicts for issues the session set worked; older rows can include an
 interactive review persisted inside the window. `linear_ratelimited` and the table's `linear rl` column — Linear's own
 RATELIMITED answers in tool results — were added 2026-10-16; older rows carry no such field. The tests-per-shipped gauge
-(`rspec_examples_per_shipped`, `story_exports_per_shipped` and their nets) was added 2026-10-19; older rows carry none.)
+(`rspec_examples_per_shipped`, `story_exports_per_shipped` and their nets) was added 2026-10-19; older rows carry none.
+`inserted_lines_per_shipped` and `tests_per_kloc`, the size-normalized companions, were added 2026-11-04; older rows carry
+neither, and the tests-rose flag stays silent against one.)
 
 WHAT IT READS
   <checkout>/tmp/auto-state-<runKey>.json   run bookkeeping written by /auto Step 4
@@ -1822,8 +1824,9 @@ DIFF_FLAGS = ["--no-color", "--no-ext-diff", "--no-renames", "--src-prefix=a/", 
 
 
 def count_declarations(diff_text):
-    """(rspec examples, vitest tests, story exports) net of removals over a unified diff, from files that can declare them."""
-    rspec = vitest = story = 0
+    """(rspec examples, vitest tests, story exports) net of removals over a unified diff, from files that can declare them,
+    plus the gross `+` lines of every hunk in every file."""
+    rspec = vitest = story = inserted = 0
     kind, in_hunk = None, False
     for line in diff_text.splitlines():
         if line.startswith("diff --git "):
@@ -1834,7 +1837,9 @@ def count_declarations(diff_text):
             in_hunk = False
         elif line.startswith("@@"):
             in_hunk = True
-        elif in_hunk and kind and line.startswith(("+", "-")):
+        elif in_hunk and line.startswith("+"):
+            inserted += 1
+        if in_hunk and kind and line.startswith(("+", "-")):
             sign = 1 if line[0] == "+" else -1
             if kind == "rspec" and SPEC_DECL.match(line):
                 rspec += sign
@@ -1844,16 +1849,16 @@ def count_declarations(diff_text):
                     vitest += sign
             elif kind == "story" and STORY_DECL.match(line):
                 story += sign
-    return rspec, vitest, story
+    return rspec, vitest, story, inserted
 
 
 def landed_declarations(checkout, landing):
-    """Net (rspec examples, vitest tests, story exports) one landing added, or None when it cannot be measured. A merge
+    """Net (rspec examples, vitest tests, story exports) and gross inserted lines one landing added, or None when it cannot be measured. A merge
     commit's change is its diff against the first parent (the branch merged INTO); fast-forward commits each stand alone."""
     if not landing or not landing[1]:
         return None
     kind, shas = landing
-    rspec = vitest = story = 0
+    rspec = vitest = story = inserted = 0
     for sha in shas:
         cmd = ["diff", *DIFF_FLAGS, f"{sha}^1", sha] if kind == "merge" else ["show", "--format=", *DIFF_FLAGS, sha]
         try:
@@ -1863,17 +1868,19 @@ def landed_declarations(checkout, landing):
             return None
         if proc.returncode != 0:
             return None
-        r, vt, st = count_declarations(proc.stdout)
+        r, vt, st, ins = count_declarations(proc.stdout)
         rspec += r
         vitest += vt
         story += st
-    return rspec, vitest, story
+        inserted += ins
+    return rspec, vitest, story, inserted
 
 
 def tests_per_shipped(checkout, merged, shipped):
-    """Net test declarations the fleet's landed ships added, per measured ship. A static count over each ship's landed
-    diff because the baseline cache holds only trees a session measured, while every ship leaves a diff."""
-    rspec = vitest = story = measured = 0
+    """Net test declarations the fleet's landed ships added, per measured ship, and per thousand gross inserted lines of the
+    same diffs. A static count over each ship's landed diff because the baseline cache holds only trees a session measured,
+    while every ship leaves a diff. The per-ship figures move with issue size; `tests_per_kloc` is the size-normalized one."""
+    rspec = vitest = story = inserted = measured = 0
     for issue in sorted(shipped):
         counts = landed_declarations(checkout, (merged.get(issue) or {}).get("landing"))
         if counts is None:
@@ -1882,6 +1889,7 @@ def tests_per_shipped(checkout, merged, shipped):
         rspec += counts[0]
         vitest += counts[1]
         story += counts[2]
+        inserted += counts[3]
     return {
         "rspec_examples_net": rspec,
         "vitest_tests_net": vitest,
@@ -1891,6 +1899,9 @@ def tests_per_shipped(checkout, merged, shipped):
         "rspec_examples_per_shipped": round(rspec / measured, 1) if measured else None,
         "vitest_tests_per_shipped": round(vitest / measured, 1) if measured else None,
         "story_exports_per_shipped": round(story / measured, 1) if measured else None,
+        "inserted_lines_gross": inserted,
+        "inserted_lines_per_shipped": round(inserted / measured) if measured else None,
+        "tests_per_kloc": round((rspec + vitest + story) / (inserted / 1000), 1) if measured and inserted else None,
     }
 
 
@@ -2677,6 +2688,8 @@ def main():
         "rspec_examples_per_shipped": tests["rspec_examples_per_shipped"],
         "vitest_tests_per_shipped": tests["vitest_tests_per_shipped"],
         "story_exports_per_shipped": tests["story_exports_per_shipped"],
+        "inserted_lines_per_shipped": tests["inserted_lines_per_shipped"],
+        "tests_per_kloc": tests["tests_per_kloc"],
         "fresh_shipped_share": fresh_share,
         "pool_exhausted_h": pool_exhausted_h,
         "idle_tail_session_hours": idle_tail_session_hours,
@@ -3185,7 +3198,9 @@ def main():
                       f"{signed_one(tests['vitest_tests_per_shipped'])} vitest tests, "
                       f"{signed_one(tests['story_exports_per_shipped'])} story exports (net declarations across "
                       f"{tests['measured_ships']} of {len(all_shipped)} landed ships; previous fleet "
-                      f"{signed_one(prev_ex)} / {signed_one(prev_vt)} / {signed_one(prev_st)})")
+                      f"{signed_one(prev_ex)} / {signed_one(prev_vt)} / {signed_one(prev_st)}) · "
+                      f"{'-' if tests['inserted_lines_per_shipped'] is None else tests['inserted_lines_per_shipped']} inserted lines per ship · "
+                      f"{'-' if tests['tests_per_kloc'] is None else format(tests['tests_per_kloc'], '.1f')} tests per kloc")
     elif all_shipped:
         tests_line = (f"Tests per shipped issue: nothing could be measured — none of the {len(all_shipped)} shipped issue(s) "
                       f"has a landing commit in this checkout's history, or git was unavailable")
@@ -3477,8 +3492,8 @@ def main():
             return f"{round(100 * v)}%" if v is not None else "-"
         print("| fleet start | n | hours | shipped | $/issue | ktok/issue | $/Mtok out | sub-final% | "
               "cycles | find/rev | C+H/rev | plan% | ctx>=200k% | filed/ship | ex/ship | vt/ship | st/ship | fresh% | idle% | "
-              "thr% | hold% | rewr% | 5h% |")
-        print("|" + "---|" * 23)
+              "thr% | hold% | rewr% | 5h% | ins/ship | t/kloc |")
+        print("|" + "---|" * 25)
         for r in history[-6:]:
             mark = " ←" if r.get("session_set") == headline["session_set"] and not args.all else ""
             fs = (r.get("fleet_start") or "?")[:16].replace("T", " ")
@@ -3494,7 +3509,8 @@ def main():
                   f"{signed_one(r.get('story_exports_per_shipped'))} | "
                   f"{pct(r.get('fresh_shipped_share'))} | {pct(r.get('idle_tail_share'))} | "
                   f"{pct(r.get('throttle_share'))} | {pct(r.get('hold_share'))} | {pct(r.get('rewritten_request_share'))} | "
-                  f"{cell(r.get('peak_five_hour_pct'), '{}%')} |")
+                  f"{cell(r.get('peak_five_hour_pct'), '{}%')} | {cell(r.get('inserted_lines_per_shipped'))} | "
+                  f"{cell(r.get('tests_per_kloc'), '{:.1f}')} |")
         if len(history) > 6:
             print(f"\n({len(history) - 6} earlier row(s) in the ledger, not shown)")
         print("\nRead $/issue as its two factors: ktok/issue is work per shipped issue (churn or harder "
@@ -3504,7 +3520,9 @@ def main():
               "floor and its $/Mtok out a ceiling, and a `-` is a row measured before the gauge existed. "
               "ex/ship, vt/ship and st/ship are the tests-per-shipped gauges: the net rspec examples, vitest tests and story "
               "exports the fleet's landed ships added, per measured ship, and a `-` is a row recorded before the gauge (or that "
-              "column) existed. "
+              "column) existed. ins/ship and t/kloc, appended after 5h% so earlier columns keep their positions, size-normalize them: "
+              "the gross lines the same landed diffs inserted per measured ship, and net tests per thousand of those lines. The "
+              "per-ship gauges move with issue size, so read a change in them against ins/ship and judge a rise by t/kloc. "
               "fresh% is the treadmill "
               "gauge: the share of shipped issues created during or within 7 days before the run. "
               "idle% is the pool-exhausted gauge: session-hours sessions sat on an empty or gated pool "
@@ -3772,16 +3790,21 @@ def main():
     cur_ex, cur_vt, cur_st = (tests["rspec_examples_per_shipped"], tests["vitest_tests_per_shipped"],
                               tests["story_exports_per_shipped"])
 
-    # Summed over the gauges both fleets measured: one gauge rising while the others fall is a shift between layers, not more
-    # tests per ship (2026-10-30: vitest +10.8 vs +5.8 fired while rspec fell +53.5 → +7.8 and stories +8.6 → +1.2).
+    prev_kloc = prev_tests.get("tests_per_kloc") if prev_tests else None
+    prev_ins = prev_tests.get("inserted_lines_per_shipped") if prev_tests else None
+    cur_kloc, cur_ins = tests["tests_per_kloc"], tests["inserted_lines_per_shipped"]
+    # The sum is over the gauges both fleets measured: one gauge rising while the others fall is a shift between layers.
     pairs = [(c, p) for c, p in ((cur_ex, prev_ex), (cur_vt, prev_vt), (cur_st, prev_st)) if c is not None and p is not None]
-    if pairs and sum(c for c, _ in pairs) > sum(p for _, p in pairs):
+    # Per-ship counts grow with issue size (2026-11-03: landings averaged 1,620 inserted lines against 658 the fleet before, and
+    # per-ship tests rose while tests per 1,000 inserted lines fell), so only the size-normalized figure raises the flag.
+    if cur_kloc is not None and prev_kloc is not None and cur_kloc > prev_kloc:
         flagged = True
         print(f"- **Tests per shipped issue rose**: rspec {signed_one(cur_ex)} vs {signed_one(prev_ex)}, vitest "
               f"{signed_one(cur_vt)} vs {signed_one(prev_vt)}, stories "
               f"{signed_one(cur_st)} vs {signed_one(prev_st)} (summed over the gauges both fleets measured: "
-              f"{signed_one(sum(c for c, _ in pairs))} vs {signed_one(sum(p for _, p in pairs))}) — ships are adding tests where "
-              f"the issue sits rather than where the mechanism lives; read the project's layer contract and route the duplicate "
+              f"{signed_one(sum(c for c, _ in pairs))} vs {signed_one(sum(p for _, p in pairs))}); tests/kloc {cur_kloc:.1f} vs "
+              f"{prev_kloc:.1f}, ins/ship {'-' if cur_ins is None else cur_ins} vs {'-' if prev_ins is None else prev_ins} — "
+              f"ships are adding tests where the issue sits rather than where the mechanism lives; read the project's layer contract and route the duplicate "
               f"arms to /test-sweep")
     no_merge = [i for i, m in merged.items() if m["commit"] and not m["merge"]]
     if no_merge:

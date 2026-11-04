@@ -2514,7 +2514,7 @@ q29() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" 
 # Seed the ledger: a pre-gauge row (no fields) and an earlier fleet that added fewer tests per ship.
 cat > "$H29" <<'EOF'
 {"fleet_start": "2026-01-01T00:00:00Z", "session_set": "old00001", "shipped": 5, "sessions": 1}
-{"fleet_start": "2026-02-01T00:00:00Z", "session_set": "old00002", "shipped": 4, "sessions": 1, "rspec_examples_per_shipped": 1.0, "story_exports_per_shipped": 0.5, "rspec_examples_net": 4, "story_exports_net": 2, "measured_ships": 4}
+{"fleet_start": "2026-02-01T00:00:00Z", "session_set": "old00002", "shipped": 4, "sessions": 1, "rspec_examples_per_shipped": 1.0, "story_exports_per_shipped": 0.5, "rspec_examples_net": 4, "story_exports_net": 2, "measured_ships": 4, "inserted_lines_per_shipped": 900, "tests_per_kloc": 100.0}
 EOF
 run29 a
 # BF-901: +3 `it` -1 `it` = +2 (it_behaves_like, the app/ file and `export default` are not declarations); BF-902: +1. BF-903 is unmeasured.
@@ -2523,55 +2523,69 @@ ck "tests: story net"              "2"   "$(q29 "d['tests_per_shipped']['story_e
 # BF-901 vitest: six added, the init file's one removed = +5; BF-902 touches no test file.
 ck "tests: vitest net"             "5"   "$(q29 "d['tests_per_shipped']['vitest_tests_net']")"
 ck "tests: measured/unmeasured"    "2 1" "$(q29 "' '.join(str(d['tests_per_shipped'][k]) for k in ('measured_ships','unmeasured_ships'))")"
+# Inserted lines are the gross `+` lines of the same two diffs: BF-901's merge against its first parent, BF-902's commit alone.
+MERGE29="$(G29 log --merges -1 --format=%H)"
+INS29="$(( $(G29 diff --numstat "$MERGE29^1" "$MERGE29" | awk '{s+=$1} END {print s}') + $(G29 show --format= --numstat HEAD | awk '{s+=$1} END {print s}') ))"
+ck "tests: inserted lines match git's own numstat over the landed diffs" "$INS29" "$(q29 "d['tests_per_shipped']['inserted_lines_gross']")"
+ck "tests: inserted lines gross" "29" "$(q29 "d['tests_per_shipped']['inserted_lines_gross']")"
+ck "tests: inserted lines per ship and tests per kloc" "14 344.8" "$(q29 "' '.join(str(d['tests_per_shipped'][k]) for k in ('inserted_lines_per_shipped','tests_per_kloc'))")"
 ck "tests: per-shipped values"     "1.5 2.5 1.0" "$(q29 "' '.join(str(d['tests_per_shipped'][k]) for k in ('rspec_examples_per_shipped','vitest_tests_per_shipped','story_exports_per_shipped'))")"
-ck "tests: headline row carries the fields" "1.5 2.5 1.0 3 5 2 2" "$(python3 -c "
+ck "tests: headline row carries the fields" "1.5 2.5 1.0 3 5 2 2 14 344.8" "$(python3 -c "
 import json,sys
 r=[json.loads(l) for l in open(sys.argv[1])][-1]
-print(' '.join(str(r[k]) for k in ('rspec_examples_per_shipped','vitest_tests_per_shipped','story_exports_per_shipped','rspec_examples_net','vitest_tests_net','story_exports_net','measured_ships')))" "$H29")"
-ck_has "tests: report line"        "Tests per shipped issue: +1.5 rspec examples, +2.5 vitest tests, +1.0 story exports (net declarations across 2 of 3 landed ships; previous fleet +1.0 / - / +0.5)" "$WORK/out29a.md"
-ck_has "tests: rising flag fires against the lower row" "- **Tests per shipped issue rose**: rspec +1.5 vs +1.0, vitest +2.5 vs -, stories +1.0 vs +0.5 (summed over the gauges both fleets measured: +2.5 vs +1.5) — ships are adding tests where the issue sits rather than where the mechanism lives; read the project's layer contract and route the duplicate arms to /test-sweep" "$WORK/out29a.md"
+print(' '.join(str(r[k]) for k in ('rspec_examples_per_shipped','vitest_tests_per_shipped','story_exports_per_shipped','rspec_examples_net','vitest_tests_net','story_exports_net','measured_ships','inserted_lines_per_shipped','tests_per_kloc')))" "$H29")"
+ck_has "tests: report line"        "Tests per shipped issue: +1.5 rspec examples, +2.5 vitest tests, +1.0 story exports (net declarations across 2 of 3 landed ships; previous fleet +1.0 / - / +0.5) · 14 inserted lines per ship · 344.8 tests per kloc" "$WORK/out29a.md"
+ck_has "tests: rising flag fires against the lower row" "- **Tests per shipped issue rose**: rspec +1.5 vs +1.0, vitest +2.5 vs -, stories +1.0 vs +0.5 (summed over the gauges both fleets measured: +2.5 vs +1.5); tests/kloc 344.8 vs 100.0, ins/ship 14 vs 900 — ships are adding tests where the issue sits rather than where the mechanism lives; read the project's layer contract and route the duplicate arms to /test-sweep" "$WORK/out29a.md"
 ck_has "tests: trend header columns" "| filed/ship | ex/ship | vt/ship | st/ship | fresh% |" "$WORK/out29a.md"
+ck_has "tests: trend header appends the size columns" "| rewr% | 5h% | ins/ship | t/kloc |" "$WORK/out29a.md"
 # BF-903's finish-merge.sh run printed NO-CODE: (2026-10-31: BF-2697, a deploy-gated measurement, was flagged as a lost merge).
 ck_has   "no-commit flag: a NO-CODE witness lists the ship as code-free" "- Code-free ships — BF-903: finish-merge.sh printed NO-CODE:" "$WORK/out29a.md"
 ck_lacks "no-commit flag: the witnessed ship is not flagged" "Shipped but no commit found" "$WORK/out29a.md"
 ck "no-commit flag: the witness is in the session json" "['BF-903']" "$(q29 "d['sessions'][0]['code_free']")"
-# ex/ship, vt/ship and st/ship cells by header position, per trend row: this fleet, the earlier gauge fleet, and the pre-gauge row.
-ck "tests: trend cells by row" "+1.5,+2.5,+1.0 +1.0,-,+0.5 -,-,-" "$(python3 -c "
+# ex/ship, vt/ship, st/ship, ins/ship and t/kloc cells by header position, per trend row: this fleet, the earlier gauge fleet, and the pre-gauge row.
+ck "tests: trend cells by row" "+1.5,+2.5,+1.0,14,344.8 +1.0,-,+0.5,900,100.0 -,-,-,-,-" "$(python3 -c "
 import sys
 cells = lambda l: [c.strip() for c in l.strip().strip('|').split('|')]
 lines = open(sys.argv[1], encoding='utf-8').read().splitlines()
 hdr = cells(next(l for l in lines if l.startswith('| fleet start')))
-ex, vt, st = hdr.index('ex/ship'), hdr.index('vt/ship'), hdr.index('st/ship')
+ex, vt, st, ins, kloc = (hdr.index(h) for h in ('ex/ship', 'vt/ship', 'st/ship', 'ins/ship', 't/kloc'))
 row = lambda start: cells(next(l for l in lines if l.startswith('| ' + start)))
-print(' '.join(','.join((r[ex], r[vt], r[st])) for r in (row(t) for t in (sys.argv[2], '2026-02-01', '2026-01-01'))))
+print(' '.join(','.join((r[ex], r[vt], r[st], r[ins], r[kloc])) for r in (row(t) for t in (sys.argv[2], '2026-02-01', '2026-01-01'))))
 " "$WORK/out29a.md" "$(python3 -c "import json; print(json.load(open('$WORK/out29a.json'))['history'][-1]['fleet_start'][:10])")")"
 ck_has "tests: trend paragraph names the columns" "ex/ship, vt/ship and st/ship are the tests-per-shipped gauges" "$WORK/out29a.md"
+ck_has "tests: trend paragraph names the size columns" "ins/ship and t/kloc, appended after 5h%" "$WORK/out29a.md"
 
 # A previous fleet that added MORE tests per ship: no flag, and the line still names it.
 cat > "$H29" <<'EOF'
 {"fleet_start": "2026-01-01T00:00:00Z", "session_set": "old00001", "shipped": 5, "sessions": 1}
-{"fleet_start": "2026-02-01T00:00:00Z", "session_set": "old00002", "shipped": 4, "sessions": 1, "rspec_examples_per_shipped": 9.0, "story_exports_per_shipped": 9.0}
+{"fleet_start": "2026-02-01T00:00:00Z", "session_set": "old00002", "shipped": 4, "sessions": 1, "rspec_examples_per_shipped": 9.0, "story_exports_per_shipped": 9.0, "inserted_lines_per_shipped": 100, "tests_per_kloc": 900.0}
 EOF
 run29 b
 ck_lacks "tests: no flag when the previous fleet was higher" "Tests per shipped issue rose" "$WORK/out29b.md"
 ck_has   "tests: previous fleet shown on the line" "previous fleet +9.0 / - / +9.0)" "$WORK/out29b.md"
-# The sum over the gauges both fleets measured decides: rspec falls while vitest rises by more → flag; one gauge rising
-# against a larger fall elsewhere is a shift between layers, not more tests per ship (the 2026-10-30 fleet's false flag).
+# The flag keys on tests per kloc, never on the per-ship sum: per-ship counts grow with issue size (the 2026-11-03 fleets landed
+# ~1,620 inserted lines per ship against 658 before, and per-ship tests rose while tests per 1,000 lines fell).
 cat > "$H29" <<'EOF'
-{"fleet_start": "2026-02-01T00:00:00Z", "session_set": "old00002", "shipped": 4, "sessions": 1, "rspec_examples_per_shipped": 2.0, "vitest_tests_per_shipped": 1.0}
+{"fleet_start": "2026-02-01T00:00:00Z", "session_set": "old00002", "shipped": 4, "sessions": 1, "rspec_examples_per_shipped": 2.0, "vitest_tests_per_shipped": 1.0, "inserted_lines_per_shipped": 900, "tests_per_kloc": 100.0}
 EOF
 run29 c
-ck_has   "tests: the sum rising flags though rspec fell" "rspec +1.5 vs +2.0, vitest +2.5 vs +1.0, stories +1.0 vs - (summed over the gauges both fleets measured: +4.0 vs +3.0)" "$WORK/out29c.md"
+ck_has   "tests: kloc rising flags with the summed per-ship figures and both size figures" "rspec +1.5 vs +2.0, vitest +2.5 vs +1.0, stories +1.0 vs - (summed over the gauges both fleets measured: +4.0 vs +3.0); tests/kloc 344.8 vs 100.0, ins/ship 14 vs 900" "$WORK/out29c.md"
 cat > "$H29" <<'EOF'
-{"fleet_start": "2026-02-01T00:00:00Z", "session_set": "old00002", "shipped": 4, "sessions": 1, "rspec_examples_per_shipped": 0.5, "story_exports_per_shipped": 9.0}
+{"fleet_start": "2026-02-01T00:00:00Z", "session_set": "old00002", "shipped": 4, "sessions": 1, "rspec_examples_per_shipped": 0.5, "vitest_tests_per_shipped": 0.5, "story_exports_per_shipped": 0.5, "inserted_lines_per_shipped": 5, "tests_per_kloc": 900.0}
 EOF
 run29 e
-ck_lacks "tests: rspec rising against a larger stories fall does not flag" "Tests per shipped issue rose" "$WORK/out29e.md"
+ck_has   "tests: per-ship rising while per-kloc falls is a size effect" "previous fleet +0.5 / +0.5 / +0.5) · 14 inserted lines per ship · 344.8 tests per kloc" "$WORK/out29e.md"
+ck_lacks "tests: per-ship rising while per-kloc falls prints no flag" "Tests per shipped issue rose" "$WORK/out29e.md"
 cat > "$H29" <<'EOF'
-{"fleet_start": "2026-02-01T00:00:00Z", "session_set": "old00002", "shipped": 4, "sessions": 1, "rspec_examples_per_shipped": 9.0, "vitest_tests_per_shipped": 0.5, "story_exports_per_shipped": 9.0}
+{"fleet_start": "2026-02-01T00:00:00Z", "session_set": "old00002", "shipped": 4, "sessions": 1, "rspec_examples_per_shipped": 0.5, "inserted_lines_per_shipped": 14, "tests_per_kloc": 344.8}
 EOF
 run29 f
-ck_lacks "tests: vitest rising against larger falls elsewhere does not flag" "Tests per shipped issue rose" "$WORK/out29f.md"
+ck_lacks "tests: per-kloc held prints no flag" "Tests per shipped issue rose" "$WORK/out29f.md"
+cat > "$H29" <<'EOF'
+{"fleet_start": "2026-02-01T00:00:00Z", "session_set": "old00002", "shipped": 4, "sessions": 1, "rspec_examples_per_shipped": 0.5, "vitest_tests_per_shipped": 0.5, "story_exports_per_shipped": 0.5}
+EOF
+run29 h
+ck_lacks "tests: a previous row without tests_per_kloc prints no flag" "Tests per shipped issue rose" "$WORK/out29h.md"
 # A previous row carrying only the vitest field is still the previous fleet, and a higher value there is no flag.
 cat > "$H29" <<'EOF'
 {"fleet_start": "2026-02-01T00:00:00Z", "session_set": "old00002", "shipped": 4, "sessions": 1, "vitest_tests_per_shipped": 9.0}
