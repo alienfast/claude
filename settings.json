@@ -145,7 +145,8 @@
       "ClaudeInChromeDomain(linear.app)",
       "ClaudeInChromeDomain(riskos.sandbox.socure.com)",
       "ClaudeInChromeDomain(app.pr588.stg.basefund.com)",
-      "ClaudeInChromeDomain(www.figma.com)"
+      "ClaudeInChromeDomain(www.figma.com)",
+      "ClaudeInChromeDomain(app.pr600.stg.basefund.com)"
     ],
     "deny": [],
     "ask": [],
