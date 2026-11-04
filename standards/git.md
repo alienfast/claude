@@ -237,6 +237,19 @@ run skipped. The tell is a PR branch pushed several times in one session, each b
 have caught, where one local run would have carried the fix whole. The one push that carries an ungated tree is
 `/checkpoint`'s WIP save, which records the check's result in its Linear comment.
 
+**A push to a branch with an open PR carries the tree that will merge, so sync the base before the local gate, not after
+CI.** CircleCI builds the branch head, not the merge result, so a green build on a branch behind its base says nothing
+about the merged tree, and a conflict surfaces only at the merge, after the gate and a full build were spent on a tree
+that cannot land (PR #596, 2026-11-04: the branch was 5 behind `main` at the session's first command, two gates and two
+builds ran before the conflict was read). Before the gate: `git fetch origin <base>`, then
+`git merge-tree --write-tree origin/<base> HEAD` (exit 1 names the conflicting paths) and
+`git rev-list --left-right --count origin/<base>...HEAD`. Behind by anything, merge the base in first
+(`git merge --no-edit origin/<base>`, never a rebase of a pushed head) and run the gate once on the result.
+`gh pr view --json mergeable` reads `UNKNOWN` until GitHub recomputes it, so the local dry-run is the check, not the API
+field. When folding a sibling PR into the branch, first check whether its fix already landed on the base
+(`git log origin/<base> -- <its files>`): a bot PR and a human hotfix for one Sentry issue race, and the loser is closed
+as superseded, not merged in.
+
 ### Why
 
 Review is the workflow: each commit is an artifact the user inspects before it enters history, and each push is visible
