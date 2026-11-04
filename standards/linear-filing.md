@@ -166,6 +166,17 @@ continue; each later create verifies itself independently.
   One method body, or one item's fix a prerequisite of another's → chain in filed order with `blocks`, adjacent pairs
   only. Same file only → `related` between adjacent pairs; `next-candidates.sh` soft-de-ranks a candidate whose
   `related` partner is in flight and `/finish` gates the merged tree, so same-file siblings may ship concurrently.
+- **Across epic branches**: while another epic fleet runs in the checkout (`<main-checkout>/tmp/fleet-deadline-<slug>.json`
+  names its `branch` and `base`), the files a filing names may already be rewritten or deleted there, and neither the
+  filer's own tree nor any Linear search shows it — a `/spec`-groomed member names no files, so a basename search finds
+  agent filings, never the sibling that rewrote the surface. Before certifying, diff that branch for every file the body
+  names: `git diff --stat <base>...<branch> -- <files>`. A hit takes `related` to the open member sharing the file (or
+  the epic's open child nearest it) plus a comment naming the branch and the change, and the filing record states the
+  precondition — the operator merges that branch into this epic's before the next launch, since no body line steers a
+  fork. Never `blocks` from that epic or its members: `epic-graph.sh` follows a blocker and its transitive blockers into
+  this scope (for an epic its members block, most of its graph) and a pick here forks them onto this epic's branch.
+  (2026-11-04: BF-3065, filed into BF-3049's graph, named a locale file `epic/bf-2982` had rewritten and pinned a dialog
+  whose entry component it had deleted; a `blocks` from BF-2982 put BF-3045 in `next-candidates.sh --root BF-3049`.)
 
 Edges are best-effort: a failed `relations add` annotates the item (`collision edge to <ID> not wired — add manually`)
 and never stops filing or changes a verdict.
