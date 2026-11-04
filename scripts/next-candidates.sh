@@ -967,16 +967,21 @@ if [ "$gate_on" -eq 1 ]; then
     else
       gate_closed=1
       candidates_json=$(printf '%s' "$candidates_json" | jq 'map(select(.state_rank != 1))')
-      hold_line=$(printf '%s' "$held_json" | jq -r --argjson w "$withheld" --arg fb "$backlog_fallback" '
+      # Inherited-stage Backlog candidates are ranked above this note but are not column members, so held_json never
+      # counts them: without this the note reads `0 pickable now … wait` under a ranked list (BF-3049's scope, 2026-11-04).
+      inherited_pickable=$(printf '%s' "$candidates_json" | jq '[.[] | select(.state_rank == 0 and ((.gates_unstarted // []) | length) > 0)] | length')
+      hold_line=$(printf '%s' "$held_json" | jq -r --argjson w "$withheld" --arg fb "$backlog_fallback" --argjson inh "$inherited_pickable" '
         ([.[] | select(.kind == "pickable")] | length) as $p
         | [.[] | select(.kind == "releasing") | .id] as $r
         | [.[] | select(.kind == "keeper") | "\(.id) [\(.reason)]"] as $k
-        | "_PLANNED-HOLD: Backlog withheld — the Planned/Todo column is not drained (\(length) issue(s) hold the gate: \($p) pickable now"
+        | "_PLANNED-HOLD: Backlog withheld — the Planned/Todo column is not drained (\(length) issue(s) hold the gate: \($p + $inh) pickable now"
+          + (if $inh > 0 then " — \($inh) of them Backlog members ranked above that inherit the stage" else "" end)
           + (if ($r | length) > 0 then "; \($r | length) will release on their own — \($r | join(", "))" else "" end)
           + (if ($k | length) > 0 then "; \($k | length) need the keeper — \($k | join(", "))" else "" end)
           + "). \($w) Backlog candidate(s) wait behind the gate; "
           + (if $fb != "1" then "it opens when the column drains — pass --no-stage-gate to list them._"
              elif $w > 0 then "backlog fallback is on — they open as soon as nothing Planned/Todo is pickable._"
+             elif $inh > 0 then "backlog fallback is on but Backlog has nothing further pickable — take the top-ranked candidate above._"
              else "backlog fallback is on but Backlog has nothing pickable either — wait._" end)')
     fi
   fi

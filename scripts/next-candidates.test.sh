@@ -33,7 +33,10 @@ ck() { # ck <label> <expected> <actual>
   if [ "$2" = "$3" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL: $1 — expected [$2] got [$3]"; fi
 }
 ck_has() { # ck_has <label> <needle> <haystack-file>
-  if grep -qF -- "$2" "$3"; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "FAIL: $1 — missing [$2]"; fi
+  if grep -qF -- "$2" "$3"; then PASS=$((PASS+1)); else
+    FAIL=$((FAIL+1)); echo "FAIL: $1 — missing [$2]"
+    grep -F -- "${2:0:12}" "$3" | head -1 | sed 's/^/  near: /'   # the line sharing the needle's head, so a drifted note reads off the failure
+  fi
 }
 ck_lacks() { # ck_lacks <label> <needle> <haystack-file>
   if grep -qF -- "$2" "$3"; then FAIL=$((FAIL+1)); echo "FAIL: $1 — unexpected [$2]"; else PASS=$((PASS+1)); fi
@@ -237,7 +240,9 @@ ck "stage-first order under the gate" "TT-3 TT-2 TT-4 TT-5 TT-28 TT-7 TT-18 TT-2
 ck_has  "related partner in flight annotated" 'Spread: `related` partner TT-10 is in flight — soft de-rank to reduce file collisions' "$OUT"
 ck_has  "epic note" '1 issue(s) hidden as delegated epics (`epic` label' "$OUT"
 ck_lacks "epic hidden" "TT-27" "$WORK/ranked.txt"
-ck_has  "planned-hold note" "_PLANNED-HOLD: Backlog withheld — the Planned/Todo column is not drained (14 issue(s) hold the gate: 7 pickable now; 3 will release on their own — TT-9, TT-21, TT-25; 4 need the keeper — TT-11 [needs decision], TT-12 [solo], TT-13 [human], TT-27 [epic — certify per child; it closes itself when they release]). 6 Backlog candidate(s) wait behind the gate; it opens when the column drains — pass --no-stage-gate to list them._" "$OUT"
+# 7 Planned pickable plus the 4 inherited-stage Backlog candidates ranked above the note (TT-20, TT-23, TT-26, TT-40):
+# the note's count reads the ranked list, not the column alone, so it never says fewer pickable than the list shows.
+ck_has  "planned-hold note" "_PLANNED-HOLD: Backlog withheld — the Planned/Todo column is not drained (14 issue(s) hold the gate: 11 pickable now — 4 of them Backlog members ranked above that inherit the stage; 3 will release on their own — TT-9, TT-21, TT-25; 4 need the keeper — TT-11 [needs decision], TT-12 [solo], TT-13 [human], TT-27 [epic — certify per child; it closes itself when they release]). 6 Backlog candidate(s) wait behind the gate; it opens when the column drains — pass --no-stage-gate to list them._" "$OUT"
 ck_lacks "claimed planned does not hold the gate" "TT-16 [" "$OUT"
 ck_has  "rfr blocker resolved"  "TT-7" "$OUT"
 ck_has  "in-review blocker resolved" "TT-18" "$OUT"
@@ -301,7 +306,7 @@ ck_has  "claimed note"  "1 issue(s) hidden as claimed by a person" "$OUT"
 OUT6="$WORK/out6.md"
 run "$OUT6" --limit 20 --include-claimed || { echo "FAIL: include-claimed run exited $?"; cat "$OUT6.err"; exit 1; }
 ck "claimed restored in place" "TT-3 TT-2 TT-4 TT-5 TT-28 TT-16 TT-7 TT-18 TT-20 TT-23 TT-26 TT-40" "$(order_of "$OUT6")"
-ck_has  "restored claim counts as pickable" "15 issue(s) hold the gate: 8 pickable now" "$OUT6"
+ck_has  "restored claim counts as pickable" "15 issue(s) hold the gate: 12 pickable now — 4 of them Backlog members ranked above that inherit the stage" "$OUT6"
 ck_lacks "no claimed note when included" "hidden as claimed" "$OUT6"
 
 # ---- the limit cut never hides Planned/Todo: --limit 1 keeps a one-item top list but
@@ -495,7 +500,7 @@ OUTR="$WORK/outr.md"
 run "$OUTR" --limit 20 --root TT-27 || { echo "FAIL: root run exited $?"; cat "$OUTR.err"; exit 1; }
 ck "scoped order (TT-29 blocked, TT-20 withheld as Backlog while TT-26/TT-40 are pickable, TT-27 hidden as the epic)" "TT-26 TT-40" "$(order_of "$OUTR")"
 ck_has  "scope line"        "_Scope: epic TT-27 — 5 non-terminal member(s) across TT; ranking limited to the graph._" "$OUTR"
-ck_has  "scoped planned-hold counts members only" "_PLANNED-HOLD: Backlog withheld — the Planned/Todo column is not drained (1 issue(s) hold the gate: 0 pickable now; 1 need the keeper — TT-27 [epic — certify per child; it closes itself when they release]). 1 Backlog candidate(s) wait behind the gate; backlog fallback is on — they open as soon as nothing Planned/Todo is pickable._" "$OUTR"
+ck_has  "scoped planned-hold counts members only" "_PLANNED-HOLD: Backlog withheld — the Planned/Todo column is not drained (1 issue(s) hold the gate: 2 pickable now — 2 of them Backlog members ranked above that inherit the stage; 1 need the keeper — TT-27 [epic — certify per child; it closes itself when they release]). 1 Backlog candidate(s) wait behind the gate; backlog fallback is on — they open as soon as nothing Planned/Todo is pickable._" "$OUTR"
 ck_has  "scoped epic note"  "1 issue(s) hidden as delegated epics" "$OUTR"
 ck_lacks "scoped: no needs-decision note (TT-11 is outside)" "hidden awaiting a human decision" "$OUTR"
 ck_lacks "scoped: no claimed note (TT-16 is outside)"        "hidden as claimed" "$OUTR"
@@ -636,6 +641,10 @@ run "$OUTF3" --limit 20 --root TT-80 || { echo "FAIL: scoped post-ship run exite
 ck "scoped: the child opens once its blocker ships" "TT-81" "$(order_of "$OUTF3")"
 ck_lacks "scoped: an inherited-stage pick carries no fallback note" "BACKLOG-FALLBACK" "$OUTF3"
 ck_lacks "scoped: still not drained" "EPIC-DRAINED" "$OUTF3"
+# The live shape of 2026-11-04 (epic BF-3049): the only pickable member inherits the stage from Backlog, so the column
+# census alone read `0 pickable now … — wait._` directly under the ranked pick. The note must count the pick and say take it.
+ck_has  "scoped: the inherited pick is counted as pickable" "(1 issue(s) hold the gate: 1 pickable now — 1 of them Backlog members ranked above that inherit the stage; 1 need the keeper — TT-80 [epic — certify per child; it closes itself when they release]). 0 Backlog candidate(s) wait behind the gate; backlog fallback is on but Backlog has nothing further pickable — take the top-ranked candidate above._" "$OUTF3"
+ck_lacks "scoped: no wait under a ranked pick" "— wait._" "$OUTF3"
 mv "$WORK/issues-page.keep" "$FIX/issues-page.json"; mv "$WORK/deps-page.keep" "$FIX/deps-page.json"
 
 # ---- sequence-held: a running /fleet-sequence's queue is hidden from every ranking (its runner dispatches
@@ -647,7 +656,7 @@ run "$OUTS" --limit 20 --no-stage-gate || { echo "FAIL: sequence-held run exited
 ck "held issues absent from the ranking" "TT-17 TT-3 TT-2 TT-4 TT-28 TT-7 TT-18 TT-20 TT-23 TT-26 TT-40 TT-1 TT-22 TT-42 TT-44" "$(order_of "$OUTS")"
 ck_has  "sequence note"   "_2 issue(s) hidden as held by a running /fleet-sequence (TT-5 → TT-6) — the sequence ships them in order; fleet-sequence.sh status reads it._" "$OUTS"
 run "$OUTS" --limit 20 || { echo "FAIL: sequence-held gate run exited $?"; cat "$OUTS.err"; exit 1; }
-ck_has  "held issue counted as releasing, not pickable" "14 issue(s) hold the gate: 6 pickable now; 4 will release on their own — TT-5, TT-9, TT-21, TT-25" "$OUTS"
+ck_has  "held issue counted as releasing, not pickable" "14 issue(s) hold the gate: 10 pickable now — 4 of them Backlog members ranked above that inherit the stage; 4 will release on their own — TT-5, TT-9, TT-21, TT-25" "$OUTS"
 ck_lacks "held issue not called filtered out" "TT-5 [filtered out]" "$OUTS"
 printf '{"status":"running","queue":["TT-5","TT-6"],"runner_pid":%s}\n' "$(sh -c 'echo $$')" > "$REPO/tmp/fleet-sequence-tt-5.json"
 run "$OUTS" --limit 20 --no-stage-gate || { echo "FAIL: dead-sequence run exited $?"; cat "$OUTS.err"; exit 1; }
