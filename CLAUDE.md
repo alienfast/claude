@@ -62,6 +62,8 @@ Bash-only idioms fail silently, so an empty `EXIT=` or an all-zero table reads a
 - Quote globs in flags: `--include='*.md'`.
 - `>` may refuse to overwrite (inherited `NO_CLOBBER`): use `>|` and `>>|`. In a worktree-isolated session `>>|` is
   refused, so write one file with `>|` or run `zsh tmp/<name>.sh`.
+- `${(f)…}`, `${(P)…}` and a modifier chain such as `${f:h:t}` are refused by the built-in rm safety check, `rm` or not:
+  run them from `zsh tmp/<name>.sh`; a real `rm` stays its own plain call.
 - A nested heredoc ends at the first matching delimiter and the rest executes: give the outer one a unique delimiter,
   or use the Write tool.
 - Build control characters from codepoints, never `\u` escapes; a real NUL makes grep skip the file silently.

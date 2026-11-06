@@ -30,6 +30,15 @@ deterministic traps below with the fix in its message.
 - `$var:` followed by a modifier letter is a zsh modifier, quoted or not: `a A c e h l P q Q r s t u` always, `F` and `W`
   depending on what follows. `git cat-file -e "$tag:apps/x"` asks about `<cwd>/v5.1.38pps/x` and reads as "absent"
   behind `2>/dev/null`. Brace the name (`${tag}:apps/x`) or follow the colon with another expansion (`"$tag:$file"`).
+- zsh-only expansion syntax in a tool call — the forms seen are the `${(f)…}` and `${(P)…}` parameter flags and a
+  modifier chain such as `${f:h:t}` — is refused by Claude Code's built-in rm safety check (not a hook) as a command
+  that *could not be checked for dangerous rm operations*, whether or not the call contains an `rm`:
+  `k=HOME; echo ${(P)k}` alone is refused, the same command without the flag runs, and the message never names the
+  token, so a near-identical re-issue is refused again. Only the call's command string is read, never a script body:
+  put the expansion in `tmp/<name>.sh` and run `zsh tmp/<name>.sh`, or drop the flag. A real `rm` is a different
+  matter — keep it as its own plain call the check can read, and never move it into the script to get past the refusal
+  (the message forbids exactly that). Same family as the `>>|` refusal under § Redirects: a bash-grammar parser cannot
+  read zsh-only syntax.
 - An unquoted leading `=` is EQUALS expansion (`=ls` → `/bin/ls`); `echo =====` aborts the call. Quote it.
 - Quote glob patterns in command flags (`--include='*.md'`, `-name '*.rb'`). Unquoted, zsh expands them against the cwd
   first: no match aborts the call with `no matches found`; a match silently substitutes filenames and the command runs on
