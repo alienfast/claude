@@ -62,11 +62,14 @@ run item 5 over every certified issue, failures included.
    targeted `/auto <ID>` or `/fleet-sequence` while the fleet is quiet. The label hides the issue from every ranking;
    targeted runs still ship it. **It over-triggers, and a false positive parks a workable issue on the one serial
    resource** — read `references/solo-qualification.md` before marking one. Exactly three grounds qualify, named in the
-   comment: (a) it changes the rules in-flight sessions already play by (merge drivers, the check graph, a shared CI gate,
-   a lockfile every worktree's install predates); (b) it collides so broadly that serialization does not scale (more than
-   a handful of Step 3 edges — put the count in the comment); (c) its acceptance holds a machine-wide resource for hours (a
-   load campaign, repeated cold runs of the browser lane). A resolved generated artifact, a sweep confined to one file,
-   and a serial artifact the repo does not resolve are the false positives the reference walks through.
+   comment: (a) it changes state a sibling meets without merging main (a launchd agent, a hook under `~/.claude`, a
+   docker image or volume every slot shares by name — never an in-tree change); (b) it collides so broadly that
+   serialization does not scale (more than a handful of Step 3 edges — put the count in the comment); (c) its
+   acceptance holds a machine-wide resource for hours (a load campaign, repeated cold runs of the browser lane, a
+   benchmark that needs a quiet machine). A dependency or lockfile change, a check-suite or CI edit, a resolved
+   generated artifact, a sweep confined to one file, and a serial artifact the repo does not resolve are the false
+   positives the reference walks through. A mark whose comment names no ground is invalid: clear it
+   (`linear-remove-label.sh <ID> solo`) and say so.
 4. **Pipeline label repair** — `/reflect` filings certify by provenance: ensure `specified` + `reflection`, plus `keeper`
    when the proposal edits `~/.claude`. Duplicate filings of one proposal: keep one canonical,
    `linear-cli relations add <dup> <canonical> -r duplicate`, cross-comment both.

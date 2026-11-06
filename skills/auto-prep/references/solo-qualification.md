@@ -4,11 +4,14 @@ Read this before marking an issue `solo` in `/auto-prep` Step 2. The disposition
 expensive: it pulls a workable issue out of the fleet pool and parks it on the one serial resource, the user. Qualify on
 exactly three grounds, and name which one in the comment.
 
-## (a) It changes the rules other in-flight sessions are already playing by
+## (a) It changes state a sibling session meets without merging main
 
-Merge-driver or `.gitattributes` registration, the check/task graph, a package's `test` script going from stub to real, a
-shared CI gate, a dependency or lockfile change every other worktree's install predates. The test is whether a session
-that started *before* this merged would behave differently after it — not whether the file sounds important.
+Machine-global state outside any worktree's tree: a launchd agent or a hook under `~/.claude`, a docker image or
+volume every stack slot shares by name, the stack-slot registry, a tool installed on the machine. The test is whether
+a session that started *before* this landed is affected *without* merging main. A change a sibling meets only by
+merging is met at `/finish`'s merged-tree gate, which runs `pnpm check` on the merged tree, and is not this ground:
+merge drivers, the check/task graph, a shared CI gate and a dependency or lockfile change all fail the test (see Not
+solo below). Nearly nothing `/auto` ships qualifies; a mark on this ground names the out-of-tree state in the comment.
 
 ## (b) It collides so broadly that serialization does not scale
 
@@ -28,10 +31,14 @@ This ground applies at filing too: a pipeline filing that certifies itself takes
 
 ## Not solo, however it sounds
 
+- **A dependency or lockfile change, a check-suite, tooling, compose or CI edit, or a merge-driver registration.** A
+  sibling meets it only by merging main, where the merged-tree gate catches a stale install or a changed rule; a
+  lockfile change needs a reinstall there, not sequencing. The 2026-11-06 audit found three of eight open marks on
+  this reading, two of them with no comment at all.
 - **Touching a generated artifact the repo already resolves.** Check `.gitattributes` for a `merge=ours` driver on those
   paths and CI for an unconditional regen; under both, sibling sessions never conflict there and CI rebuilds the truth.
-  Changing the generation *pipeline or its gate* can still qualify under (a); emitting different *content* through an
-  unchanged pipeline does not.
+  Changing the generation *pipeline or its gate* is an in-tree change too, met at the merged-tree gate; emitting
+  different *content* through an unchanged pipeline is not solo either.
 - **A class-scoped sweep confined to one file or type.** That is Step 3's serialization case by the same "same method →
   serialize" rule, and often already wired. Scope, not the word "sweep" or "audit," decides.
 - **An ordinary schema or API change** whose only shared-file contact is the regenerated output above.
