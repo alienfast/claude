@@ -200,13 +200,15 @@ cold runs of a lane that takes a machine-wide lock — takes `solo` beside `spec
 certified at 17:11Z, picked at 21:20Z, and loaded the machine for twelve hours: its three siblings' `pnpm check` medians
 tripled and 15% of their runs hit the Bash cap.
 
-Every filing ends carrying a routing label some consumer reads, `specified`, `needs decision`, `human` or `keeper`,
-never a class label alone ([issue-spec.md](issue-spec.md) § An agent filing never lands unrouted). Two gates enforce it:
+Every filing ends carrying a routing label some consumer reads — `specified`, `needs decision`, `human` or `keeper`, or
+for `/sentry` and `/dependency-updater` their own `sentry` / `dependencies` — never a class label alone
+([issue-spec.md](issue-spec.md) § An agent filing never lands unrouted). Two gates enforce it:
 `quality-review-write-verdict.sh` reads every id on a verdict's `Deferred filed as issues:` line back from Linear and
-exits 3 on one with no routing label or priority None (route it with the two commands its stderr names, then re-run the
-same call), and `linear-create-child.sh` refuses a label slot with no routing label unless the call passes
-`--allow-unrouted`, which is why only a caller that certifies in a later step of the same run passes it. A sibling filed
-unrouted is not precedent: route the new filing, and route the sibling while you are there.
+exits 3 on one with none of the four (its ids are `/quality-review`'s, which never files a producer label) or priority
+None (route it with the two commands its stderr names, then re-run the same call), and `linear-create-child.sh` refuses
+a label slot with no routing label unless the call passes `--allow-unrouted`, which is why only a caller that certifies
+in a later step of the same run passes it. A sibling filed unrouted is not precedent: route the new filing, and route
+the sibling while you are there.
 
 ## 6. Record
 

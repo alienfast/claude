@@ -238,15 +238,21 @@ Filed issues are output too, and they fail in ways the metrics cannot see. Every
   A phrase-shaped search returns empty with exit 0 and reads exactly like "no duplicate".
 - **Stranded states.** Anything in `Triage` is invisible to `/next` and `/auto` permanently. List it:
   `linear-cli api query` filtered on `state.name == "Triage"`.
-- **Routing.** Every filing carries `specified`, `needs decision`, or `human` — an issue with none of them is unrouted:
-  nothing ranks it, nothing parks it for a human, and the next session re-diagnoses and re-files it
-  (`standards/issue-spec.md` § An agent filing never lands unrouted). List rows omit labels (linear skill gotcha #13),
-  so read each filing with `issues get <ID> -o json | jq '[.labels.nodes[].name]'`. A severity-carrying filing at
-  priority None is the same fault on the other field, and a reply token such as `suggested` passed as a label is no
-  routing at all. `quality-review-write-verdict.sh` reads every filed id back from Linear and exits 3 on an unrouted
-  one, so a filing that still lands unrouted means its verdict was never published, the session ignored the exit 3, or
-  Linear did not answer the read (a `routing is unverified` WARN in the transcript); read that session's write-verdict
-  call before filing a finding against the rule.
+- **Routing.** Every filing carries a routing label some consumer reads — `specified`, `needs decision`, `human` or
+  `keeper`, or on a `/sentry` or `/dependency-updater` filing its own `sentry` / `dependencies`, the two producer labels
+  `standards/issue-spec.md` treats as self-routing (`linear-create-child.sh`'s create gate accepts exactly that set) —
+  an issue with none of them is unrouted: nothing ranks it, nothing parks it for a human, and the next session
+  re-diagnoses and re-files it (`standards/issue-spec.md` § An agent filing never lands unrouted). List rows omit labels
+  (linear skill gotcha #13), so read each filing with `issues get <ID> -o json | jq '[.labels.nodes[].name]'`. A
+  severity-carrying filing at priority None is the same fault on the other field, and a reply token such as `suggested`
+  passed as a label is no routing at all. `quality-review-write-verdict.sh` reads every filed id back from Linear and
+  exits 3 on an unrouted one, so a filing that still lands unrouted means its verdict was never published, the session
+  ignored the exit 3, or Linear did not answer the read (a `routing is unverified` WARN in the transcript); read that
+  session's write-verdict call before filing a finding against the rule. A `sentry`-only (or `sentry,bug`) filing is
+  therefore routed, not stranded: `/sentry`'s sync pass and priority reconcile query exactly that label every `next` /
+  `sweep` run, and it withholds `specified` on purpose until the root cause is measured (its `references/triage.md`),
+  so it takes no relabel on this bullet's account — whether its body clears the `specified` bar is the next bullet's
+  question.
 - **Certification and placement.** `specified` present where the issue is meant to be auto-shippable; absent where it
   needs `/spec` first. Pipeline self-certification is sanctioned: a filing whose body meets `standards/issue-spec.md`'s
   bar may carry `specified` from birth, and the retro audits the *bar*, not the label's provenance. What it must audit is
