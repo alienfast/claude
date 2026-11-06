@@ -6,33 +6,36 @@ uses the same recipe with the `deferred` and `corrective` cycle tokens.
 ## Snapshot the dirty set before any fix lands
 
 The working tree carries the implementation's own uncommitted changes, so a plain `git diff` cannot isolate what a
-cycle's fixes changed. Before any fix of the cycle lands — dispatched or direct-applied, in any lane:
+cycle's fixes changed. Before any fix of the cycle lands — dispatched or direct-applied, in any lane — take the
+snapshot, and once the fixes are applied and checked, take the delta; both are `~/.claude/scripts/qr-fix-delta.sh`:
 
-1. `rm -rf tmp/qr-fix-base-<issue-id-lowercased>-<cycle>` — the literal `no-issue` in the issue slot when Step 1
-   resolved none (the same scoping the verdict artifacts use); the cycle token is the integer cycle, or `deferred` /
-   `corrective` for Step 6 sub-step 5's batches.
-2. Derive the dirty set — `git status --porcelain --untracked-files=all -- ':!tmp' | cut -c4-` — and copy every path
-   under `tmp/qr-fix-base-<issue>-<cycle>/<repo-relative path>`, creating parents as needed. A file no fix touches diffs
-   empty, so nothing already dirty can go missing, and the cost is one `cp` per path.
-3. After the cycle's fixes are applied and checked, re-derive the dirty set; `diff -u` each snapshotted file against its
-   copy and concatenate. The set difference `now \ snapshot` is the no-snapshot fallback set: `git diff -- <file>`,
-   labeled in the prompt as possibly carrying pre-fix hunks.
+```bash
+~/.claude/scripts/qr-fix-delta.sh snapshot <issue|no-issue> <cycle>                 # clears and refills the base dir
+~/.claude/scripts/qr-fix-delta.sh delta    <issue|no-issue> <cycle> [--out <file>]  # the concatenated diff, a/ -> b/
+~/.claude/scripts/qr-fix-delta.sh dirty    [-0]                                     # the derived dirty set
+```
 
-**Derive both sets; never hand-write either.** "Each file a fix will touch" is a prediction, and the complete-the-class
-and scope-escape-hatch rules make fixes land outside the findings' named files routinely. A hand-written snapshot list
-and a hand-written fallback list have both omitted a file a cycle-1 fix edited, producing a delta of the right length
-that parsed cleanly and described one file fewer than the cycle changed. The expected-dirty hash check derives its path
-set the same way — carry the idiom across.
+`<issue>` is the Linear id in any case, or the literal `no-issue` when Step 1 resolved none (the same scoping the
+verdict artifacts use); `<cycle>` is the integer cycle, or `deferred` / `corrective` for Step 6 sub-step 5's batches.
+The snapshot copies every dirty path outside `tmp/` (`git status --porcelain --untracked-files=all -- ':!tmp'`, renames
+and spaced paths intact) and records deleted ones. The delta diffs every snapshotted path against its copy, dirty now
+or not, so a reverted or deleted file shows; a path the snapshot never saw was clean when it was taken and diffs
+against HEAD — the script names these on stderr as the fallback set, beside the file and line counts the 200-line rule
+reads. An empty delta exits 0 and says so; `delta` with no snapshot exits 2 — take the snapshot, never replay an earlier
+delta.
 
-**Issue-scope the directory and clear it first — both halves are load-bearing.** `tmp/` is reaped only by age (the
-daily `/reap-tmp` ages a `qr-fix-base-*` snapshot out after a week; nothing clears it between sessions, and CLAUDE.md
-forbids removing the directory), while every cycle token repeats across runs — the integer restarts at 1, and `deferred`
-and `corrective` collide on every run — so an un-scoped path accumulates whichever issues this repo reviewed before. A
-stale base is more dangerous than a missing one because it **disarms the fallback**, which keys on the snapshot being
-*absent*: a previous issue's copy is present, readable, and diffable, so a strayed file is diffed against another issue's
-content and `diff` exits 0 either way. Never trust a base merely because a file exists on disk. Scoping is also what
-makes the `rm -rf` safe — clearing a shared un-scoped path would delete files another session created, which the
-multi-session rule forbids.
+**Why a script, and why these rules live in it.** Both sets are derived, never hand-written: "each file a fix will
+touch" is a prediction, and the complete-the-class and scope-escape-hatch rules make fixes land outside the findings'
+named files routinely — a hand-written snapshot list and a hand-written fallback list have each omitted a file a
+cycle-1 fix edited, producing a delta of the right length that described one file fewer than the cycle changed. The
+base directory is issue-scoped and cleared on every snapshot: `tmp/` is reaped only by age (the daily `/reap-tmp` ages
+a `qr-fix-base-*` snapshot out after a week) while every cycle token repeats across runs, and a stale base is worse
+than a missing one because it **disarms the fallback** — a previous issue's copy is present, readable and diffable, so
+a strayed file diffs against another issue's content and exits 0. The hand-typed form of this recipe
+(`rm -rf … && for … in ${(f)"$(git status …)"}`) is a shape the Bash tool refuses — the rm safety check cannot parse
+the `${(f)…}` flag, rm or not (`standards/shell.md` § Reserved names and expansion), and a worktree-isolated session
+refuses any loop or `$(…)` — which is why it is a script and is never retyped. The expected-dirty hash step derives its
+path set the same way: `qr-fix-delta.sh dirty -0 | xargs -0 shasum -a 256`.
 
 Item 4's re-review and item 5's `Targeted fix confirmation` both carry this diff — a bare changed-file list makes the
 verifier re-derive the delta from the whole tree, which is re-discovery pricing for verification work.
@@ -49,11 +52,12 @@ implementation's own changes are still there) and no `.rej` or `.orig` is writte
 flags it.
 
 To isolate a later cycle's delta, take that cycle's snapshot **before** its fixes land, as the recipe already requires;
-never replay an earlier delta to recover a snapshot you skipped, and where none exists use the `git diff -- <file>`
-fallback. If you must apply a delta anyway, **split it per file** and pass each section with an explicit target — the
-split is what protects, since `-o <output>` redirects only the section whose target you named and leaves sections 2..N
-resolving from their headers into the working tree — and add `-N`/`--forward`, which refuses a reverse-apply, leaves
-the tree intact, and exits 1 with `.rej` files instead of silently succeeding.
+never replay an earlier delta to recover a snapshot you skipped (`delta` refuses to run without one, and its HEAD
+fallback covers only paths that were clean when one was taken). If you must apply a delta anyway, **split it per
+file** and pass each section with an explicit target — the split is what protects, since `-o <output>` redirects only
+the section whose target you named and leaves sections 2..N resolving from their headers into the working tree — and
+add `-N`/`--forward`, which refuses a reverse-apply, leaves the tree intact, and exits 1 with `.rej` files instead of
+silently succeeding.
 
 ## Passing a large delta by path — above 200 lines only
 
@@ -62,10 +66,9 @@ at that size costs nothing worth saving. Above 200 lines the orchestrator re-emi
 its own fidelity risk — one elided or truncated hunk means the verifier confirms less than the delta while reporting it
 confirmed, the failure this rule exists to prevent. So above that bound:
 
-- Write the concatenated delta — same recipe, same fallback and labeling — to
-  `tmp/qr-fix-delta-<issue-id-lowercased>-<cycle>.diff`, the whole token matching the snapshot directory's (`no-issue`
-  substitution and the `deferred`/`corrective` tokens included), with `>|` so an imported `NO_CLOBBER` cannot refuse the
-  overwrite and silently leave a previous run's file in place.
+- Write the concatenated delta with `delta <issue> <cycle> --out tmp/qr-fix-delta-<issue-id-lowercased>-<cycle>.diff`,
+  the whole token matching the snapshot directory's (`no-issue` substitution and the `deferred`/`corrective` tokens
+  included); the script overwrites, so an imported `NO_CLOBBER` cannot leave a previous run's file in place.
 - Pass the **absolute** path in the `Fix delta` slot of whichever template is in use, re-labeled
   `Fix delta (precomputed unified diff — read this file; do NOT re-derive)`, stating the line count so the choice is
   auditable.

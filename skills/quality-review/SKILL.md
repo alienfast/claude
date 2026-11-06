@@ -224,15 +224,16 @@ before authorizing its deletion; open any external artifact a remedy cites and c
 wording finding a wording fix only; and sweep the batch for the dispatch's own finding labels before item 3.
 
 **Snapshot first — the re-review needs the fix delta as a diff.** Before any fix of the cycle lands, in any lane:
-`rm -rf tmp/qr-fix-base-<issue-lower|no-issue>-<cycle>`, then copy every path in the derived dirty set
-(`git status --porcelain --untracked-files=all -- ':!tmp' | cut -c4-`) under it. After fixes and check, re-derive the
-dirty set, `diff -u` each file against its snapshot, and concatenate; a file with no snapshot falls back to
-`git diff -- <file>`, labeled as possibly carrying pre-fix hunks. Derive both sets, never hand-write them; issue-scope
-and clear the directory every time (a stale base disarms the fallback); never replay a concatenated delta through
-`patch` (it reverse-applies sections 2..N and exits 0). Inline the delta in every verifier prompt up to 200 lines; above
-that, write it with `>|` to `tmp/qr-fix-delta-<issue>-<cycle>.diff`, pass the absolute path with the STOP-on-missing
-instruction, and populate `Changed files:` from the fixes' own footprint, never from the file. Read
-`references/fix-delta.md` before the first snapshot of a run, and whenever a delta goes by path.
+`~/.claude/scripts/qr-fix-delta.sh snapshot <issue|no-issue> <cycle>`. After fixes and check,
+`~/.claude/scripts/qr-fix-delta.sh delta <issue|no-issue> <cycle>` prints the concatenated `diff -u` of the dirty set
+against that snapshot and, on stderr, its file and line counts and the fallback set — paths clean when the snapshot was
+taken, diffed against HEAD. The script derives both sets, issue-scopes and clears the base directory every time (a stale
+base disarms the fallback) and takes the `deferred`/`corrective` cycle tokens; never retype its steps by hand (the
+hand-typed form is a shape the Bash tool refuses), and never replay a concatenated delta through `patch` (it
+reverse-applies sections 2..N and exits 0). Inline the delta in every verifier prompt up to 200 lines; above that,
+`delta … --out tmp/qr-fix-delta-<issue>-<cycle>.diff`, pass the absolute path with the STOP-on-missing instruction, and
+populate `Changed files:` from the fixes' own footprint, never from the file. Read `references/fix-delta.md` before the
+first snapshot of a run, and whenever a delta goes by path.
 
 After fixes land, continue through items 3→4→5. Do not stop after fixing.
 
