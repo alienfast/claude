@@ -18,14 +18,19 @@ that moment every `pnpm check` failure is caused by our changes and is ours to f
 
 1. **`pnpm check` must pass at all times.** Run it early and often; Turborepo caching keeps an unchanged tree cheap when
    the heavyweight lanes sit behind cached turbo tasks. It may not cover every suite a project has (the project's
-   `CLAUDE.md` names any outside it); the contract anchors to what the baseline actually ran, so when this issue touches
-   an outside suite the orchestrator — never a parallel delegate, which would run it against shared fixtures — captures
-   that suite's own baseline too and records, never adopts, failures it shows at HEAD. It is owed before the first edit,
-   not before planning: `~/.claude/scripts/suite-baseline-cache.sh lookup <suite>` first — a `HIT` *is* the baseline (its
-   `SUMMARY` and `FAILING` lines). On a `MISS`, launch the run detached at once, do every read-only step while it runs
-   (Step 6's exploration and plan, Step 7's post), and join its completion marker immediately before Step 8's first edit.
-   After any *complete* full-suite run, `record` it before the next edit so sessions forked from the same tree skip it.
-2. **Failures are never "pre-existing."** The baseline passed; any failure after it is ours, for what the baseline ran.
+   `CLAUDE.md` names any outside it). Such a suite owes no up-front baseline: the orchestrator — never a parallel
+   delegate, which would run it against shared fixtures — runs it in full once, detached, after Step 8's last edit, and
+   joins its marker before Step 9's review is dispatched (a reviewer's mutation testing corrupts a run in flight). A red
+   example is attributed lazily, per failing file: `~/.claude/scripts/suite-baseline-cache.sh lookup <suite>` on the
+   fork tree answers at once when a sibling recorded it (its `FAILING` lines); else the failing files alone run against
+   the pre-change tree in a detached worktree (`git worktree add --detach <tmp dir> <fork sha>`, the project's
+   single-file recipe). A failure the pre-change tree shows too is recorded, never adopted, and is not a stop. After
+   any *complete* full-suite run, `record` it before the next edit so sessions forked from the same tree skip it, and
+   gate its completeness on the example count against the newest recorded total (`list`), since a truncated run reads
+   green. A fix Step 9 lands re-runs the files it touched or reddened, not the suite.
+2. **Failures are never "pre-existing" for what `pnpm check` runs.** Its baseline passed; any later check failure is
+   ours. For an outside suite, "pre-existing" is what the lazy attribution above proves per failing file, never a
+   reading of a red alone.
 3. **Failures are never "out of scope."** If our changes cause a check to fail, fixing it IS our scope.
 4. **Failures are never deferred.** We do not proceed with a broken application. We stop and fix.
 5. **In effect from Step 5's baseline through Step 9's review.** Steps 1–4, 6, 7 and 10 modify no code; Steps 5, 8 and 9
@@ -144,8 +149,8 @@ merge clause) expect that state.
    `interactive`). The claim is **read back**, not trusted from the write's exit status (linear skill gotcha #8); a
    failed read-back is a `WARN:` and proceeds, so `VERIFIED` means *claimed, or claimed-and-unconfirmable* — on that
    WARN, re-check before implementing if siblings may contend. The script runs `pnpm check` only: an outside suite this
-   change touches still owes contract rule 1's baseline — start it now, join at Step 8's first edit. **Any other verdict
-   → read `references/wt-failures.md`** (`FAILED-CHECK` is Step 5's baseline-failure path).
+   change touches owes contract rule 1's single full run after Step 8's last edit, attributed lazily — nothing to start
+   here. **Any other verdict → read `references/wt-failures.md`** (`FAILED-CHECK` is Step 5's baseline-failure path).
 
 4. **`interactive` token → halt here**: on `VERIFIED`, read `references/interactive.md` and follow its hand-off (open the
    worktree in its own editor window, emit `INTERACTIVE-READY` as the session's only tag; nothing after Step 0 runs).

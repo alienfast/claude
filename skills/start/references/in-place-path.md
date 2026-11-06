@@ -20,7 +20,6 @@ baseline — a baseline on a stale branch is worthless, and so is the plan built
 SAME message** (read-only, the digest in hand; a red baseline stops the workflow regardless — waiting would serialize the
 two longest pre-plan waits for nothing).
 
-- **Passes** → the contract is in effect: every later `pnpm check` failure is ours. Per contract rule 1, also *start*
-  the baseline for any outside suite this change will touch (cache lookup, detached launch, joined at Step 8's first
-  edit).
+- **Passes** → the contract is in effect: every later `pnpm check` failure is ours. An outside suite this change will
+  touch owes nothing yet: contract rule 1 runs it once after Step 8's last edit and attributes a red lazily.
 - **Fails** → Step 5's **Baseline fails** paragraph in `SKILL.md`.

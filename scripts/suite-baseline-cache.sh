@@ -2,12 +2,12 @@
 # suite-baseline-cache.sh — share one full-suite result between every session working on a repo, keyed by the
 # hash of the working tree the run measured.
 #
-# WHY THIS EXISTS: a suite `pnpm check` does not run (basefund's rspec) owes a full-suite baseline before the
-# first edit so that post-change failures can be attributed. Every session in a fleet forks the same tip, so
-# each first pick spends minutes and eight workers re-measuring a tree a sibling measured moments earlier, and
-# a serialized sequence re-measures the tree its predecessor just verified. The result is a function of the
-# tree alone — gems, Ruby and MySQL are machine-local and identical across worktrees — so one measurement can
-# serve every session on this machine that forks that tree.
+# WHY THIS EXISTS: a suite `pnpm check` does not run (basefund's rspec) runs in full once per change, and a red
+# example is attributed against the tree the session forked. Every session in a fleet forks the same tip, so
+# without a shared record each red would re-measure, with eight workers, a tree a sibling measured moments
+# earlier, and a serialized sequence would re-measure the tree its predecessor just verified. The result is a
+# function of the tree alone — gems, Ruby and MySQL are machine-local and identical across worktrees — so one
+# measurement can serve every session on this machine that forks that tree.
 #
 # The key is the hash of the WORKING tree (tracked and untracked non-ignored files), not of HEAD: a post-change
 # verification run measures uncommitted work, and its result becomes a successor's baseline exactly when the
