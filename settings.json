@@ -146,7 +146,8 @@
       "ClaudeInChromeDomain(riskos.sandbox.socure.com)",
       "ClaudeInChromeDomain(app.pr588.stg.basefund.com)",
       "ClaudeInChromeDomain(www.figma.com)",
-      "ClaudeInChromeDomain(app.pr600.stg.basefund.com)"
+      "ClaudeInChromeDomain(app.pr600.stg.basefund.com)",
+      "mcp__claude-in-chrome__tabs_create_mcp"
     ],
     "deny": [],
     "ask": [],
