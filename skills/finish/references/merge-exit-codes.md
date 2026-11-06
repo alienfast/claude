@@ -104,8 +104,13 @@ untouched and clean. Conflicted files are listed on stderr as worktree-relative 
 1. For each conflicted file, read `<WT_DIR>/<path>`, understand both sides, and apply the resolution **with the `Edit`
    tool on the conflicted file** — marker by marker, or the whole file when one side wins outright. When one side
    clearly subsumes the other (the worktree branch removed code the source side modified, say), take the subsuming
-   side. Do not take a side with `git checkout --ours`/`--theirs`, `git restore`, or a shell overwrite
-   (`git show <ref>:<path> >| <path>`, `cp`): the hook allows the first two only on paths git lists as unmerged, and in
+   side. **`pnpm-lock.yaml` is never hand-edited**: resolve `package.json` first, then
+   `CI=true pnpm -C '<WT_DIR>' install --no-frozen-lockfile` — pnpm reads through the markers, installs, and rewrites the
+   lockfile clean (measured 2026-11-06, pnpm 12, two branches each adding a dependency). Confirm
+   `grep -c '^<<<<<<<' '<WT_DIR>/pnpm-lock.yaml'` prints `0` before step 2: the frozen form also installs through the
+   markers but leaves them on disk, so a green install is not a resolved file. Do not take a side with
+   `git checkout --ours`/`--theirs`, `git restore`, or a shell overwrite (`git show <ref>:<path> >| <path>`, `cp`): the
+   hook allows the first two only on paths git lists as unmerged, and in
    an unattended run every one of them is adjudicated by the auto-mode classifier, which reads an overwrite of source
    files mid-merge as dangerous and denies it, while `Edit` inside the entered worktree never reaches it. A denial of one
    of those shortcuts is a denial of the shortcut, not of this step — switch to `Edit` and continue; it is not a
