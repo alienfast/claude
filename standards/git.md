@@ -230,12 +230,19 @@ for review?" or "Want me to push, or leave the commit local?"
 
 ### A push is a request for CI
 
-A push carries work that has already passed the local gate: the project's check, and its test suite where the check does
-not run it ([project-commands.md](project-commands.md)). CI's job is what the gate cannot run on your machine — browser
-suites, container builds, a parallel test split — not what it can; a CI run red on something the gate covers is a local
-run skipped. The tell is a PR branch pushed several times in one session, each build red on something the gate would
-have caught, where one local run would have carried the fix whole. The one push that carries an ungated tree is
-`/checkpoint`'s WIP save, which records the check's result in its Linear comment.
+A push carries work that has already passed the local gate: the project's check ([project-commands.md](project-commands.md)),
+plus whatever part of a suite the check does not run that CI will not run for you. Which part depends on who runs CI next.
+An interactive push to a PR branch gets a full build of the pushed tree within minutes, on more machines than the laptop
+has, so for such a suite the local obligation is the targeted set the change names (the project's reference says how to
+derive it — basefund: `api-rspec-reference.md`'s grep-derived set) and the full suite is CI's; a full local run there
+duplicates a run CI is about to make while blocking the machine (measured 2026-11-06 on basefund: ~6–8 minutes with every
+core pegged, 22–64 times a day on one machine, against a 7-minute CI lane on three nodes). An unattended `/finish merge`
+pushes nothing and CI never sees that tree until the integration PR, so there the full local suite is the only gate the
+tree gets and stays owed before the merge. CI's job is what the gate cannot run on your machine — browser suites,
+container builds, a parallel test split, and the interactive case's full suite; a CI run red on something the targeted
+set would have caught is a local run skipped. The tell is a PR branch pushed several times in one session, each build red
+on something the gate would have caught, where one local run would have carried the fix whole. The one push that carries
+an ungated tree is `/checkpoint`'s WIP save, which records the check's result in its Linear comment.
 
 **A push to a branch with an open PR carries the tree that will merge, so sync the base before the local gate, not after
 CI.** CircleCI builds the branch head, not the merge result, so a green build on a branch behind its base says nothing

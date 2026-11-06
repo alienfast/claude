@@ -23,7 +23,9 @@ explicit grant. Read [standards/git.md](standards/git.md) before any git operati
 - Skills load on invocation; the harness listing is the catalog. [skills/README.md](skills/README.md) is the creation
   guide.
 - Lint and type-check before committing ([standards/project-commands.md](standards/project-commands.md)), and run the
-  project's full local gate — its check, plus its test suite where the check does not run it — before every push
+  project's check before every push. A suite the check does not run (basefund's rspec) is owed in full only where CI
+  will not run it — an unattended `/finish merge` — and as the targeted set the change names before an interactive push
+  to a PR branch, where CI's build of the pushed tree is the full-suite gate
   ([standards/git.md](standards/git.md#a-push-is-a-request-for-ci)). Type checking is hard-gated in `/quality-review`
   and re-gated in `/finish`.
 
