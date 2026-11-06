@@ -5,6 +5,30 @@ handled in SKILL.md. Every re-invocation below is the same Step 9 line, run from
 the lock, re-verifies the worktree branch against source's current tip and converges
 ([`standards/git-worktrees.md`](../../../standards/git-worktrees.md) § `/finish merge` between worktrees).
 
+## The merged tree's install
+
+Every merged-tree gate below runs `pnpm check` from `<WT_DIR>` against a `node_modules` that `start-wt-setup.sh`
+installed from the worktree's fork-point lockfile. When the merge moved `pnpm-lock.yaml` (a Renovate bump on source, a
+sibling that added a dependency), that install is stale: the check fails on a missing module or a version mismatch, or
+passes against the old packages and CI finds it later. So the gate starts with:
+
+```bash
+git -C '<WT_DIR>' diff --name-only ORIG_HEAD -- pnpm-lock.yaml
+```
+
+`git merge` sets `ORIG_HEAD` to the pre-merge tip and neither a conflict's resolving commit nor a fix commit moves it
+(measured 2026-11-06), so the command reads the same whether the merge is committed (§ 5, `GENERATED-DISCARD:`) or in
+progress (`CONFLICT:`). Empty → run `pnpm check`. `pnpm-lock.yaml` → reinstall, then `pnpm check`:
+
+```bash
+CI=true pnpm -C '<WT_DIR>' install --prefer-offline --frozen-lockfile
+```
+
+`CI=true` lets pnpm purge `node_modules` without a TTY (`rules/package-manager.md` § Non-interactive installs); the
+frozen form is the one the worktree was created with. A failed install is the gate's red (§ 5 step 3): a lockfile the
+merge left out of step with `package.json` is the merge's defect, fixed in the worktree like any other. A reinstall is
+recorded at exit 0 (SKILL.md Step 9's exit-0 sub-step 5).
+
 ## 1 — hard precondition failure
 
 Surface the script's output and stop; attempt no recovery. These are setup problems the user resolves: source branch
@@ -51,17 +75,18 @@ never empty and never self-interpreting.
 
 - **Every hunk is a version or serial line the merged copy already carries at a higher value** (a schema dump's
   `version:`, a generated timestamp) → nothing of substance was discarded; the usual cause is a sibling's data-only
-  migration, whose only trace in a schema dump is the version line. Quote the diff as the justification, run `pnpm check`
-  from `<WT_DIR>` (the merged-tree gate — a discard exit pre-empts the script's own exit-5 stop; red routes as § 5
-  below), and finalize by re-running the Step 9 line with `_FM_SKIP_OURS_GUARD=1` — **in auto mode too**: this override
-  is backed by a measurement rather than an assertion, which is what distinguishes it from the verdict-gate overrides
-  Step 8 refuses unattended.
+  migration, whose only trace in a schema dump is the version line. Quote the diff as the justification, run the
+  merged-tree gate from `<WT_DIR>` (§ The merged tree's install, then `pnpm check` — a discard exit pre-empts the
+  script's own exit-5 stop; red routes as § 5 below), and finalize by re-running the Step 9 line with
+  `_FM_SKIP_OURS_GUARD=1` — **in auto mode too**: this override is backed by a measurement rather than an assertion,
+  which is what distinguishes it from the verdict-gate overrides Step 8 refuses unattended.
 - **Anything else** — any added, removed or changed structural line — is a real loss. Regenerate the listed artifacts in
-  the worktree from the merged sources (the project's documented schema/codegen regeneration), run `pnpm check` from
-  `<WT_DIR>` (red routes as § 5), then `git -C '<WT_DIR>' add <files> && git -C '<WT_DIR>' commit -m 'Regenerate merged
-  artifacts'` and re-invoke the Step 9 line. **Auto mode:** if the project documents no regeneration command, do not
-  guess — stop with `BLOCKED-ON-REVIEW: <ISSUE-ID> — merge=ours driver dropped <SOURCE_BRANCH>'s generated hunks
-  (<files>); regeneration needs a human. Worktree preserved.`
+  the worktree from the merged sources (the project's documented schema/codegen regeneration), run the merged-tree gate
+  from `<WT_DIR>` (§ The merged tree's install, then `pnpm check`; red routes as § 5), then
+  `git -C '<WT_DIR>' add <files> && git -C '<WT_DIR>' commit -m 'Regenerate merged artifacts'` and re-invoke the Step 9
+  line. **Auto mode:** if the project documents no regeneration command, do not guess — stop with
+  `BLOCKED-ON-REVIEW: <ISSUE-ID> — merge=ours driver dropped <SOURCE_BRANCH>'s generated hunks (<files>); regeneration
+  needs a human. Worktree preserved.`
 
 **A regeneration that changes nothing is a satisfied remedy, not a spent one — and for a schema dump it is not evidence
 either.** "Nothing to commit" means the merged tree already regenerates to what it carries, so return to the measurement
@@ -88,11 +113,11 @@ untouched and clean. Conflicted files are listed on stderr as worktree-relative 
    ambiguous, do not guess — run `git -C '<WT_DIR>' merge --abort` and stop with
    `BLOCKED-ON-REVIEW: <ISSUE-ID> — merge conflict needs a human (<files>). Worktree preserved.`
 2. `git -C '<WT_DIR>' add <resolved-files>`
-3. `pnpm check` from `<WT_DIR>` — green before committing. Red means the resolution introduced a regression: do not
-   commit and do not re-invoke. Surface the failing output and let the user choose between fixing the resolution,
-   aborting the merge (`git -C '<WT_DIR>' merge --abort`), or escalating to architect; the mid-merge state stays in the
-   worktree for inspection. **Auto mode:** run `git -C '<WT_DIR>' merge --abort` and stop with
-   `BLOCKED-ON-REVIEW: <ISSUE-ID> — conflict resolution broke pnpm check; merge aborted, worktree preserved for a human.`
+3. § The merged tree's install, then `pnpm check` from `<WT_DIR>` — green before committing. Red means the resolution
+   introduced a regression: do not commit and do not re-invoke. Surface the failing output and let the user choose
+   between fixing the resolution, aborting the merge (`git -C '<WT_DIR>' merge --abort`), or escalating to architect;
+   the mid-merge state stays in the worktree for inspection. **Auto mode:** run `git -C '<WT_DIR>' merge --abort` and
+   stop with `BLOCKED-ON-REVIEW: <ISSUE-ID> — conflict resolution broke pnpm check; merge aborted, worktree preserved for a human.`
 4. `git -C '<WT_DIR>' commit -F '<WT_DIR>/tmp/git-merge-msg-<issue-id-lowercased>.md'` — the prepared merge message.
 5. Re-invoke the Step 9 line. It re-acquires the lock and fast-forwards the main checkout, then removes the worktree and
    branch. If source advanced during the resolution it re-merges the new delta, which may return **5** (gate the newly
@@ -108,7 +133,7 @@ untouched and clean. Conflicted files are listed on stderr as worktree-relative 
 method body, a rename landing beside a new caller). This is the **merged-tree gate**: what lets `related` siblings ship
 in parallel without a `blocks` edge (`standards/issue-spec.md` § Certification includes collision edges).
 
-1. `pnpm check` from `<WT_DIR>`.
+1. § The merged tree's install, then `pnpm check` from `<WT_DIR>`.
 2. **Green** → re-invoke the Step 9 line. The re-run finds the worktree branch already containing source and finalizes —
    or returns **5** or **2** again if source advanced meanwhile; repeat.
 3. **Red** → the merge, not this issue's own change, broke the tree. Fix it in the worktree and commit (Step 7's bounds

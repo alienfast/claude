@@ -85,12 +85,14 @@ exclusive lock keyed by the repo's common git dir (`scripts/with-repo-lock.py`; 
 `~/.claude/locks/repo-<sha256-prefix>.lock`; `fcntl.flock`, released on any process exit, so no stale-lock cleanup)
 before advancing source. Other sessions wait on stderr (`[finish-queue] waiting for <common-git-dir> …`). The worktree
 branch is first brought up to source's tip **inside the worktree**, lock-free, and conflicts are resolved there, never
-in the main checkout; source is then advanced by `git merge --ff-only` when the main checkout is on source, or an atomic
-`git update-ref` compare-and-swap when it is on another branch, so the main checkout is never left mid-merge and its
-HEAD is never switched. Only that finalize is locked; pushes, Linear updates and `gh pr create` run in parallel. On a
-conflict the script exits 2 and releases the lock. The finalize re-verifies under the lock that the worktree branch still
-descends from source's current tip and re-merges any new delta, looping until it converges, so it never fast-forwards a
-stale branch.
+in the main checkout; the session then gates the merged tree with `pnpm check`, after a frozen reinstall when the merge
+moved `pnpm-lock.yaml`, since the worktree's `node_modules` predate it
+(`skills/finish/references/merge-exit-codes.md` § The merged tree's install); source is then advanced by
+`git merge --ff-only` when the main checkout is on source, or an atomic `git update-ref` compare-and-swap when it is on
+another branch, so the main checkout is never left mid-merge and its HEAD is never switched. Only that finalize is
+locked; pushes, Linear updates and `gh pr create` run in parallel. On a conflict the script exits 2 and releases the
+lock. The finalize re-verifies under the lock that the worktree branch still descends from source's current tip and
+re-merges any new delta, looping until it converges, so it never fast-forwards a stale branch.
 
 ### Transient blocks are deferred, never forced
 

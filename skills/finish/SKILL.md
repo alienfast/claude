@@ -404,7 +404,11 @@ of this gate.
    replaced: `SHIPPED-MERGE: <ISSUE-ID> — <WORKTREE_BRANCH> carried no commits beyond <SOURCE_BRANCH>; nothing merged,
    worktree removed, Ready For Release.` The completion comment says the same (Step 4's *What was done* must not describe
    repository changes the branch does not carry). Combines with sub-step 3's `CLEANUP-FAILED:` wording.
-5. Surface the merge output and emit the `SHIPPED-MERGE` closing message (§ Terminal tags). Standalone: stop. Under
+5. Surface the merge output and emit the `SHIPPED-MERGE` closing message (§ Terminal tags). When a merge round
+   reinstalled because source moved `pnpm-lock.yaml` (`references/merge-exit-codes.md` § The merged tree's install), say
+   so here, and under `/auto` also in a one-line follow-up `### Notes` comment posted by sub-step 3's mechanism (body in
+   `<REPO_ROOT>/tmp/linear-notes-<issue-id-lowercased>.md`): the completion comment went out at Step 5, before the merge,
+   and its Verification section would otherwise read as a check against the fork-point install. Standalone: stop. Under
    `/auto`: continue with `/auto` Step 4.
 
 **Other exit codes** — read `references/merge-exit-codes.md` for the full handler of each:
@@ -417,7 +421,8 @@ of this gate.
 - **2** — the worktree needs work in place: `GENERATED-DISCARD:` (a `merge=ours` driver dropped source's generated
   hunks — measure the dropped delta before regenerating anything) or `CONFLICT:` / `RESUME:` (resolve in the worktree
   with `Edit`, gate, commit, re-invoke).
-- **5** — `MERGED-SOURCE:`, the merged-tree gate. `pnpm check` from `<WT_DIR>`; green → re-invoke the same line (it
+- **5** — `MERGED-SOURCE:`, the merged-tree gate. A frozen reinstall when the merge moved `pnpm-lock.yaml` (the
+  reference's § The merged tree's install), then `pnpm check` from `<WT_DIR>`; green → re-invoke the same line (it
   finalizes, or returns 5 or 2 again if source moved meanwhile); red → the reference's exit-5 handler.
 
 #### `ACTION=pr`
