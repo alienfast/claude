@@ -4,7 +4,9 @@
 # verified transition itself (exit 1 when nothing moves it); the parent walk closing an epic when
 # the last child releases and recursing to the grand-epic; staying open while a sibling is In
 # Review (not terminal here) or In Progress; never touching an unlabeled parent; ignoring a
-# childless epic; and a parent failure that WARNs while the child's exit stays 0.
+# childless epic; a parent failure that WARNs while the child's exit stays 0; --done moving the
+# issue itself to Done; and the epic's target following its children — Done when every child is
+# settled, Ready for Release while one still waits for its release.
 #
 # linear-cli is a PATH shim over a tiny file-backed store (state-<ID>, parent-<ID>, labels-<ID>,
 # children-<ID>) that records every `issues update` in order; HOME is an empty dir so the script's
@@ -38,6 +40,8 @@ mkdir -p "$DB" "$WORK/bin" "$WORK/home"
 #   EP-8 (epic, its update is refused by the shim) ── EP-7 In Progress
 #   EP-10 (epic, no children) ── (nothing)      EP-11 In Progress, child of EP-10? no — EP-11 has no parent
 #   EP-12 (epic) ── EP-13 In Progress, EP-14 Canceled
+#   EP-30 (epic) ── EP-31 Done, EP-32 In Progress            (--done on EP-32 → EP-30 Done)
+#   EP-40 (epic) ── EP-41 Ready for Release, EP-42 In Progress (--done on EP-42 → EP-40 Ready for Release)
 set_issue() { # set_issue <ID> <state> [parent|-] [labels-csv|-] [children-space-list]
   printf '%s' "$2" > "$DB/state-$1"
   [ "${3:--}" != "-" ] && printf '%s' "$3" > "$DB/parent-$1"
@@ -59,6 +63,12 @@ set_issue EP-12 Backlog       -    epic "EP-13 EP-14"
 set_issue EP-13 "In Progress" EP-12
 set_issue EP-14 Canceled      EP-12
 set_issue EP-20 "In Progress" -
+set_issue EP-30 Planned       -     epic "EP-31 EP-32"
+set_issue EP-31 Done          EP-30
+set_issue EP-32 "In Progress" EP-30
+set_issue EP-40 Planned       -     epic "EP-41 EP-42"
+set_issue EP-41 "Ready for Release" EP-40
+set_issue EP-42 "In Progress" EP-40
 
 cat > "$WORK/bin/linear-cli" <<EOF
 #!/bin/bash
@@ -96,9 +106,9 @@ esac
 EOF
 chmod +x "$WORK/bin/linear-cli"
 
-run() { # run <outfile> <ID> — echoes the exit code
+run() { # run <outfile> <script-args...> — echoes the exit code
   : > "$WORK/updates.log"
-  HOME="$WORK/home" PATH="$WORK/bin:$PATH" "$SCRIPT" "$2" > "$1" 2> "$1.err"
+  HOME="$WORK/home" PATH="$WORK/bin:$PATH" "$SCRIPT" "${@:2}" > "$1" 2> "$1.err"
   echo "$?"
 }
 state() { cat "$DB/state-$1"; }
@@ -146,6 +156,23 @@ ck_has "unmoved issue named"            "ERROR: EP-20 still not in 'Ready for Re
 
 # ---- 7. usage ----
 if HOME="$WORK/home" PATH="$WORK/bin:$PATH" "$SCRIPT" >/dev/null 2>&1; then FAIL=$((FAIL+1)); echo "FAIL: no-args exited 0"; else PASS=$((PASS+1)); fi
+if HOME="$WORK/home" PATH="$WORK/bin:$PATH" "$SCRIPT" --done >/dev/null 2>&1; then FAIL=$((FAIL+1)); echo "FAIL: --done without an id exited 0"; else PASS=$((PASS+1)); fi
+if HOME="$WORK/home" PATH="$WORK/bin:$PATH" "$SCRIPT" --bogus EP-20 >/dev/null 2>&1; then FAIL=$((FAIL+1)); echo "FAIL: unknown flag exited 0"; else PASS=$((PASS+1)); fi
+
+# ---- 8. --done: the issue itself goes to Done; the epic follows when every child is settled ----
+rc=$(run "$WORK/o8" --done EP-32)
+ck "--done exits 0"                     "0" "$rc"
+ck "--done moved the issue to Done"     "Done" "$(state EP-32)"
+ck "epic with every child settled goes to Done" "Done" "$(state EP-30)"
+ck "transitions in order: child, epic"  "EP-32 -> Done;EP-30 -> Done" "$(cat "$WORK/updates.log" | tr '\n' ';' | sed 's/;$//')"
+ck_has "epic Done reported with the settled wording" "NOTE: epic EP-30 moved to 'Done' — every child is settled (last: EP-32)" "$WORK/o8"
+
+# ---- 9. --done beside a sibling still waiting for its release: the epic goes to Ready for Release ----
+rc=$(run "$WORK/o9" --done EP-42)
+ck "--done beside a released sibling exits 0" "0" "$rc"
+ck "the issue itself is Done"           "Done" "$(state EP-42)"
+ck "epic waits for the sibling's release" "Ready for Release" "$(state EP-40)"
+ck_has "epic release reported with the released wording" "NOTE: epic EP-40 moved to 'Ready for Release' — its last child (EP-42) released" "$WORK/o9"
 
 echo "$PASS passed / $FAIL failed"
 [ "$FAIL" -eq 0 ]

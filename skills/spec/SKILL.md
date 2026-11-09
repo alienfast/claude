@@ -250,7 +250,14 @@ options rather than carrying it silently into the draft.
    never text — so two colliding certified issues WILL be picked concurrently unless the edge exists. Wire it
    immediately after item 5; the standard's accepted residual window is seconds, not a step to defer.
 7. **Certification comment** (only after the label attached): Write a short body to `tmp/spec-comment-<id-lowercase>.md`
-   — certified via `/spec`, one-line scope summary, sub-issues created (if any), original request preserved — then:
+   — certified via `/spec`, one-line scope summary, sub-issues created (if any), original request preserved. **No hold
+   in prose**: never "run this after PR X merges" or "wait for Y". An ordering requirement is the `blocks` edge item 6
+   wired, and an edge to a Ready For Release blocker resolving is correct, not a gap — the dependent builds on its
+   fork source and git reconciles the overlap at merge (`standards/linear-workflow.md` § Terminal States). An overlap
+   with a long-lived branch is written as a collision advisory — the branch, the files, and what its edit does to
+   them, so the implementer can tell mechanics from judgment — marked as not a hold. The "Timing note for pickup" on
+   BF-3115 (2026-11-09) read as a gate: an unattended pickup returned the head of a three-issue Planned sequence as
+   `deploy-gated`, and the fleet worked Backlog instead. Then:
 
    ```bash
    ~/.claude/scripts/linear-post.sh comment <ID> tmp/spec-comment-<id-lowercase>.md

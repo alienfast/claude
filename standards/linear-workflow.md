@@ -47,6 +47,33 @@ that depend on it can begin. The remaining steps (review, PR merge, automated de
 implementation dependencies. A review kick-back moves the issue out of In Review, which reinstates its blocks
 automatically.
 
+**Done is reached by the release sweep, or directly when there is no release to wait for.** basefund's
+`linearRelease` runs after every production deploy and moves an issue from Ready For Release to Done when a commit
+**subject** in the deployed range names it, then moves an `epic` parent to Done once every child is settled; a commit
+whose subject omits the id, or a fix carried inside another issue's commit, is invisible to it (`/finish` Step 7's
+classification covers both). An issue that ships no repository change has nothing a deploy could find, so `/finish`
+moves it to Done itself (`mark-ready-for-release.sh --done`), and an epic whose children are all Done, Canceled or
+Duplicate goes to Done rather than Ready For Release.
+
+**A certified Planned issue whose blockers are all resolved is the directive to work it now.** A human's hold lives in
+the structure the ranker reads — state, labels, `blocks` edges; prose in a comment ("run this after PR X merges",
+"merge Y in first") is advice to the implementer and to whoever merges that branch, never a gate. Overlap with another
+branch — a sibling's worktree, a long-lived feature branch, an open PR — takes the test certification applies to issue
+pairs ([issue-spec.md](issue-spec.md) § Certification includes collision edges): is the merge mechanics or judgment?
+Same files with different intent — the other branch registers fonts in, or wraps a frame around, the component this
+issue rewrites — is mechanics: git reconciles it, `/finish` resolves conflicts in-session and re-gates the merged tree,
+and a branch outside the fleet's merge path is reconciled by whoever lands it. Noticing the overlap is good work; the
+disposition is to record it — the branch and files in the plan comment, a `related` edge to that branch's open
+tracking issue where one exists — and proceed. Judgment — the other change alters what this issue must do — is still
+no hold: it is a prerequisite (`blocks` from an open issue), a duplicate (CANCELED) or a decision (`needs decision`,
+the pick named), routed as those are. What a session never does is decline, return or relabel a pick, manufacture a
+`blocks` edge, or apply `deploy-gated`, `needs decision`, `human` or `solo` to express its own timing judgment on an
+issue a human placed in Planned. BF-3115 (2026-11-09): the open `payments` PR touched every PDF file for Unicode fonts
+and a frame wrapper, side effects of its own objective, while BF-3115 changes how PDFs render — mechanics — yet a
+certification comment's "Timing note for pickup" naming that PR was read as a hold, the High-priority head of a
+three-issue Planned sequence was returned as `deploy-gated` behind an edge wired for the purpose, and the fleet parked
+then worked Backlog for five hours while the sequence waited.
+
 **The close-out is `/finish`'s, whichever branch carries the code.** A fix tracked as an issue but landed on a branch no
 `/start` created — a Renovate bundle, a hotfix PR, an integration branch, an issue this session never claimed — still
 ends with `/finish <ID>`, carrying `push` or `pr` as the grant names: it checks off the satisfied requirements, posts

@@ -10,8 +10,9 @@ literal placeholder to chat or to Linear.
 
 ## Who performs the transition
 
-- Standard flow (`ACTION` empty): `yes` runs `linear-cli issues update <ISSUE-ID> --state "Ready For Release"` here —
-  SKILL.md Step 8's state-update failure recovery applies — and ends on `RELEASED:`.
+- Standard flow (`ACTION` empty): `yes` runs `~/.claude/scripts/mark-ready-for-release.sh <ISSUE-ID>` here (with
+  `--done` for Step 7's no-repository-change shape) — SKILL.md Step 8's state-update failure handling applies — and
+  ends on `RELEASED:`.
 - `ACTION=merge` or `ACTION=pr`: `yes` changes no Linear state. The gate passed; Step 9 transitions after the merge lands
   or the PR opens and ends the flow with its own tag. The override comment still posts now, but it must record
   **authorization**, not a completed transition: replace `marked Ready For Release` in every comment body below with

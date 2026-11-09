@@ -4,7 +4,12 @@ Read from `/start` Step 8.5 when one of its triggers fires, and for ABANDONED's 
 Step 5's auto-mode baseline failure and Step 6 item 4's auto-mode boundary stop. These are the only two places `/start`
 changes the issue state; both bypass Steps 9 and 10 and end on a tagged final line
 ([standards/lifecycle-tags.md](../../../standards/lifecycle-tags.md)). Use them as written rather than improvising an
-exit — they are documented contracts other sessions and the user can scan.
+exit — they are documented contracts other sessions and the user can scan. A session's own judgment that the issue
+should wait — a timing note in a comment, an open PR or unmerged branch editing the same files — is neither exit's
+trigger and never grounds for a third one (a "declined" comment, a manufactured `blocks` edge, a gating label): file
+overlap is mechanics the merge resolves, and the issue is worked (`standards/linear-workflow.md` § Terminal States;
+BF-3115, 2026-11-09). What the other branch does can still be CANCELED's trigger — it already ships this issue's
+outcome — or a `needs decision` park when it changes what the outcome can be; those routes stay open.
 
 ## CANCELED — the work is already done or not needed
 

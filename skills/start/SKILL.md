@@ -272,6 +272,14 @@ the approval UI (in VS Code a side pane that supports annotation); inline text b
    says its criteria are live here, or supersedes the description, is a requirement. **`### Nice to Have` checkboxes are
    NOT requirements** (`standards/issue-spec.md`): attempt one only when it falls out in-path, else leave it out — never
    "defer" one or promise a follow-up filing, which `/finish`'s reconciliation would convert into manufactured work.
+   **A comment's timing, ordering or collision advice is context, not a requirement, and never a hold** — "run this
+   after PR X merges", "branch Z edits these files" tell you where overlap lies; the overlap itself takes the
+   mechanics-or-judgment test (`standards/linear-workflow.md` § Terminal States). Mechanics — same files, different
+   intent — is recorded in the plan comment (the branch, the files, what the merger must carry across) and worked on
+   the fork source; judgment — the other change alters what this issue must do — routes as a prerequisite, a duplicate
+   (Step 8.5 CANCELED) or a decision (`needs decision`), never as an improvised hold: the ranker already applied every
+   gate the issue carries, and a claimed issue leaves this skill only through its enumerated exits. In auto mode never
+   pull the other branch in; interactively that is the user's call (BF-3115, 2026-11-09).
 2. **Search the tracker for adjacent open issues before designing.** The digest surfaces no *sibling* naming the same
    file, predicate or resolver without a relation edge — routinely a duplicate, the systemic fix your point fix instances,
    or in-flight overlapping work; `/quality-review`'s search-before-filing runs after scope is fixed. Run two or three

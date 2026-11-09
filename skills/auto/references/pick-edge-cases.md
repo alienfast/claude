@@ -26,6 +26,12 @@ The shape: the spec's blocker line says the blocker must be live in production, 
 of an expand/contract migration waiting on its expand's deploy), and `/next` ranks the issue because the blocker is
 `Ready For Release`. Production deploys from origin, and `/finish`'s merge mode never pushes.
 
+Not the shape, and never a hold: an open PR or unmerged branch that edits the same files, or a certification note
+saying to run the issue after it merges. Same files with different intent is mechanics git reconciles when the branch
+lands; the pick proceeds on its fork source with the overlap recorded (`standards/linear-workflow.md` § Terminal
+States). Adding the label and a `blocks` edge to such a candidate hides a human-planned issue behind a gate no human
+set (BF-3115, 2026-11-09).
+
 1. `next-candidates.sh` withholds an issue carrying the `deploy-gated` label until its blockers reach the project's
    `$LINEAR_DEPLOYED_STATES` (`standards/issue-spec.md` § The `deploy-gated` label), counting it as the keeper's so the
    Backlog fallback opens instead of the whole fleet holding on it. A candidate of this shape that IS offered was filed

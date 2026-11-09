@@ -244,6 +244,22 @@ attempts. Nothing committed.`
 
 ### Step 7: Git Commit (push is opt-in)
 
+**Classify the ship first — it decides the state the issue ends in.** The release sweep (`linearRelease`, run after
+every production deploy) moves Ready For Release to Done by finding the issue's id in a deployed commit **subject**,
+so an issue nothing names in a subject stays Ready For Release for good. Three shapes:
+
+- **A commit of this issue's own** — the branch carries, or sub-step 3 below creates, a commit whose subject names
+  `<ISSUE-ID>`. Nothing more to decide.
+- **No repository change** — a measurement, an operator action, a `human` deliverable; Step 4's *What was done* names
+  no file (BF-3013, BF-2805, BF-1971, BF-2697, 2026-11-09). Skip the commit. Step 8 (every mode but `merge`) or Step 9
+  (`merge`, after the worktree is removed) transitions straight to **Done** with `mark-ready-for-release.sh --done`:
+  there is no release for it to wait for.
+- **Landed under another issue's commit** — a sibling's merge brought the change, or the fix was needed to green a
+  merged tree (BF-3087, shipped inside BF-3077's commit). Before sub-step 3, record it with an empty commit whose
+  subject names this issue: write `<ISSUE-ID>: shipped in <OTHER-ID>'s <sha>` to
+  `tmp/finish-commit-<issue-id-lowercased>.md` and run `git commit --allow-empty -F <that file>`. Then continue as the
+  first shape (`finish-commit.sh` finds nothing staged and does not commit again).
+
 1. Stage files by name — never `git add -A` / `git add .`. **Derive the list from a fresh `git status --short` now**,
    never from a list captured earlier: review-fix cycles touch files beyond the original set, and a stale list ships a
    commit whose halves don't match (the working tree passes `pnpm check`, the committed tree fails CI). Confirm no
@@ -285,14 +301,20 @@ commit, as it does for an unpushed merge.
 **Who performs the transition** — whoever completes the lifecycle, so Linear never shows `Ready For Release` before the
 ship exists (a commit, an open PR, or a landed merge, by `ACTION`):
 
-- `ACTION` empty (standard flow): Step 8 runs `linear-cli issues update <ISSUE-ID> --state "Ready For Release"` itself.
+- `ACTION` empty (standard flow): Step 8 runs `~/.claude/scripts/mark-ready-for-release.sh <ISSUE-ID>` itself — the
+  same verified transition, unassign and epic walk the other two modes get in Step 9. A bare `issues update --state`
+  here left every standard-flow issue assigned in Ready For Release (BF-3013, 2026-11-02).
 - `ACTION=merge`: Step 8 is the **gate only**. Step 9 runs `~/.claude/scripts/mark-ready-for-release.sh` after
   `finish-merge.sh` exits 0, and the launchd drainer runs the same script when it lands a deferred merge — a deferred
   issue stays **In Progress**, which is the truth.
 - `ACTION=pr`: gate only, likewise. Step 9 transitions after `gh pr create` succeeds — an open PR is work waiting for
   its release; `In Review` is a human-review request, never a ship's landing state.
+- **Step 7's no-repository-change shape, in any mode but `merge`**: Step 8 runs
+  `~/.claude/scripts/mark-ready-for-release.sh --done <ISSUE-ID>` and ends on `RELEASED:` — there is no commit to
+  merge and nothing to open a PR for, so Step 9 is skipped. Under `merge` the worktree still needs removing: Step 9
+  runs `finish-merge.sh` (its `NO-CODE:` line) and then the same `--done` transition.
 
-"Proceed" below means: standard flow → run the update; `merge` / `pr` → go to Step 9 without touching Linear state.
+"Proceed" below means: standard flow → run the script; `merge` / `pr` → go to Step 9 without touching Linear state.
 Discriminate on `ACTION`, not `SOURCE_BRANCH` — a non-worktree `pr` has an empty `SOURCE_BRANCH` and still reaches
 Step 9.
 
@@ -301,10 +323,11 @@ Step 9.
 - `passed-clean` / `passed-after-fixes` with `VERDICT_STALE=0` → proceed. Standard flow:
 
   ```bash
-  linear-cli issues update PL-12 --state "Ready For Release"
+  ~/.claude/scripts/mark-ready-for-release.sh PL-12          # a ship with a commit of its own
+  ~/.claude/scripts/mark-ready-for-release.sh --done PL-12   # Step 7's no-repository-change shape
   ```
 
-  On success end on `RELEASED:` (§ Terminal tags); never emit it when the update failed — see below.
+  Exit 0 → end on `RELEASED:` (§ Terminal tags); never emit it when the script failed — see below.
 
 - Anything else — a stale pass, `terminated-with-open-items`, `escalated-to-architect`, `malformed`, `none-found`, or an
   unrecognized value (treat as `malformed`) → **refuse with override.** Read `references/verdict-overrides.md` now: each
@@ -315,17 +338,15 @@ Step 9.
   `BLOCKED-ON-REVIEW: <ISSUE-ID> — no /quality-review artifact; unattended runs never ship unreviewed. Run /quality-review then /finish manually.`
   The failing tag is `/auto`'s signal to count a failure and surface the issue to a human.
 
-**State-update failure (standard flow only).** If `linear-cli issues update` exits non-zero:
+**State-update failure (standard flow only).** `mark-ready-for-release.sh` exits 1 when the team has no state matching
+`/^ready[ _-]?for[ _-]?(release|deploy|ship)$/i` (an exact match — never `Ready For Review`, never a bare `Ready`; rename
+such a state to `Ready For Release` to use it) or when the transition did not verify on read-back after its raw-mutation
+fallback. Surface its stderr and end on `BLOCKED-ON-REVIEW: <ISSUE-ID> — mark-ready-for-release.sh failed: <reason>.
+State NOT changed; this issue remains In Progress.`, with `<reason>` distilled to one line (the first informative line of
+a multi-line error) so the agents-list parser reads the tag. Do not continue to Step 9. An unassign or epic-walk warning
+on exit 0 is not a failure: the transition landed; note the warning and proceed.
 
-1. On a "no such state" rejection, probe `linear-cli statuses list -t <TEAM>` (team key = the ID prefix) and pick the
-   first state matching `/^ready[ _-]?for[ _-]?(release|deploy|ship)$/i` — an exact match, never a prefix (it must not
-   latch onto `Ready For Review`), and never a bare `Ready`, too ambiguous to route into (rename it to
-   `Ready For Release` to use it). Retry with the matched name; success → `RELEASED:`.
-2. No match, or the retry fails → surface the error and end on `BLOCKED-ON-REVIEW: <ISSUE-ID> — linear-cli issues update
-   failed: <reason>. State NOT changed; this issue remains In Progress.`, with `<reason>` distilled to one line (the
-   first informative line of a multi-line error) so the agents-list parser reads the tag. Do not continue to Step 9.
-
-`merge` and `pr` run no update here; `mark-ready-for-release.sh` carries the same fallback.
+`merge` and `pr` run no transition here; Step 9 runs the same script after the ship exists.
 
 ### Step 9: Finalization (`merge` or `pr` only)
 
@@ -376,9 +397,9 @@ of this gate.
    session to `<REPO_ROOT>`, removes nothing, and is a no-op without a registration, so it is right in the
    `CLEANUP-FAILED:` sub-case too. Afterwards a background session's Write-tool edits outside a worktree are refused;
    nothing here needs one, and `/auto` Step 4's state write goes through the shell.
-2. Run `~/.claude/scripts/mark-ready-for-release.sh <ISSUE-ID>` (same team-state fallback as Step 8). Exit 0 → the
-   closing message. Non-zero → the merge succeeded but Linear did not update: do **not** undo the merge; surface the
-   error and end on
+2. Run `~/.claude/scripts/mark-ready-for-release.sh <ISSUE-ID>` (same team-state fallback as Step 8) — with `--done`
+   when the output carried a `NO-CODE:` line (sub-step 4). Exit 0 → the closing message. Non-zero → the merge
+   succeeded but Linear did not update: do **not** undo the merge; surface the error and end on
    `SHIPPED-MERGE: <ISSUE-ID> — <WORKTREE_BRANCH> merged into <SOURCE_BRANCH>, worktree removed, but Linear state update FAILED: <reason>. Mark Ready For Release manually.`
    — still `SHIPPED-MERGE`, since the code shipped (with a `CLEANUP-FAILED:` line, sub-step 3's wording replaces
    `worktree removed` here too).
@@ -398,12 +419,15 @@ of this gate.
    human's call, and the hourly reaper reports the worktree as merged-but-dirty until it is cleared
    (`skills/reap-worktrees/SKILL.md`). Interactively, surface the paths and ask once.
 4. **A `NO-CODE:` line on stdout means nothing merged**: the branch carried no commits beyond source, so the script
-   touched neither source nor its tip and printed no landing line — the expected end of a `deploy-gated` measurement or
-   a `keeper` issue (`skills/start/SKILL.md` § Keeper issues), and the shape BF-2697 (2026-10-31) was misreported in as a
-   merge above another issue's commit. The ship stands (sub-step 2 ran, `/auto` records it), with the tag's merge clause
-   replaced: `SHIPPED-MERGE: <ISSUE-ID> — <WORKTREE_BRANCH> carried no commits beyond <SOURCE_BRANCH>; nothing merged,
-   worktree removed, Ready For Release.` The completion comment says the same (Step 4's *What was done* must not describe
-   repository changes the branch does not carry). Combines with sub-step 3's `CLEANUP-FAILED:` wording.
+   touched neither source nor its tip and printed no landing line — Step 7's no-repository-change shape: a
+   `deploy-gated` measurement or a `keeper` issue (`skills/start/SKILL.md` § Keeper issues), and the shape BF-2697
+   (2026-10-31) was misreported in as a merge above another issue's commit. Such an issue ends in **Done**, not Ready
+   For Release — no deploy will ever name it — so sub-step 2 runs with `--done`. The ship stands (`/auto` records it),
+   with the tag's merge clause replaced: `SHIPPED-MERGE: <ISSUE-ID> — <WORKTREE_BRANCH> carried no commits beyond
+   <SOURCE_BRANCH>; nothing merged, worktree removed, Done.` The completion comment says the same (Step 4's *What was
+   done* must not describe repository changes the branch does not carry). A fix that landed under another issue's
+   commit is not this shape: Step 7's empty commit gives it a subject of its own, so the branch is never `NO-CODE:`.
+   Combines with sub-step 3's `CLEANUP-FAILED:` wording.
 5. Surface the merge output and emit the `SHIPPED-MERGE` closing message (§ Terminal tags). When a merge round
    reinstalled because source moved `pnpm-lock.yaml` (`references/merge-exit-codes.md` § The merged tree's install), say
    so here, and under `/auto` also in a one-line follow-up `### Notes` comment posted by sub-step 3's mechanism (body in
@@ -452,7 +476,7 @@ message's leading sentence is standalone-only; under `/auto` omit it and continu
 
 | Tag | Emitted at | Line |
 | --- | --- | --- |
-| `RELEASED` | Step 8, standard flow, after a successful state update | `RELEASED: <ISSUE-ID> — <one-line summary>`; with `PUSH=0` the summary says the commit is local and names the push |
+| `RELEASED` | Step 8, standard flow, after a successful state update; any mode but `merge` for a no-repository-change ship (`--done`) | `RELEASED: <ISSUE-ID> — <one-line summary>`; with `PUSH=0` the summary says the commit is local and names the push; after `--done` it says `Done, no repository change` |
 | `SHIPPED-MERGE` | Step 9, merge exit 0 (also a successful corruption recovery) | closing message below |
 | `DEFERRED-MERGE` | Step 9, merge exit 3 | closing message below |
 | `SHIPPED-PR` | Step 9, after `gh pr create` and the transition | closing messages below |
@@ -469,7 +493,7 @@ After a `NO-CODE:` line (Step 9 exit-0 sub-step 4) the merge clause says what ha
 `<ISSUE-ID>` right after it are what `full-continue.sh`, `/auto` Step 4 and the retro anchor on, so only the clause moves:
 
 ```text
-SHIPPED-MERGE: <ISSUE-ID> — <WORKTREE_BRANCH> carried no commits beyond <SOURCE_BRANCH>; nothing merged, worktree removed, Ready For Release.
+SHIPPED-MERGE: <ISSUE-ID> — <WORKTREE_BRANCH> carried no commits beyond <SOURCE_BRANCH>; nothing merged, worktree removed, Done.
 ```
 
 ```text
