@@ -504,16 +504,19 @@ while [ "$no_code" = 0 ]; do
     # No divergence: worktree branch is a linear descendant of source. Advancing
     # to it collapses to the issue's commit(s) with no merge commit.
     target=$(git rev-parse --verify "$worktree_branch")
-  elif [ "$(git rev-parse "${worktree_branch}^{tree}")" = "$(git rev-parse "${source_branch}^{tree}")" ]; then
-    # The worktree's work is already fully present in source (merged
-    # independently, then source moved; a branch with no commits of its own
-    # never reaches here — NO-CODE above). Advancing would create a zero-diff
-    # merge commit — skip it; just clean up.
+  elif git merge-base --is-ancestor "$orig_tip" "$source_branch"; then
+    # The issue's own commits are already in source's history (merged there by hand, then source
+    # moved on): a merge commit would carry a redundant parent. Nothing to advance.
     target="$src_old"
   else
     # Divergent: rebuild a merge commit with conventional parent order
     # [source, orig_tip], reusing the worktree's resolved tree, so source's
-    # first-parent line stays on the mainline. Build against $src_old (not the
+    # first-parent line stays on the mainline. A branch whose tree now equals source's lands here too —
+    # an empty ship-record commit (/finish Step 7's "landed under another issue's commit" shape), or work
+    # copied onto source commit by commit — because its subjects must enter source's history: the release
+    # sweep moves an issue to Done by finding its id in a deployed commit subject, and the equal-trees
+    # no-op that stood here until 2026-11-10 deleted the branch with the commit, printed a landing line,
+    # and left the issue in Ready For Release for good. Build against $src_old (not the
     # live ref) so the new commit's first parent matches the compare-and-swap.
     # commit-tree is plumbing and ignores commit.gpgSign (git commit and git
     # merge both honour it), so an unsigned merge lands in an otherwise signed
@@ -532,7 +535,7 @@ while [ "$no_code" = 0 ]; do
 
   # Advance source to $target WITHOUT switching the main checkout's HEAD.
   if [ "$target" = "$src_old" ]; then
-    :   # already-merged: nothing to advance.
+    :   # already in source's history: nothing to advance.
   elif [ "$cur_branch" = "$source_branch" ]; then
     # Main checkout is on source: the fast-forward updates ref AND working tree atomically, carrying
     # uncommitted edits to paths it does not change. A refused ff has two causes. Source moved under us

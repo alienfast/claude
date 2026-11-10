@@ -30,7 +30,7 @@
 #     the fixture repo in merge-queue-repos.txt). Cases 1–10 keep the main checkout clean, off source, and
 #     not mid-operation, so 3 is unreachable and a regression that produces one fails its exit-code
 #     assertion loudly. Cases 11–14 put the checkout on source to reach it, under a fake HOME (run_fm_home).
-#     Case 15 (a branch with no commits beyond source) runs off source again.
+#     Cases 15 (a branch with no commits beyond source) and 16 (an empty ship-record commit) run off source again.
 
 set -uo pipefail
 
@@ -421,6 +421,62 @@ ck_eq "exit 1" 1 "$RC"
 ck "reported as uncommitted tracked changes" "uncommitted tracked changes" "$OUT"
 ck_absent "no NO-CODE on a dirty worktree" "NO-CODE" "$OUT"
 ck_eq "worktree intact" PRESENT "$([ -d "$WT" ] && echo PRESENT || echo GONE)"
+
+echo "=== case 16: an empty ship-record commit with source advanced — lands as a zero-diff merge commit so its subject enters source's history ==="
+# /finish Step 7's third shape: the fix landed under another issue's commit, so the branch's only commit is empty and names
+# this issue. The release sweep finds an issue by its id in a deployed commit subject. Until 2026-11-10 the equal-trees arm
+# kept source's tip, deleted the branch with the commit, and printed a landing line for a merge that never happened; the
+# issue then sat in Ready For Release with nothing for the sweep to find.
+mk_repo c16
+git -C "$WT" commit -q --allow-empty -m "BF-T: shipped in BF-X's 0123abc"
+record=$(git -C "$WT" rev-parse HEAD)
+src_commit src.txt s1
+src_before=$(git -C "$R" rev-parse source)
+run_fm
+ck_eq "catch-up merge: exit 5" 5 "$RC"
+run_fm
+ck_eq "re-run lands: exit 0" 0 "$RC"
+ck_eq "source's tip is a merge commit" 2 "$(git -C "$R" cat-file -p source | grep -c '^parent ')"
+ck_eq "its first parent is the previous tip" "$src_before" "$(git -C "$R" rev-parse 'source^1')"
+ck_eq "its second parent is the record commit" "$record" "$(git -C "$R" rev-parse 'source^2')"
+ck_eq "its subject is the merge message" "Merge bf-t" "$(git -C "$R" log -1 --format=%s source)"
+ck "a subject scan of source reads the record" "BF-T: shipped in BF-X's 0123abc" "$(git -C "$R" log --format=%s source)"
+ck_eq "zero diff against the previous tip" "" "$(git -C "$R" diff --stat "$src_before" source)"
+ck "the landing line is true" "Merged successfully. Worktree and branch removed." "$OUT"
+ck_absent "not a no-code" "NO-CODE" "$OUT"
+ck_eq "worktree removed" GONE "$([ -d "$WT" ] && echo PRESENT || echo GONE)"
+ck_eq "branch removed" GONE "$(git -C "$R" rev-parse --verify --quiet bf-t >/dev/null 2>&1 && echo PRESENT || echo GONE)"
+ck_eq "orig ref removed" GONE "$(git -C "$R" show-ref --verify --quiet refs/finish-merge/bf-t-orig && echo PRESENT || echo GONE)"
+
+echo "=== case 16b: the same record with source unmoved — a fast-forward, as before ==="
+mk_repo c16b
+git -C "$WT" commit -q --allow-empty -m "BF-T: shipped in BF-X's 0123abc"
+record=$(git -C "$WT" rev-parse HEAD)
+run_fm
+ck_eq "exit 0" 0 "$RC"
+ck_absent "no catch-up round" "MERGED-SOURCE" "$OUT"
+ck_eq "source fast-forwarded to the record commit" "$record" "$(git -C "$R" rev-parse source)"
+ck "the landing line" "Merged successfully. Worktree and branch removed." "$OUT"
+ck_eq "worktree removed" GONE "$([ -d "$WT" ] && echo PRESENT || echo GONE)"
+
+echo "=== case 16c: the record already merged into source by hand, source moved on — nothing to advance, no redundant-parent merge commit ==="
+mk_repo c16c
+git -C "$WT" commit -q --allow-empty -m "BF-T: shipped in BF-X's 0123abc"
+record=$(git -C "$WT" rev-parse HEAD)
+src_commit src.txt s1
+run_fm
+ck_eq "catch-up merge: exit 5" 5 "$RC"
+git -C "$R" checkout -q source && git -C "$R" merge -q --no-edit "$record" && git -C "$R" checkout -q main
+src_commit other.txt o1
+run_fm
+ck_eq "re-merge under the lock: exit 5" 5 "$RC"
+src_before=$(git -C "$R" rev-parse source)
+run_fm
+ck_eq "exit 0" 0 "$RC"
+ck_eq "source did not move: the record is already in its history" "$src_before" "$(git -C "$R" rev-parse source)"
+ck "a subject scan of source still reads the record" "BF-T: shipped in BF-X's 0123abc" "$(git -C "$R" log --format=%s source)"
+ck_eq "worktree removed" GONE "$([ -d "$WT" ] && echo PRESENT || echo GONE)"
+ck_eq "branch removed" GONE "$(git -C "$R" rev-parse --verify --quiet bf-t >/dev/null 2>&1 && echo PRESENT || echo GONE)"
 
 echo ""
 echo "finish-merge.test.sh: $pass passed, $fail failed"
