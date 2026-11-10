@@ -184,7 +184,8 @@ underneath the person. `--include-claimed` restores them for inspection, and a t
 the gate removed (counted over workable stages only — nearly every In Progress issue is assigned, so an all-states count
 would drown the signal). Issues assigned to the viewer rank tier 1. Likewise hidden from every ranking, each surfaced
 only by its own `--label` listing: `needs decision` (a human must step in before pickup), `solo` (ships fine unattended
-but not alongside a fleet — only the automatic pick is blocked; a targeted `/auto <ID>` still runs one), `human` (the
+but not alongside a fleet — only the automatic pick is blocked; a targeted `/auto <ID>` still runs one and
+`/fleet-solo` drains the lot), `human` (the
 work is human-performed; no mode runs one, and targeted `/auto <ID>` refuses it too), and `epic` (a delegated container
 whose children carry the work — certify per child; the epic closes itself when its last child releases via
 `mark-ready-for-release.sh`'s parent walk — so it never counts fleet-workable, matching `fleet-blockers.sh` and

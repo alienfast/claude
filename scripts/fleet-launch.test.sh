@@ -433,6 +433,17 @@ ck "crashed sequence launches too"       "0" "$(run 1 epic:EP-3)"
 ck_lacks "crashed sequence not noted"    "running alongside" "$WORK/out"
 ck "crashed sequence protects no ledger" "no" "$([ -f "$REPO/tmp/auto-state-cafe0002.json" ] && echo yes || echo no)"
 rm -f "$REPO/tmp/fleet-sequence-sq-1.json" "$REPO/tmp/fleet-sequence-sq-7.json" "$REPO"/tmp/auto-state-*.json
+# A solo drain alongside is the collision `solo` exists to prevent: still the operator's call, but a WARN and not the
+# sequence NOTE — and its child's ledger is kept the same way.
+printf '{"status":"running","drain":true,"queue":["SQ-3"],"runner_pid":%s,"issues":{"SQ-3":{"session":"cafe0003"}}}\n' "$$" > "$REPO/tmp/fleet-sequence-solo.json"
+echo '{"status":"active","mode":"single","shipped":["SQ-3"]}' > "$REPO/tmp/auto-state-cafe0003.json"
+: > "$WORK/dispatches"
+ck "running solo drain does not block"   "0" "$(run 1 epic:EP-3)"
+ck "launch beside a drain dispatched"    "1" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
+ck_has "running solo drain warned"       "WARN: a solo drain (/fleet-solo) is running in this checkout" "$WORK/out"
+ck_lacks "and not noted as a sequence"   "NOTE: a /fleet-sequence is running alongside" "$WORK/out"
+ck "the drain child's ledger is kept"    "yes" "$([ -f "$REPO/tmp/auto-state-cafe0003.json" ] && echo yes || echo no)"
+rm -f "$REPO/tmp/fleet-sequence-solo.json" "$REPO"/tmp/auto-state-*.json
 
 # case 17: the `backlog` token (keeper ruling 2026-10-01) rides the prompt — composing with an epic scope —
 # and the marker records it for the observers; a launch without it records nothing, and a FLEET_PROMPT
@@ -826,6 +837,20 @@ ck "cap: weekly-only, no duration"        "0" "$(run 2)"
 ck_has "cap: weekly-only, no duration budget" "Weekly budget: 2 sessions burn ≈ 1.1 points per hour against 95 points of room (~86.3h)" "$WORK/out"
 rm -f "$BIN/cswap"; rm -rf "$WORK/home/.claude-swap-backup"
 rm -rf "$WORK/home/.claude"
+
+# ---- FLEET_LAUNCH_CHECK: the argument and recommendation refusals only — nothing dispatched, nothing written ----
+# What fleet-sequence.sh's then-fleet runs at ITS launch, hours before this fleet's.
+rm -f "$REPO"/tmp/fleet-deadline*.json "$REPO"/tmp/fleet-recommendation-*.json
+: > "$WORK/dispatches"
+ck "check with a count exits 0"       "0" "$(FLEET_LAUNCH_CHECK=1 run 2 10h)"
+ck_has "check prints its verdict"     "CHECK-OK: 2 session(s), a 10h budget from launch" "$WORK/out"
+ck "check dispatched nothing"         "0" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
+ck "check wrote no marker"            "no" "$([ -e "$TM" ] && echo yes || echo no)"
+ck "check with no count and no recommendation exits 1" "1" "$(FLEET_LAUNCH_CHECK=1 run)"
+ck_has "check names what is missing"  "no count given and no" "$WORK/out"
+ck "check refuses a duration it cannot parse" "1" "$(FLEET_LAUNCH_CHECK=1 run 2 soon)"
+ck_has "check names the duration"     "cannot parse duration 'soon'" "$WORK/out"
+ck "the refusals dispatched nothing"  "0" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
 
 echo
 echo "$PASS passed / $FAIL failed"

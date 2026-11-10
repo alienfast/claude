@@ -58,8 +58,8 @@ run item 5 over every certified issue, failures included.
    path exists. Keep the label, list it: the user decides now (best) or accepts the conservative option. A decision counts
    only once it is in the description — route it through `/spec <ID>`; a comment does not unblock `/auto`.
 3. **Mark `solo`** — implementable unattended but fleet-hostile; the remedy is sequencing. Apply the label
-   (`linear-add-label.sh <ID> solo`; exit 2 → `linear-cli labels create "solo" -t issue`, retry once) and recommend a
-   targeted `/auto <ID>` or `/fleet-sequence` while the fleet is quiet. The label hides the issue from every ranking;
+   (`linear-add-label.sh <ID> solo`; exit 2 → `linear-cli labels create "solo" -t issue`, retry once) and recommend
+   `/fleet-solo` (or a targeted `/auto <ID>`) while the fleet is quiet. The label hides the issue from every ranking;
    targeted runs still ship it. **It over-triggers, and a false positive parks a workable issue on the one serial
    resource** — read `references/solo-qualification.md` before marking one. Exactly three grounds qualify, named in the
    comment: (a) it changes state a sibling meets without merging main (a launchd agent, a hook under `~/.claude`, a
@@ -132,7 +132,10 @@ Then wire **minimal chains** with `linear-cli relations add <BLOCKER> <BLOCKED> 
   dependent is wrong without it; `fleet-blockers.sh` reports it as a `human` root).
 - **A `solo` blocker is a chain head or nothing.** It ships outside the fleet window, and blocker resolution reads state,
   never labels, so a dependent behind it stays blocked all run. Wire it as a blocker only when you will run it in the
-  pre-fleet solo pass; otherwise leave it at a tail.
+  pre-fleet solo pass (`/fleet-solo … then-fleet`); otherwise leave it at a tail.
+- **Order between two `solo` issues is an edge too, never a comment.** `/fleet-solo` runs the `--label solo` listing in
+  its own order and reads it again after every ship, so a solo→solo `blocks` edge is honored — the blocked one joins once
+  its blocker ships — and so is priority. An audit comment asking to "run this first" orders nothing: wire it.
 
 Rails that need no wiring: Linear is the claim registry (In Progress is invisible to `/next`), worktree creation is
 repo-locked, `/finish` merges serialize and re-gate the merged tree whenever source advanced (what lets `related` partners
@@ -254,9 +257,9 @@ Launch checklist for the report:
 - `export LINEAR_TEAM=<KEY>` in every fleet session (else `/next` roams the workspace).
 - Project main checkout clean and parked off the integration branch (`git checkout --detach`) — every merge then takes
   the ref-only path.
-- Run the `solo` issues via targeted `/auto <ID>` or `/fleet-sequence` before or after the fleet, not during. Bare
-  `--label solo` is the **workable-now** set; the `--include-blocked` diff is the **blocked** set, which waits on its
-  blockers regardless of the quiet window.
+- Run the `solo` issues with `/fleet-solo` before or after the fleet, not during (one issue: `/auto <ID>`; a named
+  list in one PR: `/fleet-sequence`). Bare `--label solo` is the **workable-now** set — exactly what the drain takes;
+  the `--include-blocked` diff is the **blocked** set, which waits on its blockers regardless of the quiet window.
 - The decisions (Step 2 flags, `needs decision` issues) that would refill the pool once made.
 - **What will hold the Planned gate once the pickable Planned work ships** — the `PLANNED-HOLD` note's *need the keeper*
   entries. Each one left in the column idles the whole fleet at that point (without `backlog` it will not spend on
@@ -294,7 +297,15 @@ accounts-with-room reading), the `STAGE` drain time the duration rounds up, and 
 the observed peak; when the checklist named the `backlog` opt-in, the same command with ` backlog` appended and its own
 duration from the `--backlog` forecast on a second line, labelled as the opt-in. Then the `solo` quiet-window plan in
 running order: **workable now**,
-then **blocked** (each with its blocker). **Everything Backlog-scoped comes last and stays brief**: changes made
+then **blocked** (each with its blocker). When anything is workable now, print the command that runs the solo pass and
+then this prep's fleet, with the same count and duration, and say that a budget in front (`/fleet-solo 3h then-fleet …`)
+caps how much of the window the solo pass may take:
+
+```text
+/fleet-solo then-fleet 6 10h
+```
+
+**Everything Backlog-scoped comes last and stays brief**: changes made
 (consolidations as absorbed→canonical
 with the class named, edges as blocker→blocked with one-line rationale, label ops, priority bumps), decision-gated issues
 gating only Backlog work, remaining FLEET-BLOCKED edges, and the validated top of the ranked pool. Every write is

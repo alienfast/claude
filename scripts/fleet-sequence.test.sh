@@ -22,6 +22,14 @@
 # every push. One case launches a real detached runner to measure its process group; everything else runs
 # the runner inline. The ~/.claude freshness check runs against a current fixture clone (CLAUDE_FRESHNESS_DIR)
 # except in the one case that pushes to its origin.
+#
+# The solo drain (the last section) adds two stubs behind the script's seams: FLEET_SEQUENCE_LISTER prints $WORK/solo-list
+# in next-candidates.sh's listing format (titles carrying quotes, sub-lines and a trailing note, as the real one has) or
+# fails with $WORK/lister-rc, and FLEET_SEQUENCE_FLEET_LAUNCHER records `check <args>` / `launch <args>` with the number
+# of dispatches and the drain's status at the moment of the launch. It covers the refusals, the read-only `list`, the
+# listing re-read before every dispatch, skip-and-continue with its two-in-a-row limit, the budget, then-fleet (checked at
+# launch, launched only after a clean end), stop, one drain per checkout, a list never resuming a drain, adoption of a
+# session the last drain left working, and the launch from a parked (detached) checkout.
 set -uo pipefail
 
 SCRIPT="$(cd "$(dirname "$0")" && pwd)/fleet-sequence.sh"
@@ -754,6 +762,284 @@ ck "status without marker"      "0" "$(run status)"
 ck_has "status says nothing launched" "No sequence marker" "$WORK/out"
 ck "stop without marker"        "0" "$(run stop)"
 ck_has "stop says nothing to stop" "nothing to stop" "$WORK/out"
+
+# =====================================================================================
+# The solo drain (`fleet-sequence.sh solo`, /fleet-solo): the queue is discovered, never typed.
+cat > "$BIN/solo-lister" <<STUB_LISTER
+#!/usr/bin/env bash
+echo "\$*" >> "$WORK/lister-calls"
+if [ -f "$WORK/lister-rc" ]; then echo "ERROR: Linear unreachable (stub)" >&2; exit "\$(cat "$WORK/lister-rc")"; fi
+printf '## Suggested next\n\n'
+n=0
+while IFS= read -r id; do
+  [ -n "\$id" ] || continue
+  n=\$((n+1))
+  printf '%s. **%s** — "Fix "the thing" in %s"\n   - State: Planned | Priority: High\n   - Tier 4: highest-priority workable\n' "\$n" "\$id" "\$id"
+done < "$WORK/solo-list"
+[ "\$n" -gt 0 ] || printf '_No workable issues with label solo in BF._\n'
+printf '\n_2 issue(s) hidden as held by a running /fleet-sequence (BF-90 → BF-91) — the sequence ships them in order._\n'
+STUB_LISTER
+cat > "$BIN/fleet-launcher" <<STUB_LAUNCHER
+#!/usr/bin/env bash
+if [ "\${FLEET_LAUNCH_CHECK:-0}" = "1" ]; then
+  echo "check \$*" >> "$WORK/fleet-calls"
+  if [ -f "$WORK/fleet-check-rc" ]; then echo "ERROR: no count given and no recommendation (stub)" >&2; exit "\$(cat "$WORK/fleet-check-rc")"; fi
+  echo "Using /auto-prep's recommendation: 3 session(s) (stub)"; echo "CHECK-OK: 3 session(s)"; exit 0
+fi
+echo "launch \$*" >> "$WORK/fleet-calls"
+echo "dispatched-before=\$(grep -c -- '/auto ' "$WORK/dispatches") drain=\$(jq -r .status "$REPO/tmp/fleet-sequence-solo.json")" >> "$WORK/fleet-calls"
+if [ -f "$WORK/fleet-launch-rc" ]; then echo "TOOLING-STALE (stub)" >&2; exit "\$(cat "$WORK/fleet-launch-rc")"; fi
+echo "fleet launched (stub)"
+STUB_LAUNCHER
+chmod +x "$BIN/solo-lister" "$BIN/fleet-launcher"
+export FLEET_SEQUENCE_LISTER="$BIN/solo-lister" FLEET_SEQUENCE_FLEET_LAUNCHER="$BIN/fleet-launcher" \
+       FLEET_SEQUENCE_LIST_WAIT=0 FLEET_SEQUENCE_LIST_RETRIES=2 LINEAR_TEAM=BF
+dreset() { # reset, plus the drain's stubs; the arguments become the listing, in order
+  reset
+  rm -f "$WORK/lister-rc" "$WORK/lister-calls" "$WORK/fleet-calls" "$WORK/fleet-check-rc" "$WORK/fleet-launch-rc" "$WORK/stop-out"
+  : > "$WORK/solo-list"
+  local id; for id in "$@"; do echo "$id" >> "$WORK/solo-list"; done
+}
+smarker() { marker "$1" solo; }
+solo_marker_exists() { [ -e "$REPO/tmp/fleet-sequence-solo.json" ] && echo yes || echo no; }
+fleet_calls() { [ -f "$WORK/fleet-calls" ] && paste -sd, - < "$WORK/fleet-calls"; }
+auto_order() { grep -o -- '/auto [A-Z]*-[0-9]*' "$WORK/dispatches" | paste -sd, -; }
+mk_drain() { # mk_drain <status> <runner pid|null> <base> <queue json> [<issues json>] — a drain's marker as an earlier run leaves it
+  local issues="${5:-}"
+  [ -n "$issues" ] || issues='{}'
+  jq -n --arg st "$1" --argjson pid "$2" --arg base "$3" --argjson q "$4" --argjson i "$issues" \
+    '{slug: "solo", drain: true, team: "BF", queue: $q, plan: [], base: $base, mode: "merge", branch: null, claude_args: [], status: $st,
+      reason: "", stop_requested: false, current: null, issues: $i, launch_epoch: 1, runner_pid: $pid}' > "$REPO/tmp/fleet-sequence-solo.json"
+}
+
+# ---- refusals and the read-only listing: nothing dispatched, nothing written ----
+dreset BF-1 BF-2
+ck "drain without LINEAR_TEAM exits 1" "1" "$(LINEAR_TEAM='' run solo)"
+ck_has "names the variable"        "LINEAR_TEAM is not set" "$WORK/out"
+ck "solo list exits 0"             "0" "$(run solo list)"
+ck_has "list is the running order" '  2. BF-2 — Fix "the thing" in BF-2' "$WORK/out"
+ck_has "lister asked for the team's solo issues" "--team BF --label solo" "$WORK/lister-calls"
+printf '{"labels":{"nodes":[{"name":"solo"}]},"state":{"name":"Planned"}}\n' > "$WORK/issue-BF-2.json"
+ck "list with an uncertified issue exits 0" "0" "$(run solo list)"
+ck_has "list flags what the probe will refuse" "[will be skipped: BF-2 is not certified" "$WORK/out"
+rm -f "$WORK/issue-BF-2.json"
+ck "pr is refused"                 "1" "$(run solo pr)"
+ck_has "says why a drain merges"   "a solo drain lands by merge" "$WORK/out"
+ck "an issue ID is refused"        "1" "$(run solo BF-1)"
+ck_has "points at the list form"   "cannot read 'BF-1' as a duration" "$WORK/out"
+ck "an unknown option is refused"  "1" "$(run solo --fast)"
+ck "then-fleet stop is refused"    "1" "$(run solo then-fleet stop)"
+ck_has "names the launch tokens"   "'stop' is not one" "$WORK/out"
+echo 1 > "$WORK/fleet-check-rc"
+ck "then-fleet tokens fleet-launch refuses exit 1" "1" "$(run solo then-fleet)"
+ck_has "the refusal is relayed"    "no count given and no recommendation" "$WORK/out"
+ck_has "and attributed"            "fleet-launch.sh refused the then-fleet arguments" "$WORK/out"
+rm -f "$WORK/fleet-check-rc"
+echo 2 > "$WORK/lister-rc"
+ck "an unreadable listing exits 1" "1" "$(run solo)"
+ck_has "names the listing"         "could not list the solo issues for BF" "$WORK/out"
+rm -f "$WORK/lister-rc"
+ck "refusals dispatched nothing"   "0" "$(dispatches)"
+ck "refusals wrote no marker"      "no" "$(solo_marker_exists)"
+dreset
+ck "an empty pool exits 0"         "0" "$(run solo)"
+ck_has "says there is nothing"     "nothing to drain" "$WORK/out"
+ck "an empty pool wrote no marker" "no" "$(solo_marker_exists)"
+
+# ---- happy path: the listing, in its order, one at a time into the launch branch; no branch, no PR ----
+dreset BF-1 BF-2 BF-3
+base0=$(git -C "$REPO" rev-parse main)
+ck "drain exits 0"                 "0" "$(run solo)"
+ck "dispatched in listing order"   "/auto BF-1,/auto BF-2,/auto BF-3" "$(auto_order)"
+ck "every child forks from the launch branch" "BF-1 head=main src=main ahead=0,BF-2 head=main src=main ahead=0,BF-3 head=main src=main ahead=0" "$(grep '^BF-' "$WORK/forks" | paste -sd, -)"
+ck "the launch branch gained three commits" "3" "$(git -C "$REPO" rev-list --count "$base0..main")"
+ck "marker is a merge-mode drain"  "true merge null BF" "$(smarker '"\(.drain) \(.mode) \(.branch) \(.team)"')"
+ck "marker done"                   "done" "$(smarker .status)"
+ck "queue is what the drain took"  "BF-1 BF-2 BF-3" "$(smarker '.queue | join(" ")')"
+ck "landings recorded"             "3" "$(smarker '[.queue[] as $id | .issues[$id].landed_sha | select(. != null)] | length')"
+ck_has "the plan is printed at launch" '  3. BF-3 — Fix "the thing" in BF-3' "$WORK/out"
+ck_has "reason says drained"       "drained, no workable solo issue is left — shipped into main: BF-1, BF-2, BF-3" "$WORK/out"
+ck "no PR"                         "0" "$(prs_created)"
+ck "no integration branch"         "" "$(git -C "$REPO" branch --list 'seq/*')"
+ck "keys unset"                    "" "$(fork_keys)"
+ck "no fleet without then-fleet"   "" "$(fleet_calls)"
+ck "status solo exits 0"           "0" "$(run status solo)"
+ck_has "status names the drain"    "**Solo drain:** BF-1 → BF-2 → BF-3" "$WORK/out"
+
+# ---- a non-ship costs the drain that issue only ----
+dreset BF-1 BF-2 BF-3
+echo failed > "$WORK/outcome-BF-2"
+ck "a failed issue does not stop the drain" "0" "$(run solo)"
+ck "the next issue still ran"      "/auto BF-1,/auto BF-2,/auto BF-3" "$(auto_order)"
+ck "outcomes recorded"             "shipped failed shipped" "$(smarker '[.queue[] as $id | .issues[$id].outcome] | join(" ")')"
+ck "marker done after a skip"      "done" "$(smarker .status)"
+ck_has "the reason names the miss" "not shipped: BF-2 (failed)" "$WORK/out"
+
+# ---- two failures in a row are a pattern: the drain stops and no fleet follows ----
+dreset BF-1 BF-2 BF-3 BF-4
+echo failed > "$WORK/outcome-BF-1"; echo none > "$WORK/outcome-BF-2"
+ck "two in a row exit 1"           "1" "$(run solo then-fleet 2)"
+ck "the third was not dispatched"  "/auto BF-1,/auto BF-2" "$(auto_order)"
+ck "marker failed"                 "failed" "$(smarker .status)"
+ck_has "the reason names the limit" "2 issues in a row ended without shipping" "$WORK/out"
+ck_has "and says no fleet followed" "the fleet was not launched" "$WORK/out"
+ck "the fleet was only checked"    "check 2" "$(fleet_calls)"
+# A ship between two failures resets the count; /auto declining an issue (skipped, canceled) never counts.
+dreset BF-1 BF-2 BF-3 BF-4
+echo failed > "$WORK/outcome-BF-1"; echo failed > "$WORK/outcome-BF-3"
+ck "failures a ship apart do not stop it" "0" "$(run solo)"
+ck "all four ran"                  "4" "$(dispatches)"
+dreset BF-1 BF-2 BF-3
+echo skipped > "$WORK/outcome-BF-1"; echo canceled > "$WORK/outcome-BF-2"; echo skipped > "$WORK/outcome-BF-3"
+ck "declined issues do not trip the limit" "0" "$(run solo)"
+ck "all three ran"                 "3" "$(dispatches)"
+
+# ---- the listing is read again before every dispatch ----
+dreset BF-1 BF-2
+printf 'printf "BF-1\\nBF-9\\n" > "%s/solo-list"\n' "$WORK" > "$WORK/hook-BF-1"
+ck "a moved pool exits 0"          "0" "$(run solo)"
+ck "the issue that left is not dispatched; the one that joined is" "/auto BF-1,/auto BF-9" "$(auto_order)"
+# An issue the probe refuses at its turn is recorded and skipped without a session.
+dreset BF-1 BF-2 BF-3
+printf '{"labels":{"nodes":[{"name":"specified"},{"name":"solo"}]},"state":{"name":"Done"}}\n' > "$WORK/issue-BF-2.json"
+ck "a refused issue exits 0"       "0" "$(run solo)"
+ck "it got no session"             "/auto BF-1,/auto BF-3" "$(auto_order)"
+ck "its refusal is recorded"       "refused" "$(smarker '.issues["BF-2"].outcome')"
+ck_has "and summarized"            "not shipped: BF-2 (refused)" "$WORK/out"
+# A listing that stops answering mid-run is retried, then fails the drain with what shipped kept.
+dreset BF-1 BF-2
+printf 'echo 2 > "%s/lister-rc"\n' "$WORK" > "$WORK/hook-BF-1"
+ck "an unreadable listing mid-run exits 1" "1" "$(run solo)"
+ck "nothing more was dispatched"   "/auto BF-1" "$(auto_order)"
+ck "marker failed on the listing"  "failed" "$(smarker .status)"
+ck_has "the reason counts the tries" "could not be read in 2 tries" "$WORK/out"
+ck "launch, first pick, then two tries" "4" "$(wc -l < "$WORK/lister-calls" | tr -d ' ')"
+
+# ---- then-fleet: checked at launch, launched once the drain has ended clean ----
+dreset BF-1 BF-2
+ck "then-fleet exits 0"            "0" "$(run solo then-fleet 6 10h)"
+ck "checked first, launched after the last ship, the drain already done" "check 6 10h,launch 6 10h,dispatched-before=2 drain=done" "$(fleet_calls)"
+ck "the launch is recorded"        "0" "$(smarker .fleet.exit)"
+ck_has "the hand-off is announced" "Then: fleet-launch.sh 6 10h — only after a drain that ends clean" "$WORK/out"
+ck_has "fleet-launch's own check output is relayed" "Using /auto-prep's recommendation: 3 session(s)" "$WORK/out"
+ck_lacks "the verdict line is not" "CHECK-OK" "$WORK/out"
+ck "status after a hand-off exits 0" "0" "$(run status solo)"
+ck_has "status reports the hand-off" '**Then:** `fleet-launch.sh 6 10h` — launched' "$WORK/out"
+# The claude flags after -- reach the drain's sessions and the fleet.
+dreset BF-1
+ck "flags with then-fleet exit 0"  "0" "$(run solo then-fleet 3 -- --model sonnet)"
+ck_has "the child got the flag"    "--model sonnet" "$WORK/dispatches"
+ck_lacks "the default model is not added over it" "opus[1m]" "$WORK/dispatches"
+ck_has "the fleet got it after --" "launch 3 -- --model sonnet" "$WORK/fleet-calls"
+# An empty pool still owes the fleet.
+dreset
+ck "an empty pool with then-fleet exits 0" "0" "$(run solo then-fleet 3)"
+ck "nothing was dispatched"        "0" "$(dispatches)"
+ck "the fleet launched"            "check 3,launch 3,dispatched-before=0 drain=done" "$(fleet_calls)"
+# A fleet launch that fails after the drain fails the run, with the drain's result kept in the reason.
+dreset BF-1
+echo 4 > "$WORK/fleet-launch-rc"
+ck "a refused fleet launch exits 1" "1" "$(run solo then-fleet 3)"
+ck "marker failed on the hand-off" "failed 4" "$(smarker '"\(.status) \(.fleet.exit)"')"
+ck_has "the reason keeps the drain's result" "the drain finished but the fleet did not launch (fleet-launch.sh exit 4" "$WORK/out"
+ck_has "with what shipped"         "shipped into main: BF-1" "$WORK/out"
+
+# ---- the budget: nothing starts after it, and running out of time is a clean end ----
+dreset BF-1 BF-2
+ck "a spent budget exits 0"        "0" "$(run solo 0m then-fleet 3)"
+ck "nothing started"               "0" "$(dispatches)"
+ck_has "the reason says so"        "out of time, so nothing new was started" "$WORK/out"
+ck "the fleet still launched"      "launch 3" "$(sed -n 2p "$WORK/fleet-calls")"
+ck "a two-word budget exits 0"     "0" "$(run solo 3 hours)"
+ck "inside the budget both ran"    "2" "$(dispatches)"
+ck "the deadline is recorded"      "true" "$(smarker '.deadline_epoch > 0 and (.deadline | length) > 0')"
+ck_has "and announced"             "Budget: nothing new starts after" "$WORK/out"
+
+# ---- stop: the issue in flight finishes, nothing else starts, no fleet ----
+dreset BF-1 BF-2
+printf '( cd "%s" && "%s" stop solo ) > "%s/stop-out" 2>&1\n' "$REPO" "$SCRIPT" "$WORK" > "$WORK/hook-BF-1"
+ck "a stopped drain exits 0"       "0" "$(run solo then-fleet 3)"
+ck "stop dispatched once"          "/auto BF-1" "$(auto_order)"
+ck "marker stopped"                "stopped" "$(smarker .status)"
+ck_has "stop names the drain"      "Stop requested for the solo drain (BF-1)" "$WORK/stop-out"
+ck "the reason keeps what shipped" "stopped — shipped into main: BF-1; the fleet was not launched; re-run the drain to continue" "$(smarker .reason)"
+ck "the fleet was never launched"  "check 3" "$(fleet_calls)"
+ck "status of a stopped drain exits 0" "0" "$(run status solo)"
+ck_has "status says the fleet did not launch" '**Then:** `fleet-launch.sh 3` — not launched' "$WORK/out"
+
+# ---- one drain per checkout, and a list never mixes with one ----
+dreset BF-1
+mk_drain running $$ main '["BF-7"]'
+ck "a second drain is refused"     "1" "$(run solo)"
+ck_has "names the running drain"   "a solo drain is already running here (solo drain (BF-7)" "$WORK/out"
+ck "a merge list beside it is refused" "1" "$(run merge BF-1)"
+ck_has "names the drain as the merger" "a merge-mode sequence is already merging into 'main' (solo drain (BF-7))" "$WORK/out"
+ck "a list naming its issue is refused" "1" "$(run BF-7 BF-8)"
+ck_has "names the holder"          "BF-7 already in a running sequence (solo drain (BF-7)" "$WORK/out"
+ck "none of them dispatched"       "0" "$(dispatches)"
+tmp=$(jq '.plan = ["BF-7","BF-8","BF-9"]' "$REPO/tmp/fleet-sequence-solo.json"); printf '%s\n' "$tmp" > "$REPO/tmp/fleet-sequence-solo.json"
+ck "status of a running drain exits 0" "0" "$(run status solo)"
+ck_has "up next leaves out what it already took" "read again before each dispatch): BF-8, BF-9" "$WORK/out"
+# A list sharing an issue with an ENDED drain is its own sequence — it neither resumes the drain nor rewrites its marker.
+dreset
+mk_drain failed null main '["BF-7"]' "{\"BF-7\":{\"session\":\"cd000001\",\"started_epoch\":1,\"tip_before\":\"$(git -C "$REPO" rev-parse main)\",\"outcome\":\"failed\"}}"
+ck "a list after an ended drain exits 0" "0" "$(run merge BF-7 BF-8)"
+ck "it is its own sequence"        "merge null" "$(marker '"\(.mode) \(.drain)"' bf-7)"
+ck "the drain's marker is left as found" "failed BF-7" "$(smarker '"\(.status) \(.queue | join(" "))"')"
+# …unless the drain's session for that issue is still working: dispatching it again would run it twice.
+dreset
+mk_drain failed null main '["BF-7"]' "{\"BF-7\":{\"session\":\"cd000001\",\"started_epoch\":1,\"tip_before\":\"$(git -C "$REPO" rev-parse main)\"}}"
+printf '[{"id":"cd000001","kind":"background","state":"running"}]\n' > "$WORK/agents.json"
+ck "a list naming an in-flight drain issue is refused" "1" "$(run merge BF-7 BF-8)"
+ck_has "points back at the drain"  "BF-7 is still in flight from the last solo drain (session cd000001)" "$WORK/out"
+ck "it dispatched nothing"         "0" "$(dispatches)"
+
+# ---- a re-launch waits on what the last drain left unfinished, then carries on from the listing ----
+dreset BF-8
+tip=$(git -C "$REPO" rev-parse main)
+mk_drain failed null main '["BF-7"]' "{\"BF-7\":{\"session\":\"cd000001\",\"started_epoch\":1,\"tip_before\":\"$tip\"}}"
+jq -n '{mode:"single",status:"active",shipped:["BF-7"],canceled:[],skipped:[],failed:[]}' > "$REPO/tmp/auto-state-cd000001.json"
+new=$(git -C "$REPO" -c user.email=t@t -c user.name=t commit-tree -p "$tip" -m "BF-7: work" "$tip^{tree}"); git -C "$REPO" update-ref refs/heads/main "$new"
+ck "an adopting drain exits 0"     "0" "$(run solo)"
+ck_has "adoption announced"        "Waiting first on what the last drain left unfinished, not dispatching it again: BF-7" "$WORK/out"
+ck "only the listed issue was dispatched" "/auto BF-8" "$(auto_order)"
+ck "the queue leads with the adopted issue" "BF-7 BF-8" "$(smarker '.queue | join(" ")')"
+ck "the adopted landing is recorded" "$new" "$(smarker '.issues["BF-7"].landed_sha')"
+# Left on another branch, it cannot be waited on from here.
+dreset BF-8
+mk_drain failed null release '["BF-7"]' "{\"BF-7\":{\"session\":\"cd000001\",\"started_epoch\":1,\"tip_before\":\"$(git -C "$REPO" rev-parse main)\"}}"
+printf '[{"id":"cd000001","kind":"background","state":"running"}]\n' > "$WORK/agents.json"
+ck "unfinished work on another branch is refused" "1" "$(run solo)"
+ck_has "names the branch to launch from" "the last drain left BF-7 unfinished on 'release'" "$WORK/out"
+ck "it dispatched nothing either"  "0" "$(dispatches)"
+
+# ---- a fleet still working here is named, never refused; an ended fleet's marker is not ----
+dreset BF-1
+printf '{"fleet_sessions":["fe000001"],"count":1,"deadline_epoch":%s}\n' "$(( $(date +%s) + 3600 ))" > "$REPO/tmp/fleet-deadline-team.json"
+printf '[{"id":"fe000001","kind":"background","state":"working"}]\n' > "$WORK/agents.json"
+ck "a live fleet does not block the drain" "0" "$(run solo)"
+ck_has "but it is named"           "WARN: a fleet is still working in this checkout (team)" "$WORK/out"
+dreset BF-1
+printf '{"fleet_sessions":["fe000001"],"count":1,"deadline_epoch":%s}\n' "$(( $(date +%s) + 3600 ))" > "$REPO/tmp/fleet-deadline-team.json"
+ck "an ended fleet's marker exits 0" "0" "$(run solo)"
+ck_lacks "and draws no warning"    "a fleet is still working" "$WORK/out"
+
+# ---- a checkout parked for a fleet (detached, start.wt-source-branch set) drains into the branch the key names ----
+dreset BF-1
+git -C "$REPO" config start.wt-source-branch main
+git -C "$REPO" checkout -q --detach
+base0=$(git -C "$REPO" rev-parse main)
+ck "a parked checkout exits 0"     "0" "$(run solo)"
+ck "it ships into the keyed branch" "main 1" "$(smarker .base) $(git -C "$REPO" rev-list --count "$base0..main")"
+ck "the child forks by its per-issue key" "BF-1 head= src=main ahead=0" "$(sed -n 1p "$WORK/forks")"
+ck "the checkout stays detached"   "" "$(git -C "$REPO" branch --show-current)"
+git -C "$REPO" config --unset start.wt-source-branch
+: > "$WORK/dispatches"
+ck "detached with no key is refused" "1" "$(run solo)"
+ck_has "names the key"             "start.wt-source-branch names no local branch" "$WORK/out"
+ck "and dispatched nothing"        "0" "$(dispatches)"
+git -C "$REPO" checkout -q main
+unset LINEAR_TEAM
 
 echo
 echo "$PASS passed / $FAIL failed"

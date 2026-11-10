@@ -1078,7 +1078,7 @@ if [ "$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')" != "solo" ]; then
   solo_hidden=$(jq '[.[] | select(any((.labels // [])[]; ascii_downcase == "solo"))] | length' "$list_file" 2>/dev/null || echo 0)
 fi
 solo_note() {
-  [ "$solo_hidden" -gt 0 ] && printf '\n_%s issue(s) hidden as fleet-hostile (`solo` label) — list with --label solo; ship one via /auto <ID> or /full <ID>, several in order via /fleet-sequence._\n' "$solo_hidden"
+  [ "$solo_hidden" -gt 0 ] && printf '\n_%s issue(s) hidden as fleet-hostile (`solo` label) — list with --label solo; ship one via /auto <ID> or /full <ID>, all of them via /fleet-solo, a named list in order via /fleet-sequence._\n' "$solo_hidden"
   return 0
 }
 

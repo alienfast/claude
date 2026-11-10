@@ -273,4 +273,6 @@ ends so the operator and `/fleet-retro` can read them; a launch is where they ex
   immediately before a reboot.
 - A `/fleet-sequence` running alongside is not a refusal: the launch proceeds with a `NOTE:` naming it, its queued
   issues are hidden from this fleet's picks, and its child sessions' ledgers survive the ledger expiry. Relay the note.
+  A running **solo drain** (`/fleet-solo`) draws a `WARN:` instead — `solo` marks work that should not run beside a
+  fleet — and is still the operator's call; `/fleet-solo … then-fleet` is the form that runs the two in turn.
   Another fleet running alongside is not a refusal either — § Several fleets in one checkout.

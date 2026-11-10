@@ -6,8 +6,9 @@
 # straight into the launch branch, the shape an unscoped fleet ships in.
 #
 # Usage: fleet-sequence.sh [pr|merge] [stale-ok] <ISSUE-ID>... [-- <claude flags...>]
-#        fleet-sequence.sh status [<ISSUE-ID>]
-#        fleet-sequence.sh stop [<ISSUE-ID>]
+#        fleet-sequence.sh solo [list] [stale-ok] [<duration>] [then-fleet [<fleet-launch tokens>...]] [-- <claude flags...>]
+#        fleet-sequence.sh status [<ISSUE-ID>|solo]
+#        fleet-sequence.sh stop [<ISSUE-ID>|solo]
 #        fleet-sequence.sh run <slug>     (internal: the detached runner; reads tmp/fleet-sequence-<slug>.json)
 #
 #   <ISSUE-ID>...  The issues in the order they must ship. Each must carry `specified` and not `human`
@@ -26,6 +27,23 @@
 #                  unattended-run prerequisites, same as fleet-launch.sh; no --autocompact since 2026-10-09:
 #                  mods/loop-boundary compacts at iteration boundaries, and the launch refuses, exit 5, where
 #                  it is not enabled unless an explicit --autocompact is passed).
+#
+#   solo           The DRAIN (/fleet-solo): no list — the queue is next-candidates.sh --label solo for $LINEAR_TEAM, the
+#                  set /auto-prep reports as workable now, read again before every dispatch: an issue a predecessor's
+#                  ship unblocked joins, and one that left the pool is never dispatched from a stale list. Always
+#                  `merge` — a broad change parked on a branch only defers its collision to the catch-up merge, and
+#                  one PR for a named list is the list form above. A non-ship means something else here: the issues
+#                  are independent, so one that ends without shipping is recorded and the drain moves on, until
+#                  FLEET_SEQUENCE_DRAIN_MAX_FAILS in a row fail — a pattern the next one would repeat. `list` prints
+#                  the running order and launches nothing. <duration> ("3h", "90 minutes") is a budget: no issue
+#                  starts after it, the one in flight finishes. `then-fleet` runs fleet-launch.sh with the tokens
+#                  that follow once the drain ends CLEAN (drained, or out of time) — never after a stop, the fail
+#                  limit, or an issue left in flight; the tokens are checked at launch (FLEET_LAUNCH_CHECK), so a
+#                  bad count or a missing recommendation refuses while someone is watching. The claude flags after
+#                  -- go to the drain's sessions and to that fleet. One drain per checkout, marker slug `solo`; a
+#                  re-launch waits on a session the last drain left working instead of dispatching beside it. Unlike
+#                  a list it also launches from a checkout parked detached with start.wt-source-branch set, merging
+#                  into the branch that key names.
 #
 #   status         One-screen readout of a marker: mode, branch, PR, per-issue session, liveness,
 #                  outcome and where it landed, the branch's position against its base, the runner's
@@ -88,19 +106,22 @@
 # sequence fails and the session is left running), FLEET_SEQUENCE_MERGE_TIMEOUT (default 1800 — how long a shipped issue may take to land
 # on the branch; the merge-queue drainer runs every 15 minutes), FLEET_SEQUENCE_PR_UPDATE=0 skips the
 # closing /pr-update session, FLEET_SEQUENCE_PR_UPDATE_TIMEOUT (default 1800), FLEET_SEQUENCE_FOREGROUND=1
-# runs the runner inline (tests).
+# runs the runner inline (tests). The drain's: FLEET_SEQUENCE_DRAIN_MAX_FAILS (default 2), FLEET_SEQUENCE_LIST_RETRIES
+# and FLEET_SEQUENCE_LIST_WAIT (default 6 tries, 300s apart, before an unreadable listing fails the drain), and the
+# test seams FLEET_SEQUENCE_LISTER / FLEET_SEQUENCE_FLEET_LAUNCHER (default next-candidates.sh / fleet-launch.sh).
 #
 # Read-write: tmp/fleet-sequence-<slug>.json (the marker) and tmp/fleet-sequence-<slug>.log in the main
 # checkout; creates the integration branch, sets/unsets the per-issue `start.<id>.wt-source-branch` keys,
 # pushes the branch, opens its PR, adds and removes a throwaway worktree at tmp/fleet-sequence-pr-update-<slug>
-# for the closing /pr-update session, dispatches background claude sessions. Never moves the main checkout's
+# for the closing /pr-update session, dispatches background claude sessions, and for a drain's then-fleet runs
+# fleet-launch.sh. Never moves the main checkout's
 # HEAD. Exit 1 on argument/environment errors, exit 4 on TOOLING-STALE and exit 5 on BOUNDARY-MOD-MISSING, all
 # before anything is dispatched or written; the runner exits 1 when the sequence fails.
 
 set -eo pipefail
 
 usage() {
-  echo "usage: fleet-sequence.sh [pr|merge] [stale-ok] <ISSUE-ID>... [-- <claude flags...>] | fleet-sequence.sh status [<ISSUE-ID>] | stop [<ISSUE-ID>]" >&2
+  echo "usage: fleet-sequence.sh [pr|merge] [stale-ok] <ISSUE-ID>... [-- <claude flags...>] | fleet-sequence.sh solo [list] [stale-ok] [<duration>] [then-fleet [<fleet-launch tokens>...]] [-- <claude flags...>] | fleet-sequence.sh status [<ISSUE-ID>|solo] | stop [<ISSUE-ID>|solo]" >&2
   exit 1
 }
 
@@ -109,6 +130,7 @@ for cmd in claude jq git gh; do
 done
 
 here=$(cd "$(dirname "$0")" && pwd)
+. "$here/../lib/fleet-markers.sh"
 main_checkout=$(git worktree list --porcelain 2>/dev/null | awk '/^worktree /{print substr($0,10); exit}')
 [ -n "$main_checkout" ] || { echo "ERROR: not inside a git repository — run from the project the sequence should work on" >&2; exit 1; }
 mkdir -p "$main_checkout/tmp"
@@ -118,6 +140,9 @@ grace="${FLEET_SEQUENCE_GRACE:-120}"
 issue_timeout="${FLEET_SEQUENCE_ISSUE_TIMEOUT:-43200}"
 merge_timeout="${FLEET_SEQUENCE_MERGE_TIMEOUT:-1800}"
 pr_update_timeout="${FLEET_SEQUENCE_PR_UPDATE_TIMEOUT:-1800}"
+drain_max_fails="${FLEET_SEQUENCE_DRAIN_MAX_FAILS:-2}"
+list_retries="${FLEET_SEQUENCE_LIST_RETRIES:-6}"
+list_wait="${FLEET_SEQUENCE_LIST_WAIT:-300}"
 claude_args=()
 
 logln() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
@@ -159,6 +184,69 @@ marker_naming() { # <ISSUE-ID as typed> → the newest marker naming it, or "" w
   while IFS= read -r f; do
     if names_issue "$f" "$id"; then printf '%s' "$f"; return 0; fi
   done < <(all_markers)
+  return 0
+}
+marker_for() { # <ISSUE-ID or `solo` as typed> → the marker it names, or "" when there is none; returns 1 on a malformed ID
+  if [ "$(lower "$1")" = "solo" ]; then
+    if [ -s "$main_checkout/tmp/fleet-sequence-solo.json" ]; then printf '%s' "$main_checkout/tmp/fleet-sequence-solo.json"; fi
+    return 0
+  fi
+  marker_naming "$1"
+}
+is_drain() { [ "$(jq -r '.drain // false' "$1" 2>/dev/null)" = "true" ]; } # <marker>
+seq_label() { # <marker> → how a message names it: the queue, or `solo drain` with what it has taken so far
+  jq -r '((.queue // []) | join(" → ")) as $q
+    | if .drain == true then "solo drain" + (if $q == "" then "" else " (" + $q + ")" end) else $q end' "$1"
+}
+in_flight_entries() { # <marker> → "<ID>\t<session>\t<started>" per recorded session still working, or shipped with its landing unrecorded
+  local id sid since
+  while IFS=$'\t' read -r id sid since; do
+    [ -n "$sid" ] || continue
+    if registry_alive "$sid" || [ "$(ledger_outcome "$sid" "$id" "$since")" = "shipped" ]; then printf '%s\t%s\t%s\n' "$id" "$sid" "$since"; fi
+  done < <(jq -r '(.issues // {}) | to_entries[] | select(.value.outcome != "shipped" and (.value.session // "") != "") | [.key, .value.session, (.value.started_epoch // 0)] | @tsv' "$1")
+  return 0
+}
+
+# ---- the probe /auto's targeted mode runs ----
+probe_issue() { # <ISSUE-ID> — prints why the issue cannot ship and returns 1; silent and 0 when it can
+  local id="$1" json labels state
+  json=$(linear-cli issues get "$id" -o json 2>/dev/null) || { echo "could not read $id from Linear (linear-cli issues get failed)"; return 1; }
+  labels=$(printf '%s' "$json" | jq -r '.labels.nodes[].name' 2>/dev/null || true)
+  state=$(printf '%s' "$json" | jq -r '.state.name // ""' 2>/dev/null || true)
+  printf '%s\n' "$labels" | grep -qix specified || { echo "$id is not certified (no specified label) — run /spec $id first"; return 1; }
+  if printf '%s\n' "$labels" | grep -qix human; then echo "$id is human-owned work (human label) — no unattended mode can ship it"; return 1; fi
+  case "$state" in
+    Done|Canceled|Duplicate|"Ready For Release") echo "$id is already $state — nothing to ship"; return 1 ;;
+  esac
+  return 0
+}
+
+# ---- the drain's pool ----
+solo_listing() { # <team> → "<ID>\t<title>" per workable solo issue, in running order; the lister's exit code when it could not be read
+  local out rc=0
+  out=$("${FLEET_SEQUENCE_LISTER:-$here/next-candidates.sh}" --team "$1" --label solo --limit 50 2>&1) || rc=$?
+  if [ "$rc" -ne 0 ]; then printf '%s\n' "$out" >&2; return "$rc"; fi
+  printf '%s\n' "$out" | sed -n 's/^[0-9][0-9]*\. \*\*\([A-Za-z0-9]*-[0-9][0-9]*\)\*\*[^"]*"\(.*\)"$/\1'"$(printf '\t')"'\2/p' | awk -F'\t' '!seen[$1]++'
+}
+drain_next() { # <team> → the first listed issue this run has not taken, or nothing when none is left; 1 when the listing stays unreadable
+  local listing try=1 ids_json
+  until listing=$(solo_listing "$1"); do
+    [ "$try" -lt "$list_retries" ] || return 1
+    logln "the solo listing could not be read (try $try of $list_retries, above) — again in ${list_wait}s" >&2
+    try=$((try+1)); sleep "$list_wait"
+  done
+  ids_json=$(printf '%s\n' "$listing" | cut -f1 | jq -R . | jq -sc 'map(select(length > 0))')
+  update_marker --argjson l "$ids_json" '(.issues // {}) as $seen | .plan = [$l[] | select(. as $x | $seen | has($x) | not)]'
+  jq -r '.plan[0] // empty' "$marker"
+}
+print_plan() { # <listing> — the running order, each issue probed the way its dispatch will be
+  local k=0 id title reason
+  while IFS=$'\t' read -r id title; do
+    [ -n "$id" ] || continue
+    k=$((k+1))
+    if reason=$(probe_issue "$id"); then printf '  %s. %s — %s\n' "$k" "$id" "$title"
+    else printf '  %s. %s — %s  [will be skipped: %s]\n' "$k" "$id" "$title" "$reason"; fi
+  done <<< "$1"
   return 0
 }
 
@@ -386,7 +474,7 @@ open_sequence_pr() { # push, open or find the PR from the branch onto the base, 
 cmd_status() { # [<ISSUE-ID>] — that issue's sequence; without one, every running sequence, else the latest
   local f n=0 shown=() rest=""
   if [ -n "${1:-}" ]; then
-    f=$(marker_naming "$1") || exit 1
+    f=$(marker_for "$1") || exit 1
     [ -n "$f" ] || { echo "No sequence here names $1 — nothing launched for it from $main_checkout."; exit 0; }
     shown=("$f")
   else
@@ -404,14 +492,14 @@ cmd_status() { # [<ISSUE-ID>] — that issue's sequence; without one, every runn
     use_sequence "$(slug_of "$f")"; print_status; n=$((n+1))
   done
   while IFS= read -r f; do
-    case " ${shown[*]} " in *" $f "*) ;; *) rest="$rest, $(jq -r '.queue | join(" → ")' "$f") ($(jq -r '.status' "$f"))" ;; esac
+    case " ${shown[*]} " in *" $f "*) ;; *) rest="$rest, $(seq_label "$f") ($(jq -r '.status' "$f"))" ;; esac
   done < <(all_markers)
-  [ -z "$rest" ] || printf '\n**Other sequences here:** %s — `fleet-sequence.sh status <ISSUE-ID>` reads one.\n' "${rest#, }"
+  [ -z "$rest" ] || printf '\n**Other sequences here:** %s — `fleet-sequence.sh status <ISSUE-ID>` reads one (`status solo` the drain).\n' "${rest#, }"
   return 0
 }
 
 print_status() { # the readout of the sequence use_sequence selected
-  local status base mode branch queue runner_pid runner live id sid st outcome landed pr_url ahead behind keys k
+  local status base mode branch queue runner_pid runner live id sid st outcome landed pr_url ahead behind keys k drain=0 plan fleet_exit
   status=$(jq -r '.status' "$marker"); base=$(jq -r '.base' "$marker"); mode=$(jq -r '.mode // "pr"' "$marker")
   branch=$(jq -r '.branch // ""' "$marker"); pr_url=$(jq -r '.pr_url // ""' "$marker")
   queue=$(jq -r '.queue | join(" → ")' "$marker")
@@ -420,12 +508,27 @@ print_status() { # the readout of the sequence use_sequence selected
   if [ -n "$runner_pid" ]; then
     if kill -0 "$runner_pid" 2>/dev/null; then runner="alive (pid $runner_pid)"; else runner="gone (pid $runner_pid)"; fi
   fi
-  printf '**Sequence:** %s · **mode:** %s' "$queue" "$mode"
+  if is_drain "$marker"; then drain=1; printf '**Solo drain:** %s · **mode:** %s' "${queue:-nothing dispatched yet}" "$mode"
+  else printf '**Sequence:** %s · **mode:** %s' "$queue" "$mode"; fi
   if [ "$mode" = "merge" ]; then printf ' · **merges into:** `%s`' "$base"; else printf ' · **branch:** `%s` → `%s`' "$branch" "$base"; fi
   printf ' · **status:** %s · **runner:** %s' "$status" "$runner"
   [ "$(jq -r '.stop_requested' "$marker")" = "true" ] && printf ' · **stop requested**'
   printf '\n'
   [ "$(jq -r '.reason // ""' "$marker")" != "" ] && printf '**Reason:** %s\n' "$(jq -r '.reason' "$marker")"
+  if [ "$drain" = 1 ]; then
+    plan=$(jq -r '((.plan // []) - (.queue // [])) | join(", ")' "$marker")
+    if [ "$status" = "running" ] && [ -n "$plan" ]; then printf '**Up next** (as last listed; read again before each dispatch): %s\n' "$plan"; fi
+    if [ "$(jq -r '.deadline // ""' "$marker")" != "" ]; then printf '**Budget:** nothing new starts after %s\n' "$(jq -r '.deadline' "$marker")"; fi
+    if [ "$(jq -r '.then_fleet != null' "$marker")" = "true" ]; then
+      fleet_exit=$(jq -r '.fleet.exit // empty' "$marker")
+      case "$fleet_exit" in
+        "") if [ "$status" = "running" ]; then k="launches when the drain ends clean"; else k="not launched"; fi ;;
+        0) k="launched — /fleet-status reads it" ;;
+        *) k="did NOT launch (fleet-launch.sh exit $fleet_exit — see the log)" ;;
+      esac
+      printf '**Then:** `fleet-launch.sh %s` — %s\n' "$(jq -r '.then_fleet | join(" ")' "$marker")" "$k"
+    fi
+  fi
   keys=""
   for id in $(jq -r '.queue[]' "$marker"); do
     k=$(git -C "$main_checkout" config --get "$(fork_key "$id")" 2>/dev/null || true)
@@ -436,7 +539,7 @@ print_status() { # the readout of the sequence use_sequence selected
   if [ "$mode" != "merge" ]; then
     if [ -n "$pr_url" ]; then printf '**PR:** %s\n' "$pr_url"; else printf '**PR:** not opened yet (opens when the last issue ships)\n'; fi
   fi
-  printf '\n| issue | session | liveness | outcome | landed |\n|---|---|---|---|---|\n'
+  [ -z "$queue" ] || printf '\n| issue | session | liveness | outcome | landed |\n|---|---|---|---|---|\n'
   for id in $(jq -r '.queue[]' "$marker"); do
     sid=$(jq -r --arg id "$id" '.issues[$id].session // ""' "$marker")
     outcome=$(jq -r --arg id "$id" '.issues[$id].outcome // ""' "$marker")
@@ -464,7 +567,7 @@ print_status() { # the readout of the sequence use_sequence selected
 cmd_stop() { # [<ISSUE-ID>] — needed only to choose among several running sequences
   local f latest="" running=()
   if [ -n "${1:-}" ]; then
-    f=$(marker_naming "$1") || exit 1
+    f=$(marker_for "$1") || exit 1
     [ -n "$f" ] || { echo "No sequence here names $1 — nothing to stop."; exit 0; }
     latest="$f"
     if [ "$(jq -r '.status' "$f")" = "running" ]; then running=("$f"); fi
@@ -477,12 +580,17 @@ cmd_stop() { # [<ISSUE-ID>] — needed only to choose among several running sequ
   fi
   if [ ${#running[@]} -eq 0 ]; then echo "Sequence is already $(jq -r '.status' "$latest") — nothing to stop."; exit 0; fi
   if [ ${#running[@]} -gt 1 ]; then
-    echo "ERROR: ${#running[@]} sequences are running — name an issue of the one to stop: fleet-sequence.sh stop <ISSUE-ID>" >&2
-    for f in "${running[@]}"; do echo "       $(jq -r '.queue | join(" → ")' "$f")" >&2; done
+    echo "ERROR: ${#running[@]} sequences are running — name an issue of the one to stop (or \`solo\` for the drain): fleet-sequence.sh stop <ISSUE-ID>" >&2
+    for f in "${running[@]}"; do echo "       $(seq_label "$f")" >&2; done
     exit 1
   fi
   use_sequence "$(slug_of "${running[0]}")"
   update_marker '.stop_requested = true'
+  if is_drain "$marker"; then
+    echo "Stop requested for the $(seq_label "$marker"): the runner finishes the issue in flight, then stops; what shipped stays merged and no fleet is launched."
+    echo "Nothing is killed — to abort the in-flight session use \`claude agents\`. Re-run the drain to continue."
+    return 0
+  fi
   echo "Stop requested for $(jq -r '.queue | join(" → ")' "$marker"): the runner finishes the issue in flight, then stops; what shipped stays on the branch and no PR is opened."
   echo "Nothing is killed — to abort the in-flight session use \`claude agents\`. Re-run the same list to continue and open the PR."
 }
@@ -501,38 +609,108 @@ on_exit_run() {
   fi
 }
 
+launch_fleet() { # the hand-off a clean drain owes its launch: fleet-launch.sh with the tokens `then-fleet` carried
+  local a rc=0 summary
+  local args=()
+  summary=$(jq -r '.reason' "$marker")
+  while IFS= read -r a; do args+=("$a"); done < <(jq -r '(.then_fleet // [])[]' "$marker")
+  if [ "$(jq -r '(.fleet_claude_args // []) | length' "$marker")" -gt 0 ]; then
+    args+=(--)
+    while IFS= read -r a; do args+=("$a"); done < <(jq -r '.fleet_claude_args[]' "$marker")
+  fi
+  logln "then-fleet: fleet-launch.sh ${args[*]}"
+  "${FLEET_SEQUENCE_FLEET_LAUNCHER:-$here/fleet-launch.sh}" "${args[@]}" || rc=$?
+  update_marker --argjson rc "$rc" --argjson now "$(date +%s)" '.fleet = {exit: $rc, epoch: $now}'
+  [ "$rc" -eq 0 ] || fail_run "the drain finished but the fleet did not launch (fleet-launch.sh exit $rc — its refusal is above in $log); launch it by hand. The drain: $summary"
+  logln "then-fleet: launched — /fleet-status reads it"
+}
+
+finish_drain() { # <drained|deadline|fails|stop> — the drain's closing record, then the fleet when its launch named one and it ended clean
+  local why="$1" base summary reason fleet_note=""
+  base=$(jq -r '.base' "$marker")
+  summary=$(jq -r --arg b "$base" '
+    [.queue[] as $q | select(.issues[$q].outcome == "shipped") | $q] as $ok
+    | [.queue[] as $q | select(.issues[$q].outcome != "shipped") | "\($q) (\(.issues[$q].outcome // "no outcome"))"] as $no
+    | "shipped into \($b): " + (if ($ok | length) > 0 then ($ok | join(", ")) else "none" end)
+      + (if ($no | length) > 0 then "; not shipped: " + ($no | join(", ")) else "" end)' "$marker")
+  [ "$(jq -r '.then_fleet != null' "$marker")" != "true" ] || fleet_note="; the fleet was not launched"
+  case "$why" in
+    stop)
+      logln "STOPPED: $summary$fleet_note — re-run the drain to continue"
+      update_marker --arg r "stopped — $summary$fleet_note; re-run the drain to continue" '.status = "stopped" | .reason = $r'
+      exit 0 ;;
+    fails)
+      fail_run "$drain_max_fails issues in a row ended without shipping — a pattern the next one would repeat (a broken base, an outage), so the drain stopped$fleet_note. $summary" ;;
+    deadline) reason="out of time, so nothing new was started — $summary" ;;
+    *) reason="drained, no workable solo issue is left — $summary" ;;
+  esac
+  update_marker --arg r "$reason" '.status = "done" | .reason = $r'
+  clear_fork_keys
+  logln "done: $reason"
+  [ -n "$fleet_note" ] || return 0
+  launch_fleet
+}
+
 cmd_run() { # [<slug>] — the launch passes it to the detached runner; a foreground launch has already selected the sequence
   [ -z "${1:-}" ] || use_sequence "$1"
   [ -s "$marker" ] || { echo "ERROR: no marker at ${marker:-tmp/fleet-sequence-<slug>.json} — the runner only runs under a launch" >&2; exit 1; }
   cd "$main_checkout"
   trap on_exit_run EXIT
-  local base mode target ids_csv id sid out outcome remaining now started before dirty current
+  local base mode target ids_csv id sid out outcome remaining now started before dirty current tag reason
+  local drain=0 team="" deadline="" fails=0 ended="" fresh rerun="re-run the same list"
   local queue=()
   base=$(jq -r '.base' "$marker"); mode=$(jq -r '.mode' "$marker"); target=$(target_branch)
   while IFS= read -r id; do queue+=("$id"); done < <(jq -r '.queue[]' "$marker")
   while IFS= read -r out; do claude_args+=("$out"); done < <(jq -r '.claude_args[]' "$marker")
   ids_csv=$(jq -r '.queue | join(", ")' "$marker")
-  if [ "$mode" = "merge" ]; then logln "sequence started: $ids_csv merging into $base; runner pid $$"
+  if is_drain "$marker"; then
+    drain=1; rerun="re-run the drain"
+    team=$(jq -r '.team // ""' "$marker"); deadline=$(jq -r '.deadline_epoch // empty' "$marker")
+    logln "solo drain started: the workable solo issues in $team, one at a time into $base${deadline:+ — nothing new starts after $(jq -r '.deadline' "$marker")}; runner pid $$"
+  elif [ "$mode" = "merge" ]; then logln "sequence started: $ids_csv merging into $base; runner pid $$"
   else logln "sequence started: $ids_csv onto $target (forked from $base); runner pid $$"; fi
 
   local i=0
-  for id in "${queue[@]}"; do
+  while :; do
+    fresh=0
+    if [ "$i" -lt "${#queue[@]}" ]; then
+      id="${queue[$i]}"
+    elif [ "$drain" = 1 ]; then
+      # A drain's queue is what it has taken so far. The next issue comes from a fresh listing, and only while the run
+      # may still start one.
+      if [ "$(jq -r '.stop_requested' "$marker")" = "true" ]; then ended=stop; break; fi
+      if [ "$fails" -ge "$drain_max_fails" ]; then ended=fails; break; fi
+      if [ -n "$deadline" ] && [ "$(date +%s)" -ge "$deadline" ]; then ended=deadline; break; fi
+      id=$(drain_next "$team") || fail_run "the solo listing could not be read in $list_retries tries (above in $log) — nothing more was dispatched; $rerun once Linear answers"
+      if [ -z "$id" ]; then ended=drained; break; fi
+      queue+=("$id"); fresh=1
+      update_marker --arg id "$id" '.queue += [$id]'
+    else
+      break
+    fi
     i=$((i+1))
+    tag="[$i/${#queue[@]}]"
+    if [ "$drain" = 1 ]; then tag="[$i]"; fi
+    if [ "$fresh" = 1 ] && ! reason=$(probe_issue "$id"); then
+      logln "$tag $id not dispatched — $reason"
+      update_marker --arg id "$id" --arg r "$reason" --argjson now "$(date +%s)" '.issues[$id] = {outcome: "refused", reason: $r, ended_epoch: $now}'
+      continue
+    fi
     if [ "$(jq -r --arg id "$id" '.issues[$id].outcome // ""' "$marker")" = "shipped" ]; then
       if [ -n "$(jq -r --arg id "$id" '.issues[$id].landed_sha // ""' "$marker")" ]; then
-        logln "[$i/${#queue[@]}] $id already shipped (landed $(jq -r --arg id "$id" '.issues[$id].landed_sha | .[0:12]' "$marker")) — skipping"
+        logln "$tag $id already shipped (landed $(jq -r --arg id "$id" '.issues[$id].landed_sha | .[0:12]' "$marker")) — skipping"
         continue
       fi
       # Shipped but never landed: an earlier run timed out on its deferred merge. Skipping it would fork the next issue
       # from a tip without it, so wait for the landing here exactly as the run that dispatched it would have.
       before=$(jq -r --arg id "$id" '.issues[$id].tip_before // ""' "$marker")
-      logln "[$i/${#queue[@]}] $id shipped but its landing was never recorded — waiting for it before the next issue forks"
+      logln "$tag $id shipped but its landing was never recorded — waiting for it before the next issue forks"
       wait_for_landing "$id" "$before" \
-        || fail_run "$id: shipped but still not landed on '$target' within ${merge_timeout}s — its merge is queued (/merge-queue) or never merged; land it, then re-run the same list"
-      record_landing "[$i/${#queue[@]}]" "$id" "$before"
+        || fail_run "$id: shipped but still not landed on '$target' within ${merge_timeout}s — its merge is queued (/merge-queue) or never merged; land it, then $rerun"
+      record_landing "$tag" "$id" "$before"
       continue
     fi
-    if [ "$(jq -r '.stop_requested' "$marker")" = "true" ]; then
+    if [ "$drain" = 0 ] && [ "$(jq -r '.stop_requested' "$marker")" = "true" ]; then
       remaining=$(printf '%s\n' "${queue[@]:$((i-1))}" | paste -sd, - | sed 's/,/, /g')
       logln "STOPPED: stopped before $id; not started: $remaining — re-run the same list to continue"
       update_marker --arg r "stopped before $id; not started: $remaining — re-run the same list to continue" '.status = "stopped" | .reason = $r | .current = null'
@@ -542,8 +720,8 @@ cmd_run() { # [<slug>] — the launch passes it to the detached runner; a foregr
     if [ -n "$dirty" ]; then
       current=$(git branch --show-current 2>/dev/null || true)
       carries_issue_id "$current" \
-        && fail_run "main checkout is dirty on '$current' before $id — the branch name carries an issue ID, so $id's /auto would refuse that dirt or finish it as its own work; commit or stash it, then re-run the same list"
-      logln "[$i/${#queue[@]}] NOTE: main checkout is dirty before $id ($dirty) — $id's /auto picks past it; a merge that changes one of those paths defers to the queue"
+        && fail_run "main checkout is dirty on '$current' before $id — the branch name carries an issue ID, so $id's /auto would refuse that dirt or finish it as its own work; commit or stash it, then $rerun"
+      logln "$tag NOTE: main checkout is dirty before $id ($dirty) — $id's /auto picks past it; a merge that changes one of those paths defers to the queue"
     fi
 
     # The launch carries a non-shipped entry only for a session it found still working (or shipped with its
@@ -554,34 +732,41 @@ cmd_run() { # [<slug>] — the launch passes it to the detached runner; a foregr
       started=$(jq -r --arg id "$id" '.issues[$id].started_epoch // 0' "$marker")
       before=$(jq -r --arg id "$id" '.issues[$id].tip_before // ""' "$marker")
       update_marker --arg id "$id" '.current = $id'
-      logln "[$i/${#queue[@]}] $id was dispatched by an earlier run of this sequence (session $sid) — waiting on that session, not dispatching again"
+      logln "$tag $id was dispatched by an earlier run of this sequence (session $sid) — waiting on that session, not dispatching again"
     else
       set_fork_key "$id"
       before=$(git rev-parse --verify --quiet "refs/heads/$target")
       started=$(date +%s)
       update_marker --arg id "$id" --argjson now "$started" --arg b "$before" \
         '.current = $id | .issues[$id] = {started_epoch: $now, tip_before: $b}'
-      logln "[$i/${#queue[@]}] dispatching: claude --bg ${claude_args[*]} -n 'fleet-sequence $id' '/auto $id'  (forks from $target at ${before:0:12})"
+      logln "$tag dispatching: claude --bg ${claude_args[*]} -n 'fleet-sequence $id' '/auto $id'  (forks from $target at ${before:0:12})"
       if ! out=$(claude --bg "${claude_args[@]}" -n "fleet-sequence $id" "/auto $id" 2>&1); then
         printf '%s\n' "$out"
         fail_run "dispatch of $id failed — see the claude output above in $log"
       fi
       printf '%s\n' "$out"
       sid=$(parse_sid "$out")
-      [ -n "$sid" ] || fail_run "could not read the session id from the claude --bg output for $id — cannot wait on an unknown session; find it in \`claude agents\`, let it finish, then re-run the same list"
+      [ -n "$sid" ] || fail_run "could not read the session id from the claude --bg output for $id — cannot wait on an unknown session; find it in \`claude agents\`, let it finish, then $rerun"
       update_marker --arg id "$id" --arg s "$sid" '.issues[$id].session = $s'
-      logln "[$i/${#queue[@]}] $id running in session $sid"
+      logln "$tag $id running in session $sid"
     fi
     if ! wait_session "$sid" "$issue_timeout" "$id" "$started"; then
-      fail_run "$id: $(timeout_reason "$sid" "$issue_timeout") — not killed; watch it in \`claude agents\`, then re-run the same list"
+      fail_run "$id: $(timeout_reason "$sid" "$issue_timeout") — not killed; watch it in \`claude agents\`, then $rerun"
     fi
     # The key has done its job once the session has ended — its /start wt ran at the very start.
     git config --unset "$(fork_key "$id")" >/dev/null 2>&1 || true
     outcome=$(ledger_outcome "$sid" "$id" "$started")
     now=$(date +%s)
     update_marker --arg id "$id" --arg o "$outcome" --argjson now "$now" '.issues[$id] += {outcome: $o, ended_epoch: $now}'
-    logln "[$i/${#queue[@]}] $id → $outcome (session $sid)"
+    logln "$tag $id → $outcome (session $sid)"
     if [ "$outcome" != "shipped" ]; then
+      if [ "$drain" = 1 ]; then
+        # Solo issues do not build on each other, so a session that ended without shipping costs the drain that one
+        # issue. `skipped` and `canceled` are /auto declining the issue, not failing at it, and leave the count alone.
+        case "$outcome" in failed|unknown) fails=$((fails+1)) ;; esac
+        logln "$tag $id did not ship — claude logs $sid; /auto's Linear comment names the cause. Moving on"
+        continue
+      fi
       remaining=$(printf '%s\n' "${queue[@]:$i}" | paste -sd, - | sed 's/,/, /g')
       case "$outcome:$last_state" in
         unknown:failed|unknown:stopped)
@@ -589,14 +774,16 @@ cmd_run() { # [<slug>] — the launch passes it to the detached runner; a foregr
       esac
       fail_run "$id ended '$outcome' in session $sid (claude logs $sid; /auto's Linear comment names the cause) — not started: ${remaining:-none}. Fix or drop it, then re-run the same list"
     fi
+    fails=0
 
     # Shipped means merged: the branch the checkout is parked on must have moved. A deferred merge
     # (finish-merge.sh exit 3) lands later through the queue's drainer, so the wait is bounded, not skipped.
     wait_for_landing "$id" "$before" \
-      || fail_run "$id: ledger says shipped but '$target' never moved within ${merge_timeout}s — a deferred merge (/merge-queue) or a ship that did not merge; land it, then re-run the same list"
-    record_landing "[$i/${#queue[@]}]" "$id" "$before"
+      || fail_run "$id: ledger says shipped but '$target' never moved within ${merge_timeout}s — a deferred merge (/merge-queue) or a ship that did not merge; land it, then $rerun"
+    record_landing "$tag" "$id" "$before"
   done
   update_marker '.current = null'
+  if [ "$drain" = 1 ]; then finish_drain "$ended"; return 0; fi
   [ "$mode" = "merge" ] || open_sequence_pr
   update_marker '.status = "done"'
   clear_fork_keys
@@ -637,8 +824,95 @@ open(my $f, ">", $pf) or die "$pf: $!"; print $f $pid; close $f;'
 }
 
 # =====================================================================================
+# What a list launch and a drain launch both do before anything is dispatched or written. Each reads the caller's
+# $mode and the selected $marker.
+refuse_second_merge_runner() { # <launch branch> <what to do instead> — two merge-mode runners on one branch would each read the other's merge as its own landing
+  local f
+  [ "$mode" = "merge" ] || return 0
+  while IFS= read -r f; do
+    [ "$f" != "$marker" ] || continue
+    if runner_alive "$f" && [ "$(jq -r '.mode // "pr"' "$f")" = "merge" ] && [ "$(jq -r '.base // ""' "$f")" = "$1" ]; then
+      echo "ERROR: a merge-mode sequence is already merging into '$1' ($(seq_label "$f")) — each would read the other's merges as its own landings. $2" >&2
+      exit 1
+    fi
+  done < <(all_markers)
+}
+
+preflight_dirt() { # <the checkout's branch, "" when detached>
+  # Dirt is fatal only where /auto would attribute it: a targeted child refuses dirt it ties to another issue, and finishes
+  # dirt it ties to its own target as its own work. Anything else it picks past, and finish-merge.sh fast-forwards around.
+  local current="$1" dirty
+  dirty=$(git -C "$main_checkout" status --porcelain 2>/dev/null || true)
+  if [ -n "$dirty" ]; then
+    if carries_issue_id "$current"; then
+      echo "ERROR: main checkout is dirty on '$current', whose name carries an issue ID — each child's /auto would refuse that" >&2
+      echo "       dirt, or finish it as its own work when the ID is its target." >&2
+      printf '%s\n' "$dirty" | sed 's/^/       /' >&2
+      echo "       Commit or stash the above, then re-run. Nothing was dispatched." >&2
+      exit 1
+    fi
+    echo "WARN: main checkout is dirty on '${current:-(detached)}' — a merge that changes any of these paths defers to the" >&2
+    echo "      merge queue until they are committed or discarded, and this runner waits on it; every other merge lands normally:" >&2
+    printf '%s\n' "$dirty" | sed 's/^/       /' >&2
+  fi
+  return 0
+}
+
+preflight_tooling() { # <stale-ok: 0|1> — reads claude_args for an explicit --autocompact
+  # Once, here: every child session is dispatched later by the detached runner, whose log nobody reads at launch.
+  local fresh_rc=0 explicit_cap=0 a
+  "$here/claude-freshness.sh" || fresh_rc=$?
+  if [ "$fresh_rc" -eq 4 ]; then
+    if [ "$1" = 1 ]; then
+      echo "WARN: launching on the stale ~/.claude above (stale-ok) — every issue's session runs that tooling" >&2
+    else
+      echo "Nothing was dispatched or written. Run /update and re-launch, or re-run with 'stale-ok' to launch on this tooling." >&2
+      exit 4
+    fi
+  fi
+
+  # Same guard as fleet-launch.sh: no --autocompact default, so the loop-boundary mod must be enabled unless the
+  # operator passed a cap of their own after --.
+  for a in "${claude_args[@]}"; do case "$a" in --autocompact|--autocompact=*) explicit_cap=1 ;; esac; done
+  if ! "$here/mod-enabled.sh" loop-boundary; then
+    if [ "$explicit_cap" = 1 ]; then
+      echo "WARN: launching without the loop-boundary mod — the explicit --autocompact after -- is the only compaction control these sessions have" >&2
+    else
+      echo "Nothing was dispatched or written. Install the mod (above), or pass an explicit --autocompact after -- to launch without it." >&2
+      exit 5
+    fi
+  fi
+}
+
+have_flag() { # <flag> <args...>
+  local f="$1"; shift
+  local a
+  for a in "$@"; do [[ "$a" == "$f" || "$a" == "$f="* ]] && return 0; done
+  return 1
+}
+default_claude_args() { # add to claude_args whatever skills/auto/references/launch-prereqs.md requires and the operator did not pass
+  have_flag --model "${claude_args[@]}" || claude_args+=(--model 'opus[1m]')
+  have_flag --effort "${claude_args[@]}" || claude_args+=(--effort xhigh)
+  if ! have_flag --permission-mode "${claude_args[@]}" && ! have_flag --dangerously-skip-permissions "${claude_args[@]}"; then
+    claude_args+=(--permission-mode auto)
+  fi
+}
+
+start_sequence() { # <slug> <keep the log: 0|1> — detach the runner for the marker just written; returns 1 when it ran inline instead (FLEET_SEQUENCE_FOREGROUND)
+  local slug="$1" pidfile pid
+  if [ "${FLEET_SEQUENCE_FOREGROUND:-0}" = "1" ]; then cmd_run; return 1; fi
+  # A resume appends: the log it continues is the only record of why the earlier run stopped.
+  [ "$2" -eq 1 ] || : > "$log"
+  pidfile="$main_checkout/tmp/fleet-sequence-$slug.pid"
+  start_runner "$slug" "$pidfile"
+  pid=$(cat "$pidfile" 2>/dev/null || true); rm -f "$pidfile"
+  [[ "$pid" =~ ^[0-9]+$ ]] || { echo "ERROR: runner did not start — see $log" >&2; update_marker '.status = "failed" | .reason = "runner did not start"'; exit 1; }
+  update_marker --argjson p "$pid" '.runner_pid = $p'
+  echo "Runner detached (pid $pid) — log: $log"
+}
+
 cmd_launch() {
-  local raw id norm prev json labels state current existing_issues dirty tok mode="pr" mode_set="" branch="" resume=0 carried="" stale_ok=0 fresh_rc=0
+  local raw id norm prev current existing_issues tok mode="pr" mode_set="" branch="" resume=0 carried="" stale_ok=0 reason
   local ids=()
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -681,8 +955,18 @@ cmd_launch() {
     shared=$(jq -r --argjson l "$list_json" '[((.queue // []) + ((.issues // {}) | keys))[] | select(. as $x | $l | index($x) != null)] | unique | join(", ")' "$f" 2>/dev/null || true)
     [ -n "$shared" ] || continue
     if runner_alive "$f"; then
-      echo "ERROR: $shared already in a running sequence ($(jq -r '.queue | join(" → ")' "$f"), runner pid $(jq -r '.runner_pid' "$f")) — an issue ships in one sequence at a time; fleet-sequence.sh status / stop $(jq -r '.queue[0]' "$f") first" >&2
+      echo "ERROR: $shared already in a running sequence ($(seq_label "$f"), runner pid $(jq -r '.runner_pid' "$f")) — an issue ships in one sequence at a time; fleet-sequence.sh status / stop $(jq -r '.queue[0]' "$f") first" >&2
       exit 1
+    fi
+    # A drain is resumed only by the next drain: its marker has no list to share. What a list must not do is dispatch
+    # an issue the last drain's session is still working.
+    if is_drain "$f"; then
+      while IFS=$'\t' read -r id sid since; do
+        case " ${normalized[*]} " in
+          *" $id "*) echo "ERROR: $id is still in flight from the last solo drain (session $sid) — re-run the drain to wait on it (fleet-sequence.sh solo), or stop it in \`claude agents\` first" >&2; exit 1 ;;
+        esac
+      done < <(in_flight_entries "$f")
+      continue
     fi
     [ -n "$current" ] && [ "$(jq -r '.base // ""' "$f")" = "$current" ] && [ "$(jq -r '.mode // "pr"' "$f")" = "$mode" ] || continue
     if [ "$mode" != "merge" ]; then
@@ -705,16 +989,7 @@ cmd_launch() {
       exit 1
     fi
   fi
-  # Two merge-mode runners on one launch branch would each read the other's merge as its own landing.
-  if [ "$mode" = "merge" ]; then
-    while IFS= read -r f; do
-      [ "$f" != "$marker" ] || continue
-      if runner_alive "$f" && [ "$(jq -r '.mode // "pr"' "$f")" = "merge" ] && [ "$(jq -r '.base // ""' "$f")" = "$current" ]; then
-        echo "ERROR: a merge-mode sequence is already merging into '$current' ($(jq -r '.queue | join(" → ")' "$f")) — each would read the other's merges as its own landings. Let it finish, or drop 'merge' to ship this list onto a branch of its own." >&2
-        exit 1
-      fi
-    done < <(all_markers)
-  fi
+  refuse_second_merge_runner "$current" "Let it finish, or drop 'merge' to ship this list onto a branch of its own."
 
   # A resume keeps what the marker recorded as shipped, and ADOPTS a session an earlier run dispatched that
   # is still working or shipped with its landing unrecorded (the runner died under it). Neither is probed:
@@ -723,67 +998,20 @@ cmd_launch() {
   if [ "$resume" -eq 1 ]; then
     carried=$(jq -r '(.issues // {}) | to_entries[] | select(.value.outcome == "shipped") | .key' "$marker" | paste -sd' ' -)
     while IFS=$'\t' read -r id sid since; do
-      [ -n "$sid" ] || continue
-      if registry_alive "$sid" || [ "$(ledger_outcome "$sid" "$id" "$since")" = "shipped" ]; then
-        case " ${normalized[*]} " in
-          *" $id "*) adopted="$adopted $id" ;;
-          *) echo "ERROR: $id was dispatched by an earlier run of this sequence (session $sid) and is still in flight, or shipped with its landing unrecorded — list it so the runner waits for it, or stop it in \`claude agents\` first" >&2; exit 1 ;;
-        esac
-      fi
-    done < <(jq -r '(.issues // {}) | to_entries[] | select(.value.outcome != "shipped" and (.value.session // "") != "") | [.key, .value.session, (.value.started_epoch // 0)] | @tsv' "$marker")
+      case " ${normalized[*]} " in
+        *" $id "*) adopted="$adopted $id" ;;
+        *) echo "ERROR: $id was dispatched by an earlier run of this sequence (session $sid) and is still in flight, or shipped with its landing unrecorded — list it so the runner waits for it, or stop it in \`claude agents\` first" >&2; exit 1 ;;
+      esac
+    done < <(in_flight_entries "$marker")
   fi
   for id in "${normalized[@]}"; do
     case " $carried $adopted " in *" $id "*) continue ;; esac
-    json=$(linear-cli issues get "$id" -o json 2>/dev/null) || { echo "ERROR: could not read $id from Linear (linear-cli issues get failed)" >&2; exit 1; }
-    labels=$(printf '%s' "$json" | jq -r '.labels.nodes[].name' 2>/dev/null || true)
-    state=$(printf '%s' "$json" | jq -r '.state.name // ""' 2>/dev/null || true)
-    printf '%s\n' "$labels" | grep -qix specified || { echo "ERROR: $id is not certified (no specified label) — run /spec $id first" >&2; exit 1; }
-    printf '%s\n' "$labels" | grep -qix human && { echo "ERROR: $id is human-owned work (human label) — no unattended mode can ship it" >&2; exit 1; }
-    case "$state" in
-      Done|Canceled|Duplicate|"Ready For Release") echo "ERROR: $id is already $state — nothing to ship" >&2; exit 1 ;;
-    esac
+    reason=$(probe_issue "$id") || { echo "ERROR: $reason" >&2; exit 1; }
   done
 
-  # Dirt is fatal only where /auto would attribute it: a targeted child refuses dirt it ties to another issue, and finishes
-  # dirt it ties to its own target as its own work. Anything else it picks past, and finish-merge.sh fast-forwards around.
-  dirty=$(git -C "$main_checkout" status --porcelain 2>/dev/null || true)
-  if [ -n "$dirty" ]; then
-    if carries_issue_id "$current"; then
-      echo "ERROR: main checkout is dirty on '$current', whose name carries an issue ID — each child's /auto would refuse that" >&2
-      echo "       dirt, or finish it as its own work when the ID is its target." >&2
-      printf '%s\n' "$dirty" | sed 's/^/       /' >&2
-      echo "       Commit or stash the above, then re-run. Nothing was dispatched." >&2
-      exit 1
-    fi
-    echo "WARN: main checkout is dirty on '${current:-(detached)}' — a merge that changes any of these paths defers to the" >&2
-    echo "      merge queue until they are committed or discarded, and this runner waits on it; every other merge lands normally:" >&2
-    printf '%s\n' "$dirty" | sed 's/^/       /' >&2
-  fi
+  preflight_dirt "$current"
   [ -n "$current" ] || { echo "ERROR: HEAD is detached — check out the branch the sequence should ship onto, then re-run" >&2; exit 1; }
-
-  # Once, here: every child session is dispatched later by the detached runner, whose log nobody reads at launch.
-  "$here/claude-freshness.sh" || fresh_rc=$?
-  if [ "$fresh_rc" -eq 4 ]; then
-    if [ "$stale_ok" = 1 ]; then
-      echo "WARN: launching on the stale ~/.claude above (stale-ok) — every issue's session runs that tooling" >&2
-    else
-      echo "Nothing was dispatched or written. Run /update and re-launch, or re-run with 'stale-ok' to launch on this tooling." >&2
-      exit 4
-    fi
-  fi
-
-  # Same guard as fleet-launch.sh: no --autocompact default, so the loop-boundary mod must be enabled unless the
-  # operator passed a cap of their own after --.
-  local explicit_cap=0 a
-  for a in "${claude_args[@]}"; do case "$a" in --autocompact|--autocompact=*) explicit_cap=1 ;; esac; done
-  if ! "$here/mod-enabled.sh" loop-boundary; then
-    if [ "$explicit_cap" = 1 ]; then
-      echo "WARN: launching without the loop-boundary mod — the explicit --autocompact after -- is the only compaction control these sessions have" >&2
-    else
-      echo "Nothing was dispatched or written. Install the mod (above), or pass an explicit --autocompact after -- to launch without it." >&2
-      exit 5
-    fi
-  fi
+  preflight_tooling "$stale_ok"
 
   if [ "$mode" = "pr" ]; then
     # The PR's base is the launch branch, so it must exist on origin — an unpushed one would spend every
@@ -825,17 +1053,7 @@ cmd_launch() {
     fi
   fi
 
-  have_flag() {
-    local f="$1"; shift
-    local a
-    for a in "$@"; do [[ "$a" == "$f" || "$a" == "$f="* ]] && return 0; done
-    return 1
-  }
-  have_flag --model "${claude_args[@]}" || claude_args+=(--model 'opus[1m]')
-  have_flag --effort "${claude_args[@]}" || claude_args+=(--effort xhigh)
-  if ! have_flag --permission-mode "${claude_args[@]}" && ! have_flag --dangerously-skip-permissions "${claude_args[@]}"; then
-    claude_args+=(--permission-mode auto)
-  fi
+  default_claude_args
 
   local queue_json args_json pr_url slug
   slug=$(slug_of "$marker")
@@ -855,19 +1073,7 @@ cmd_launch() {
   else
     echo "Sequence: $(printf '%s' "$queue_json" | jq -r 'join(" → ")') onto $branch (forked from $current); one PR onto $current when the list completes"
   fi
-  if [ "${FLEET_SEQUENCE_FOREGROUND:-0}" = "1" ]; then
-    cmd_run
-    return
-  fi
-  # A resume appends: the log it continues is the only record of why the earlier run stopped.
-  [ "$resume" -eq 1 ] || : > "$log"
-  local pidfile="$main_checkout/tmp/fleet-sequence-$slug.pid"
-  start_runner "$slug" "$pidfile"
-  local pid
-  pid=$(cat "$pidfile" 2>/dev/null || true); rm -f "$pidfile"
-  [[ "$pid" =~ ^[0-9]+$ ]] || { echo "ERROR: runner did not start — see $log" >&2; update_marker '.status = "failed" | .reason = "runner did not start"'; exit 1; }
-  update_marker --argjson p "$pid" '.runner_pid = $p'
-  echo "Runner detached (pid $pid) — log: $log"
+  start_sequence "$slug" "$resume" || return 0
   if [ "$mode" = "merge" ]; then
     echo "Each issue runs in its own background session and merges into $current by ref (a fast-forward touches the main checkout's tree only while it sits on $current)."
   else
@@ -877,10 +1083,153 @@ cmd_launch() {
   echo "Watch with: fleet-sequence.sh status ${normalized[0]}  |  claude agents"
 }
 
+# =====================================================================================
+warn_live_fleets() { # `solo` marks work for a quiet checkout: name a fleet still working here — the operator's call, never a refusal
+  local f k
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    fleet_marker_running "$f" || continue
+    for k in $(jq -r '(.fleet_sessions // [])[]' "$f" 2>/dev/null); do
+      registry_alive "$k" || continue
+      echo "WARN: a fleet is still working in this checkout ($(fleet_marker_token "$f")) — \`solo\` marks work that should not run beside one. Launching anyway (your call); /fleet-stop winds it down." >&2
+      break
+    done
+  done < <(fleet_live_markers "$main_checkout")
+  return 0
+}
+
+cmd_drain() { # [list] [stale-ok] [<duration>] [then-fleet [<fleet-launch tokens>...]] [-- <claude flags>]
+  local tok list_only=0 stale_ok=0 fleet=0 secs="" deadline_epoch="" deadline_human="" current head_branch team listing n id sid since out
+  local mode=merge slug=solo prior_base="" adopted="" pending="" existing_issues='{}' queue_json='[]' plan_json fleet_json=null user_json args_json
+  local dur_tokens=() fleet_args=() user_args=()
+  while [ $# -gt 0 ]; do
+    if [ "$1" = "--" ]; then shift; user_args=("$@"); break; fi
+    if [ "$fleet" = 1 ]; then fleet_args+=("$1"); shift; continue; fi
+    tok=$(lower "$1")
+    case "$tok" in
+      list) list_only=1 ;;
+      stale-ok) stale_ok=1 ;;
+      merge) ;;
+      then-fleet) fleet=1 ;;
+      pr) echo "ERROR: a solo drain lands by merge — a broad change parked on a branch only defers its collision to the catch-up merge. For one PR, name the issues: fleet-sequence.sh pr <ISSUE-ID>... (fleet-sequence.sh solo list prints them in order)" >&2; exit 1 ;;
+      -*) echo "ERROR: unknown option '$1' — a solo drain takes an optional list, stale-ok, a duration, then-fleet <fleet-launch tokens>, then optionally -- <claude flags>" >&2; usage ;;
+      *) dur_tokens+=("$1") ;;
+    esac
+    shift
+  done
+  command -v linear-cli >/dev/null 2>&1 || { echo "ERROR: 'linear-cli' not found on PATH — needed to certify each issue before dispatch" >&2; exit 1; }
+  team="${LINEAR_TEAM:-}"
+  [ -n "$team" ] || { echo "ERROR: LINEAR_TEAM is not set — without it the listing spans every team in the workspace, and the drain would ship another project's solo issues from this checkout. Export it and re-run." >&2; exit 1; }
+  if [ ${#dur_tokens[@]} -gt 0 ]; then
+    secs=$(fleet_duration_secs "${dur_tokens[*]}") || { echo "ERROR: cannot read '${dur_tokens[*]}' as a duration — a solo drain takes an optional budget such as '3h', '3 hours' or '90m'. It lists the issues itself; a named list is fleet-sequence.sh <ISSUE-ID>..." >&2; exit 1; }
+    deadline_epoch=$(( $(date +%s) + secs ))
+    deadline_human=$(date -r "$deadline_epoch" '+%Y-%m-%d %H:%M %Z' 2>/dev/null || date -d "@$deadline_epoch" '+%Y-%m-%d %H:%M %Z')
+  fi
+  listing=$(solo_listing "$team") || { echo "ERROR: could not list the solo issues for $team (above) — nothing was dispatched or written" >&2; exit 1; }
+  n=$(printf '%s\n' "$listing" | grep -c . || true)
+
+  if [ "$list_only" = 1 ]; then
+    if [ "$n" -eq 0 ]; then echo "No workable solo issue in $team — nothing to drain."; return 0; fi
+    echo "Workable solo issues in $team, in running order ($n):"
+    print_plan "$listing"
+    return 0
+  fi
+
+  use_sequence "$slug"
+  if [ -s "$marker" ] && runner_alive "$marker"; then
+    echo "ERROR: a solo drain is already running here ($(seq_label "$marker"), runner pid $(jq -r '.runner_pid' "$marker")) — fleet-sequence.sh status solo / stop solo" >&2
+    exit 1
+  fi
+  # The drain merges by ref and never needs the checkout on the branch, so it also launches from a checkout parked
+  # detached with the checkout-wide start.wt-source-branch set — the branch /start wt forks from there, and the posture
+  # /auto-prep's launch checklist asks for before the fleet a `then-fleet` hands off to.
+  head_branch=$(git -C "$main_checkout" branch --show-current 2>/dev/null || true)
+  current="$head_branch"
+  if [ -z "$current" ]; then
+    current=$(git -C "$main_checkout" config --get start.wt-source-branch 2>/dev/null || true)
+    if [ -z "$current" ] || ! git -C "$main_checkout" rev-parse --verify --quiet "refs/heads/$current" >/dev/null; then
+      echo "ERROR: HEAD is detached and start.wt-source-branch names no local branch — check out the branch the solo issues should merge into, or set the key (git config start.wt-source-branch <branch>), then re-run" >&2
+      exit 1
+    fi
+  fi
+  preflight_dirt "$head_branch"
+  refuse_second_merge_runner "$current" "Let it finish, then re-run the drain."
+
+  # A session the last drain left working — its runner died under it, or timed out waiting — is waited on, never
+  # dispatched beside: this is the one runner whose issues must not overlap. So is a ship whose merge never landed.
+  if [ -s "$marker" ]; then
+    prior_base=$(jq -r '.base // ""' "$marker")
+    pending=$(jq -r '(.issues // {}) | to_entries[] | select(.value.outcome == "shipped" and ((.value.landed_sha // "") == "")) | .key' "$marker" | paste -sd' ' -)
+    while IFS=$'\t' read -r id sid since; do adopted="$adopted $id"; done < <(in_flight_entries "$marker")
+    adopted="${adopted# }"
+    if [ -n "$pending$adopted" ] && [ "$prior_base" != "$current" ]; then
+      echo "ERROR: the last drain left $(printf '%s %s' "$pending" "$adopted" | xargs) unfinished on '$prior_base' (in flight, or shipped with its merge not landed) — launch from $prior_base so this drain waits for it, or stop the session in \`claude agents\` first" >&2
+      exit 1
+    fi
+    # shellcheck disable=SC2086
+    existing_issues=$(jq -c --argjson a "$(printf '%s\n' $adopted | jq -R . | jq -s 'map(select(length > 0))')" \
+      '(.issues // {}) | with_entries(select((.value.outcome == "shipped" and ((.value.landed_sha // "") == "")) or (.key as $k | $a | index($k) != null)))
+       | with_entries(if .value.outcome == "shipped" then . else .value |= {session, started_epoch, tip_before} end)' "$marker")
+    queue_json=$(jq -c --argjson e "$existing_issues" '[(.queue // [])[] | select(. as $q | $e | has($q))]' "$marker")
+  fi
+  if [ "$n" -eq 0 ] && [ "$queue_json" = "[]" ] && [ "$fleet" = 0 ]; then
+    echo "No workable solo issue in $team — nothing to drain."
+    return 0
+  fi
+
+  claude_args=("${user_args[@]}")
+  preflight_tooling "$stale_ok"
+  if [ "$fleet" = 1 ]; then
+    case "$(lower "${fleet_args[0]:-}")" in
+      stop) echo "ERROR: then-fleet takes fleet-launch.sh's launch tokens (count, duration, epic:<ID>, backlog, stale-ok) — 'stop' is not one" >&2; exit 1 ;;
+    esac
+    if ! out=$(FLEET_LAUNCH_CHECK=1 "${FLEET_SEQUENCE_FLEET_LAUNCHER:-$here/fleet-launch.sh}" "${fleet_args[@]}" 2>&1); then
+      printf '%s\n' "$out" >&2
+      echo "ERROR: fleet-launch.sh refused the then-fleet arguments (above) — nothing was dispatched or written" >&2
+      exit 1
+    fi
+    printf '%s\n' "$out" | grep -v '^CHECK-OK' || true
+    fleet_json=$(printf '%s\n' "${fleet_args[@]}" | jq -R . | jq -sc 'map(select(length > 0))')
+  fi
+  warn_live_fleets
+
+  user_json=$(printf '%s\n' "${user_args[@]}" | jq -R . | jq -sc 'map(select(length > 0))')
+  default_claude_args
+  args_json=$(printf '%s\n' "${claude_args[@]}" | jq -R . | jq -sc 'map(select(length > 0))')
+  plan_json=$(printf '%s\n' "$listing" | cut -f1 | jq -R . | jq -sc 'map(select(length > 0))')
+  jq -n --arg slug "$slug" --arg team "$team" --argjson q "$queue_json" --argjson plan "$plan_json" --arg base "$current" --argjson a "$args_json" \
+        --argjson dl "${deadline_epoch:-null}" --arg dlh "$deadline_human" --argjson fleet "$fleet_json" --argjson fca "$user_json" \
+        --argjson now "$(date +%s)" --arg log "$log" --argjson issues "$existing_issues" \
+    '{slug: $slug, drain: true, team: $team, queue: $q, plan: $plan, base: $base, mode: "merge", branch: null, claude_args: $a,
+      deadline_epoch: $dl, deadline: (if $dlh == "" then null else $dlh end), then_fleet: $fleet, fleet_claude_args: $fca, fleet: null,
+      status: "running", reason: "", stop_requested: false, current: null, issues: $issues,
+      pr_url: null, pr_number: null, launch_epoch: $now, log: $log, runner_pid: null}' > "$marker"
+
+  if [ "$queue_json" != "[]" ]; then
+    echo "Waiting first on what the last drain left unfinished, not dispatching it again: $(printf '%s' "$queue_json" | jq -r 'join(", ")')"
+  fi
+  if [ "$n" -eq 0 ]; then
+    echo "Solo drain: no workable solo issue in $team right now"
+  else
+    echo "Solo drain: $n workable solo issue(s) in $team, one at a time into $current (no PR), in this order — the listing is read again before each dispatch:"
+    print_plan "$listing"
+  fi
+  [ -z "$deadline_human" ] || echo "Budget: nothing new starts after $deadline_human; the issue in flight then runs to completion."
+  [ "$fleet" = 0 ] || echo "Then: fleet-launch.sh ${fleet_args[*]} — only after a drain that ends clean (drained, or out of time)."
+  # A re-launch that waits on the last drain's session continues that run, and its log is the only record of it.
+  local keep_log=0
+  [ "$queue_json" = "[]" ] || keep_log=1
+  start_sequence "$slug" "$keep_log" || return 0
+  echo "Each issue runs in its own background session and merges into $current by ref. One that ends without shipping is skipped; $drain_max_fails in a row stop the drain."
+  echo "The main checkout is never moved — commit what you edit there: a merge that changes a path left uncommitted on $current defers to the queue, and the runner waits for it."
+  echo "Watch with: fleet-sequence.sh status solo  |  claude agents"
+}
+
 case "${1:-}" in
   status) [ $# -le 2 ] || usage; cmd_status "${2:-}" ;;
   stop)   [ $# -le 2 ] || usage; cmd_stop "${2:-}" ;;
   run)    [ $# -eq 2 ] || usage; cmd_run "$2" ;;
+  [Ss][Oo][Ll][Oo]) shift; cmd_drain "$@" ;;
   "")     usage ;;
   *)      cmd_launch "$@" ;;
 esac

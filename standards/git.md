@@ -210,7 +210,9 @@ The documented contract of a skill is its grant. No other skill or phrasing crea
   the merge commit waits for a human's push. No force-pushes, no history rewrites, no committing work unattributable to
   a Linear issue.
 - `/fleet-sequence` is the same run-scoped grant for the issues it lists, merging into the sequence's integration branch
-  (or the launch branch under `merge`); the runner pushes that branch and opens its one PR.
+  (or the launch branch under `merge`); the runner pushes that branch and opens its one PR. `/fleet-solo` is that grant
+  for the `solo` issues its drain takes, each merged into the launch branch; its `then-fleet` token is the fleet's own
+  launch grant, given when the human typed it.
 - `scripts/epic-pr.sh` pushes one epic's integration branch by ref and opens its PR; it never merges the PR or moves the
   checkout. Running it is the grant for that one push.
 - `/keeper` commits and pushes, in the `~/.claude` repo only, the config changes it accepts, staged by name, never files

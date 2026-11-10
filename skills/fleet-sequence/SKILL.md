@@ -27,8 +27,8 @@ Why this shape:
 
 ## Arguments
 
-`/fleet-sequence [pr|merge] [stale-ok] <ISSUE-ID> <ISSUE-ID>...` · `/fleet-sequence status [<ISSUE-ID>]` ·
-`/fleet-sequence stop [<ISSUE-ID>]`
+`/fleet-sequence [pr|merge] [stale-ok] <ISSUE-ID> <ISSUE-ID>...` · `/fleet-sequence status [<ISSUE-ID>|solo]` ·
+`/fleet-sequence stop [<ISSUE-ID>|solo]`
 
 - **Issue IDs** — every token matching `^[A-Za-z]+-[0-9]+$`, in ship order. Each is probed as `/auto`'s targeted mode
   probes (`specified` present, `human` absent) and refused if already Done, Canceled, Duplicate, or Ready For Release —
@@ -43,6 +43,9 @@ Why this shape:
 - `status` — read-only readout: with an ID, the sequence naming that issue; without, every running sequence, or the
   latest when none runs. `stop` — finish the issue in flight, then stop; what shipped stays on the branch, no PR is
   opened, nothing is killed. It needs an ID only when several sequences are running.
+- `solo` in place of a list is the **drain** — the queue is discovered, a failed issue is skipped, and it always
+  merges. It is the same script and marker family (slug `solo`), invoked and documented as
+  [`/fleet-solo`](../fleet-solo/SKILL.md); `status solo` and `stop solo` name it here. A list never resumes a drain.
 - Anything else → error: `Unrecognized argument 'X'. /fleet-sequence takes an optional pr|merge and stale-ok, issue IDs
   in ship order, or status / stop with an optional issue ID.`
 
@@ -165,6 +168,8 @@ its own log (the only record of why the earlier run stopped); no launch touches 
 
 ## Relationship to the fleet skills
 
+- **To ship every `solo` issue without naming them**, use [`/fleet-solo`](../fleet-solo/SKILL.md); this skill is for a
+  list whose order or single PR matters.
 - **A fleet may run alongside.** Neither refuses the other: `next-candidates.sh` hides every issue a running sequence
   holds, the issue in flight is In Progress and claimed, both merge under the same repo lock, and `fleet-launch.sh`'s
   ledger expiry leaves a live sequence's child sessions alone. Running `solo` work beside a fleet is the operator's call.

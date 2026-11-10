@@ -22,6 +22,16 @@ fleet_slug() { # <scope or empty> → the slug: the scope lowercased, `team` whe
   if [ -n "$s" ]; then printf '%s' "$s"; else printf 'team'; fi
 }
 
+# <duration as typed: "10h", "10 hours", "90m", "45 minutes"> → seconds; returns 1 on anything else. Every launcher that
+# takes a time budget parses it here, so a budget typed for one reads the same for the other.
+fleet_duration_secs() {
+  local d
+  d=$(printf '%s' "${1:-}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+  if [[ "$d" =~ ^([0-9]+)(h|hr|hrs|hour|hours)$ ]]; then printf '%s' "$(( BASH_REMATCH[1] * 3600 ))"
+  elif [[ "$d" =~ ^([0-9]+)(m|min|mins|minute|minutes)$ ]]; then printf '%s' "$(( BASH_REMATCH[1] * 60 ))"
+  else return 1; fi
+}
+
 fleet_marker_path() { printf '%s/tmp/fleet-deadline-%s.json' "$1" "$2"; }        # <main checkout> <slug>
 fleet_rec_path()    { printf '%s/tmp/fleet-recommendation-%s.json' "$1" "$2"; }  # <main checkout> <slug>
 

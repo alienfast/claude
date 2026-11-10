@@ -2,7 +2,7 @@
 # Unit suite for lib/fleet-markers.sh — the slug, path and predicate helpers every fleet script and hook sources. Drives
 # the real functions against a throwaway checkout: live markers are listed and archived ones (<slug>.<epoch>) are not,
 # `running` reads stopped/deadline, `retrod` matches history ids by prefix in both directions and treats a marker with no
-# sessions as measured, and `token` renders the command-line name a human types.
+# sessions as measured, `token` renders the command-line name a human types, and `duration_secs` reads a typed budget.
 set -uo pipefail
 
 LIB="$(cd "$(dirname "$0")" && pwd)/fleet-markers.sh"
@@ -77,6 +77,15 @@ ck "team marker"                   team "$(fleet_marker_token "$M/tmp/fleet-dead
 ck "epic marker by scope"          epic:BF-2948 "$(fleet_marker_token "$M/tmp/fleet-deadline-bf-2948.json")"
 printf '{"fleet_sessions":[]}\n' > "$M/tmp/fleet-deadline-ep-7.json"
 ck "epic marker by slug when scope is missing" epic:EP-7 "$(fleet_marker_token "$M/tmp/fleet-deadline-ep-7.json")"
+
+echo "== duration"
+ck "hours"                         36000 "$(fleet_duration_secs 10h)"
+ck "two words, any case"           10800 "$(fleet_duration_secs '3 Hours')"
+ck "minutes"                       5400 "$(fleet_duration_secs 90m)"
+ck "minutes spelled out"           2700 "$(fleet_duration_secs '45 minutes')"
+ck "a bare number is not a duration" 1 "$(rc fleet_duration_secs 10)"
+ck "an issue id is not a duration" 1 "$(rc fleet_duration_secs BF-12)"
+ck "nothing is not a duration"     1 "$(rc fleet_duration_secs '')"
 
 echo
 echo "$PASS passed / $FAIL failed"

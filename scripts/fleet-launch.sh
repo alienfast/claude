@@ -132,7 +132,8 @@
 # Env: FLEET_PROMPT overrides the dispatched prompt (default "/loop /auto", plus " epic:<ID>"
 # when scoped and " backlog" under the token — e.g. "/loop /auto BF" to team-scope the run; an
 # override that drops a launch's scope is warned about, never corrected);
-# FLEET_STAGGER_TIMEOUT seconds per wait.
+# FLEET_STAGGER_TIMEOUT seconds per wait; FLEET_LAUNCH_CHECK=1 runs the argument, recommendation and
+# scope refusals only and exits 0 with a CHECK-OK line — nothing is dispatched or written.
 #
 # Read-write: writes tmp/fleet-deadline-<slug>.json in the main checkout (`scope`, `members`,
 # `branch`, `base` added on a scoped launch; `backlog: true` under the token), archives or expires
@@ -346,17 +347,20 @@ fi
 deadline_epoch=""
 deadline_human=""
 if [ ${#dur_tokens[@]} -gt 0 ]; then
-  dur=$(printf '%s' "${dur_tokens[*]}" | tr -d ' ' | tr '[:upper:]' '[:lower:]')
-  if [[ "$dur" =~ ^([0-9]+)(h|hr|hrs|hour|hours)$ ]]; then
-    secs=$(( BASH_REMATCH[1] * 3600 ))
-  elif [[ "$dur" =~ ^([0-9]+)(m|min|mins|minute|minutes)$ ]]; then
-    secs=$(( BASH_REMATCH[1] * 60 ))
-  else
+  secs=$(fleet_duration_secs "${dur_tokens[*]}") || {
     echo "ERROR: cannot parse duration '${dur_tokens[*]}' — use e.g. '10h', '10 hours', '90m', '45 minutes'" >&2
     exit 1
-  fi
+  }
   deadline_epoch=$(( $(date +%s) + secs ))
   deadline_human=$(date -r "$deadline_epoch" '+%Y-%m-%d %H:%M %Z' 2>/dev/null || date -d "@$deadline_epoch" '+%Y-%m-%d %H:%M %Z')
+fi
+
+# A caller that will launch this fleet hours from now (fleet-sequence.sh's then-fleet) settles the argument, recommendation
+# and scope refusals here, while a human is still watching. Everything below — the cap, the tooling checks, every write —
+# belongs to the real launch.
+if [ "${FLEET_LAUNCH_CHECK:-0}" = "1" ]; then
+  echo "CHECK-OK: $count session(s)${scope:+, epic $scope}${secs:+, a ${dur_tokens[*]} budget from launch}"
+  exit 0
 fi
 
 # The concurrency cap — fleet-cap.sh owns the arithmetic and the reason (skills/fleet-launch/SKILL.md § The count). Advice,
@@ -432,6 +436,10 @@ for seq_marker in "$main_checkout"/tmp/fleet-sequence-*.json; do
   seq_pid=$(jq -r '.runner_pid // empty' "$seq_marker" 2>/dev/null)
   [[ "$seq_pid" =~ ^[0-9]+$ ]] && kill -0 "$seq_pid" 2>/dev/null || continue
   seq_sessions="$seq_sessions $(jq -r '[(.issues // {})[] | .session // empty, .pr_update_session // empty] | join(" ")' "$seq_marker" 2>/dev/null)"
+  if [ "$(jq -r '.drain // false' "$seq_marker" 2>/dev/null)" = "true" ]; then
+    echo "WARN: a solo drain (/fleet-solo) is running in this checkout — \`solo\` marks work that should not run beside a fleet. Launching anyway (your call); fleet-sequence.sh status solo reads it, stop solo ends it after the issue in flight" >&2
+    continue
+  fi
   echo "NOTE: a /fleet-sequence is running alongside ($(jq -r '(.queue // []) | join(" → ")' "$seq_marker")) — its queued issues are hidden from this fleet's picks; fleet-sequence.sh status reads it"
 done
 
