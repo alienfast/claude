@@ -3191,7 +3191,7 @@ def main():
               f"{sum(v['sev']['HIGH'] for v in verdicts)}/{sum(v['sev']['MED'] for v in verdicts)} · "
               f"origin-tagged {tagged}/{resolved_total} ({origins}) · "
               f"{filed_total} deferred filings from this fleet's reviews → {ratio}. Review-pipeline filings only — "
-              f"the Linear window query (retro Step 3) is the full filing census.\n")
+              f"retro Step 3's Linear census, attributed to the fleet's sessions, is the full filing count.\n")
         if tier_join:
             parts = " | ".join(
                 f"{label} n={len(vals)} · mean {sum(vals) / len(vals):.1f} · median {median(vals):.1f}"

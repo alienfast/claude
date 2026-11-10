@@ -196,7 +196,15 @@ Independent of the transcripts, establish what the run really produced:
   `mark-ready-for-release.sh <ID>` call, or an `AUTO-CONTINUE: <ID> shipped (…)` line — the call is the reliable
   witness for an in-session merge and the outcome line for a queued one; `references/scoping-pitfalls.md`). Confirm
   each is in a release-ready state and has a commit. The script's merge reconciliation flags the gaps.
-- **Filed** — issues *created* during the window. This is the half a retro forgets.
+- **Filed** — issues *created* during the window. This is the half a retro forgets. The census counts every filing in
+  the team, not only the fleet's: teammates' filings, and the operator's own interactive ones during the run and after
+  it, since the query has no upper bound. Agents file through `linear-cli` under the operator's personal login, so no
+  Linear field (`creator`, `botActor`, `integrationSourceType`) tells an agent filing from an interactive one. Drop
+  teammates' rows by `creator`; attribute each operator-login id to the session whose transcript (main, worktree or
+  `subagents/`) holds a timestamped record naming it seconds after its `createdAt` — the create call's own output
+  (`grep -lw -- <ID>` finds the files, then that record's `timestamp`). Never attribute by first mention alone: fleet
+  sessions name teammates' filings hours later while reading the pool (2026-11-10: three of five). Count only fleet
+  members' filings into R, and say how many rows the attribution excluded and why.
 
 ```bash
 # One command, two consumers: the census listing below, and tmp/fleet-linear-window.json, which
@@ -216,7 +224,8 @@ Re-run `fleet-metrics.py` after writing these — its Shipped-issue provenance s
 (during-run / week-before / older) instead of reporting them unknown.
 
 - **Net backlog delta** — drained vs. filed, stated as the reproduction ratio **R = issues filed / issues shipped** for
-  the window (the script's filed-per-shipped rate covers only review-pipeline filings; this census is the full number).
+  the window (the script's filed-per-shipped rate covers only review-pipeline filings; the census, attributed to the
+  fleet's sessions as the Filed bullet describes, is the full number).
   **The pool is the workable backlog only — `Planned`, `Backlog`, `Triage`, plus in-flight — and `Ready for Release`
   counts as done in every metric here.** Deployment cadence is a separate axis, and the rule holds whatever Linear type
   the state carries — a state-type census sweeps shipped-awaiting-deploy work into "open" and overstates the pool
