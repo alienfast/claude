@@ -1188,6 +1188,77 @@ bash -c ". '$IDLIB'; wt_identity_disown '$WT' test-1" >/dev/null 2>&1
 mkjob sess-A running
 ck "3:released" "$(alive "$WT" "CLAUDE_JOB_DIR=$JOBSROOT/self")" "a deliberate release stays released while the releasing session is demonstrably alive"
 
+# A DELETED daemon session leaves no job dir at all, which the probe alone cannot tell from an interactive owner
+# that never had one; the stamp's start.owner-job-dir is what tells them apart. The live pid below plays the
+# fleet-shared root, which outlives the deleted session — 2026-11-09, a relaunch's replaced session held BF-3092
+# this way for 3.6h. State files are the daemon's real shape, snapshotted into fixtures/ from ~/.claude/jobs.
+JOBFIX="$(cd "$(dirname "$0")" && pwd -P)/fixtures/jobs-state-2026-11-10.json"
+mkjob_real() { # root session state — a job dir carrying the daemon's real state.json shape, fresh mtime
+  mkdir -p "$1/$2"
+  sed "s/\"state\": \"[^\"]*\"/\"state\": \"$3\"/" "$JOBFIX" > "$1/$2/state.json"
+  : > "$1/$2/timeline.jsonl"
+}
+if [ "$HAVE_NODE" = yes ]; then
+  mkrepo sessdeleted
+  spawn_live
+  mkjob_real "$JOBSROOT" sess-D running
+  stamp_env "CLAUDE_JOB_DIR=$JOBSROOT/sess-D CLAUDE_HARNESS_PID=$LIVE" "$WT"
+  ck "$(cd "$JOBSROOT/sess-D" && pwd -P)" "$(cfg start.owner-job-dir)" "a daemon session's stamp records its own job dir"
+  ck "0:alive" "$(alive "$WT" "CLAUDE_JOB_DIR=$JOBSROOT/self")" "sanity: the owner reads alive while its job dir is live"
+  rm -rf "$JOBSROOT/sess-D"
+  ck "1:dead" "$(alive "$WT" "CLAUDE_JOB_DIR=$JOBSROOT/self")" "a deleted daemon session adjudicates dead although the shared root pid lives"
+
+  # The recorded key is the quantity that moves the verdict: the same deletion on a stamp without it stays on the pid tier.
+  mkrepo sessdeletedlegacy
+  spawn_live
+  mkjob_real "$JOBSROOT" sess-L running
+  stamp_env "CLAUDE_JOB_DIR=$JOBSROOT/sess-L CLAUDE_HARNESS_PID=$LIVE" "$WT"
+  git -C "$WT" config --worktree --unset-all start.owner-job-dir
+  rm -rf "$JOBSROOT/sess-L"
+  ck "0:alive" "$(alive "$WT" "CLAUDE_JOB_DIR=$JOBSROOT/self")" "an unrecorded (legacy) stamp keeps the pid tier's verdict"
+
+  # An interactive owner never had a job dir; taking over a daemon owner's worktree must clear that owner's record, or
+  # deleting the old session would read the new, live owner dead.
+  mkrepo sesstakeover
+  spawn_live
+  mkjob_real "$JOBSROOT" sess-T running
+  stamp_env "CLAUDE_JOB_DIR=$JOBSROOT/sess-T CLAUDE_HARNESS_PID=$LIVE" "$WT"
+  stamp_env "CLAUDE_SESSION_ID=sess-I CLAUDE_HARNESS_PID=$LIVE" "$WT"
+  ck "" "$(cfg start.owner-job-dir)" "a non-daemon owner's stamp clears the previous owner's job dir"
+  rm -rf "$JOBSROOT/sess-T"
+  ck "0:alive" "$(alive "$WT" "CLAUDE_JOB_DIR=$JOBSROOT/self")" "an interactive owner stays alive after the prior daemon owner's dir is deleted"
+
+  # A stamp that cannot name its own session carries the prior owner forward, and with it that owner's record.
+  mkrepo sesscarried
+  mkjob_real "$JOBSROOT" sess-C running
+  stamp_env "CLAUDE_JOB_DIR=$JOBSROOT/sess-C CLAUDE_HARNESS_PID=999999" "$WT"
+  recorded=$(cfg start.owner-job-dir)
+  stamp_env "CLAUDE_HARNESS_PID=999999" "$WT"
+  ck "sess-C:$recorded" "$(cfg start.owner-session):$(cfg start.owner-job-dir)" "a carried-forward owner keeps its own job dir record"
+
+  # A whole jobs root gone or emptied is a relocation or wipe, not one session's deletion: every sibling would read
+  # dead at once, and /auto resumes dead owners' worktrees.
+  mkrepo sessrootgone
+  spawn_live
+  mkjob_real "$TMP/jobs-wiped" sess-W running
+  stamp_env "CLAUDE_JOB_DIR=$TMP/jobs-wiped/sess-W CLAUDE_HARNESS_PID=$LIVE" "$WT"
+  rm -rf "$TMP/jobs-wiped"
+  ck "0:alive" "$(alive "$WT" "CLAUDE_JOB_DIR=$JOBSROOT/self")" "a vanished jobs root proves nothing about one session"
+  mkdir -p "$TMP/jobs-wiped"
+  ck "0:alive" "$(alive "$WT" "CLAUDE_JOB_DIR=$JOBSROOT/self")" "an emptied jobs root proves nothing about one session"
+
+  # The record must name the owner it rides with; a mismatched one (hand edit, splice) is ignored, never trusted.
+  mkrepo sessmismatch
+  spawn_live
+  mkjob_real "$JOBSROOT" sess-M running
+  stamp_env "CLAUDE_JOB_DIR=$JOBSROOT/sess-M CLAUDE_HARNESS_PID=$LIVE" "$WT"
+  git -C "$WT" config --worktree start.owner-job-dir "$JOBSROOT/sess-other"
+  rm -rf "$JOBSROOT/sess-M"
+  ck "0:alive" "$(alive "$WT" "CLAUDE_JOB_DIR=$JOBSROOT/self")" "a job dir record naming another session is ignored"
+else
+  skip "node not available — the deleted-daemon-session fixtures need a live allowlisted process as the shared root"
+fi
+
 # Per-worktree git config is authoritative for ownership because every stamp rewrites it latest-wins: a
 # stale same-issue sidecar sitting in OUR job dir must not shadow another session's takeover.
 #

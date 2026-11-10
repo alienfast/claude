@@ -1,0 +1,14 @@
+{
+  "state": "stopped",
+  "detail": "stopped",
+  "tempo": "idle",
+  "template": "bg",
+  "backend": "daemon",
+  "daemonShort": "b31a90dd",
+  "sessionId": "b31a90dd-67e4-4d20-88dd-cf1f3c6816ef",
+  "cliVersion": "2.1.319",
+  "createdAt": "2026-11-09T16:11:47.874Z",
+  "updatedAt": "2026-11-10T15:19:26.824Z",
+  "firstTerminalAt": "2026-11-10T15:19:26.824Z",
+  "lastTerminalAt": "2026-11-10T15:19:26.824Z"
+}

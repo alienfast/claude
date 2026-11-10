@@ -669,8 +669,13 @@ _wtid_jobs_root() {
 #   - non-terminal + fresh  → alive (activity within WTID_SESSION_FRESH_SECS, default 2h — /auto
 #                                    sessions heartbeat at most every ~30min, so a live session
 #                                    cannot go quiet that long)
+#   - recorded job dir gone → dead  (the stamp recorded start.owner-job-dir, so the owner WAS a daemon
+#                                    session, and that dir is now absent while its jobs root still holds
+#                                    other entries: the session was deleted. Without this the pid tier
+#                                    reads the fleet root and holds a dead session's worktree for the
+#                                    root's lifetime — a relaunched fleet's replaced session did, 2026-11-09)
 #   - anything else         → ""    (unanswerable here; NOT evidence of death — an interactive
-#                                    owner has no job dir at all, and a GC'd job dir looks the same)
+#                                    owner has no job dir at all, and an unrecorded GC'd one looks the same)
 # The daemon's full state vocabulary, read from its writer on harness 2.1.234 (regenerate:
 #   strings -a "$(realpath "$(command -v claude)")" | grep -oE '\["starting","running[^]]*\]')
 # is starting|running|resuming|adopted|crashed|working|blocked|done|stopped|failed, and the
@@ -684,10 +689,17 @@ _wtid_jobs_root() {
 # spelling degrades to "" and then to the pid walk / unknown — fail-safe, since the create gate
 # refuses foreign claims on unknown.
 _wtid_session_liveness() {
-  local owner="$1" dir state_file state now window f m newest=0
+  local owner="$1" recorded="${2-}" dir state_file state now window f m newest=0 root
   WTID_SESSION_PROBE=""
   [ -z "$owner" ] && return 0
   dir="$(_wtid_jobs_root)/$owner"
+  if [ -n "$recorded" ] && [ ! -e "$dir" ] && [ ! -e "$recorded" ] && [ "$(basename "$recorded")" = "$owner" ]; then
+    root=$(dirname "$recorded")
+    # A missing or emptied root is a relocation or wipe, which would read every sibling dead at once.
+    if [ -d "$root" ] && [ -n "$(ls -A "$root" 2>/dev/null)" ]; then
+      WTID_SESSION_PROBE="dead"; return 0
+    fi
+  fi
   state_file="$dir/state.json"
   [ -f "$state_file" ] || return 0
   if command -v jq >/dev/null 2>&1; then
@@ -741,11 +753,13 @@ _wtid_resolve_owner() {
   local wt_dir="$1" issue_lower="${2-}" name f main_root
   local keep_issue="$WTID_ISSUE" keep_branch="$WTID_BRANCH" keep_src="$WTID_SOURCE_BRANCH" keep_base="$WTID_BASELINE"
   local keep_head="$WTID_HEAD_SHA" keep_era="$WTID_STAMPED_AT" keep_wt="$WTID_WT_DIR"
-  local owner pid pid_start released claimed
+  local owner pid pid_start released claimed job_dir
   [ -z "$issue_lower" ] && issue_lower=$(basename "$wt_dir")
   _wtid_read_config "$wt_dir"
   owner="$WTID_OWNER"; pid="$WTID_OWNER_PID"; pid_start="$WTID_OWNER_PID_START"; released="$WTID_OWNER_RELEASED_AT"
   claimed="$WTID_OWNER_CLAIMED_AT"
+  # Config-only and outside the fingerprint: sidecars never carry it, so a tuple taken from a sidecar below drops it.
+  _wtid_config_get "$wt_dir" start.owner-job-dir job_dir
   if [ -z "$pid" ] && [ -z "$released" ]; then
     name=$(_wtid_sidecar_name "$issue_lower")
     main_root=$(_wtid_main_root "$wt_dir" || true)
@@ -762,7 +776,7 @@ _wtid_resolve_owner() {
       if [ -n "$owner" ] && [ "$WTID_OWNER" != "$owner" ]; then continue; fi
       if [ -n "$WTID_OWNER" ] || [ -n "$WTID_OWNER_PID" ]; then
         owner="$WTID_OWNER"; pid="$WTID_OWNER_PID"; pid_start="$WTID_OWNER_PID_START"; released="$WTID_OWNER_RELEASED_AT"
-        claimed="$WTID_OWNER_CLAIMED_AT"
+        claimed="$WTID_OWNER_CLAIMED_AT"; job_dir=""
         break
       fi
     done
@@ -771,14 +785,15 @@ _wtid_resolve_owner() {
   WTID_HEAD_SHA="$keep_head"; WTID_STAMPED_AT="$keep_era"; WTID_WT_DIR="$keep_wt"
   WTID_OWNER="$owner"; WTID_OWNER_SESSION="$owner"
   WTID_OWNER_PID="$pid"; WTID_OWNER_PID_START="$pid_start"; WTID_OWNER_RELEASED_AT="$released"
-  WTID_OWNER_CLAIMED_AT="$claimed"
+  WTID_OWNER_CLAIMED_AT="$claimed"; WTID_OWNER_JOB_DIR="$job_dir"
 }
 
 # Adjudicate the liveness of <wt_dir>'s owning session. Runs wt_identity_load for the structural identity and then _wtid_resolve_owner for the owner tuple,
 # so it populates the whole WTID_* set and is the only caller that may act on ownership — of interest here:
 # WTID_OWNER_SESSION, WTID_OWNER_PID, WTID_OWNER_PID_START, WTID_OWNER_RELEASED_AT,
 # WTID_OWNER_ALIVE = alive | dead | unknown | released. Returns 0 alive, 1 dead, 2 unknown, 3 released.
-# "dead" requires POSITIVE evidence (PID gone, or recycled into a non-harness / different-start-time process);
+# "dead" requires POSITIVE evidence (a terminal session state, the owner's recorded job dir deleted, PID gone, or recycled into a non-harness /
+# different-start-time process);
 # "released" requires POSITIVE evidence too (owner-released-at present with no resolvable pid — a deliberate wt_identity_disown);
 # anything less is "unknown" — automation must fail safe on unknown (a live owner can't be ruled out).
 wt_owner_alive() {
@@ -801,7 +816,7 @@ wt_owner_alive() {
   # while the root still lives, and a live session's must read alive when its stamp carries a blank or
   # root-shared pid. The probe checked released above so a deliberate handoff is never resurrected to
   # "alive" by its still-running releaser.
-  _wtid_session_liveness "$WTID_OWNER_SESSION"
+  _wtid_session_liveness "$WTID_OWNER_SESSION" "$WTID_OWNER_JOB_DIR"
   if [ "$WTID_SESSION_PROBE" = "alive" ]; then
     WTID_OWNER_ALIVE="alive"
     return 0
@@ -1056,9 +1071,12 @@ wt_identity_stamp() {
   # stamp ever wrote, pairing one session's identity with another's pid, which is the splice _wtid_resolve_owner
   # refuses to construct. So attribution survives and the claim does not: the tuple reads incomplete, ownership
   # falls through to a path-verified sidecar or resolves `unknown`, and `unknown` is hands-off.
+  local owner_carried=0 owner_job_dir=""
   if [ -z "$WTID_STAMP_OWNER" ]; then
     WTID_STAMP_OWNER=$(git -C "$wt_dir" config --worktree --get start.owner-session 2>/dev/null || true)
-    [ -n "$WTID_STAMP_OWNER" ] && { WTID_STAMP_OWNER_PID=""; WTID_STAMP_OWNER_PID_START=""; }
+    [ -n "$WTID_STAMP_OWNER" ] && { WTID_STAMP_OWNER_PID=""; WTID_STAMP_OWNER_PID_START=""; owner_carried=1; }
+  elif [ -n "${CLAUDE_JOB_DIR:-}" ] && [ -d "$CLAUDE_JOB_DIR" ] && [ "$(basename "$CLAUDE_JOB_DIR")" = "$WTID_STAMP_OWNER" ]; then
+    owner_job_dir=$(cd "$CLAUDE_JOB_DIR" 2>/dev/null && pwd -P || true)
   fi
 
   # Mandatory git config. This is the tier ownership is read from, so a failure here is a failed stamp, not a
@@ -1080,6 +1098,15 @@ wt_identity_stamp() {
     _wtid_stamp_cfg "$wt_dir" start.owner-session "$WTID_STAMP_OWNER" || cfg_rc=1
   else
     _wtid_unstamp_cfg "$wt_dir" start.owner-session || cfg_rc=1
+  fi
+  # The owner's daemon job dir, recorded only when the owner IS this background session: it is what lets the
+  # liveness probe read a deleted session as dead (its job dir gone) instead of falling to the fleet-shared pid.
+  # A carried-forward owner keeps its own record; any other owner (an interactive takeover) must not inherit
+  # the previous owner's, or that dir's deletion would read the new, live owner dead.
+  if [ -n "$owner_job_dir" ]; then
+    _wtid_stamp_cfg "$wt_dir" start.owner-job-dir "$owner_job_dir" || cfg_rc=1
+  elif [ "$owner_carried" = 0 ]; then
+    _wtid_unstamp_cfg "$wt_dir" start.owner-job-dir || cfg_rc=1
   fi
   # The claim epoch is written unconditionally — even a carried-forward or ownerless stamp re-asserts
   # whatever tuple it writes, and the contest comparison requires both owners non-empty anyway.
