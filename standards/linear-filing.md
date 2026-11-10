@@ -72,7 +72,9 @@ description without error.
 The body is the compact certifiable shape of [issue-spec.md](issue-spec.md): `## Problem` as a story with the
 measurements and `file:line` under `## Evidence`, `## Desired Outcome`, `## Success Criteria` as checkboxes, and an
 optional `## Boundaries` that excludes deliverables, never mechanisms, when the root cause is undiagnosed (`(decided:
-<who/why>)` only when relaying a human's recorded call; never author `(assumed)`). The title carries no severity prefix
+<who/why>)` only when relaying a human's recorded call; never author `(assumed)`). Optional is deliberate: issue-spec.md's
+quality bar exempts this shape from its Boundaries item while the outcome and criteria confine the deliverable to the one
+defect filed (§ Quality bar). The title carries no severity prefix
 and no routing word: the priority field carries the grade and the label carries the route. When a criterion cites a
 measurement this run produced (a repro rate, a baseline count, a remedy matrix), paste the runnable apparatus into the
 body or a comment, or commit it where the repo keeps such scripts; a prose summary makes the next session re-pay the
