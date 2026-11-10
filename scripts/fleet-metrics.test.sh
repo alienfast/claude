@@ -2741,6 +2741,58 @@ CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK31" --list-fleets 
 ck "retro'd: a shared leading digit is not a recorded session" "1" "$(grep -c -E '^  tt-9 .* NOT retro-d ' "$O31")"
 ck "retro'd: the exact id in a comma-joined set still is"      "1" "$(grep -c -E '^  team .*  retro-d ' "$O31")"
 
+# ---- 32. untagged no-pick ticks, and a `backlog` session held by an unpickable candidate, from the 2026-11-09 basefund fleet ----
+# fixtures/fleet-metrics-nopick/ holds trimmed REAL records of two sessions — every /loop firing, loop-boundary record and
+# outcome turn across the stall — and their real ledgers, both carrying `backlog`. A deleted session's worktree stamp read
+# alive, so BF-3092 ranked pickable and every session dropped it. 0d9dc25d: two untagged no-pick ticks, then eight that name
+# PLANNED-HOLD (up to 156 Backlog candidates waiting), then a skip and a ship. 48410b87: eight no-pick ticks, none tagged,
+# between a review park and a skip — `held` reads nothing for it.
+FIXN="$(cd "$(dirname "$0")" && pwd)/fixtures/fleet-metrics-nopick"
+CKN="$WORK/checkoutn"
+mkdir -p "$CKN/tmp"
+git -C "$CKN" init -q 2>/dev/null
+git -C "$CKN" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "init"
+MN="$(git -C "$CKN" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
+mkdir -p "$WORK/projects/$MN"
+cp "$FIXN"/auto-state-*.json "$CKN/tmp/"
+cp "$FIXN"/*-0000.jsonl "$WORK/projects/$MN/"
+echo '{"deadline_epoch": 1794316250, "deadline": "2026-11-10 07:10 CST"}' > "$CKN/tmp/fleet-deadline-team.json"
+JN="$WORK/outn.json"; MDN="$WORK/outn.md"
+qn() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); S={s['run_key']: s for s in d['sessions']}; print($1)" "$JN"; }
+runn() {
+  rm -f "$CKN/tmp/fleet-metrics-history.jsonl"
+  CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CKN" --sessions 0d9dc25d,48410b87 --json > "$JN" 2>"$WORK/errn.log"; RCN=$?
+  CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CKN" --sessions 0d9dc25d,48410b87 --no-record > "$MDN" 2>&1
+}
+runn
+ck "nopick: the analyzer completes" "0" "$RCN"
+# `held` keeps its meaning: the tagged run opens at the 17:05 firing, after the untagged ticks that close nothing it holds.
+ck "nopick: held is the tagged run alone, unchanged" "2.65 8 [{'start': '2026-11-09T17:05:00Z', 'end': '2026-11-09T19:44:00Z'}]" \
+  "$(qn "' '.join(str(x) for x in (lambda h: (h['hours'], h['ticks'], h['intervals']))(S['0d9dc25d']['held']))")"
+ck "nopick: every tick, one interval from the 16:21 firing to the 19:44 firing" \
+  "3.38 10 2 [{'start': '2026-11-09T16:21:00Z', 'end': '2026-11-09T19:44:00Z'}]" \
+  "$(qn "' '.join(str(x) for x in (lambda g: (g['hours'], g['ticks'], g['untagged_ticks'], g['intervals']))(S['0d9dc25d']['no_pick']))")"
+ck "nopick: kinds" "[('PLANNED-HOLD', 8), ('UNTAGGED', 2)]" "$(qn "sorted(S['0d9dc25d']['no_pick']['kinds'].items())")"
+ck "nopick: an all-untagged stall holds nothing" "0.0 0" "$(qn "' '.join(str(S['48410b87']['held'][k]) for k in ('hours','ticks'))")"
+ck "nopick: and the gauge sees it, from the 16:33 firing to the 20:11 firing" \
+  "3.63 8 8 [{'start': '2026-11-09T16:33:00Z', 'end': '2026-11-09T20:11:01Z'}]" \
+  "$(qn "' '.join(str(x) for x in (lambda g: (g['hours'], g['ticks'], g['untagged_ticks'], g['intervals']))(S['48410b87']['no_pick']))")"
+ck "nopick: fleet roll-up" "7.0 18 10" "$(qn "' '.join(str(d['no_pick'][k]) for k in ('session_hours','ticks','untagged_ticks'))")"
+ck "nopick: history row carries hours and share" "7.0 0.78" "$(qn "' '.join(str(d['history'][-1][k]) for k in ('nopick_session_hours','nopick_share'))")"
+ck_has "nopick: per-session cells, tagged" "| 2.6h (8) | 3.4h (10, 2 untagged) |" "$MDN"
+ck_has "nopick: per-session cells, untagged only" "| - | 3.6h (8, 8 untagged) |" "$MDN"
+ck_has "nopick: totals clause" "no-pick 7.0h (78% of fleet; 18 ticks, 10 untagged — held plus the no-pick time no hold tag names)" "$MDN"
+ck_has "nopick: trend column appended last" "| ins/ship | t/kloc | np% |" "$MDN"
+ck_has "nopick: untagged flag" '**`48410b87` sat 3.6h on no-pick ticks no hold tag names** — 8 untagged of 8 no-pick tick(s), outside `held`.' "$MDN"
+ck_lacks "nopick: under an hour untagged does not flag" '`0d9dc25d` sat' "$MDN"
+ck_has "backlog: a ledger carrying the token is not called a launch without it" "although its ledger carries \`backlog\`: the fallback opens only once nothing in Planned/Todo is pickable now" "$MDN"
+ck_lacks "backlog: no ran-without claim against the ledger" "withheld because it ran without \`backlog\`" "$MDN"
+# The token is the quantity that moves the wording: the same ticks under a ledger without it read as a launch without it.
+python3 -c "import json,sys; d=json.load(open(sys.argv[1])); d.pop('backlog'); json.dump(d, open(sys.argv[1], 'w'))" "$CKN/tmp/auto-state-0d9dc25d.json"
+runn
+ck_has "backlog: a ledger without the token keeps the ran-without wording" "withheld because it ran without \`backlog\`: a \`backlog\` launch would have worked them." "$MDN"
+ck "nopick: the gauge does not read the ledger" "3.38" "$(qn "S['0d9dc25d']['no_pick']['hours']")"
+
 echo
 echo "$PASS passed / $FAIL failed / $SKIP skipped"
 [ "$FAIL" -eq 0 ]

@@ -156,6 +156,10 @@ TERMINAL_TAG = re.compile(r"^\s*(NO-CANDIDATES|AUTO-HALTED):", re.M)
 # hold writes no ledger status, so this line is the only trace of one. Line-anchored for the reason TERMINAL_TAG is; the kind
 # rides after the dash on the same line (an epic-scoped run prefixes `epic <ID>: `).
 HOLD_TICK = re.compile(r"^[ \t]*AUTO-CONTINUE: no pick\b[^\n]*?(PLANNED-HOLD|BLOCKED-HOLD)", re.M)
+# Every no-pick tick, tagged or not. /auto ends an iteration untagged when a sibling's live-reading worktree drops every candidate,
+# which HOLD_TICK cannot see: 2026-11-09, a deleted session's stamp held a whole fleet that way. Counted as the `no-pick` gauge
+# beside `held`, never folded into it.
+NOPICK_TICK = re.compile(r"^[ \t]*AUTO-CONTINUE: no pick\b", re.M)
 # next-candidates.sh's clause under --backlog-fallback when Backlog is as empty as the gated column: the pool ran out.
 BACKLOG_EMPTY_TICK = re.compile(r"backlog fallback is on but Backlog has nothing pickable either")
 # The count every PLANNED-HOLD note states (since the 2026-08-28 stage gate), zero included. /auto sometimes abbreviates the note
@@ -611,6 +615,8 @@ def scan_transcript(path, agg, agent_type="main", description=""):
                                                                  int(waiting[-1]) if waiting else None)))
                     elif OUTCOME_LINE.search(body):
                         agg["outcome_times"].append(t)
+                        if NOPICK_TICK.search(body):
+                            agg["nopick_ticks"].append(t)
                 for kind in LIMIT_HIT.findall(body):
                     agg["limit_hits"][kind.lower()] += 1
                     if t and (agg["first_limit_hit"] is None or t < agg["first_limit_hit"][0]):
@@ -870,6 +876,8 @@ def new_agg():
         # Main-loop `AUTO-CONTINUE: no pick` hold ticks as (time, PLANNED-HOLD|BLOCKED-HOLD, Backlog empty too), the time of every other
         # iteration-ending outcome line, and each `/loop /auto` firing — the inputs to hold_gauge.
         "hold_ticks": [], "outcome_times": [], "loop_starts": [],
+        # Untagged `AUTO-CONTINUE: no pick` tick times — outcome lines to hold_gauge, ticks to the no-pick gauge.
+        "nopick_ticks": [],
         # name -> subagent_type from this session's own Agent tool_use inputs, and how many
         # dispatches carried a name at all.
         "named_types": {}, "named_dispatches": 0,
@@ -2505,6 +2513,20 @@ def main():
                     in_tail += (b_ - a_).total_seconds() / 3600
         g["in_idle_tail_h"] = in_tail
         holds[s["run_key"]] = g
+    # The no-pick gauge: hold_gauge's intervals over EVERY no-pick tick. An untagged tick is an outcome line to the hold gauge above,
+    # so `held` keeps its meaning and this is its superset; the difference is no-pick time no hold tag names.
+    nopicks = {}
+    for s in sessions:
+        a = s["agg"]
+        untagged = set(a["nopick_ticks"])
+        g = hold_gauge({"hold_ticks": a["hold_ticks"] + [(t, "UNTAGGED", (False, None)) for t in a["nopick_ticks"]],
+                        "outcome_times": [t for t in a["outcome_times"] if t not in untagged],
+                        "loop_starts": a["loop_starts"], "last": a["last"]}, fleet_deadline_dt)
+        g["untagged_ticks"] = g["kinds"].get("UNTAGGED", 0)
+        nopicks[s["run_key"]] = g
+    nopick_total_h = sum(g["hours"] for g in nopicks.values())
+    nopick_ticks_total = sum(g["ticks"] for g in nopicks.values())
+    nopick_untagged_total = sum(g["untagged_ticks"] for g in nopicks.values())
     hold_total_h = sum(g["hours"] for g in holds.values())
     hold_ticks_total = sum(g["ticks"] for g in holds.values())
     hold_in_tail_h = sum(g["in_idle_tail_h"] for g in holds.values())
@@ -2699,6 +2721,8 @@ def main():
         "throttle_share": None,  # filled below once session_hours exists
         "hold_session_hours": round(hold_total_h, 1),
         "hold_share": None,  # filled below once session_hours exists
+        "nopick_session_hours": round(nopick_total_h, 1),
+        "nopick_share": None,  # filled below once session_hours exists
         "rewritten_request_share": fleet_lanes["rewritten_request_share"] if fleet_lanes else None,
         "non_judgment_token_share": fleet_lanes["non_judgment_token_share"] if fleet_lanes else None,
         "peak_five_hour_pct": (fleet_rl["peaks"].get("five_hour") or {}).get("percent") if fleet_rl else None,
@@ -2717,6 +2741,7 @@ def main():
         if idle_tail_session_hours is not None and session_hours else None
     headline["throttle_share"] = round(throttle_parked_h / session_hours, 3) if session_hours else None
     headline["hold_share"] = round(hold_total_h / session_hours, 3) if session_hours else None
+    headline["nopick_share"] = round(nopick_total_h / session_hours, 3) if session_hours else None
     # --sessions carries NO time bound, so every ledger-less /auto session the project has ever
     # held counts as "excluded" — 18 of them on the 2026-08-25 checkout, all from earlier fleets and
     # every one a correct exclusion. Only an exclusion OVERLAPPING the measured fleet's own span can
@@ -2884,6 +2909,11 @@ def main():
                     "in_idle_tail_h": round(holds[s["run_key"]]["in_idle_tail_h"], 2),
                     "intervals": [{"start": f"{lo:%Y-%m-%dT%H:%M:%SZ}", "end": f"{hi:%Y-%m-%dT%H:%M:%SZ}"}
                                   for lo, hi in holds[s["run_key"]]["intervals"]]},
+                "no_pick": {
+                    "hours": round(nopicks[s["run_key"]]["hours"], 2), "ticks": nopicks[s["run_key"]]["ticks"],
+                    "untagged_ticks": nopicks[s["run_key"]]["untagged_ticks"], "kinds": nopicks[s["run_key"]]["kinds"],
+                    "intervals": [{"start": f"{lo:%Y-%m-%dT%H:%M:%SZ}", "end": f"{hi:%Y-%m-%dT%H:%M:%SZ}"}
+                                  for lo, hi in nopicks[s["run_key"]]["intervals"]]},
                 "ledger_offschema": s["ledger_offschema"],
                 "rewakes": {k: v for k, v in rewakes[s["run_key"]].items()
                             if k != "spurious_lines"} if s["run_key"] in rewakes else None,
@@ -2962,6 +2992,10 @@ def main():
                 # Hours of the holds above that also sit inside the idle tails (a hold past the session's last ship).
                 "within_idle_tail_session_hours": round(hold_in_tail_h, 1),
             },
+            "no_pick": {
+                "session_hours": round(nopick_total_h, 1), "share": headline["nopick_share"],
+                "ticks": nopick_ticks_total, "untagged_ticks": nopick_untagged_total,
+            },
             "throttle": {
                 "parked_session_hours": throttle_parked_h,
                 "share": headline["throttle_share"],
@@ -3032,8 +3066,8 @@ def main():
                           else f"started {e['started']}") + ")" for e in excluded_stale) + "\n")
 
     print("## Per session\n")
-    print("| run | span | ctx>=200k | shipped (rec/obs) | canceled (rec/obs) | wakeups | dispatch bg/sync/ign | blind sleep | marker | cls denied/unavail | dangling | linear rl | throttled | held |")
-    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    print("| run | span | ctx>=200k | shipped (rec/obs) | canceled (rec/obs) | wakeups | dispatch bg/sync/ign | blind sleep | marker | cls denied/unavail | dangling | linear rl | throttled | held | no-pick |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     tot = Counter()
     for s in sessions:
         a = s["agg"]
@@ -3053,6 +3087,9 @@ def main():
               f"{a['sleep_marker_s'] / 3600:.1f}h | {len(a['classifier_blocks'])}/{len(a['classifier_unavailable'])} | {a['dangling']} | {a['linear_ratelimited']} | "
               f"{throttle[s['run_key']]['parked_h']:.1f}h ({throttle[s['run_key']]['throttled']}/{throttle[s['run_key']]['probes']}) | "
               + (f"{holds[s['run_key']]['hours']:.1f}h ({holds[s['run_key']]['ticks']})" if holds[s["run_key"]]["ticks"] else "-")
+              + " | "
+              + (f"{nopicks[s['run_key']]['hours']:.1f}h ({nopicks[s['run_key']]['ticks']}, "
+                 f"{nopicks[s['run_key']]['untagged_ticks']} untagged)" if nopicks[s["run_key"]]["ticks"] else "-")
               + " |")
         tot["span"] += span
         tot["blind"] += a["sleep_blind_s"]
@@ -3077,6 +3114,9 @@ def main():
              if throttle_probes else " (no headroom probes seen)")
           + (f" · held {hold_total_h:.1f}h ({100 * headline['hold_share']:.0f}% of fleet; {hold_ticks_total} no-pick ticks in "
              f"{len(hold_sessions)} of {len(sessions)} sessions)" if hold_sessions and headline["hold_share"] is not None else "")
+          + (f" · no-pick {nopick_total_h:.1f}h ({100 * headline['nopick_share']:.0f}% of fleet; {nopick_ticks_total} ticks, "
+             f"{nopick_untagged_total} untagged — held plus the no-pick time no hold tag names)"
+             if nopick_ticks_total and headline["nopick_share"] is not None else "")
           + "\n")
     if rewake_tot is not None:
         print(f"rewakes {rewake_tot['stop']} stop ({rewake_tot['save']} save / "
@@ -3492,8 +3532,8 @@ def main():
             return f"{round(100 * v)}%" if v is not None else "-"
         print("| fleet start | n | hours | shipped | $/issue | ktok/issue | $/Mtok out | sub-final% | "
               "cycles | find/rev | C+H/rev | plan% | ctx>=200k% | filed/ship | ex/ship | vt/ship | st/ship | fresh% | idle% | "
-              "thr% | hold% | rewr% | 5h% | ins/ship | t/kloc |")
-        print("|" + "---|" * 25)
+              "thr% | hold% | rewr% | 5h% | ins/ship | t/kloc | np% |")
+        print("|" + "---|" * 26)
         for r in history[-6:]:
             mark = " ←" if r.get("session_set") == headline["session_set"] and not args.all else ""
             fs = (r.get("fleet_start") or "?")[:16].replace("T", " ")
@@ -3510,7 +3550,7 @@ def main():
                   f"{pct(r.get('fresh_shipped_share'))} | {pct(r.get('idle_tail_share'))} | "
                   f"{pct(r.get('throttle_share'))} | {pct(r.get('hold_share'))} | {pct(r.get('rewritten_request_share'))} | "
                   f"{cell(r.get('peak_five_hour_pct'), '{}%')} | {cell(r.get('inserted_lines_per_shipped'))} | "
-                  f"{cell(r.get('tests_per_kloc'), '{:.1f}')} |")
+                  f"{cell(r.get('tests_per_kloc'), '{:.1f}')} | {pct(r.get('nopick_share'))} |")
         if len(history) > 6:
             print(f"\n({len(history) - 6} earlier row(s) in the ledger, not shown)")
         print("\nRead $/issue as its two factors: ktok/issue is work per shipped issue (churn or harder "
@@ -3538,7 +3578,10 @@ def main():
               f"and polling lanes); a `-` is a fleet with no effort-phase ledger. 5h% is the highest five_hour reading any "
               f"session's mods/rate-limits history recorded in a 5h block that began inside the fleet's span — a block already "
               f"running at launch carries earlier usage — the account's own meter, so read it beside n for headroom (the "
-              f"Headroom verdict line does that arithmetic); a `-` is a fleet with no history or no such block.\n")
+              f"Headroom verdict line does that arithmetic); a `-` is a fleet with no history or no such block. np%, appended "
+              f"last, is the no-pick gauge: session-hours over EVERY `AUTO-CONTINUE: no pick` tick, hold-tagged or not, as a "
+              f"share of the same span — hold% plus the no-pick time no hold tag names (a candidate dropped as a sibling's "
+              f"live-owned worktree, which a dead session's stamp can fake); a `-` is a row recorded before the gauge.\n")
     elif not args.all:
         print("- first recorded fleet — the trend accrues one row per windowed run in "
               "`tmp/fleet-metrics-history.jsonl`\n")
@@ -3652,7 +3695,9 @@ def main():
         # each read as a mixed launch). A BLOCKED-HOLD tick never prints the clause and does not count against the proof.
         # A hold whose ticks state Backlog candidates waiting flags with or without a landing, and says so: those ticks prove the
         # session ran without `backlog`, so a uniform launch reaches the same lever a mixed one does (2026-10-28: three sessions
-        # held behind 2 candidates their own fleet filed, flagged only where a sibling's landing fell inside, read as mixed).
+        # held behind 2 candidates their own fleet filed, flagged only where a sibling's landing fell inside, read as mixed) —
+        # unless a surviving ledger carries the token: the fallback opens only once nothing in Planned/Todo is pickable now, so a
+        # candidate ranked pickable that no session can pick holds `backlog` sessions too (2026-11-09: a deleted session's stamp).
         hg = holds[s["run_key"]]
         if hg["hours"] >= 1 and not hg["pool_ran_out"]:
             landed = {}
@@ -3673,14 +3718,30 @@ def main():
                          "that is gated parks only the sessions launched without the token."
                          if not st.get("backlog") and not s["ledger_missing"]
                          and any(sessions_by_key[k]["state"].get("backlog") for k in landed) else "")
-                gated = (f" Its PLANNED-HOLD ticks named up to {waiting} Backlog candidate(s) waiting behind the gate, withheld "
-                         "because it ran without `backlog`: a `backlog` launch would have worked them." if waiting else "")
+                carries = bool(st.get("backlog")) and not s["ledger_missing"]
+                gated = ("" if not waiting else
+                         f" Its PLANNED-HOLD ticks named up to {waiting} Backlog candidate(s) waiting behind the gate although "
+                         "its ledger carries `backlog`: the fallback opens only once nothing in Planned/Todo is pickable now, so a "
+                         "candidate ranked pickable that no session could pick held it shut — read the ticks for the candidate "
+                         "they dropped (a sibling's claim, or a dead session's worktree stamp reading alive)." if carries else
+                         f" Its PLANNED-HOLD ticks named up to {waiting} Backlog candidate(s) waiting behind the gate, withheld "
+                         "because it ran without `backlog`: a `backlog` launch would have worked them.")
                 head = (f"held {hg['hours']:.1f}h while siblings landed {sum(landed.values())} ship(s)" if landed
                         else f"held {hg['hours']:.1f}h with Backlog candidates waiting behind the gate")
                 print(f"- **`{s['run_key']}` {head}** — {hg['ticks']} no-pick tick(s) ({kinds})"
                       + (f"; landings inside the hold: {who}." if landed else ".") + mixed + gated
                       + (" `BLOCKED-HOLD` waits on a sibling's in-flight issue by design, so read its hours against that."
                          if "BLOCKED-HOLD" in hg["kinds"] else ""))
+        # No-pick time no hold tag names: /auto ends untagged when every candidate drops as a sibling's live-owned worktree, which
+        # is transient by design — an hour of it means the "live" owner is not.
+        npg = nopicks[s["run_key"]]
+        untagged_h = max(0.0, npg["hours"] - holds[s["run_key"]]["hours"])
+        if npg["untagged_ticks"] and untagged_h >= 1:
+            flagged = True
+            print(f"- **`{s['run_key']}` sat {untagged_h:.1f}h on no-pick ticks no hold tag names** — {npg['untagged_ticks']} "
+                  f"untagged of {npg['ticks']} no-pick tick(s), outside `held`. /auto ends untagged when every candidate drops "
+                  f"as a sibling's live-owned worktree, a transient state: read the ticks for the worktree they name and run "
+                  f"`~/.claude/scripts/wt-owner.sh` on it — a deleted session's stamp reading alive holds every session.")
         if a["dangling"]:
             flagged = True
             print(f"- `{s['run_key']}` has {a['dangling']} tool call(s) with no result — an "
