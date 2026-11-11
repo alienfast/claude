@@ -666,6 +666,12 @@ _wtid_jobs_root() {
 # fleet-shared pid can never be:
 #   - terminal state        → dead  (positive evidence; the pid tier would read the shared root's
 #                                    liveness instead and strand the worktree until the root exits)
+#   - done + work in flight → not terminal (the daemon writes `done` at the end of every TURN, not only at
+#                                    the end of the session: a self-waking /loop /auto session rests in it
+#                                    between turns while a background task runs or a wake is armed. Read as
+#                                    dead, a sibling's orphan sweep resumed and re-stamped a worktree whose
+#                                    owner's background developer was still editing it, 2026-11-10. Such a
+#                                    state takes the freshness rule below, like any non-terminal one.)
 #   - non-terminal + fresh  → alive (activity within WTID_SESSION_FRESH_SECS, default 2h — /auto
 #                                    sessions heartbeat at most every ~30min, so a live session
 #                                    cannot go quiet that long)
@@ -708,7 +714,8 @@ _wtid_session_liveness() {
     state=$(sed -n 's/.*"state"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$state_file" 2>/dev/null | head -1)
   fi
   case "$state" in
-    done|failed|stopped|killed|canceled|cancelled|error) WTID_SESSION_PROBE="dead"; return 0 ;;
+    done) _wtid_done_in_flight "$state_file" || { WTID_SESSION_PROBE="dead"; return 0; } ;;
+    failed|stopped|killed|canceled|cancelled|error) WTID_SESSION_PROBE="dead"; return 0 ;;
   esac
   window="${WTID_SESSION_FRESH_SECS:-7200}"
   now=$(_wtid_now)
@@ -722,6 +729,23 @@ _wtid_session_liveness() {
     WTID_SESSION_PROBE="alive"
   fi
   return 0
+}
+
+# 0 when a `done` state.json still records work in flight: inFlight.tasks above zero, or inFlight.wake.at (epoch
+# ms) in the future. A wake already past is not pending. The daemon pretty-prints the file across lines, so the
+# jq-less branch flattens it before matching.
+_wtid_done_in_flight() {
+  local state_file="$1" now_ms flat tasks wake
+  now_ms="$(_wtid_now)000"
+  case "$now_ms" in *[!0-9]*) now_ms=0 ;; esac
+  if command -v jq >/dev/null 2>&1; then
+    jq -e --argjson now "$now_ms" '((.inFlight.tasks // 0) > 0) or ((.inFlight.wake.at // 0) > $now)' "$state_file" >/dev/null 2>&1
+    return
+  fi
+  flat=$(tr -d '\n\r' < "$state_file" 2>/dev/null) || return 1
+  tasks=$(printf '%s' "$flat" | sed -n 's/.*"inFlight"[[:space:]]*:[[:space:]]*{[^}]*"tasks"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p')
+  wake=$(printf '%s' "$flat" | sed -n 's/.*"wake"[[:space:]]*:[[:space:]]*{[^}]*"at"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p')
+  [ "${tasks:-0}" -gt 0 ] || [ "${wake:-0}" -gt "$now_ms" ]
 }
 
 # Settle WHO owns <wt_dir>, filling the owner globals wt_identity_load deliberately left empty (structural

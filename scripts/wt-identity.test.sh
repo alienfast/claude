@@ -1180,6 +1180,44 @@ mkjob sess-A running
 touch -t 202001010000 "$JOBSROOT/sess-A/state.json"
 ck "2:unknown" "$(alive "$WT" "CLAUDE_JOB_DIR=$JOBSROOT/self")" "a stale non-terminal job dir proves nothing — unknown, never alive or dead"
 
+# `done` closes a TURN, not a session: a self-waking /auto session rests in it between turns while a background task
+# runs or a wake is armed, and reading that as dead handed a live owner's worktree to a sibling's orphan sweep
+# (2026-11-10). The stamp's pid is blank (ps shim), so every verdict below is the session probe's alone.
+mkjob_turn() { # session tasks wake-at-ms|- — a `done` state.json as the daemon writes it: pretty-printed, with its inFlight record
+  local kinds='[]' wake=''
+  [ "$2" = 0 ] || kinds='["local_bash", "session_cron"]'
+  [ "$3" = - ] || wake=$(printf ',\n    "wake": {\n      "at": %s,\n      "fires": 0\n    }' "$3")
+  mkdir -p "$JOBSROOT/$1"
+  printf '{\n  "state": "done",\n  "tempo": "idle",\n  "inFlight": {\n    "tasks": %s,\n    "queued": 0,\n    "kinds": %s,\n    "drainableMonitors": 0%s\n  },\n  "selfWake": true\n}\n' \
+    "$2" "$kinds" "$wake" > "$JOBSROOT/$1/state.json"
+}
+# alive() with `command -v jq` answering absent, which is the whole test the library's jq-less branches make.
+alive_nojq() { # wt_dir ["VAR=VAL ..."]
+  local wt="$1" assigns="${2-}"
+  env $assigns bash -c "$SHIMPATH command() { if [ \"\$1\" = -v ] && [ \"\$2\" = jq ]; then return 1; fi; builtin command \"\$@\"; }
+    . '$IDLIB'; wt_owner_alive '$wt'; rc=\$?; printf '%s:%s' \"\$rc\" \"\$WTID_OWNER_ALIVE\""
+}
+WAKE_AHEAD=$(( ($(date +%s) + 3600) * 1000 ))
+WAKE_PAST=$(( ($(date +%s) - 3600) * 1000 ))
+mkrepo sessturn
+stamp_env "TEST_SHIM=$PSSHIM CLAUDE_SESSION_ID=sess-A" "$WT"
+mkjob_turn sess-A 2 "$WAKE_AHEAD"
+ck "0:alive" "$(alive "$WT" "CLAUDE_JOB_DIR=$JOBSROOT/self")" "a done state with background tasks and an armed wake is between turns — alive on fresh evidence"
+ck "0:alive" "$(alive_nojq "$WT" "CLAUDE_JOB_DIR=$JOBSROOT/self")" "the jq-less branch reads the same between-turns state alive"
+mkjob_turn sess-A 2 -
+ck "0:alive" "$(alive "$WT" "CLAUDE_JOB_DIR=$JOBSROOT/self")" "background tasks alone keep a done state non-terminal"
+mkjob_turn sess-A 0 "$WAKE_AHEAD"
+ck "0:alive" "$(alive "$WT" "CLAUDE_JOB_DIR=$JOBSROOT/self")" "an armed wake alone keeps a done state non-terminal"
+ck "0:alive" "$(alive_nojq "$WT" "CLAUDE_JOB_DIR=$JOBSROOT/self")" "the jq-less branch reads an armed wake alone as non-terminal"
+mkjob_turn sess-A 0 "$WAKE_PAST"
+ck "1:dead" "$(alive "$WT" "CLAUDE_JOB_DIR=$JOBSROOT/self")" "a wake already past is not pending — done with nothing in flight is dead"
+mkjob_turn sess-A 0 -
+ck "1:dead" "$(alive "$WT" "CLAUDE_JOB_DIR=$JOBSROOT/self")" "a done state with nothing in flight is a finished session — dead"
+ck "1:dead" "$(alive_nojq "$WT" "CLAUDE_JOB_DIR=$JOBSROOT/self")" "the jq-less branch reads a finished session dead"
+mkjob_turn sess-A 2 "$WAKE_AHEAD"
+touch -t 202001010000 "$JOBSROOT/sess-A/state.json"
+ck "2:unknown" "$(alive "$WT" "CLAUDE_JOB_DIR=$JOBSROOT/self")" "a stale in-flight record proves nothing — unknown, never dead"
+
 # released is adjudicated before the session probe: a releaser that is still alive (it deliberately
 # walked away and moved on to other work) must not resurrect its own handoff to 'alive'.
 mkrepo sessreleased
