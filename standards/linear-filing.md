@@ -11,6 +11,20 @@ failed and never-attempted.
 
 ## 1. Search before filing
 
+**One fix shape at several sites is one issue.** Before searching, group the batch: two or more findings of the same
+defect class with the same fix shape at different sites — each dialog's save echoing the fields it loaded, each
+client-set write skipping the same re-read — file as one class-scoped issue at the highest severity among them, with one
+Success Criteria checkbox per site naming its subject or greppable shape ([issue-spec.md](issue-spec.md)'s
+site-enumeration form), so `/finish` checks each off and `/auto-prep`'s collision pass sees every site. Search once per
+group and record every absorbed item against the one ID (§ 6). A group whose combined fix outgrows one focused session
+([issue-spec.md](issue-spec.md) § Quality bar) stays split. Sharing a file or a method is not sharing a fix shape: two
+different defects there stay separate issues joined by collision edges (§ 4). An open sibling of the same shape at
+another site is an **Adjacent but distinct** hit below, not **Same root cause** — its fix never reaches the new site —
+so file beside it with `related`; never widen its description from here, since its criteria are a mandate only a person
+extends, and `/auto-prep` Step 3's consolidation is where that widening is approved. (2026-11-11: one review filed three
+issues within 25 seconds for three dialogs each echoing the fields it loaded, and another batch split one stale-read
+class in two; the fleet retro consolidated both families by hand.)
+
 Probe for an open issue already covering the defect: `linear-cli search issues "<token>"` (the helper
 `~/.claude/scripts/linear-dedup-search.sh <token>...` runs exactly that search one token per call, refuses phrases
 (`--phrase` for verbatim title text), keeps stderr and stops on RATELIMITED (exit 3 = wait), and tags terminal hits
