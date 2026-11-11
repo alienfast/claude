@@ -203,11 +203,16 @@ process_marker() {
       # never show Ready For Release for code that isn't merged), so mark it now —
       # best-effort: the merge already succeeded; a Linear hiccup must not undo it.
       rm -f "$marker"   # finish-merge.sh self-dequeued on success; belt-and-suspenders
-      if "$HOME/.claude/scripts/mark-ready-for-release.sh" "$issue" >/dev/null 2>&1; then
-        echo "DRAINED: $issue (marked Ready For Release)$no_code_note$cleanup_note"
+      # Run from the repository: the transition refuses an issue no local commit subject names, and the drainer's
+      # cwd is whatever started it. A NO-CODE: ship has no commit to name it and ends in Done, as /finish Step 9
+      # ends it. The script's stderr reaches the drain log, since a refusal's own lines are the remedy.
+      local mrr=("$issue") landed="Ready For Release"
+      [ -z "$no_code_note" ] || { mrr=(--done "$issue"); landed="Done"; }
+      if ( cd "$repo_root" && "$HOME/.claude/scripts/mark-ready-for-release.sh" "${mrr[@]}" ) >/dev/null; then
+        echo "DRAINED: $issue (marked $landed)$no_code_note$cleanup_note"
       else
-        echo "DRAINED: $issue — WARNING: merged, but could not mark Ready For Release; set it manually$no_code_note$cleanup_note" >&2
-        notify "Merge landed: $issue" "Merged, but the Linear state update failed — mark $issue Ready For Release manually."
+        echo "DRAINED: $issue — WARNING: merged, but could not mark $landed; the reason is above$no_code_note$cleanup_note" >&2
+        notify "Merge landed: $issue" "Merged, but the Linear state update failed — see the drain log, then mark $issue $landed."
       fi
       [ -z "$cleanup_note" ] || notify "Merge landed: $issue" "Merged, but the worktree could not be removed — CLEANUP-FAILED in the drain log; clear it by hand."
       ;;

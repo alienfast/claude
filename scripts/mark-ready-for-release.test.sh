@@ -5,8 +5,10 @@
 # the last child releases and recursing to the grand-epic; staying open while a sibling is In
 # Review (not terminal here) or In Progress; never touching an unlabeled parent; ignoring a
 # childless epic; a parent failure that WARNs while the child's exit stays 0; --done moving the
-# issue itself to Done; and the epic's target following its children — Done when every child is
-# settled, Ready for Release while one still waits for its release.
+# issue itself to Done; the epic's target following its children — Done when every child is
+# settled, Ready for Release while one still waits for its release; and the commit-subject guard —
+# a release transition refused when only a commit body or a longer id names the issue, or outside
+# a git checkout, with --done ungated and a subject longer than a pipe buffer not costing the match.
 #
 # linear-cli is a PATH shim over a tiny file-backed store (state-<ID>, parent-<ID>, labels-<ID>,
 # children-<ID>) that records every `issues update` in order; HOME is an empty dir so the script's
@@ -106,11 +108,28 @@ esac
 EOF
 chmod +x "$WORK/bin/linear-cli"
 
-run() { # run <outfile> <script-args...> — echoes the exit code
+# The repository the ships "landed in": one empty commit per released fixture id, since the guard refuses an id
+# no subject names. The oldest subject is longer than a pipe buffer, so an implementation that pipes git log into
+# grep -q dies of SIGPIPE on every case here. EP-50 is named only in EP-51's body, EP-60 only as a prefix of
+# EP-600, EP-70 only in lower case.
+set_issue EP-50 "In Progress" -
+set_issue EP-51 "In Progress" -
+set_issue EP-60 "In Progress" -
+set_issue EP-70 "In Progress" -
+G() { HOME="$WORK/home" git -C "$WORK/repo" -c user.name=t -c user.email=t@example.invalid -c commit.gpgsign=false "$@"; }
+mkdir -p "$WORK/norepo"
+git init -q "$WORK/repo"
+head -c 200000 /dev/zero | tr '\0' x | G commit -q --allow-empty -F -
+for id in EP-2 EP-3 EP-6 EP-7 EP-13 EP-20 EP-600; do G commit -q --allow-empty -m "$id: x"; done
+G commit -q --allow-empty -m "Merge ep-70"
+G commit -q --allow-empty -m "EP-51: x" -m "also fixes EP-50"
+
+run_in() { # run_in <cwd> <outfile> <script-args...> — echoes the exit code
   : > "$WORK/updates.log"
-  HOME="$WORK/home" PATH="$WORK/bin:$PATH" "$SCRIPT" "${@:2}" > "$1" 2> "$1.err"
+  ( cd "$1" && HOME="$WORK/home" PATH="$WORK/bin:$PATH" GIT_CEILING_DIRECTORIES="$WORK" "$SCRIPT" "${@:3}" ) > "$2" 2> "$2.err"
   echo "$?"
 }
+run() { run_in "$WORK/repo" "$@"; } # run <outfile> <script-args...>
 state() { cat "$DB/state-$1"; }
 
 echo "mark-ready-for-release.sh —"
@@ -173,6 +192,39 @@ ck "--done beside a released sibling exits 0" "0" "$rc"
 ck "the issue itself is Done"           "Done" "$(state EP-42)"
 ck "epic waits for the sibling's release" "Ready for Release" "$(state EP-40)"
 ck_has "epic release reported with the released wording" "NOTE: epic EP-40 moved to 'Ready for Release' — its last child (EP-42) released" "$WORK/o9"
+
+# ---- 10. an id only a commit BODY names: refused before anything moves ----
+rc=$(run "$WORK/o10" EP-50)
+ck "body-only id exits 2"               "2" "$rc"
+ck_has "refusal names the reason"       "REFUSED: EP-50 — no commit subject on any local ref names it" "$WORK/o10.err"
+ck "refused issue left as it was"       "In Progress" "$(state EP-50)"
+ck "no update issued on a refusal"      "" "$(cat "$WORK/updates.log")"
+
+# ---- 11. --done is not gated: the no-repository-change shape has no commit to name it ----
+rc=$(run "$WORK/o11" --done EP-50)
+ck "--done on an unnamed id exits 0"    "0" "$rc"
+ck "--done moved the unnamed id"        "Done" "$(state EP-50)"
+
+# ---- 12. a longer id is not a match: EP-600's subject does not name EP-60 ----
+rc=$(run "$WORK/o12" EP-60)
+ck "prefix of a longer id exits 2"      "2" "$rc"
+ck "prefix-only issue left as it was"   "In Progress" "$(state EP-60)"
+
+# ---- 13. outside a git checkout (a drainer started from elsewhere): refused, with the cause named ----
+rc=$(run_in "$WORK/norepo" "$WORK/o13" EP-51)
+ck "non-repo cwd exits 2"               "2" "$rc"
+ck_has "non-repo refusal names the cause" "is not a git checkout" "$WORK/o13.err"
+ck "non-repo refusal moved nothing"     "In Progress" "$(state EP-51)"
+
+# ---- 14. the same id from the repository: named in a subject, with the pipe-buffer-sized subject behind it ----
+rc=$(run "$WORK/o14" EP-51)
+ck "subject-named id exits 0"           "0" "$rc"
+ck "subject-named id moved"             "Ready for Release" "$(state EP-51)"
+
+# ---- 15. the sweep matches ids in any case, so the guard does too ----
+rc=$(run "$WORK/o15" EP-70)
+ck "lower-case subject exits 0"         "0" "$rc"
+ck "lower-case-named id moved"          "Ready for Release" "$(state EP-70)"
 
 echo "$PASS passed / $FAIL failed"
 [ "$FAIL" -eq 0 ]

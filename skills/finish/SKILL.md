@@ -346,6 +346,11 @@ State NOT changed; this issue remains In Progress.`, with `<reason>` distilled t
 a multi-line error) so the agents-list parser reads the tag. Do not continue to Step 9. An unassign or epic-walk warning
 on exit 0 is not a failure: the transition landed; note the warning and proceed.
 
+**Exit 2, `REFUSED:`, is not a state-update failure.** No commit subject names the issue, so Step 7's classification
+was skipped. Apply the shape it should have taken — the *Landed under another issue's commit* empty commit, or `--done`
+for the no-repository-change shape — and re-run the script. Never set the state by hand: that strands the issue in
+Ready For Release, which is what the refusal prevents.
+
 `merge` and `pr` run no transition here; Step 9 runs the same script after the ship exists.
 
 ### Step 9: Finalization (`merge` or `pr` only)
@@ -402,7 +407,10 @@ of this gate.
    succeeded but Linear did not update: do **not** undo the merge; surface the error and end on
    `SHIPPED-MERGE: <ISSUE-ID> — <WORKTREE_BRANCH> merged into <SOURCE_BRANCH>, worktree removed, but Linear state update FAILED: <reason>. Mark Ready For Release manually.`
    — still `SHIPPED-MERGE`, since the code shipped (with a `CLEANUP-FAILED:` line, sub-step 3's wording replaces
-   `worktree removed` here too).
+   `worktree removed` here too). Exit 2, `REFUSED:` (no commit subject names the issue), takes the same tag with the
+   refusal as `<reason>` and, in place of the manual-mark sentence, `Record "<ISSUE-ID>: shipped in <OTHER-ID>'s <sha>"
+   as an empty commit on <SOURCE_BRANCH>, then re-run mark-ready-for-release.sh.` Never make that commit from here: the
+   main checkout's index is shared, and a commit there takes whatever another session has staged.
 3. **A `CLEANUP-FAILED:` line on stdout means the merge landed and the worktree stayed** — `git worktree remove` refused
    over untracked or modified files, and the script never forces, since a blocking file can be work this session forgot
    to commit. The issue still ships (sub-step 2 and the `SHIPPED-MERGE` tag stand, so `/auto` records a ship), but exit 0

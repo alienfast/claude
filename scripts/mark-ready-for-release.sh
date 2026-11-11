@@ -17,6 +17,13 @@
 # issue's id in a deployed commit subject, so an issue with no commit would sit in
 # Ready For Release for good (BF-3013, BF-2805, BF-1971, BF-2697, 2026-11-09).
 #
+# For the same reason a Ready For Release transition is refused (exit 2, nothing moved) unless
+# a commit subject on some local ref names the issue, matched as the sweep matches it: the
+# whole id, any case. Code carried inside another issue's commit, or an id written only in a
+# commit body, strands the issue the same way (BF-3087, BF-3204, 2026-11-10); /finish Step 7's
+# empty commit is the record that clears it. Run from the repository the ship landed in.
+# --done is not gated.
+#
 # It resolves the EXACT state name from the team's workflow states (never trusting
 # `--state` to fuzzy-match), matching the same rule /finish Step 8 documents:
 # exact "ready for <release|deploy|ship>" with flexible separators, never a bare
@@ -52,6 +59,8 @@
 #   1 — usage / no matching state / the state update failed or did not verify (read-back
 #       mismatch and the raw-mutation fallback also missed). The caller
 #       surfaces/notifies; the merge itself has already landed regardless.
+#   2 — refused, nothing moved: a Ready For Release transition run outside a git checkout, or
+#       for an issue no commit subject on any local ref names.
 
 set -eo pipefail
 
@@ -128,6 +137,22 @@ transition() {
   fi
   return 0
 }
+
+# Top level only: the epic walk below calls transition() for parents, and an epic carries no commit.
+# Subjects are captured, never piped: under pipefail, grep -q leaving on its first match kills git
+# with SIGPIPE once the history outgrows a pipe buffer, and every legitimate ship is then refused.
+if [ "$kind" = release ]; then
+  if ! subjects=$(git log --all --format=%s 2>/dev/null); then
+    echo "REFUSED: $issue — $(pwd) is not a git checkout; run from the repository the ship landed in." >&2
+    exit 2
+  fi
+  if ! grep -qiwF -- "$issue" <<<"$subjects"; then
+    echo "REFUSED: $issue — no commit subject on any local ref names it, so the release sweep can never move it to Done." >&2
+    echo "  Shipped inside another issue's commit: /finish Step 7's empty commit ('$issue: shipped in <OTHER-ID>'s <sha>') is the record; re-run once a subject names it." >&2
+    echo "  --done only when nothing shipped to the repository; never for code carried by another commit." >&2
+    exit 2
+  fi
+fi
 
 # Resolve the exact target-state name from the team's workflow states.
 team="${issue%%-*}"
