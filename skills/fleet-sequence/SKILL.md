@@ -31,7 +31,7 @@ Why this shape:
 `/fleet-sequence stop [<ISSUE-ID>|solo]`
 
 - **Issue IDs** — every token matching `^[A-Za-z]+-[0-9]+$`, in ship order. Each is probed as `/auto`'s targeted mode
-  probes (`specified` present, `human` absent) and refused if already Done, Canceled, Duplicate, or Ready For Release —
+  probes (`specified` present, `human` and `hold` absent) and refused if already Done, Canceled, Duplicate, or Ready For Release —
   except an issue the marker records as shipped on this run, which a resume skips. `solo` is expressly welcome.
 - **`pr`** (default) — create `seq/<first-id>` from the launch branch, ship every issue onto it, push after each ship,
   open one PR onto the launch branch when the list completes, then `/pr-update`. The launch branch must exist on origin.
@@ -185,7 +185,7 @@ its own log (the only record of why the earlier run stopped); no launch touches 
 ## Error Handling
 
 - Refusals before dispatch (nothing launched, checkout untouched, no branch created): an unparseable or duplicate ID;
-  `pr` and `merge` together; an issue without `specified`, with `human`, or already terminal; `linear-cli` unreachable;
+  `pr` and `merge` together; an issue without `specified`, with `human` or `hold`, or already terminal; `linear-cli` unreachable;
   a dirty tree on a branch whose name carries an issue ID (files listed — elsewhere a WARN); detached HEAD; an issue a
   running sequence holds; a list sharing issues with two earlier sequences; a second `merge` sequence on a launch branch
   one is already merging into; on a resume, an issue left off the list whose session is still working; in `pr` mode no

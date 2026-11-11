@@ -74,7 +74,7 @@ once. An archived marker (an ended run a later launch displaced) is never a sect
   ledger entry is a claim about that run only: a later session or an interactive pickup can resolve the issue without
   writing any ledger, so a completed-type state renders as "since shipped" history. Only ⚠️ rows need action.
 - **Runway** — unblocked certified candidates remaining, with the hidden-count notes (`needs decision` / `solo` /
-  `deploy-gated` / `human`) passed through verbatim. Under a `backlog` launch — every epic-scoped launch is one — the
+  `deploy-gated` / `human` / `hold`) passed through verbatim. Under a `backlog` launch — every epic-scoped launch is one — the
   count includes Backlog once nothing Planned/Todo is pickable and the heading says `(backlog fallback on)`.
 
 Surface the script's markdown as-is, then narrate only where the output flags something (⚠️ rows, deferred merges,

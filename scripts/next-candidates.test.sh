@@ -5,7 +5,7 @@
 # truncation from blocking). Fixtures pin: stage-first (Planned/Todo drains fully before Backlog,
 # Urgent included), Urgent piercing label classes WITHIN a stage, security > bug > other,
 # Ready-for-Release blockers resolving case-insensitively, open blockers hiding a candidate
-# (restored by --include-blocked), the needs decision / solo / human hiding notes, and the Planned
+# (restored by --include-blocked), the needs decision / solo / human / hold hiding notes, and the Planned
 # GATE (keeper ruling 2026-08-28): while the Planned/Todo column holds anything not claimed by
 # another person, every Backlog candidate is withheld behind a PLANNED-HOLD note that classifies
 # the held issues (pickable / releasing on their own / need the keeper); discovery listings are
@@ -726,6 +726,47 @@ run "$OUTD" --limit 20 --label deploy-gated || { echo "FAIL: deploy-gated listin
 ck "the label listing shows the held issue" "TT-70" "$(order_of "$OUTD")"
 ck_lacks "the label listing is gate-exempt" "PLANNED-HOLD" "$OUTD"
 unset LINEAR_DEPLOYED_STATES
+cp "$FIX/issues-main.json" "$FIX/issues-page.json"; cp "$FIX/deps-main.json" "$FIX/deps-page.json"
+
+# ---- hold: a person parked the issue, so no ranking and no listing a runner consumes may show it. Pinned here: it is
+# ---- absent from the certified ranking, from the solo listing /fleet-solo runs as a queue (TT-82) and from the
+# ---- needs-decision view (TT-87); the hold note names it as the keeper's, as it does an issue behind a held blocker —
+# ---- started or not (TT-85 behind the In Progress TT-84, TT-81 behind the Planned TT-80); and --label hold lists it.
+cat > "$FIX/issues-onhold.json" <<'EOF'
+{"data":{"issues":{"nodes":[
+ {"identifier":"TT-80","title":"held","estimate":null,"priority":2,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[{"name":"specified"},{"name":"hold"}]},"parent":null},
+ {"identifier":"TT-81","title":"behind a held issue","estimate":null,"priority":3,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[{"name":"specified"}]},"parent":null},
+ {"identifier":"TT-82","title":"held solo","estimate":null,"priority":3,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[{"name":"specified"},{"name":"solo"},{"name":"Hold"}]},"parent":null},
+ {"identifier":"TT-83","title":"solo","estimate":null,"priority":3,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[{"name":"specified"},{"name":"solo"}]},"parent":null},
+ {"identifier":"TT-84","title":"held in progress","estimate":null,"priority":3,"state":{"name":"In Progress","type":"started"},"assignee":null,"labels":{"nodes":[{"name":"specified"},{"name":"hold"}]},"parent":null},
+ {"identifier":"TT-85","title":"behind held in-progress work","estimate":null,"priority":3,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[{"name":"specified"}]},"parent":null},
+ {"identifier":"TT-86","title":"backlog work","estimate":null,"priority":3,"state":{"name":"Backlog","type":"backlog"},"assignee":null,"labels":{"nodes":[{"name":"specified"}]},"parent":null},
+ {"identifier":"TT-87","title":"held decision","estimate":null,"priority":3,"state":{"name":"Planned","type":"unstarted"},"assignee":null,"labels":{"nodes":[{"name":"specified"},{"name":"needs decision"},{"name":"hold"}]},"parent":null}
+],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
+EOF
+cat > "$FIX/deps-onhold.json" <<'EOF'
+{"data":{"issues":{"nodes":[
+ {"identifier":"TT-80","title":"held","state":{"name":"Planned","type":"unstarted"},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-81"}}]}},
+ {"identifier":"TT-84","title":"held in progress","state":{"name":"In Progress","type":"started"},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-85"}}]}}
+],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
+EOF
+cp "$FIX/issues-onhold.json" "$FIX/issues-page.json"; cp "$FIX/deps-onhold.json" "$FIX/deps-page.json"
+OUTH="$WORK/outh.md"
+run "$OUTH" --limit 20 --label specified || { echo "FAIL: hold run exited $?"; cat "$OUTH.err"; exit 1; }
+ck "a held issue is never ranked, and the column it sits in still holds the gate" "" "$(order_of "$OUTH")"
+ck_has  "held issues and the issues behind them need the keeper" "(6 issue(s) hold the gate: 0 pickable now; 6 need the keeper — TT-80 [hold], TT-81 [blocked by TT-80 [hold]], TT-82 [hold], TT-83 [solo], TT-85 [blocked by TT-84 [hold]], TT-87 [hold])" "$OUTH"
+ck_has  "hold hidden note names the issues" "4 issue(s) hidden as on hold (\`hold\` label; top: TT-80, TT-82, TT-84, TT-87) — list with --label hold" "$OUTH"
+run "$OUTH" --limit 20 --label specified --backlog-fallback || { echo "FAIL: hold fallback run exited $?"; cat "$OUTH.err"; exit 1; }
+ck "a held column opens the backlog fallback" "TT-86" "$(order_of "$OUTH")"
+run "$OUTH" --limit 20 --label solo || { echo "FAIL: hold solo-listing run exited $?"; cat "$OUTH.err"; exit 1; }
+ck "the solo listing never shows a held issue" "TT-83" "$(order_of "$OUTH")"
+ck_has  "the solo listing still counts what the hold hid" "4 issue(s) hidden as on hold" "$OUTH"
+run "$OUTH" --limit 20 --label 'needs decision' || { echo "FAIL: hold decision-listing run exited $?"; cat "$OUTH.err"; exit 1; }
+ck "the needs-decision listing never shows a held issue" "" "$(order_of "$OUTH")"
+run "$OUTH" --limit 20 --label hold || { echo "FAIL: hold listing exited $?"; cat "$OUTH.err"; exit 1; }
+ck "the hold listing shows every workable held issue, whatever else it carries" "TT-80 TT-82 TT-87" "$(order_of "$OUTH")"
+ck_lacks "the hold listing is gate-exempt" "PLANNED-HOLD" "$OUTH"
+ck_lacks "the hold listing carries no hold note" "hidden as on hold" "$OUTH"
 cp "$FIX/issues-main.json" "$FIX/issues-page.json"; cp "$FIX/deps-main.json" "$FIX/deps-page.json"
 
 # ---- Linear rate limit (2026-10-16): linear-cli answers RATELIMITED on stderr with empty stdout, which the old

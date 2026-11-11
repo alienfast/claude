@@ -29,7 +29,7 @@
 #   FLEET-BLOCKED — pool-drain hygiene, second-order: every `blocks` edge whose blocked side is
 #   a certified fleet candidate (workable state + `specified`, not label-hidden) but whose
 #   blocker nothing the fleet can pick will ever ship: labeled `human` / `needs decision` /
-#   `solo` / `stalled`, sitting in Triage, or uncertified (the fleet runs `/next specified`, so
+#   `solo` / `hold` / `stalled`, sitting in Triage, or uncertified (the fleet runs `/next specified`, so
 #   an unlabeled blocker never ships unattended). Sitting in Backlog is NOT a strand condition —
 #   the fleet reaches Backlog once the unstarted stage drains.
 #
@@ -144,6 +144,7 @@ printf '%s' "$all" | jq -r --arg me "${me_email:-}" '
       (if ($v.labels | index("human")) then "human-labeled (human-performed; the fleet never ships it)" else empty end),
       (if ($v.labels | index("needs decision")) then "needs decision (decide and clear the label)" else empty end),
       (if ($v.labels | index("solo")) then "solo (targeted /auto in the quiet window)" else empty end),
+      (if ($v.labels | index("hold")) then "on hold (a person parked it; remove the label to release it)" else empty end),
       (if ($v.labels | index("stalled")) then "stalled (resume or release it)" else empty end),
       (if $v.stype == "triage" then "in Triage (groom via /spec)" else empty end),
       (if (($v.stype | IN("unstarted","backlog")) and (($v.labels | index("specified")) | not)
@@ -157,6 +158,7 @@ printf '%s' "$all" | jq -r --arg me "${me_email:-}" '
       (if ($v.labels | index("needs decision")) then "needs decision" else empty end),
       (if ($v.labels | index("human")) then "human" else empty end),
       (if ($v.labels | index("solo")) then "solo" else empty end),
+      (if ($v.labels | index("hold")) then "hold" else empty end),
       (if ($v.labels | index("stalled")) then "stalled" else empty end),
       (if ((($v.labels | index("specified")) | not) and (($v.labels | index("epic")) | not)) then "uncertified" else empty end) ];
   # Every transitive blocker above $id — the full ancestry, NOT just chain leaves. A
@@ -265,7 +267,7 @@ printf '%s' "$all" | jq -r --arg me "${me_email:-}" '
        # itself hidden by a gate label (a hidden dependent surfaces in FOCUS, not here).
        | select($t.sname | IN("Backlog","Planned","Todo"))
        | select($t.labels | index("specified"))
-       | select([ $t.labels[] | select(IN("needs decision","human","solo")) ] | length == 0)
+       | select([ $t.labels[] | select(IN("needs decision","human","solo","hold")) ] | length == 0)
        | gate_reasons($b) as $reasons
        | select($reasons | length > 0)
        | "\(.blocked) [\($t.sname)] blocked by \(.blocker) [\($b.sname)] — \($reasons | join("; "))"

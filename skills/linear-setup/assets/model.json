@@ -141,6 +141,14 @@
       "required": false
     },
     {
+      "name": "hold",
+      "color": "#eb5757",
+      "description": null,
+      "isGroup": false,
+      "parent": null,
+      "required": true
+    },
+    {
       "name": "human",
       "color": "#6B7280",
       "description": null,

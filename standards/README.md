@@ -25,7 +25,7 @@ file.
 - [Linear Filing](linear-filing.md) - the recipe for every issue an agent files: search, create through the helper,
   labels and priority, collision edges, certify last
 - [Issue Spec](issue-spec.md) - certified-spec template, quality bar, and the label contracts (`specified`,
-  `needs decision`, `human`, `solo`, `deploy-gated`, `simple`, `keeper`)
+  `needs decision`, `human`, `solo`, `deploy-gated`, `hold`, `simple`, `keeper`)
 - [Lifecycle Tags](lifecycle-tags.md) - final-line status tags for Linear-lifecycle skills
 - [Deprecation Handling](deprecation-handling.md) - proactively update deprecated code; migration patterns and
   anti-patterns

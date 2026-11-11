@@ -186,7 +186,9 @@ would drown the signal). Issues assigned to the viewer rank tier 1. Likewise hid
 only by its own `--label` listing: `needs decision` (a human must step in before pickup), `solo` (ships fine unattended
 but not alongside a fleet — only the automatic pick is blocked; a targeted `/auto <ID>` still runs one and
 `/fleet-solo` drains the lot), `human` (the
-work is human-performed; no mode runs one, and targeted `/auto <ID>` refuses it too), and `epic` (a delegated container
+work is human-performed; no mode runs one, and targeted `/auto <ID>` refuses it too), `hold` (a person parked it; no
+unattended mode runs one — targeted `/auto <ID>` refuses it, and it is absent from the `solo` and `needs decision`
+listings as well — until a person removes the label; `standards/issue-spec.md` § The `hold` label), and `epic` (a delegated container
 whose children carry the work — certify per child; the epic closes itself when its last child releases via
 `mark-ready-for-release.sh`'s parent walk — so it never counts fleet-workable, matching `fleet-blockers.sh` and
 `fleet-forecast.py`), `deploy-gated` (held until every `blocks` blocker reaches one of the project's

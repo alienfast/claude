@@ -2,7 +2,7 @@
 
 Read this before any label read or write. What each label means and who applies it is
 [standards/issue-spec.md](../../../standards/issue-spec.md) (`specified`, `needs decision`, `human`, `solo`,
-`deploy-gated`, `simple`, `keeper`, and § An agent filing never lands unrouted). The flag shape on `issues create`
+`deploy-gated`, `hold`, `simple`, `keeper`, and § An agent filing never lands unrouted). The flag shape on `issues create`
 (`-l` once per label, never comma-joined) is [create.md](create.md) gotcha #21.
 
 ## Gotcha 7 — labels are typed, can be team-scoped, and `-l` REPLACES
@@ -45,8 +45,8 @@ the staleness is server-side and re-reading settles nothing.
 
 **Verify through whatever consumes the label.** For the pickup gates that is `~/.claude/scripts/next-candidates.sh`,
 which re-fetches every issue per invocation and answers the question that matters — is the label *effective* — rather
-than whether a string is present on one read. It hard-hides `needs decision`, `solo` and `keeper`, each with a trailing
-hidden-count note, so a count moving plus the issue leaving the ranking is the proof; `specified` has no hidden count
+than whether a string is present on one read. It hard-hides `needs decision`, `solo`, `hold` and `keeper`, each with a
+trailing hidden-count note, so a count moving plus the issue leaving the ranking is the proof; `specified` has no hidden count
 and is checked by ranking membership under `--label specified`. (It also gates ordering, not visibility, on
 `specified`+`reflection` together for tier 0 and on `security`/`bug` for class rank.) Counts are computed client-side
 by `jq` from that fresh fetch — the value is the consumer's semantics, not a fresher read path.

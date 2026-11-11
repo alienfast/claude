@@ -82,8 +82,11 @@ linear-cli issues get <ISSUE-ID> -o json | jq -r '.labels.nodes[].name' | grep -
   A probe failure from auth or network is Error Handling's `linear-cli` territory, never a silent pass.
 - `human` present (same command, `grep -qix human`) → refuse the same way; that label marks work a person performs:
   `<ISSUE-ID> is human-owned work (human label) — assign a person, or /spec <ISSUE-ID> to split out an agent-shippable slice.`
+- `hold` present (same command, `grep -qix hold`) → refuse the same way; a person parked it, and a typed ID is not that
+  person saying it may run:
+  `<ISSUE-ID> is on hold (hold label) — a person parked it; remove the label to release it (~/.claude/scripts/linear-remove-label.sh <ISSUE-ID> hold), then re-run.`
 - `solo` is legitimate: the label hides an issue from `/next` precisely so it arrives here by a typed ID. Never extend
-  the probe beyond `specified` and `human`.
+  the probe beyond `specified`, `human` and `hold`.
 
 Targeted mode narrows the workflow in exactly four places, each marked at its step: Step 0's sticky terminal-state gate
 is bypassed, Step 1 is scoped to the target, Step 2 is skipped, and Step 4 never transitions `status` or schedules a
@@ -230,7 +233,7 @@ headroom gate applies while any marker exists. Read `references/fleet-gates.md` 
 
 **Hot handoff — a certified child the just-shipped issue filed preempts the ranking, once.** When the immediately
 preceding iteration in THIS session shipped its issue and that run filed deferred children, and one is `specified`,
-unblocked, and carries no gating label (`needs decision`, `human`, `solo`), take the highest-priority such child as
+unblocked, and carries no gating label (`needs decision`, `human`, `solo`, `hold`), take the highest-priority such child as
 this iteration's pick instead of dispatching `/next` — the session still holds the parent's loaded context, which a
 cold pick discards. Bounds: consecutive iterations of the same session only (a compaction does not disqualify; a
 different intervening pick does); one hop — a hot-picked child's own filings never qualify; the child takes Step 3's

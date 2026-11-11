@@ -3,8 +3,8 @@
 # audit — gated/uncertified unstarted issues as keeper actions, transitive root-cause tracing
 # with fan-out-first ordering, required-promotion framing with via/co-gate annotations and the
 # full-membership PROMOTE-SET batch line, cycle termination, and
-# clean planned/in-flight roots NOT flagged) and FLEET-BLOCKED (the four gate labels — human /
-# needs decision / solo / stalled — Triage by TYPE so a renamed "Inbox" still classifies,
+# clean planned/in-flight roots NOT flagged) and FLEET-BLOCKED (the gate labels — human /
+# needs decision / solo / hold / stalled — Triage by TYPE so a renamed "Inbox" still classifies,
 # uncertified blockers, clean and in-flight blockers NOT flagged, non-candidate blocked sides
 # skipped in edges but surfaced in FOCUS, and NO bulk in-Backlog promotion advice). The
 # summary/verdict lines make an empty result distinguishable from a broken run. linear-cli is a
@@ -74,7 +74,11 @@ cat > "$FIX/issues-page.json" <<'EOF'
  {"identifier":"TT-81","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[]},"assignee":{"email":"keeper@test"},"relations":{"nodes":[]}},
  {"identifier":"TT-82","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"}]},"assignee":{"email":"other@test"},"relations":{"nodes":[]}},
  {"identifier":"TT-90","state":{"name":"In Review","type":"started"},"labels":{"nodes":[{"name":"specified"}]},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-91"}}]}},
- {"identifier":"TT-91","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"}]},"relations":{"nodes":[]}}
+ {"identifier":"TT-91","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"}]},"relations":{"nodes":[]}},
+ {"identifier":"TT-92","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"}]},"relations":{"nodes":[]}},
+ {"identifier":"TT-93","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"},{"name":"hold"}]},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-92"}}]}},
+ {"identifier":"TT-94","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"},{"name":"hold"}]},"relations":{"nodes":[]}},
+ {"identifier":"TT-95","state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[]},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-94"}}]}}
 ],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
 EOF
 
@@ -116,7 +120,7 @@ HOME="$WORK/home" PATH="$WORK/bin:$PATH" "$SCRIPT" --team TT > "$OUT" 2>"$OUT.er
 # ---- FOCUS section: the release-scope audit is the primary output and leads ----
 # TT-54 (blocked only by clean-Backlog TT-55) counts as attention, not draining: the promotion
 # is required release scope (keeper ruling 2026-08-13), so its dependent waits on the batch.
-ck "focus summary leads" "FOCUS: 29 unstarted — 2 fleet-workable · 23 need keeper action · 4 draining on their own" "$(head -1 "$OUT")"
+ck "focus summary leads" "FOCUS: 33 unstarted — 2 fleet-workable · 27 need keeper action · 4 draining on their own" "$(head -1 "$OUT")"
 # TT-91's only blocker is In Review TT-90 — completed-in-substance, so the edge never exists:
 # TT-91 counts fleet-workable (not draining) and neither issue appears in any row.
 ck "in-review blocker resolved by construction" "0" "$(grep -c 'TT-90' "$OUT")"
@@ -167,10 +171,13 @@ ck_has "claimed certified is not fleet-workable"   "FOCUS-ACTION: TT-82 [Planned
 ck_has "promote-set carries the full membership" "PROMOTE-SET: TT-29[uncertified], TT-39[uncertified], TT-41[uncertified], TT-52[needs decision], TT-55, TT-57[needs decision], TT-58" "$OUT"
 
 # ---- FLEET-BLOCKED section: pool-drain edges, bulk Backlog promotion advice gone ----
-ck "verdict line" "FLEET-BLOCKED: 9" "$(grep -m1 '^FLEET-BLOCKED' "$OUT")"
+ck "verdict line" "FLEET-BLOCKED: 10" "$(grep -m1 '^FLEET-BLOCKED' "$OUT")"
 ck_has "needs-decision blocker" "TT-20 [Planned] blocked by TT-21 [Planned] — needs decision (decide and clear the label)" "$OUT"
 ck_has "human blocker"          "TT-22 [Planned] blocked by TT-23 [Planned] — human-labeled (human-performed; the fleet never ships it)" "$OUT"
 ck_has "solo blocker"           "TT-24 [Planned] blocked by TT-25 [Planned] — solo (targeted /auto in the quiet window)" "$OUT"
+ck_has "held blocker"           "TT-92 [Planned] blocked by TT-93 [Planned] — on hold (a person parked it; remove the label to release it)" "$OUT"
+ck_has "held planned is a keeper action" "FOCUS-ACTION: TT-94 [Planned] — on hold (a person parked it; remove the label to release it)" "$OUT"
+ck_lacks "held dependent skipped in edges" "TT-94 [Planned] blocked by" "$OUT"
 ck_has "renamed-triage blocker" "TT-26 [Todo] blocked by TT-27 [Inbox] — in Triage (groom via /spec)" "$OUT"
 ck_has "backlog blocker flags only real reasons" "TT-28 [Planned] blocked by TT-29 [Backlog] — uncertified (/spec to certify)" "$OUT"
 ck_has "uncertified planned blocker"  "TT-30 [Planned] blocked by TT-31 [Planned] — uncertified (/spec to certify)" "$OUT"

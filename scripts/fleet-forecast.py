@@ -68,7 +68,7 @@ from pathlib import Path
 for _stream in (sys.stdout, sys.stderr):
     _stream.reconfigure(encoding="utf-8", newline="\n")
 
-GATE_LABELS = ("human", "needs decision", "solo", "stalled")
+GATE_LABELS = ("hold", "human", "needs decision", "solo", "stalled")
 
 
 def issue_key(iid):

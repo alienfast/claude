@@ -67,8 +67,9 @@ disposition is to record it — the branch and files in the plan comment, a `rel
 tracking issue where one exists — and proceed. Judgment — the other change alters what this issue must do — is still
 no hold: it is a prerequisite (`blocks` from an open issue), a duplicate (CANCELED) or a decision (`needs decision`,
 the pick named), routed as those are. What a session never does is decline, return or relabel a pick, manufacture a
-`blocks` edge, or apply `deploy-gated`, `needs decision`, `human` or `solo` to express its own timing judgment on an
-issue a human placed in Planned. BF-3115 (2026-11-09): the open `payments` PR touched every PDF file for Unicode fonts
+`blocks` edge, or apply `deploy-gated`, `needs decision`, `human`, `solo` or `hold` to express its own timing judgment
+on an issue a human placed in Planned (`hold` is a person's label in every case — [issue-spec.md](issue-spec.md) § The
+`hold` label). BF-3115 (2026-11-09): the open `payments` PR touched every PDF file for Unicode fonts
 and a frame wrapper, side effects of its own objective, while BF-3115 changes how PDFs render — mechanics — yet a
 certification comment's "Timing note for pickup" naming that PR was read as a hold, the High-priority head of a
 three-issue Planned sequence was returned as `deploy-gated` behind an edge wired for the purpose, and the fleet parked
@@ -158,10 +159,11 @@ parent too (a Backlog child of a Ready-for-Release issue under a Planned epic is
 cannot deadlock on them. With nothing pickable the picker **waits** (`/auto` ticks at no usage until a chain releases or
 the keeper acts) and never reads the hold as a drained backlog; the fleet deadline is what ends an idle run, except an
 epic-scoped run, which ends on `EPIC-DRAINED` ([lifecycle-tags.md](lifecycle-tags.md) § Tag vocabulary, the `NO-CANDIDATES` row). Consequences
-the keeper owns: an issue left in Planned that the fleet cannot ship (`needs decision`, `human`, `solo`, uncertified, an
-epic whose children have all shipped) idles the fleet once the pickable Planned work is gone; decide, certify, close, or
-move it out of the column deliberately. A claim by another person is the one carve-out. Discovery listings (`/spec`'s
-`--include-blocked`/`--include-triage` roster, the `solo` / `needs decision` / `human` label views) are exempt, and
+the keeper owns: an issue left in Planned that the fleet cannot ship (`needs decision`, `human`, `solo`, `hold`,
+uncertified, an epic whose children have all shipped) idles the fleet once the pickable Planned work is gone; decide,
+certify, close, release, or move it out of the column deliberately. A claim by another person is the one carve-out.
+Discovery listings (`/spec`'s `--include-blocked`/`--include-triage` roster, the `solo` / `needs decision` / `human` /
+`hold` / `deploy-gated` label views) are exempt, and
 `--no-stage-gate` lifts the gate for inspection.
 
 **The `backlog` opt-in: on a day with spare usage, the human may let a fleet fall through to Backlog once nothing

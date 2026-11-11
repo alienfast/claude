@@ -54,7 +54,9 @@ a customer's, a compliance owner's — never approval of the run's own edit.
 is still open — is NOT written to `skipped` at all. Step 2 excludes every `skipped` entry for the rest of the run, so a
 run-scoped entry would make a transient decline permanent for the session that recorded it, and the session would
 refuse the issue after shipping its blocker itself. The condition clears on its own and the issue must stay eligible:
-say so in the iteration's tag line, write nothing to the ledger.
+say so in the iteration's tag line, write nothing to the ledger. A skip on a `hold` label (a person added it between
+the pick and the claim) is handled the same way and for a second reason: the label is already the marker
+`next-candidates.sh` reads, so it takes no comment and no further label — never `needs decision` on top of it.
 
 **Durable** — the issue as written is not unattended-shippable: a product or design decision with no testable success
 criteria, work needing credentials, console or vendor access, or a human note on the issue saying it must not ship

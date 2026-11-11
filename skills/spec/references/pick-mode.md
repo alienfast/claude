@@ -21,7 +21,9 @@ drains it — but only ever last. Blocked issues are included deliberately: cert
 runway `/auto` picks up the moment it unblocks. The **Planned/Todo queue is exhaustive by construction**: every below-cut
 Planned/Todo issue is appended in a trailing **"Planned/Todo below the cut"** section — full roster members. The limit
 trims only the Backlog/Triage tail; raise it for a large inbox. Issues parked behind a human decision keep `specified`
-plus `needs decision`, so the exclude filter hides them — the second invocation lists them.
+plus `needs decision`, so the exclude filter hides them — the second invocation lists them. An issue on `hold` is in
+neither listing — a person parked it, so the roster never offers it; surface the script's hold note verbatim (it names
+the held IDs), and groom one only when the user names it, where Step 3 asks whether the hold comes off.
 
 ## Three buckets, fixed order
 

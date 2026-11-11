@@ -123,6 +123,11 @@ estimate — recommend one and apply it; a volunteered estimate still wins.
   screen.
 - Skip what the issue + research already answer confidently — confirm, don't re-ask. Iterate until every quality-bar
   item can be checked honestly.
+- **An issue on `hold`** (the label in Step 2's read; `standards/issue-spec.md` § The `hold` label) takes one more
+  question, in the last interview batch: certification will not make it pickable while the hold stays, so does the hold
+  come off? State what the hold does and anything in the comments saying why it was set. Lead with *Keep the hold*
+  unless the interview itself established that its reason is gone — a person set it and the label carries no reason
+  to weigh. Never skip the question and never answer it yourself; Step 6 item 5 applies the answer.
 
 **The bar is decisiveness — the spec's consumer is an unattended session that cannot ask anything.** Every judgment call
 the implementation will face is either answered or explicitly excluded. When the interview surfaces an open question,
@@ -224,6 +229,12 @@ options rather than carrying it silently into the draft.
    comment. Never on a `security`, `human`, `needs decision`, or `epic` issue — so never in a run that parked the issue
    or made it an epic; in doubt leave it off (`/auto-prep` re-audits both directions). Exit 2 on this add is
    inconclusive (linear gotcha #17), affects only the review tier, and never skips items 6–7.
+
+   **Hold:** when the issue carries `hold`, apply Step 3's answer here, after the writes above have returned (one label
+   write per issue at a time — linear gotcha #17). *Remove* → `~/.claude/scripts/linear-remove-label.sh <ID> hold`.
+   *Keep* → write nothing: the issue is certified and stays hidden from every ranking until a person removes the label,
+   and item 7's comment and Step 7's report say so in place of the pickup handoff. A hold the interview never asked
+   about (it attached mid-groom) is asked about now, never removed silently and never left unmentioned.
 6. **Collision edges — wire them now; prose is not a control.** Certification makes the issue pickable, and grooming is
    the moment its touched files and methods are actually known (Step 2 just read the code) — the last reliable point to
    make sequencing mechanical. Check the issue (and every sub-issue just created) against other open issues touching
@@ -240,7 +251,7 @@ options rather than carrying it silently into the draft.
    for no overlap; never `blocks` behind an uncertified, `needs decision`, or `solo` collider. For a `blocks` edge, verify
    it took (`linear-cli relations list <BLOCKED>`) and confirm the blocked issue no longer appears in
    `next-candidates.sh` output run with a generous `--limit` (the default is 3, so absence at the default can be
-   truncation; a `solo` label alone also hides an issue there). A `related` edge changes no ranking, so that check does
+   truncation; a `solo` or `hold` label alone also hides an issue there). A `related` edge changes no ranking, so that check does
    not apply. Report blocker status with the ranking's semantics: a blocker in any `TERMINAL_STATES` entry of
    `next-candidates.sh` (`Done`, `Canceled`/`Cancelled`, `Duplicate`, `Ready for Release`, `In Review` — by name,
    case-insensitive; `standards/linear-workflow.md` § Terminal States for Dependency Resolution) is RESOLVED, whatever
@@ -272,7 +283,8 @@ options rather than carrying it silently into the draft.
 
 Compact summary: what was rewritten, state moved (Triage → Planned, or a Backlog blocker promoted), label applied,
 collision edges wired, sub-issues created, the temporary claim released — and the handoff line: *eligible for
-`/next specified` and `/auto` pickup*. In pick mode, re-run the roster and re-render all three buckets for every
+`/next specified` and `/auto` pickup*, or, for an issue whose hold was kept, *certified, still on `hold` — no
+unattended pickup until the label is removed*. In pick mode, re-run the roster and re-render all three buckets for every
 subsequent pick, announcing a drained bucket as its own milestone line (`references/pick-mode.md` § After each
 certification). Stop when the user is done.
 
@@ -285,6 +297,8 @@ certification). Stop when the user is done.
   claim is the one assignment it makes, and every exit path releases it.
 - **No certification without signoff** — Step 5's approval is implicit only for a draft that purely codifies the
   interview; a spec carrying material the user never saw never gets the label.
+- **No silent hold change** — a `hold` label comes off only on the user's answer to Step 3's question, and a kept
+  hold is named in the report; certifying a held issue and announcing it eligible for pickup is a false handoff.
 - **No undisposed exits** — every run ends with the issue certified (optionally parked `needs decision`), labeled
   `human` and left uncertified, closed `Done` (decision-grade), or restored to its pre-groom state with the claim
   released. Stopping to ask permission for a state move this skill's own path prescribes is an undisposed exit, not

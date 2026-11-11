@@ -65,7 +65,8 @@ IDs, duplicated tokens, and `auto` with `interactive` (unattended vs user-driven
 `/start auto <ISSUE-ID>` runs the same workflow with **no user prompts**: every prompt resolves to its documented
 conservative default (`skills/full/SKILL.md` § Auto mode owns the token; `/auto` reaches it through `/full auto`). This
 skill's defaults, each stated where the prompt lives: Step 2 unresolved blocker → `SKIPPED-BLOCKED`; Step 3 owned by
-someone else, terminal state, `needs decision` or `human` → `SKIPPED-BLOCKED` (never reassign, reopen or decide); Step 5
+someone else, terminal state, `needs decision`, `human` or `hold` → `SKIPPED-BLOCKED` (never reassign, reopen, decide or
+release a hold); Step 5
 red baseline → at most two fix delegations; Step 6 plan approval → skipped, the plan posted at Step 7 is the audit
 record; Step 8.5 CANCELED-vs-ABANDONED doubt → `ABANDONED`; Step 9 passes `auto` (and `simple`) through to
 `/quality-review`. Nothing else changes: the contract, checkpointing, delegation rules and tagged final lines all apply.
@@ -127,7 +128,7 @@ merge clause) expect that state.
 
 3. **Run the verification script — Steps 2–5's actions in one call — with Step 6's exploration dispatched in the SAME
    message.** Decide FIRST from the digest and `STATE=`/`ASSIGNEE=`: an unresolved blocker (Step 2) or an unavailable
-   issue (Step 3: owned by someone else, terminal state, `needs decision`, `human`) → do NOT run the script; take that
+   issue (Step 3: owned by someone else, terminal state, `needs decision`, `human`, `hold`) → do NOT run the script; take that
    step's prompt or auto exit. Already In Progress and mine → `--no-claim` in place of `--claim`. On the happy path, with
    an explicit Bash timeout ≥ 300000ms (`pnpm check` runs inside), redirecting **stderr only**:
 
@@ -173,8 +174,8 @@ Labels line predates the label read, and one cached before a label attached miss
 - **Dependencies** — blockers with states; comments summary; **Attachments** — `uploads.linear.app` URLs (Step 4)
 - **Labels** — `simple` present → carry the `simple` token to Step 9 exactly as if typed (the label is how a fleet run,
   whose only input is Linear, selects the review tier), without adjudicating co-labels — `/quality-review`'s guard 2
-  escalates on `security`/`human`/`needs decision`/`epic` and removes the mislabel. Step 3's `needs decision`, `human`
-  and `stalled` checks read the same line.
+  escalates on `security`/`human`/`needs decision`/`epic` and removes the mislabel. Step 3's `needs decision`, `human`,
+  `hold` and `stalled` checks read the same line.
 
 ### Step 2: Check for Blockers
 
@@ -210,6 +211,11 @@ Verify availability from the digest's `**State:**`, `**Assignee:**` and `**Label
   resolves nothing and the issue must stay hidden from ranking). **Auto:** never proceed — emit
   `SKIPPED-BLOCKED: <ISSUE-ID> — human-owned work (human label); assign a person, or /spec <ISSUE-ID> to split out an
   agent-shippable slice. Nothing claimed.` and stop.
+- `hold` label → a person parked the issue (`standards/issue-spec.md` § The `hold` label). The label carries no reason,
+  so quote any comment that gives one. Warn and ask whether to release the hold and proceed — proceeding IS the release:
+  on yes, remove the label (`~/.claude/scripts/linear-remove-label.sh <ISSUE-ID> hold`) and claim. **Auto:** never
+  proceed — emit `SKIPPED-BLOCKED: <ISSUE-ID> — on hold (hold label); a person parked it — remove the label to release
+  it. Nothing claimed.` and stop. Outranks the resumption bullet, as `needs decision` does.
 - `In Progress`, assigned to **me** → idempotent resumption; skip the update and continue (either mode).
 
 Otherwise claim it immediately: `~/.claude/scripts/linear-claim.sh PL-13 --state "In Progress"` — its verdict line is the read-back; anything but a confirmed claim means do not proceed as if claimed.

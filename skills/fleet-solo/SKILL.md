@@ -50,8 +50,8 @@ narrates.
 | Afterwards | the PR | optionally the fleet |
 
 - **Re-read, never frozen.** An issue a predecessor's ship unblocked joins the same run; one that left the pool
-  (claimed, canceled, label cleared) is never dispatched from a stale list; one the probe refuses at its turn
-  (uncertified, already shipped) is recorded `refused` and gets no session.
+  (claimed, canceled, label cleared, put on `hold`) is never dispatched from a stale list; one the probe refuses at its
+  turn (uncertified, held, already shipped) is recorded `refused` and gets no session.
 - **Merge, not a branch.** A broad change parked on `seq/…` until its PR merges only moves the collision to the catch-up
   merge, with a fleet already running on a base that lacks it.
 - **Skip, with a limit.** Solo issues do not build on each other, so a failed one costs the drain that issue; `/auto`

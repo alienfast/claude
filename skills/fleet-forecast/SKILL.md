@@ -50,7 +50,7 @@ idling, Planned/Todo still first at every pick — a `BACKLOG-FALLBACK` line say
 day would eat.
 
 The script fetches once (states, labels, estimates, relations), classifies fleet-eligibility with the same gate rules as
-`fleet-blockers.sh` (certified + workable state, unclaimed, non-epic, no `human`/`needs decision`/`solo`/`stalled`, not
+`fleet-blockers.sh` (certified + workable state, unclaimed, non-epic, no `human`/`needs decision`/`solo`/`hold`/`stalled`, not
 Triage), then greedily drains the graph: each free session picks the top-ranked available candidate (stage-first — a
 Backlog blocker or child of Planned/Todo work counts as Planned, as in `next-candidates.sh`, and under the Planned gate a
 session with no pickable Planned issue **idles** rather than filling with Backlog — `HOLD` events and a `PLANNED-HOLD` line

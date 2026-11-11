@@ -11,8 +11,8 @@
 #        fleet-sequence.sh stop [<ISSUE-ID>|solo]
 #        fleet-sequence.sh run <slug>     (internal: the detached runner; reads tmp/fleet-sequence-<slug>.json)
 #
-#   <ISSUE-ID>...  The issues in the order they must ship. Each must carry `specified` and not `human`
-#                  (the same probe /auto's targeted mode runs), and must not already be terminal or
+#   <ISSUE-ID>...  The issues in the order they must ship. Each must carry `specified` and neither `human`
+#                  nor `hold` (the same probe /auto's targeted mode runs), and must not already be terminal or
 #                  Ready For Release — unless the marker records it shipped on this launch branch, which
 #                  a resume skips unprobed. `solo` is expressly fine — this is the runner for it.
 #                  A list that shares an issue with an earlier sequence (same launch branch and mode, its
@@ -215,6 +215,7 @@ probe_issue() { # <ISSUE-ID> — prints why the issue cannot ship and returns 1;
   state=$(printf '%s' "$json" | jq -r '.state.name // ""' 2>/dev/null || true)
   printf '%s\n' "$labels" | grep -qix specified || { echo "$id is not certified (no specified label) — run /spec $id first"; return 1; }
   if printf '%s\n' "$labels" | grep -qix human; then echo "$id is human-owned work (human label) — no unattended mode can ship it"; return 1; fi
+  if printf '%s\n' "$labels" | grep -qix hold; then echo "$id is on hold (hold label) — a person parked it; remove the label to release it"; return 1; fi
   case "$state" in
     Done|Canceled|Duplicate|"Ready For Release") echo "$id is already $state — nothing to ship"; return 1 ;;
   esac
@@ -935,7 +936,7 @@ cmd_launch() {
   command -v linear-cli >/dev/null 2>&1 || { echo "ERROR: 'linear-cli' not found on PATH — needed to certify each issue before dispatch" >&2; exit 1; }
 
   # Normalize and dedupe the queue; every ID is validated offline first, then probed in Linear the way
-  # /auto's targeted mode probes: `specified` present, `human` absent. Refusing here, before anything is
+  # /auto's targeted mode probes: `specified` present, `human` and `hold` absent. Refusing here, before anything is
   # dispatched, is what keeps a typo from surfacing as a failed session three hours in.
   local normalized=()
   for raw in "${ids[@]}"; do

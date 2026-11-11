@@ -71,8 +71,8 @@
 # (blocked behind in-flight or fleet-eligible chains) and what needs the keeper (parked,
 # uncertified, epics to close). With nothing pickable the caller waits — /auto treats it as a
 # no-pick tick, never as drained. Discovery listings (--include-blocked, --include-triage, and
-# the solo / needs decision / human label views) are exempt; --no-stage-gate lifts it to inspect
-# what waits behind it.
+# the solo / needs decision / human / hold / deploy-gated label views) are exempt; --no-stage-gate
+# lifts it to inspect what waits behind it.
 #
 # --backlog-fallback (keeper ruling 2026-10-01) is the human's opt-in for a day with spare usage —
 # /next's `backlog` token, which /auto passes through from /fleet-launch backlog, and the runway
@@ -123,6 +123,13 @@
 # `human`-labeled issues are hidden the same way and surfaced via --label human. The work
 # itself is human-performed (standards/issue-spec.md), so unlike `solo` there is no
 # targeted-mode carve-out: /auto refuses a human-labeled target in any mode.
+#
+# `hold`-labeled issues are hidden the same way and surfaced via --label hold. A person parked
+# the issue, and the label carries no condition a ranker could test, so it yields to its own
+# listing ONLY — not to --label solo, which /fleet-solo runs as a queue, nor to the needs decision
+# and human views, whose readers act on what they list. Like `human` it has no targeted-mode
+# carve-out (/auto <ID> refuses a held target), and only a person removes it
+# (standards/issue-spec.md § The `hold` label).
 #
 # `deploy-gated`-labeled issues wait on a RELEASE, not a merge, and are hidden until every `blocks`
 # blocker reaches one of the project's deployed states — $LINEAR_DEPLOYED_STATES, a comma list the
@@ -759,8 +766,10 @@ eligible_json=$(jq \
       # hidden from every ranking unless the caller asked for this label itself, or for
       # the human label (both listings are human-facing discovery views and an issue can
       # carry both labels — hiding one from the other would recreate the count-vs-listing
-      # confusion the trailing notes exist to prevent).
-      | select((($label | ascii_downcase) | . == "needs decision" or . == "human") or (all(($i.labels // [])[]; ascii_downcase != "needs decision")))
+      # confusion the trailing notes exist to prevent). Every gate below yields to a hold
+      # listing for the same reason: it is the view of what a person parked, whatever else
+      # the issue carries.
+      | select((($label | ascii_downcase) | . == "needs decision" or . == "human" or . == "hold") or (all(($i.labels // [])[]; ascii_downcase != "needs decision")))
       # solo gate: shippable unattended but not concurrently (standards/issue-spec.md) —
       # same hide-unless-asked-for contract, so no ranking ever hands one to a fleet.
       # It also yields to a `needs decision` or `human` listing: an issue can carry both
@@ -768,21 +777,25 @@ eligible_json=$(jq \
       # and those listings are how /spec and a human owner find parked work — no
       # apostrophes in here, the jq program is one single-quoted string and one would end
       # it mid-filter.
-      | select((($label | ascii_downcase) | . == "solo" or . == "needs decision" or . == "human") or (all(($i.labels // [])[]; ascii_downcase != "solo")))
+      | select((($label | ascii_downcase) | . == "solo" or . == "needs decision" or . == "human" or . == "hold") or (all(($i.labels // [])[]; ascii_downcase != "solo")))
       # human gate: the work itself is human-performed (standards/issue-spec.md) — no agent
       # path exists at any time, so it is hidden from every ranking and never offered to
       # /auto in any mode. Yields to its own listing and to a needs-decision listing, but
       # NOT to a solo listing — that one is a running order for targeted /auto, and a
       # human-labeled issue must never appear runnable there.
-      | select((($label | ascii_downcase) | . == "human" or . == "needs decision") or (all(($i.labels // [])[]; ascii_downcase != "human")))
+      | select((($label | ascii_downcase) | . == "human" or . == "needs decision" or . == "hold") or (all(($i.labels // [])[]; ascii_downcase != "human")))
+      # hold gate: a person parked the issue (standards/issue-spec.md) — listed by --label hold
+      # and by nothing else. It yields to no other listing, the solo one above all: /fleet-solo
+      # dispatches that listing in order, so a held issue shown there would ship.
+      | select((($label | ascii_downcase) == "hold") or (all(($i.labels // [])[]; ascii_downcase != "hold")))
       # deploy-gated gate: waits on a release, not a merge — hidden until every blocker is deployed
       # (deploy_held above), listed by --label deploy-gated. Yields to a needs-decision listing too,
       # since an issue can carry both.
-      | select((($label | ascii_downcase) | . == "deploy-gated" or . == "needs decision") or (deploy_held($i) | not))
+      | select((($label | ascii_downcase) | . == "deploy-gated" or . == "needs decision" or . == "hold") or (deploy_held($i) | not))
       # epic gate: a delegated container — its children carry the work — so it is never a pick
       # (fleet-blockers.sh / fleet-forecast.py agree); the delegated de-rank below still covers
-      # an unlabeled parent. Listed only by --label epic.
-      | select((($label | ascii_downcase) == "epic") or (all(($i.labels // [])[]; ascii_downcase != "epic")))
+      # an unlabeled parent. Listed only by --label epic, and by a hold listing when it is held.
+      | select((($label | ascii_downcase) | . == "epic" or . == "hold") or (all(($i.labels // [])[]; ascii_downcase != "epic")))
       # Planned/Todo issues this Backlog candidate gates — transitively blocks, or descends from —
       # non-empty means it inherits the Planned stage below. Computed for Backlog candidates only;
       # a Planned or Triage candidate has nothing to inherit.
@@ -865,7 +878,7 @@ label_lc=$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')
 gate_on=0
 if [ "$stage_gate" -eq 1 ] && [ "$include_blocked" -eq 0 ] && [ "$include_triage" -eq 0 ] \
    && [ "$label_lc" != "solo" ] && [ "$label_lc" != "needs decision" ] && [ "$label_lc" != "human" ] \
-   && [ "$label_lc" != "deploy-gated" ]; then
+   && [ "$label_lc" != "hold" ] && [ "$label_lc" != "deploy-gated" ]; then
   gate_on=1
 fi
 gate_closed=0
@@ -896,6 +909,7 @@ CHAIN_DEFS='def is_terminal($x): ((($terminal | map(ascii_downcase)) | index((($
       # Why a held issue is the keeper to move — empty when the fleet could pick it (now or once unblocked).
       def self_reason($i):
         if lbl($i; "epic") then "epic — certify per child; it closes itself when they release"
+        elif lbl($i; "hold") then "hold"
         elif lbl($i; "needs decision") then "needs decision"
         elif lbl($i; "human") then "human"
         elif lbl($i; "solo") then "solo"
@@ -905,9 +919,9 @@ CHAIN_DEFS='def is_terminal($x): ((($terminal | map(ascii_downcase)) | index((($
         elif ($el[$i.identifier] == null) then (if ($label != "") then "lacks label \($label)" else "filtered out" end)
         else "" end;
       # Walk the unresolved blocker chain: a blocker in flight or fleet-eligible releases on its own; the first
-      # keeper-owned one names the reason. A started blocker is in flight unless it is stalled or labeled human or
-      # needs decision: those are a person working or deciding, which no fleet session ships (BF-2287 sat behind the
-      # started human BF-2009 and read as releasing for a whole night). $seen guards cycles.
+      # keeper-owned one names the reason. A started blocker is in flight unless it is stalled or labeled human,
+      # needs decision or hold: those are a person working, deciding or parking it, which no fleet session ships
+      # (BF-2287 sat behind the started human BF-2009 and read as releasing for a whole night). $seen guards cycles.
       def chain_reason($ids; $seen):
         if ($ids | length) == 0 then ""
         else ($ids[0]) as $b | ($m[$b] // null) as $bi
@@ -917,6 +931,7 @@ CHAIN_DEFS='def is_terminal($x): ((($terminal | map(ascii_downcase)) | index((($
                (if lbl($bi; "stalled") then "blocked by \($b) [stalled]"
                 elif lbl($bi; "human") then "blocked by \($b) [human]"
                 elif lbl($bi; "needs decision") then "blocked by \($b) [needs decision]"
+                elif lbl($bi; "hold") then "blocked by \($b) [hold]"
                 else "" end)
              elif (($seqheld | index($b)) != null) then ""
              elif ($el[$b] != null) and (lbl($bi; "epic") | not) then chain_reason(($bm[$b] // []); $seen + [$b])
@@ -989,7 +1004,7 @@ fi
 # An epic-scoped run ends once only keeper-gated members remain (keeper ruling 2026-10-14): the root epic holds the column until
 # its last child releases and /epic-prep promotes human-gated members beside it, so the team-style hold could only tick to the
 # deadline (2026-10-13: 11.7 session-hours across three sessions after the last ship). In flight is a started member that is not
-# In Review, stalled, human or needs decision — chain_reason's reading of a started blocker; a landing can file certified
+# In Review, stalled, human, needs decision or hold — chain_reason's reading of a started blocker; a landing can file certified
 # children, so the drain waits for it, and the in-flight line under the scope line names them on every scoped run so /auto can
 # hold on them when its only candidates are ones it already attempted. The verdict is reached only with nothing to pick: a
 # pickable member proves the scope is not drained whatever its column (a Backlog child of the Planned root inherits the stage and
@@ -1004,7 +1019,7 @@ if [ -n "$root" ]; then
     [ .[] | select(.state_type == "started")
       | ((.state // "") | ascii_downcase) as $st
       | select((($terminal | map(ascii_downcase)) | index($st)) == null)
-      | select(any((.labels // [])[]; (ascii_downcase | IN("stalled", "human", "needs decision"))) | not)
+      | select(any((.labels // [])[]; (ascii_downcase | IN("stalled", "human", "needs decision", "hold"))) | not)
       | .identifier ] | sort' "$list_file")
   if [ "$(printf '%s' "$inflight_json" | jq 'length')" -gt 0 ]; then
     inflight_line=$(printf '%s' "$inflight_json" | jq -r '"_In flight: \(length) member(s) — \(join(", ")). A landing can file certified children, so the scope is not drained while any is in flight._"')
@@ -1117,6 +1132,23 @@ human_note() {
   return 0
 }
 
+# Same visibility contract for the hold gate, naming the top hidden IDs as the needs-decision note does: only a person
+# releases a hold, and a bare count sends them to Linear to learn which. `onhold_`, since hold_note and hold_line are
+# the Planned gate's.
+onhold_hidden=0
+onhold_top=""
+if [ "$label_lc" != "hold" ]; then
+  onhold_hidden=$(jq '[.[] | select(any((.labels // [])[]; ascii_downcase == "hold"))] | length' "$list_file" 2>/dev/null || echo 0)
+  onhold_top=$(jq -r '[.[] | select(any((.labels // [])[]; ascii_downcase == "hold"))]
+    | sort_by(if .priority == 0 then 5 else .priority end) | .[0:4] | map(.identifier) | join(", ")' "$list_file" 2>/dev/null || true)
+fi
+onhold_note() {
+  if [ "$onhold_hidden" -gt 0 ]; then
+    printf '\n_%s issue(s) hidden as on hold (`hold` label; top: %s) — list with --label hold; a person parked them, and no unattended mode ships one until that person removes the label._\n' "$onhold_hidden" "$onhold_top"
+  fi
+  return 0
+}
+
 # Epic gate note — counted over workable stages only, like the claimed note (a shipped or in-flight
 # epic is not what the reader is missing from a pick list).
 epic_hidden=0
@@ -1223,6 +1255,7 @@ if [ "$candidate_count" -eq 0 ]; then
   solo_note
   deploy_note
   human_note
+  onhold_note
   epic_note
   seq_note
   exit 0
@@ -1482,5 +1515,6 @@ claimed_note
 solo_note
 deploy_note
 human_note
+onhold_note
 epic_note
 seq_note

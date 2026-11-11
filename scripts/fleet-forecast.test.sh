@@ -243,6 +243,25 @@ ck_has "NB backlog shipped" "PICK t=0.0h: TT-122 → s1" "$WORK/nb.out"
 ck_lacks "NB nothing withheld" "WITHHELD" "$WORK/nb.out"
 ck_lacks "NB no planned-hold" "PLANNED-HOLD" "$WORK/nb.out"
 
+# ---- Fixture NH: a held issue is never picked — Urgent and certified notwithstanding — it strands what it
+# ---- blocks, and a held In Progress issue is not assumed to finish ----
+cat > "$WORK/nh.json" <<'EOF'
+[
+ {"identifier":"TT-141","priority":1,"state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"},{"name":"hold"}]},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-142"}}]}},
+ {"identifier":"TT-142","priority":2,"state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"}]},"relations":{"nodes":[]}},
+ {"identifier":"TT-143","priority":3,"state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"}]},"relations":{"nodes":[]}},
+ {"identifier":"TT-144","priority":2,"state":{"name":"In Progress","type":"started"},"labels":{"nodes":[{"name":"specified"},{"name":"hold"}]},"relations":{"nodes":[{"type":"blocks","relatedIssue":{"identifier":"TT-145"}}]}},
+ {"identifier":"TT-145","priority":2,"state":{"name":"Planned","type":"unstarted"},"labels":{"nodes":[{"name":"specified"}]},"relations":{"nodes":[]}}
+]
+EOF
+rc=$(run "$WORK/nh.json" "$WORK/nh.out" --sessions 1 --horizon-h 12 --hours-per-issue 2 --flat)
+ck "NH exit" 0 "$rc"
+ck_has "NH only the unheld issue ships" "PICK t=0.0h: TT-143 → s1" "$WORK/nh.out"
+ck_lacks "NH held issue never picked" "PICK t=0.0h: TT-141" "$WORK/nh.out"
+ck_has "NH stranded behind a hold" "STRANDED: TT-142 — blocked by TT-141 [Planned] — hold" "$WORK/nh.out"
+ck_has "NH stranded behind held in-flight work" "STRANDED: TT-145 — blocked by TT-144 [In Progress] — hold" "$WORK/nh.out"
+ck_lacks "NH held in-flight work is not assumed to finish" "INFLIGHT: TT-144" "$WORK/nh.out"
+
 # ---- Fixture O: a Backlog child of a Planned epic inherits the stage — pickable under the gate ----
 cat > "$WORK/o.json" <<'EOF'
 [

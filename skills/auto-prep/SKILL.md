@@ -180,6 +180,8 @@ releases and the released issues' priorities as its worth:
 - Uncertified scope → `/spec`, **excluding claimed issues**: an assignee other than the viewer is a person's claim
   (`standards/linear-workflow.md`; the script's `claimed by <email>` rows) — one line, never a keeper action.
 - `human` work → do or re-scope; `solo` roots → the pre-fleet quiet window; `stalled` in-flight roots → resume or release.
+- `hold` (`on hold` rows) → the user's call alone: name what each held issue strands and ask whether the hold comes off
+  (`linear-remove-label.sh <ID> hold`) or the issue leaves `Planned`. Never remove one as prep hygiene, and never apply one.
 - **Parked roots holding banked work** — a `needs decision`/`human` root whose preserved worktree carries verified
   commits: quantify the drift (`git rev-list --count <branch>..<source>`) and lead its row with a split-and-merge
   recommendation, since the gate usually covers part of the work and the verified remainder ages.
