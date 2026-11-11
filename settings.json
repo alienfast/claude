@@ -276,6 +276,5 @@
   "theme": "dark",
   "switchModelsOnFlag": false,
   "agentPushNotifEnabled": true,
-  "skipAutoPermissionPrompt": true,
-  "model": "fable"
+  "skipAutoPermissionPrompt": true
 }
