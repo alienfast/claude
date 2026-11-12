@@ -21,6 +21,8 @@
 #
 # This script uses `git show HEAD:path` to examine the actual final state
 # of files in the current branch, not the working directory state.
+#
+# Tested by verify-feature.test.sh.
 
 set -euo pipefail
 
@@ -75,8 +77,9 @@ if [ -z "$SEARCH_PATTERN" ]; then
     exit 0
 fi
 
-# Search for pattern in file
-if git show HEAD:"$FILE_PATH" | grep -q "$SEARCH_PATTERN"; then
+# Search for pattern in file. No -q: grep would exit at the first match while git is still writing a file larger than
+# the pipe buffer, git would die of SIGPIPE, and pipefail would report a feature that is present as MISSING.
+if git show HEAD:"$FILE_PATH" | grep "$SEARCH_PATTERN" >/dev/null; then
     echo -e "${GREEN}✓ PRESENT${NC}: Found '$SEARCH_PATTERN' in '$FILE_PATH' (HEAD)"
     exit 0
 else

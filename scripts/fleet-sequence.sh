@@ -132,7 +132,9 @@ done
 
 here=$(cd "$(dirname "$0")" && pwd)
 . "$here/../lib/fleet-markers.sh"
-main_checkout=$(git worktree list --porcelain 2>/dev/null | awk '/^worktree /{print substr($0,10); exit}')
+# sed reads the whole listing: a consumer that exits at the first line leaves git to die of SIGPIPE on a later worktree,
+# and under pipefail and errexit a checkout with on the order of a hundred worktrees ends the script on this assignment.
+main_checkout=$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')
 [ -n "$main_checkout" ] || { echo "ERROR: not inside a git repository — run from the project the sequence should work on" >&2; exit 1; }
 mkdir -p "$main_checkout/tmp"
 marker=""; log=""; pr_wt="" # per sequence — set by use_sequence before anything reads them

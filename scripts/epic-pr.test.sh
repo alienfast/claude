@@ -184,5 +184,12 @@ rc=$(run "$WORK/t7b" --dry-run EP-8)
 ck "T7b no branch for the epic" 1 "$rc"
 ck_has "T7b names the remedy" "/epic-prep EP-8" "$WORK/t7b.err"
 
+# T8 — a checkout with many worktrees. git lists them with work between rows, so a consumer that exited at the first row
+# left it to die of SIGPIPE, and under pipefail and errexit the script ended on the main-checkout lookup with nothing said.
+for i in $(seq 1 150); do g worktree add "$WORK/many/a-long-worktree-directory-name-for-width-$i" -b "many-$i" >/dev/null 2>&1; done
+rc=$(run "$WORK/t8" --dry-run EP-8)
+ck "T8 many worktrees: the main checkout is still resolved" 1 "$rc"
+ck_has "T8 and the script reaches its own error" "/epic-prep EP-8" "$WORK/t8.err"
+
 echo "epic-pr.test.sh: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

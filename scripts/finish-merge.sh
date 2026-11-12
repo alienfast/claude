@@ -335,7 +335,8 @@ if [ -e "$wt_git_dir/MERGE_HEAD" ]; then
     echo "RESUME: worktree at $wt_dir has an in-progress /finish merge of $source_branch to resolve." >&2
     echo "Resolve conflicts there, then: git -C '$wt_dir' add <files> && git -C '$wt_dir' commit -F '$message_file'" >&2
     echo "Then re-run /finish merge." >&2
-    if git -C "$wt_dir" diff --name-only --diff-filter=U | grep -q .; then
+    # No -q: an early exit SIGPIPEs a git still writing, and pipefail then reads a long list as empty.
+    if git -C "$wt_dir" diff --name-only --diff-filter=U | grep . >/dev/null; then
       echo "Unresolved files (worktree-relative):" >&2
       git -C "$wt_dir" diff --name-only --diff-filter=U >&2
     fi

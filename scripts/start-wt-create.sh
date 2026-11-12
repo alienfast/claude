@@ -197,10 +197,12 @@ if [ -d "$wt_dir" ]; then
   echo "Resuming worktree: $wt_dir" >&2
   mode="reuse"
 elif git rev-parse --verify "$branch" >/dev/null 2>&1; then
-  # Branch exists but no worktree directory. Check if it's checked out elsewhere.
+  # Branch exists but no worktree directory. Check if it's checked out elsewhere. awk reads the whole listing (a branch is
+  # checked out in at most one worktree): exiting at the match leaves git to die of SIGPIPE on a later worktree, and under
+  # pipefail and errexit the script ends on this assignment, before the error below can name the checkout.
   existing_wt=$(git worktree list --porcelain | awk -v b="refs/heads/$branch" '
     /^worktree / { sub(/^worktree /, ""); wt = $0 }
-    /^branch / && $2 == b { print wt; exit }
+    /^branch / && $2 == b { print wt }
   ')
   if [ -n "$existing_wt" ]; then
     echo "ERROR: branch '$branch' is already checked out at '$existing_wt'." >&2

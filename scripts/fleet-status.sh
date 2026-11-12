@@ -93,7 +93,9 @@ fi
 have_registry=0
 [ -n "$agents_json" ] && have_registry=1
 
-main_checkout=$(git worktree list --porcelain 2>/dev/null | awk '/^worktree /{print substr($0,10); exit}')
+# sed reads the whole listing: a consumer that exits at the first line leaves git to die of SIGPIPE on a later worktree,
+# and under pipefail and errexit a checkout with on the order of a hundred worktrees ends the script on this assignment.
+main_checkout=$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')
 [ -n "$main_checkout" ] || { echo "ERROR: not inside a git repository — run from the fleet's project" >&2; exit 1; }
 . "$SCRIPT_DIR/../lib/fleet-markers.sh"
 
@@ -284,8 +286,10 @@ registry_row() {
 # fleet member for a whole retro. Transcripts live under the mangled checkout path, plus one dir per
 # worktree, so the glob matches what fleet-metrics.py walks. The gsub is load-bearing: a real
 # opening turn is a MULTI-LINE string ("<command-message>loop</command-message>\n<command-name>…"),
-# so without flattening, `head -1` takes the first LINE rather than the first MESSAGE and every
-# genuine /loop /auto session reads as interactive.
+# so without flattening, the first LINE is taken rather than the first MESSAGE and every
+# genuine /loop /auto session reads as interactive. The shell takes that line, not a `head -1`: head
+# exits at the first message while jq is still writing the later ones, jq dies of SIGPIPE, and
+# pipefail empties `first` for a session whose opening turns are long.
 # The harness names the dir by replacing every non-alphanumeric character of the session cwd with a dash (C:/Users/x/.claude
 # lives under c--Users-x--claude) and spells a Windows drive letter however the session's cwd did, so match either case.
 proj_mangled=$(printf '%s' "$main_checkout" | sed 's/[^A-Za-z0-9]/-/g')
@@ -303,7 +307,8 @@ is_auto_run() {
       first=$(head -n 60 "$f" 2>/dev/null \
         | jq -rR 'fromjson? | select(.type == "user") | (.message.content? // empty)
                   | if type == "string" then . else ([.[]? | select(.type? == "text") | .text? // empty] | join(" ")) end
-                  | select(. != "") | gsub("\n"; " ")' 2>/dev/null | head -1) || first=""
+                  | select(. != "") | gsub("\n"; " ")' 2>/dev/null) || first=""
+      first=${first%%$'\n'*}
       [ -n "$first" ] || continue
       case "$first" in
         *"<command-name>/auto</command-name>"*) return 0 ;;
@@ -482,10 +487,10 @@ else
   [ -n "$src_branch" ] || src_branch=HEAD
   recent_subjects=$(git -C "$main_checkout" log -300 --format='%s' "$src_branch" 2>/dev/null || true)
   for id in $all_shipped; do
-    if printf '%s\n' "$recent_subjects" | grep -q "^$id:"; then
+    # No -q on either grep: one that exits on this issue's line leaves its producer to die of SIGPIPE, and pipefail reads
+    # the match as a miss. 300 long subjects pass the pipe buffer, and the queue listing prints a row at a time.
+    if printf '%s\n' "$recent_subjects" | grep "^$id:" >/dev/null; then
       printf -- '- %s — merged on `%s` ✓\n' "$id" "$src_branch"
-    # No -q: the listing prints a row at a time, so a grep that exits on this issue's row leaves merge-queue.sh to die
-    # of SIGPIPE on the next one, and pipefail reads a queued merge as "not queued".
     elif (cd "$main_checkout" && "$SCRIPT_DIR/merge-queue.sh" list 2>/dev/null) | grep "^$id " >/dev/null; then
       printf -- '- %s — **deferred**: sitting in the merge queue\n' "$id"
     else

@@ -855,6 +855,13 @@ ck "check refuses a duration it cannot parse" "1" "$(FLEET_LAUNCH_CHECK=1 run 2 
 ck_has "check names the duration"     "cannot parse duration 'soon'" "$WORK/out"
 ck "the refusals dispatched nothing"  "0" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
 
+# ---- a checkout with many worktrees: the main-checkout lookup reads the whole listing. git lists worktrees with work
+# between rows, so a consumer that exited at the first row left it to die of SIGPIPE, and under pipefail and errexit the
+# launch ended on that assignment with nothing said. ----
+for i in $(seq 1 150); do git -C "$REPO" worktree add "$WORK/many/a-long-worktree-directory-name-for-width-$i" -b "many-$i" >/dev/null 2>&1; done
+ck "many worktrees: the check still runs"    "0" "$(FLEET_LAUNCH_CHECK=1 run 2 10h)"
+ck_has "many worktrees: and prints its verdict" "CHECK-OK: 2 session(s), a 10h budget from launch" "$WORK/out"
+
 echo
 echo "$PASS passed / $FAIL failed"
 [ "$FAIL" -eq 0 ]

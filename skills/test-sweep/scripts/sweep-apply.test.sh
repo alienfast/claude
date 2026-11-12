@@ -393,6 +393,23 @@ run --proposal "$D/array.json" --proposal "$D/good-after-bad.json" --baseline-co
 ckrc "one malformed proposal refuses the whole batch" 1 "$rc"
 ckno "and no steps are printed for the good one" 'STEP ' "$out"
 
+echo "== a ledger past the pipe buffer =="
+# The batch's own lines come first and a thousand others follow. A grep -q that exited at the match left printf to die of
+# SIGPIPE still writing the rest, and pipefail reported names the ledger lists as missing.
+mk "$D/long.json" a 3 '["a one","a two","a three"]'
+{
+  printf '%s\n' '- "a one" → s' '- "a two" → s' '- "a three" → s'
+  i=0
+  while [ "$i" -lt 1000 ]; do
+    i=$((i + 1))
+    printf -- '- "an example with a long enough name to fill the ledger, number %s of a thousand" → s\n' "$i"
+  done
+} > "$ROOT/ledger-long.md"
+ckrc "the ledger is past the pipe buffer" 1 "$(( $(wc -c < "$ROOT/ledger-long.md") > 80000 ))"
+run --proposal "$D/long.json" --baseline-count 100 --post-count 97 --ledger "$ROOT/ledger-long.md"
+ckrc "a long ledger that lists every name passes" 0 "$rc"
+ck "and the gates pass"                         'GATES-PASSED a' "$out"
+
 echo
 echo "sweep-apply: $pass passed, $fail failed"
 [ "$fail" = 0 ]

@@ -1106,6 +1106,14 @@ ck "and dispatched nothing"        "0" "$(dispatches)"
 git -C "$REPO" checkout -q main
 unset LINEAR_TEAM
 
+# ---- a checkout with many worktrees: the main-checkout lookup reads the whole listing. git lists worktrees with work
+# between rows, so a consumer that exited at the first row left it to die of SIGPIPE, and under pipefail and errexit the
+# runner ended on that assignment with nothing said. ----
+reset
+for i in $(seq 1 150); do git -C "$REPO" worktree add "$WORK/many/a-long-worktree-directory-name-for-width-$i" -b "many-$i" >/dev/null 2>&1; done
+ck "many worktrees: status still runs" "0" "$(run status)"
+ck_has "many worktrees: and answers"   "No sequence marker" "$WORK/out"
+
 echo
 echo "$PASS passed / $FAIL failed"
 [ "$FAIL" -eq 0 ]

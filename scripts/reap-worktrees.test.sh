@@ -961,7 +961,7 @@ if git -C "$r" merge-tree --write-tree main main >/dev/null 2>&1; then
   # A branch checked out somewhere is live work whatever its refs say.
   r=$(build_fm_shape fm_checked_out BF-976)
   ck "a branch with a worktree is the worktree's verdict, never a branch-only candidate" NOMATCH \
-     "$($SCRIPT list "$r" 2>&1 | grep -q 'STALE-BRANCH' && echo MATCHED || echo NOMATCH)"
+     "$($SCRIPT list "$r" 2>&1 | grep 'STALE-BRANCH' >/dev/null && echo MATCHED || echo NOMATCH)"
 else
   echo "  SKIP  git merge-tree --write-tree is unsupported ($(git --version)); the content-containment arms need git >= 2.38"
 fi

@@ -210,6 +210,31 @@ ck_detail "  ... by 30m" "wakeup overdue 30m (armed 1800s)"
 run_case "dead after notification: no wakeup PENDING, flat rule decides  -> stalled" tail_dead active 3600 "stalled"
 ck_detail "  ... and says so" "no terminal tag, no wakeup pending"
 
+# LONG TAILS. The assistant text of 200 records can pass the pipe buffer. A terminal tag or a limit message with that much
+# text behind it used to be lost: grep -q exited at the match, printf died of SIGPIPE still writing the rest, and pipefail
+# read the match as a miss, so an ended loop was flagged and a quota cutoff lost its name. Both builders put more text
+# behind the match than the buffer holds, which the tail's own size check confirms before the verdict is trusted.
+LONG_TEXT=$(head -c 70000 /dev/zero | tr '\0' z)
+tail_stopped_long() {
+  local a="$1"; cat <<EOF
+{"type":"assistant","timestamp":"$(iso_ago $((a+2)))","message":{"role":"assistant","content":[{"type":"text","text":"NO-CANDIDATES: fleet deadline reached (2026-08-14 07:19 CDT) — 5/0/0/0 this run."}]}}
+{"type":"assistant","timestamp":"$(iso_ago "$a")","message":{"role":"assistant","content":[{"type":"text","text":"$LONG_TEXT"}]}}
+EOF
+}
+tail_quota_long() {
+  local a="$1"; cat <<EOF
+{"type":"assistant","timestamp":"$(iso_ago $((a+2)))","message":{"role":"assistant","content":[{"type":"text","text":"You've hit your session limit · resets 5:10am (America/Chicago)"}]}}
+{"type":"assistant","timestamp":"$(iso_ago "$a")","message":{"role":"assistant","content":[{"type":"text","text":"$LONG_TEXT"}]}}
+EOF
+}
+run_case "loop ended by tag, a long tail behind it, 300m silent -> none"          tail_stopped_long active 18000 "none"
+if [ "$(wc -c < "$PROJ/aaaaaaaa-0000-0000-0000-000000000000.jsonl")" -gt 65536 ]; then
+  echo "  PASS    ... and the tail is past the pipe buffer"; PASS=$((PASS+1))
+else
+  echo "  FAIL    ... the tail is not past the pipe buffer"; FAIL=$((FAIL+1))
+fi
+run_case "quota cutoff, a long tail behind it, 149m silent      -> stalled-quota" tail_quota_long   active 8940 "stalled-quota"
+
 # A session with no /auto run-state file is somebody else's session, not fleet work. The state file is
 # the ONLY scope filter — kind must play no part (the live schema reports every session interactive).
 echo -n "  "

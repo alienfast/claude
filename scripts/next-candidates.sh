@@ -1330,7 +1330,8 @@ if [ "$parent_walk" -eq 1 ] && [ -n "$top_ids" ]; then
     pids+=($!)
   done <<< "$top_ids"
   for pid in "${pids[@]}"; do wait "$pid" || true; done
-  if cat "$fetch_dir"/*.err 2>/dev/null | grep -q -e '"RATELIMITED"' -e 'Rate limit exceeded'; then warn_ratelimited_walk; fi
+  # No -q: an early exit SIGPIPEs a cat still writing the later files, and pipefail then drops the warning.
+  if cat "$fetch_dir"/*.err 2>/dev/null | grep -e '"RATELIMITED"' -e 'Rate limit exceeded' >/dev/null; then warn_ratelimited_walk; fi
 
   # Step 2: extract parent chains (climb via repeated linear-cli issues get on each
   # ancestor). Cache hits skip the fetch. Bounded by max_depth=10.

@@ -179,7 +179,8 @@ if [ "$TOTAL_REMOVED" -gt 0 ] || [ "$NAMES_TOTAL" -gt 0 ]; then
     missing=""
     while IFS= read -r name; do
       [ -n "$name" ] || continue
-      printf '%s\n' "$ledger_names" | grep -qFx -- "$name" || missing="$missing \"$name\""
+      # No -q: on a ledger past the pipe buffer an early exit SIGPIPEs printf, and pipefail reports a listed name missing.
+      printf '%s\n' "$ledger_names" | grep -Fx -- "$name" >/dev/null || missing="$missing \"$name\""
     done <<< "$ALL_NAMES"
     if [ -n "$missing" ]; then
       refuse ledger-gate "missing=${missing# } (each needs a ledger line: - \"<name>\" → <survivor>)"

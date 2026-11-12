@@ -17,12 +17,14 @@ command -v jq >/dev/null 2>&1 || { echo "baseline-series.test: jq is required" >
 command -v git >/dev/null 2>&1 || { echo "baseline-series.test: git is required" >&2; exit 2; }
 
 pass=0; fail=0
+# No -q in either helper: the long-series case hands them output past the pipe buffer, where a grep that exits at its match
+# leaves printf to die of SIGPIPE and pipefail reads the match as a miss.
 ck() { # ck <label> <expected-substring> <actual>
-  if printf '%s' "$3" | grep -qF -- "$2"; then pass=$((pass+1)); echo "  PASS  $1"
+  if printf '%s' "$3" | grep -F -- "$2" >/dev/null; then pass=$((pass+1)); echo "  PASS  $1"
   else fail=$((fail+1)); echo "  FAIL  $1"; echo "        want ~ $2"; echo "        got    $3"; fi
 }
 ckno() { # ckno <label> <unexpected-substring> <actual>
-  if printf '%s' "$3" | grep -qF -- "$2"; then fail=$((fail+1)); echo "  FAIL  $1"; echo "        must not contain: $2"; echo "        got    $3"
+  if printf '%s' "$3" | grep -F -- "$2" >/dev/null; then fail=$((fail+1)); echo "  FAIL  $1"; echo "        must not contain: $2"; echo "        got    $3"
   else pass=$((pass+1)); echo "  PASS  $1"; fi
 }
 ckrc() { # ckrc <label> <want> <got>
@@ -127,6 +129,32 @@ ckrc "and exits 1" 1 "$rc"
 rm -rf "$CACHE"
 run
 ck "a repository with no cache directory has no baselines" "NO-BASELINES" "$out"
+
+echo "== a series longer than the pipe buffer =="
+# 1,700 commits with one clean record each, built by fast-import because a commit apiece is too slow. Their SERIES lines
+# pass the pipe buffer, where the closing check's grep -q exited at the first of them, printf died of SIGPIPE still writing
+# the rest, and pipefail exited 1 on the longest series.
+R="$ROOT/long"
+git init -q "$R"
+i=0
+while [ "$i" -lt 1700 ]; do
+  i=$((i + 1))
+  printf 'commit refs/heads/long\ncommitter t <t@example.com> %s +0000\ndata 2\nc\n\n' "$((1790000000 + i * 3600))"
+done | git -C "$R" fast-import --quiet
+git -C "$R" symbolic-ref HEAD refs/heads/long
+CACHE="$R/.git/suite-baselines/rspec"
+mkdir -p "$CACHE"
+tree=$(git -C "$R" rev-parse 'long^{tree}')
+i=0
+while IFS= read -r sha; do
+  i=$((i + 1))
+  printf '{"suite":"rspec","key":"%s","commit":"%s","recorded_at":"2026-10-01T10:00:00Z","summary":"rspec: %s examples / 0 failures / 8 of 8 workers"}\n' \
+    "$tree" "$sha" "$((1000 + i))" > "$CACHE/r$i.json"
+done < <(git -C "$R" rev-list --reverse long)
+run
+ckrc "the series is past the pipe buffer" 1 "$(( ${#out} > 65536 ))"
+ck "every commit is in it" "points=1700" "$out"
+ckrc "and it exits 0" 0 "$rc"
 
 echo
 echo "baseline-series: $pass passed, $fail failed"

@@ -220,7 +220,9 @@ classify() {
   # An explicit loop-end. ScheduleWakeup(stop:true) and the two terminal tags each mean "no wakeup is
   # pending and that is intended" — the exact state that otherwise looks identical to a stall. The tags
   # are matched the way fleet-metrics.py matches them: at line start, with their colon.
-  if printf '%s' "$asst_txt" | grep -qE '^ScheduleWakeup\(stop:true\)$|^[[:space:]]*(NO-CANDIDATES|AUTO-HALTED):'; then
+  # No -q, here and on the limit match below: the text of 200 records can pass the pipe buffer, grep would exit at a tag
+  # with more text behind it, printf would die of SIGPIPE, and pipefail would read an ended loop as a stall.
+  if printf '%s' "$asst_txt" | grep -E '^ScheduleWakeup\(stop:true\)$|^[[:space:]]*(NO-CANDIDATES|AUTO-HALTED):' >/dev/null; then
     printf 'terminal\ttag'; return 0
   fi
 
@@ -236,7 +238,7 @@ classify() {
 
   # A quota cutoff is the diagnosable case: name it separately so the operator knows the session is
   # waiting on nothing and will never self-resume, as against a merely slow turn.
-  if printf '%s' "$asst_txt" | grep -qiE "hit your [a-z0-9 -]{0,20}limit"; then
+  if printf '%s' "$asst_txt" | grep -iE "hit your [a-z0-9 -]{0,20}limit" >/dev/null; then
     local resets
     resets=$(printf '%s' "$asst_txt" | grep -oiE "hit your [a-z0-9 -]{0,20}limit[^\"]{0,40}" | tail -1)
     printf 'stalled-quota\t%s' "${resets:-quota limit}"; return 0

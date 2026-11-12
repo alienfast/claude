@@ -1,6 +1,8 @@
 #!/bin/bash
 # PR Analysis Helper Script
 # Quick analysis of PR scope and changes
+#
+# Tested by analyze-pr.test.sh.
 
 set -euo pipefail
 
@@ -103,7 +105,9 @@ echo ""
 DOC_CHANGES=$(git diff "$BASE"...HEAD --name-only | grep -E '\.md$|^doc/' || true)
 if [ -n "$DOC_CHANGES" ]; then
   echo "📝 Documentation Changes:"
-  echo "$DOC_CHANGES" | head -10 | sed 's/^/   /'
+  # sed reads the whole list: `head -10` exits early, and on a list past the pipe buffer echo dies of SIGPIPE and
+  # errexit ends the report here. The same holds for the infrastructure list below.
+  echo "$DOC_CHANGES" | sed -n '1,10s/^/   /p'
   DOC_COUNT=$(echo "$DOC_CHANGES" | wc -l | tr -d ' ')
   if [ "$DOC_COUNT" -gt 10 ]; then
     echo "   ... and $((DOC_COUNT - 10)) more"
@@ -115,7 +119,7 @@ fi
 INFRA_CHANGES=$(git diff "$BASE"...HEAD --name-only | grep -E '^cloud/' || true)
 if [ -n "$INFRA_CHANGES" ]; then
   echo "☁️  Infrastructure Changes:"
-  echo "$INFRA_CHANGES" | head -10 | sed 's/^/   /'
+  echo "$INFRA_CHANGES" | sed -n '1,10s/^/   /p'
   INFRA_COUNT=$(echo "$INFRA_CHANGES" | wc -l | tr -d ' ')
   if [ "$INFRA_COUNT" -gt 10 ]; then
     echo "   ... and $((INFRA_COUNT - 10)) more"
@@ -131,8 +135,8 @@ if [ -n "$CICD_CHANGES" ]; then
   echo ""
 fi
 
-# Package changes
-if git diff "$BASE"...HEAD --name-only | grep -q 'package.json'; then
+# Package changes. No -q: an early exit SIGPIPEs a git still writing a long name list, and pipefail drops the notice.
+if git diff "$BASE"...HEAD --name-only | grep 'package.json' >/dev/null; then
   echo "📦 Dependency Changes Detected"
   echo "   Run: git diff $BASE...HEAD -- package.json"
   echo ""

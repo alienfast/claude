@@ -142,5 +142,15 @@ ck_err "setup: the stubbed title composes the post-retitle name" "the current ti
 ck "setup: BRANCH= names the existing branch" "$OLD" "$(kv BRANCH)"
 ck "setup: no branch is minted from the new title" "no" "$(has_ref "$NEW")"
 
+# --- elsewhere: the composed branch is checked out in the main checkout, ahead of many other worktrees ---
+# git lists worktrees with work between rows. An awk that exited at the match left it to die of SIGPIPE, and under pipefail
+# and errexit the script ended on the lookup itself, without the error that names the checkout.
+mkrepo elsewhere
+git -C "$REPO" switch -q -c "$NEW"
+for i in $(seq 1 150); do git -C "$REPO" worktree add "$WORK/elsewhere/many/a-long-worktree-directory-name-for-width-$i" -b "many-$i" >/dev/null 2>&1; done
+create "$NEW"
+ck "elsewhere: refuses" "1" "$RC"
+ck_err "elsewhere: names the checkout that holds the branch" "branch '$NEW' is already checked out at"
+
 echo "--- start-wt-create.test.sh: $PASS passed, $FAIL failed ---"
 [ "$FAIL" -eq 0 ]

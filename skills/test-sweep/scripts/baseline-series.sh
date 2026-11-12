@@ -145,5 +145,7 @@ out=$(printf '%s' "$all" | jq -r --rawfile history "$scratch/history" --rawfile 
 ') || die "could not parse the baseline records under $dir"
 
 printf '%s\n' "$out"
-printf '%s\n' "$out" | grep -q '^SERIES ' || exit 1
+# No -q: on a series past the pipe buffer grep would exit at the first SERIES line, printf would die of SIGPIPE, and
+# pipefail would exit 1 on the longest series.
+printf '%s\n' "$out" | grep '^SERIES ' >/dev/null || exit 1
 exit 0

@@ -216,7 +216,7 @@ rm -f "$REPO/tmp/auto-state-sess-c.json"
 echo "== 12. a LEDGER-LESS /AUTO session gets a row; an interactive worktree owner does not"
 # Resolve the projects dir exactly as the script does, so the mangled name matches on macOS where
 # mktemp's /var/folders is a symlink to /private/var/folders.
-MANGLED=$( (cd "$REPO" && git worktree list --porcelain | awk '/^worktree /{print substr($0,10); exit}') | sed 's/[^A-Za-z0-9]/-/g' )
+MANGLED=$( (cd "$REPO" && git worktree list --porcelain | sed -n '1s/^worktree //p') | sed 's/[^A-Za-z0-9]/-/g' )
 PDIR="$FHOME/.claude/projects/$MANGLED"
 mkdir -p "$PDIR"
 
@@ -517,6 +517,43 @@ run_fs team --no-runway
 ck "team token exit" "0" "$RC"
 ck_has "  team token: team member rowed"      "| sess-t | ALIVE (working) |" "$OUT"
 ck_lacks "  team token: no epic row"          "| sess-e |" "$OUT"
+
+echo "== 22. inputs past the pipe buffer: a long history, long opening turns, a checkout with many worktrees"
+# Each arm hands the script an input large enough that a consumer exiting early (grep -q, head -1, awk's exit) leaves its
+# producer to die of SIGPIPE, which pipefail turns into the wrong branch and errexit into the end of the script. A small
+# fixture passes whether or not the consumer reads to the end, so the first two arms assert their size before the answer.
+rm -f "$REPO"/tmp/auto-state-*.json "$REPO"/tmp/fleet-deadline*.json
+NOW=$(date +%s)
+write_marker $((NOW - 500)) $((NOW + 3600))
+jq -n '{status: "active", shipped: ["XX-50"], canceled: [], failed: [], reviewBlocks: 0}' > "$REPO/tmp/auto-state-sess-z.json"
+# 300 subjects, the shipped issue's the newest, so its line is the first grep reads.
+WIDE=$(head -c 250 /dev/zero | tr '\0' x)
+tip=$(git -C "$REPO" rev-parse refs/heads/main); tree=$(git -C "$REPO" rev-parse 'refs/heads/main^{tree}')
+for i in $(seq 1 299); do tip=$(git -C "$REPO" commit-tree -p "$tip" -m "filler $i $WIDE" "$tree"); done
+tip=$(git -C "$REPO" commit-tree -p "$tip" -m "XX-50: the newest commit of a long history" "$tree")
+git -C "$REPO" update-ref refs/heads/main "$tip"
+ck "  the history is past the pipe buffer" "1" "$(( $(git -C "$REPO" log -300 --format=%s main | wc -c) > 65536 ))"
+# A ledger-less /auto session: /loop /auto opens its transcript and four long turns follow inside the 60 records read.
+git -C "$REPO" worktree add "$REPO/.claude/worktrees/xx-60" -b xx-60 >/dev/null 2>&1
+printf 'WT_IDENTITY_OWNER=c0ffee00-9722-4503-9f27-d7156e65ecfb\n' > "$REPO/.claude/worktree-identity/wt-identity-xx-60.env"
+LONGTURN=$(head -c 30000 /dev/zero | tr '\0' y)
+{
+  printf '%s\n' '{"type":"user","timestamp":"2026-08-25T10:00:00Z","message":{"role":"user","content":"<command-message>loop</command-message>\n<command-name>/loop</command-name>\n<command-args>/auto</command-args>"}}'
+  for i in 1 2 3 4; do printf '{"type":"user","timestamp":"2026-08-25T10:0%s:00Z","message":{"role":"user","content":"%s"}}\n' "$i" "$LONGTURN"; done
+} > "$PDIR/c0ffee00-0000.jsonl"
+ck "  the opening turns are past the pipe buffer" "1" "$(( $(wc -c < "$PDIR/c0ffee00-0000.jsonl") > 65536 ))"
+write_agents '[{"id":"c0ffee00","cwd":"/x","kind":"background","sessionId":"c0ffee00-9722-4503-9f27-d7156e65ecfb","name":"n","state":"working"}]'
+run_fs --no-runway
+ck "long inputs: clean exit" "0" "$RC"
+ck_has "  a ship under a long history resolves" "- XX-50 — merged on" "$OUT"
+ck_has "  a session behind long opening turns is still an /auto run" "| c0ffee00 | ALIVE (working) | **no ledger** |" "$OUT"
+# 150 worktrees: git does work between rows, so a consumer that stops at the first row never sees it finish. A token
+# with no marker exits past the main-checkout lookup and before the per-worktree sections.
+for i in $(seq 1 150); do git -C "$REPO" worktree add "$ROOT/many/a-long-worktree-directory-name-for-width-$i" -b "many-$i" >/dev/null 2>&1; done
+ck "  the checkout lists the worktrees" "1" "$(( $(git -C "$REPO" worktree list --porcelain | grep -c '^worktree ') > 150 ))"
+run_fs epic:XX-404 --no-runway
+ck "many worktrees: the main checkout is still resolved" "1" "$RC"
+ck_has "  and the script reaches its own error" "no fleet marker for epic:XX-404" "$ERR"
 
 echo ""
 echo "$PASS passed / $FAIL failed"

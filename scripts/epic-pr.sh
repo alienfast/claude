@@ -47,7 +47,9 @@ for cmd in git jq; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "ERROR: '$cmd' not found on PATH" >&2; exit 1; }
 done
 
-main_checkout=$(git worktree list --porcelain 2>/dev/null | awk '/^worktree /{print substr($0,10); exit}')
+# sed reads the whole listing: a consumer that exits at the first line leaves git to die of SIGPIPE on a later worktree,
+# and under pipefail and errexit a checkout with on the order of a hundred worktrees ends the script on this assignment.
+main_checkout=$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')
 [ -n "$main_checkout" ] || { echo "ERROR: not inside a git repository" >&2; exit 1; }
 . "$script_dir/../lib/fleet-markers.sh"
 checkout_branch=$(git -C "$main_checkout" branch --show-current 2>/dev/null || true)
