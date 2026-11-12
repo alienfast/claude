@@ -105,6 +105,11 @@ routes to the filer's project rules, and the verdict names which sentence is whi
 - Linear items: implement directly in `~/.claude` (Read before Edit, always).
 - PR items: nothing to apply locally — the merge in Step 4 is the apply. Review on GitHub (inline comments where a
   recommendation is line-scoped).
+- Siblings: verifying a family claim (Step 2, item 1) means finding the members the change skipped, and a member that
+  carries the same defect is repaired in this run, with a regression arm, as its own `keeper: <summary>` commit. The
+  accepted set bounds what is staged from other sessions' edits, never what the keeper repairs: a sibling the report
+  lists as "unchanged" is work left undone (2026-11-12: four such sites were reported that way, and repairing them
+  turned up five fleet scripts that exited 141 once a checkout held about a hundred worktrees).
 - Gates before any commit: a touched `scripts/<name>.(sh|py)` with a sibling `<name>.test.sh` runs it green; touched
   markdown runs `npx markdownlint-cli2 <files>` from `~/.claude`. Then `pnpm check-anchors && pnpm test` runs once from
   `~/.claude` — `pnpm check` minus `check-markdown`, whose `--fix '**/*.md'` would rewrite files outside the accepted
@@ -117,9 +122,9 @@ routes to the filer's project rules, and the verdict names which sentence is whi
 
 ### Step 4: Commit, merge, push — the skill-scoped grant
 
-Invoking `/keeper` is the explicit grant to commit and push **exactly the adjudicated-accepted set** (`standards/git.md`
-§ Named exceptions). Bounded: stage by name only, never `-A`; no force-pushes; no history rewrites; deferred and rejected
-files are never swept in.
+Invoking `/keeper` is the explicit grant to commit and push **exactly the adjudicated-accepted set** and the sibling
+repairs Step 3 made (`standards/git.md` § Named exceptions). Bounded: stage by name only, never `-A`; no force-pushes;
+no history rewrites; deferred and rejected files are never swept in.
 
 - One commit per keeper issue — `keeper: <ID> — <summary>`, body carrying per-item outcomes.
 - One commit for accepted pre-existing local edits — `keeper: accept local apply-now edits — <areas>`.
