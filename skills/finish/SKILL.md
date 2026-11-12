@@ -19,7 +19,8 @@ description, composing the completion comment, gating the release on the review 
   source branch, then remove the worktree.
 - `pr` — open a pull request for the current branch, from **any** branch. In a worktree the base is the recorded source
   branch and the worktree stays; otherwise the base is the repo's GitHub default branch and no worktree is touched.
-  Labels: `with label X` / `label X, Y`. The issue moves to Ready For Release once the PR is open.
+  Labels: `with label X` / `label X, Y`. The issue moves to Ready For Release (Done on a team with no such state) once
+  the PR is open.
 - `auto` — autonomous mode (case-insensitive, position-agnostic): every prompt below resolves to its conservative default
   — abort rather than override, proceed-without rather than create; each prompt site states its default. The token and
   its `/full auto` pass-through: `skills/full/SKILL.md` § Auto mode. The `/auto` invocation is the commit/push grant:
@@ -314,6 +315,13 @@ ship exists (a commit, an open PR, or a landed merge, by `ACTION`):
   merge and nothing to open a PR for, so Step 9 is skipped. Under `merge` the worktree still needs removing: Step 9
   runs `finish-merge.sh` (its `NO-CODE:` line) and then the same `--done` transition.
 
+**A team with no Ready For Release state has no release batch to wait in**, so the same script, at the same point in
+every mode, moves the issue straight to **Done** (MAR-147, 2026-11-12, was left In Progress when this was an error).
+Its stdout says where the issue landed — `<ISSUE-ID> -> <state>`, plus a `NOTE:` naming the team when it fell through
+to Done — and that state is what the closing tag and any later comment name wherever a line below says
+`Ready For Release`. Nothing else changes: no `--done`, and no Step 7 empty commit for the transition's sake, since the
+commit-subject refusal guards only a move into a release state.
+
 "Proceed" below means: standard flow → run the script; `merge` / `pr` → go to Step 9 without touching Linear state.
 Discriminate on `ACTION`, not `SOURCE_BRANCH` — a non-worktree `pr` has an empty `SOURCE_BRANCH` and still reaches
 Step 9.
@@ -338,13 +346,15 @@ Step 9.
   `BLOCKED-ON-REVIEW: <ISSUE-ID> — no /quality-review artifact; unattended runs never ship unreviewed. Run /quality-review then /finish manually.`
   The failing tag is `/auto`'s signal to count a failure and surface the issue to a human.
 
-**State-update failure (standard flow only).** `mark-ready-for-release.sh` exits 1 when the team has no state matching
-`/^ready[ _-]?for[ _-]?(release|deploy|ship)$/i` (an exact match — never `Ready For Review`, never a bare `Ready`; rename
-such a state to `Ready For Release` to use it) or when the transition did not verify on read-back after its raw-mutation
-fallback. Surface its stderr and end on `BLOCKED-ON-REVIEW: <ISSUE-ID> — mark-ready-for-release.sh failed: <reason>.
-State NOT changed; this issue remains In Progress.`, with `<reason>` distilled to one line (the first informative line of
-a multi-line error) so the agents-list parser reads the tag. Do not continue to Step 9. An unassign or epic-walk warning
-on exit 0 is not a failure: the transition landed; note the warning and proceed.
+**State-update failure (standard flow only).** `mark-ready-for-release.sh` exits 1 when the team's states could not be
+read (or it has no `Done`), or when the transition did not verify on read-back after its raw-mutation fallback. A team
+with no state matching `/^ready[ _-]?for[ _-]?(release|deploy|ship)$/i` is not a failure — the issue lands in Done, as
+above; the match is exact, so `Ready For Review` or a bare `Ready` does not count, and a team that does batch releases
+under such a name renames the state to `Ready For Release`. On exit 1, surface its stderr and end on
+`BLOCKED-ON-REVIEW: <ISSUE-ID> — mark-ready-for-release.sh failed: <reason>. State NOT changed; this issue remains In
+Progress.`, with `<reason>` distilled to one line (the first informative line of a multi-line error) so the agents-list
+parser reads the tag. Do not continue to Step 9. An unassign or epic-walk warning on exit 0 is not a failure: the
+transition landed; note the warning and proceed.
 
 **Exit 2, `REFUSED:`, is not a state-update failure.** No commit subject names the issue, so Step 7's classification
 was skipped. Apply the shape it should have taken — the *Landed under another issue's commit* empty commit, or `--done`
@@ -481,6 +491,7 @@ of the message that carries it, with no fence around it and nothing after it —
 that line (of each message, not of the turn, so `/auto` Step 4's later output does not defeat it). Each closing
 message's leading sentence is standalone-only; under `/auto` omit it and continue with `/auto` Step 4 after the tag.
 `re-run` at the Step 8 gate has no tag — it dispatches and resumes — and a failed state update never emits `RELEASED:`.
+On a team with no Ready For Release state, every `Ready For Release` in the lines below reads `Done` (Step 8).
 
 | Tag | Emitted at | Line |
 | --- | --- | --- |

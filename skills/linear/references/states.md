@@ -74,9 +74,11 @@ relevance with `issues get <ID>` on the surviving hits, never from the row alone
 ## Gotcha 23 — `statuses list` reads through the Statuses cache; pass `--no-cache`
 
 A workflow state added minutes ago is invisible to a cached read, and the error blames the team:
-`mark-ready-for-release.sh` exits 1 with `ERROR: no Ready-For-Release state found for team '<KEY>'. Set it manually.`
-while the state exists and every matcher handles it (measured against a 24-minute-old cache: the cached path returned
-nothing, `--no-cache` returned `Ready for Release`, and `linear-cli cache clear` fixed the cached path). It self-heals
+`mark-ready-for-release.sh` exited 1 with `ERROR: no Ready-For-Release state found for team '<KEY>'. Set it manually.`
+while the state existed and every matcher handled it (measured against a 24-minute-old cache: the cached path returned
+nothing, `--no-cache` returned `Ready for Release`, and `linear-cli cache clear` fixed the cached path). That script now
+reads a team with no such state as one that releases nothing in batches and moves the issue straight to Done, so the
+same stale read there would skip the release state without any error. It self-heals
 on expiry, which makes it intermittent and easy to dismiss, and it appears only in the window right after someone
 changes a workflow state — exactly when these scripts matter most. Every state resolution in `~/.claude/scripts`
 passes `--no-cache` (`grep -rn 'statuses list' ~/.claude/scripts` is the roster); keep it that way in any new one, at

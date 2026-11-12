@@ -22,14 +22,17 @@
 # whole id, any case. Code carried inside another issue's commit, or an id written only in a
 # commit body, strands the issue the same way (BF-3087, BF-3204, 2026-11-10); /finish Step 7's
 # empty commit is the record that clears it. Run from the repository the ship landed in.
-# --done is not gated.
+# A transition that ends in Done (--done, or the team below) is not gated.
+#
+# A team with NO Ready For Release state releases nothing in batches, so there is no release for
+# a ship to wait in: its issue goes straight to Done, with a NOTE saying so (MAR-147, 2026-11-12).
+# The epic walk resolves a parent's team the same way.
 #
 # It resolves the EXACT state name from the team's workflow states (never trusting
 # `--state` to fuzzy-match), matching the same rule /finish Step 8 documents:
 # exact "ready for <release|deploy|ship>" with flexible separators, never a bare
-# "Ready" (too ambiguous) and never "Ready For Review". This avoids latching onto
-# the wrong state on a team that has "Ready For Review" but not "...Release".
-# Done is matched as the exact name "Done".
+# "Ready" (too ambiguous) and never "Ready For Review" — a team whose only such state is one
+# of those has no release state. Done is matched as the exact name "Done".
 #
 # After the transition it unassigns the issue (`issues assign` with no user):
 # once work is done and queued for release the assignee no longer owns it, and a
@@ -53,14 +56,19 @@
 # share, which is why the walk lives here and not in either caller; /auto-prep's CLOSE-SET
 # sweep (fleet-blockers.sh) catches epics that were already complete before this walk existed.
 #
+# Output: `<ISSUE-ID> -> <state>` on stdout once the transition verifies — the state the caller's
+# closing line names — then any NOTE lines.
+#
 # Exit codes:
 #   0 — issue VERIFIED in the resolved target state by read-back (unassign and the epic walk
 #       best-effort).
-#   1 — usage / no matching state / the state update failed or did not verify (read-back
-#       mismatch and the raw-mutation fallback also missed). The caller
+#   1 — usage / the team's states unreadable or without a Done / the state update failed or did
+#       not verify (read-back mismatch and the raw-mutation fallback also missed). The caller
 #       surfaces/notifies; the merge itself has already landed regardless.
 #   2 — refused, nothing moved: a Ready For Release transition run outside a git checkout, or
 #       for an issue no commit subject on any local ref names.
+#
+# Tested by mark-ready-for-release.test.sh (linear-cli shimmed on PATH).
 
 set -eo pipefail
 
@@ -87,19 +95,20 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 RELEASE_STATE_PATTERN='^ready[ _-]?for[ _-]?(release|deploy|ship)$'
 
-# resolve_target_state <team> <release|done> — prints the team's exact state name for the kind, or nothing.
+# resolve_target_state <team> <release|done> — prints the team's exact state name for the kind, or nothing. `release`
+# on a team with no release state resolves to its Done. Both names are read from ONE response: were Done a second
+# call, a failed first one would read as "no release state" and send a release-tracked team's issue straight to Done.
 resolve_target_state() {
-  local pattern="$RELEASE_STATE_PATTERN"
-  [ "$2" != done ] || pattern='^done$'
-  linear-cli statuses list -t "$1" --no-cache -o json 2>/dev/null \
-    | jq -r '.statuses[]?.name // empty' 2>/dev/null \
-    | grep -iE "$pattern" \
-    | head -1 || true
+  local names matched=""
+  names=$(linear-cli statuses list -t "$1" --no-cache -o json 2>/dev/null | jq -r '.statuses[]?.name // empty' 2>/dev/null || true)
+  [ "$2" = done ] || matched=$(grep -m1 -iE "$RELEASE_STATE_PATTERN" <<<"$names" || true)
+  [ -n "$matched" ] || matched=$(grep -m1 -iE '^done$' <<<"$names" || true)
+  printf '%s\n' "$matched"
 }
 
-# kind_label <release|done> — the state's name for diagnostics.
-kind_label() {
-  if [ "$1" = done ]; then echo "Done"; else echo "Ready-For-Release"; fi
+# is_release_state <state-name> — true when the name is a release state rather than Done.
+is_release_state() {
+  grep -qiE "$RELEASE_STATE_PATTERN" <<<"$1"
 }
 
 # transition <ISSUE-ID> <state-name> — the verified transition: wrapped update, --no-cache
@@ -138,10 +147,19 @@ transition() {
   return 0
 }
 
-# Top level only: the epic walk below calls transition() for parents, and an epic carries no commit.
+# Resolve the exact target-state name from the team's workflow states.
+team="${issue%%-*}"
+matched=$(resolve_target_state "$team" "$kind")
+if [ -z "$matched" ]; then
+  echo "ERROR: could not read a Done state for team '$team' (issue $issue) — states unreadable (auth? team key?) or the team has none. Set it manually." >&2
+  exit 1
+fi
+
+# Only a transition INTO a release state is gated: the sweep that needs the subject runs for no other. Top level
+# only: the epic walk below calls transition() for parents, and an epic carries no commit.
 # Subjects are captured, never piped: under pipefail, grep -q leaving on its first match kills git
 # with SIGPIPE once the history outgrows a pipe buffer, and every legitimate ship is then refused.
-if [ "$kind" = release ]; then
+if is_release_state "$matched"; then
   if ! subjects=$(git log --all --format=%s 2>/dev/null); then
     echo "REFUSED: $issue — $(pwd) is not a git checkout; run from the repository the ship landed in." >&2
     exit 2
@@ -154,15 +172,11 @@ if [ "$kind" = release ]; then
   fi
 fi
 
-# Resolve the exact target-state name from the team's workflow states.
-team="${issue%%-*}"
-matched=$(resolve_target_state "$team" "$kind")
-if [ -z "$matched" ]; then
-  echo "ERROR: no $(kind_label "$kind") state found for team '$team' (issue $issue). Set it manually." >&2
-  exit 1
-fi
-
 transition "$issue" "$matched" || exit 1
+echo "$issue -> $matched"
+if [ "$kind" = release ] && ! is_release_state "$matched"; then
+  echo "NOTE: team '$team' has no Ready-For-Release state — $issue went straight to '$matched' (no release batch to wait in)"
+fi
 
 # Unassign — best-effort. `issues assign <id>` with no user clears the assignee.
 if ! linear-cli issues assign "$issue" >/dev/null 2>&1; then
@@ -215,7 +229,7 @@ while [ "$hops" -lt 10 ]; do
   parent_team="${parent%%-*}"
   parent_state=$(resolve_target_state "$parent_team" "$parent_kind")
   if [ -z "$parent_state" ]; then
-    echo "WARN: epic $parent is complete (every child terminal) but team '$parent_team' has no $(kind_label "$parent_kind") state — close it manually." >&2
+    echo "WARN: epic $parent is complete (every child terminal) but team '$parent_team' has no readable Done state — close it manually." >&2
     break
   fi
   if ! transition "$parent" "$parent_state"; then

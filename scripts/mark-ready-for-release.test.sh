@@ -8,7 +8,9 @@
 # issue itself to Done; the epic's target following its children — Done when every child is
 # settled, Ready for Release while one still waits for its release; and the commit-subject guard —
 # a release transition refused when only a commit body or a longer id names the issue, or outside
-# a git checkout, with --done ungated and a subject longer than a pipe buffer not costing the match.
+# a git checkout, with --done ungated and a subject longer than a pipe buffer not costing the match; and a team
+# with no Ready for Release state — its issue and its epic go straight to Done, ungated, while a team whose
+# states cannot be read moves nothing.
 #
 # linear-cli is a PATH shim over a tiny file-backed store (state-<ID>, parent-<ID>, labels-<ID>,
 # children-<ID>) that records every `issues update` in order; HOME is an empty dir so the script's
@@ -71,6 +73,13 @@ set_issue EP-32 "In Progress" EP-30
 set_issue EP-40 Planned       -     epic "EP-41 EP-42"
 set_issue EP-41 "Ready for Release" EP-40
 set_issue EP-42 "In Progress" EP-40
+# SM is a team with no Ready for Release state; NS is a team whose states cannot be read.
+#   SM-1 (epic) ── SM-2 In Progress, SM-3 Done      SM-4 In Progress, named by no commit subject
+set_issue SM-1  Planned       -    epic "SM-2 SM-3"
+set_issue SM-2  "In Progress" SM-1
+set_issue SM-3  Done          SM-1
+set_issue SM-4  "In Progress" -
+set_issue NS-1  "In Progress" -
 
 cat > "$WORK/bin/linear-cli" <<EOF
 #!/bin/bash
@@ -79,6 +88,8 @@ LOG="$WORK/updates.log"
 stype() { case "\$1" in Done|"Ready for Release") echo completed ;; Canceled) echo canceled ;; Duplicate) echo duplicate ;; "In Progress"|"In Review") echo started ;; Backlog) echo backlog ;; *) echo unstarted ;; esac; }
 case "\${1:-} \${2:-}" in
   "statuses list")
+    [ "\${4:-}" = "NS" ] && exit 1
+    [ "\${4:-}" = "SM" ] && { echo '{"statuses":[{"name":"Backlog","id":"m1"},{"name":"Planned","id":"m2"},{"name":"In Progress","id":"m3"},{"name":"In Review","id":"m4"},{"name":"Done","id":"m6"},{"name":"Canceled","id":"m7"}]}'; exit 0; }
     echo '{"statuses":[{"name":"Backlog","id":"s1"},{"name":"Planned","id":"s2"},{"name":"In Progress","id":"s3"},{"name":"In Review","id":"s4"},{"name":"Ready for Release","id":"s5"},{"name":"Done","id":"s6"},{"name":"Canceled","id":"s7"}]}' ;;
   "issues update")
     id="\$3"; shift 3
@@ -120,7 +131,7 @@ G() { HOME="$WORK/home" git -C "$WORK/repo" -c user.name=t -c user.email=t@examp
 mkdir -p "$WORK/norepo"
 git init -q "$WORK/repo"
 head -c 200000 /dev/zero | tr '\0' x | G commit -q --allow-empty -F -
-for id in EP-2 EP-3 EP-6 EP-7 EP-13 EP-20 EP-600; do G commit -q --allow-empty -m "$id: x"; done
+for id in EP-2 EP-3 EP-6 EP-7 EP-13 EP-20 EP-600 NS-1; do G commit -q --allow-empty -m "$id: x"; done
 G commit -q --allow-empty -m "Merge ep-70"
 G commit -q --allow-empty -m "EP-51: x" -m "also fixes EP-50"
 
@@ -225,6 +236,28 @@ ck "subject-named id moved"             "Ready for Release" "$(state EP-51)"
 rc=$(run "$WORK/o15" EP-70)
 ck "lower-case subject exits 0"         "0" "$rc"
 ck "lower-case-named id moved"          "Ready for Release" "$(state EP-70)"
+ck_has "the landed state is printed"    "EP-70 -> Ready for Release" "$WORK/o15"
+ck_lacks "no fallback note on a team with the state" "has no Ready-For-Release state" "$WORK/o15"
+
+# ---- 16. a team with no Ready for Release state: straight to Done, and its epic with it ----
+rc=$(run "$WORK/o16" SM-2)
+ck "no-release-state team exits 0"      "0" "$rc"
+ck "issue went straight to Done"        "Done" "$(state SM-2)"
+ck "epic follows to Done"               "Done" "$(state SM-1)"
+ck_has "the landed state is Done"       "SM-2 -> Done" "$WORK/o16"
+ck_has "the fallback is announced"      "NOTE: team 'SM' has no Ready-For-Release state — SM-2 went straight to 'Done'" "$WORK/o16"
+
+# ---- 17. Done has no sweep to feed, so the commit-subject guard does not apply: no subject, no checkout ----
+rc=$(run_in "$WORK/norepo" "$WORK/o17" SM-4)
+ck "unnamed id outside a checkout exits 0" "0" "$rc"
+ck "unnamed id moved to Done"           "Done" "$(state SM-4)"
+
+# ---- 18. unreadable states are not "no release state": nothing moves ----
+rc=$(run "$WORK/o18" NS-1)
+ck "unreadable states exit 1"           "1" "$rc"
+ck "nothing moved on unreadable states" "In Progress" "$(state NS-1)"
+ck "no update issued on unreadable states" "" "$(cat "$WORK/updates.log")"
+ck_has "the cause is named"             "could not read a Done state for team 'NS'" "$WORK/o18.err"
 
 echo "$PASS passed / $FAIL failed"
 [ "$FAIL" -eq 0 ]

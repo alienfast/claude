@@ -53,7 +53,9 @@ automatically.
 whose subject omits the id, or a fix carried inside another issue's commit, is invisible to it (`/finish` Step 7's
 classification covers both). An issue that ships no repository change has nothing a deploy could find, so `/finish`
 moves it to Done itself (`mark-ready-for-release.sh --done`), and an epic whose children are all Done, Canceled or
-Duplicate goes to Done rather than Ready For Release.
+Duplicate goes to Done rather than Ready For Release. A team whose workflow has no Ready For Release state runs no
+batched release at all, so every ship there lands in Done — the same script falls through to it, in every `/finish`
+mode and in the merge-queue drainer, and prints the state it reached.
 
 **A certified Planned issue whose blockers are all resolved is the directive to work it now.** A human's hold lives in
 the structure the ranker reads — state, labels, `blocks` edges; prose in a comment ("run this after PR X merges",

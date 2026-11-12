@@ -205,10 +205,13 @@ process_marker() {
       rm -f "$marker"   # finish-merge.sh self-dequeued on success; belt-and-suspenders
       # Run from the repository: the transition refuses an issue no local commit subject names, and the drainer's
       # cwd is whatever started it. A NO-CODE: ship has no commit to name it and ends in Done, as /finish Step 9
-      # ends it. The script's stderr reaches the drain log, since a refusal's own lines are the remedy.
-      local mrr=("$issue") landed="Ready For Release"
+      # ends it. The script's stderr reaches the drain log, since a refusal's own lines are the remedy. Its
+      # `<ID> -> <state>` line names where the issue landed: Done on a team with no Ready For Release state.
+      local mrr=("$issue") landed="Ready For Release" mrr_out mrr_line
       [ -z "$no_code_note" ] || { mrr=(--done "$issue"); landed="Done"; }
-      if ( cd "$repo_root" && "$HOME/.claude/scripts/mark-ready-for-release.sh" "${mrr[@]}" ) >/dev/null; then
+      if mrr_out=$( cd "$repo_root" && "$HOME/.claude/scripts/mark-ready-for-release.sh" "${mrr[@]}" ); then
+        mrr_line=$(grep -m1 "^$issue -> " <<<"$mrr_out" || true)
+        [ -z "$mrr_line" ] || landed="${mrr_line#"$issue -> "}"
         echo "DRAINED: $issue (marked $landed)$no_code_note$cleanup_note"
       else
         echo "DRAINED: $issue — WARNING: merged, but could not mark $landed; the reason is above$no_code_note$cleanup_note" >&2

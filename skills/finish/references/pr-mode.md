@@ -58,7 +58,8 @@ the refusal, so without this branch §5's transition never runs.
 
 Run `~/.claude/scripts/mark-ready-for-release.sh <ISSUE-ID>`: the open PR is the ship, and Ready For Release is the
 state of work waiting for its release — never `In Review`, which is a human-review request, not a ship's landing state.
-The PR merging later changes nothing in Linear.
+The PR merging later changes nothing in Linear. On a team with no Ready For Release state the script lands the issue in
+Done and prints `<ISSUE-ID> -> Done`; the tag's `issue Ready For Release` then reads `issue Done`.
 
 Then emit the `SHIPPED-PR` closing message from SKILL.md § Terminal tags, choosing the variant by `SOURCE_BRANCH`:
 
