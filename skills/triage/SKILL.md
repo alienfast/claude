@@ -96,8 +96,8 @@ issue it reads ([standards/issue-spec.md](../../standards/issue-spec.md) § A re
 convention is a decision); this flag is what makes it read them all. Write the decision into the project's rules first:
 the scan finds conflicts with what is written down and nothing else. Narrow a large pool with `--ids` for the issues on
 the surfaces the rule governs. (BF-452, 2026-11-11: certified on 2026-10-15 with a requirement that departed from the
-app's row action convention, which no rule file stated until after the revert; built unattended and reverted the same
-day.)
+app's row action convention, which no rule file prescribed until after the revert; built unattended and reverted the
+same day.)
 
 ## Step 4: Apply — dispositions from proposals, batched by verdict
 
