@@ -19,10 +19,15 @@
           "collisions": { "type": "array", "items": { "type": "string" } },
           "questions": { "type": "array", "items": { "type": "string" }, "description": "for ask-filer: at most three" },
           "open_question": { "type": "string", "description": "for hand-to-spec: the one product decision" },
+          "convention_conflicts": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "one per requirement a written project convention prescribes against, with no (decided:) marker: <requirement, quoted> | <rule file> § <heading> | <what the rule prescribes>. Empty when none; required so an unanswered question cannot read as no conflict"
+          },
           "escalate": { "type": "boolean" },
           "report": { "type": "string", "description": "full per-issue markdown write-up" }
         },
-        "required": ["id", "verdict", "disposition", "evidence", "subjects", "escalate", "report"]
+        "required": ["id", "verdict", "disposition", "evidence", "subjects", "convention_conflicts", "escalate", "report"]
       }
     }
   },

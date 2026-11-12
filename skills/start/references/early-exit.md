@@ -1,8 +1,9 @@
 # Step 8.5: the CANCELED and ABANDONED exits
 
 Read from `/start` Step 8.5 when one of its triggers fires, and for ABANDONED's return-to-availability mechanics from
-Step 5's auto-mode baseline failure and Step 6 item 4's auto-mode boundary stop. These are the only two places `/start`
-changes the issue state; both bypass Steps 9 and 10 and end on a tagged final line
+Step 5's auto-mode baseline failure and Step 6's auto-mode boundary (item 4) and convention-conflict (item 5) stops.
+The two exits are the only places `/start` changes the issue state; both bypass Steps 9 and 10 and end on a tagged
+final line
 ([standards/lifecycle-tags.md](../../../standards/lifecycle-tags.md)). Use them as written rather than improvising an
 exit — they are documented contracts other sessions and the user can scan. A session's own judgment that the issue
 should wait — a timing note in a comment, an open PR or unmerged branch editing the same files — is neither exit's

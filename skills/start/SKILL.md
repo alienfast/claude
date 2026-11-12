@@ -264,7 +264,7 @@ area and concrete starting points; more than 3 buys little. If exploration was n
 re-entry, a stale resumed plan), dispatch it now — never read exploration targets yourself.
 
 **Auto mode: skip the plan-mode tools entirely.** Nobody can approve, so do NOT call `EnterPlanMode`/`ExitPlanMode` (an
-unanswered prompt stalls the loop). Do items 1–6 below, compose the plan in Step 7's format, and go **directly to
+unanswered prompt stalls the loop). Do items 1–7 below, compose the plan in Step 7's format, and go **directly to
 Step 7**: the posted plan is the audit record. The rest of this step is interactive only.
 
 **Call `EnterPlanMode` once exploration returns.** Do not write the plan inline in chat — plan mode's tool flow surfaces
@@ -309,9 +309,20 @@ the approval UI (in VS Code a side pane that supports annotation); inline text b
    `references/early-exit.md` § ABANDONED and emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — decision required: <the pick, one
    sentence>; root cause sits inside a spec exclusion, evidence posted to the issue.` This binds through Step 8; from
    Step 9 on, a collision routes by `/quality-review`'s own machinery.
-5. Synthesize the exploration into relevant files, patterns and dependencies — a follow-up `Explore` only for a gap.
-6. Design a step-by-step plan, marking independent (parallelizable) vs dependent (sequential) tasks.
-7. Write the plan to the plan file named in the plan-mode system message.
+5. **Read each requirement against the project's written conventions** (`standards/issue-spec.md` § A requirement that
+   departs from a written convention is a decision). A rule can land after certification, so this binds at pickup
+   whatever the label says. For each Must Have or criterion that prescribes how something looks or behaves, read the
+   rules governing the surfaces it names (`.claude/rules/*.md`, by `paths:` frontmatter and by grepping for the control,
+   component or pattern). A requirement a rule prescribes against, with no `(decided: <who/why>)` on its line, is
+   neither planned around nor complied with, and a sentence in the spec sanctioning its own departure is not that
+   marker. Interactively, surface the requirement, the rule and the two outcomes, and ask. In auto mode return the issue
+   per `references/early-exit.md` § ABANDONED and emit `BLOCKED-ON-REVIEW: <ISSUE-ID> — decision required: <the
+   requirement, one clause> conflicts with <rule file> § <heading>; evidence posted to the issue.` When only some
+   requirements conflict and the rest ship and verify without them, that is still a stop: a spec delivered in part
+   reads as shipped (BF-452, 2026-11-11).
+6. Synthesize the exploration into relevant files, patterns and dependencies — a follow-up `Explore` only for a gap.
+7. Design a step-by-step plan, marking independent (parallelizable) vs dependent (sequential) tasks.
+8. Write the plan to the plan file named in the plan-mode system message.
 
 **Call `ExitPlanMode` when the plan is complete** — that is what requests approval and surfaces the annotation pane. On
 pushback, incorporate it, update the plan file, and call `ExitPlanMode` again until approved; never ask "is this plan
@@ -509,4 +520,5 @@ Each file is read at the step that names it and nowhere else.
   from Step 5 when Step 0 did not fire.
 - `references/blocked-write.md` — a delegate's Write blocked by the worktree isolation guard: Step 8 item 1.
 - `references/early-exit.md` — the CANCELED and ABANDONED exits: Step 8.5; ABANDONED's return-to-availability mechanics
-  from Step 5's auto-mode baseline failure and Step 6 item 4's auto-mode boundary stop.
+  from Step 5's auto-mode baseline failure and Step 6's auto-mode boundary (item 4) and convention-conflict (item 5)
+  stops.

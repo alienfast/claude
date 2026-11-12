@@ -89,6 +89,16 @@ or a current `applied/` one skips the issue; `--force` re-scans; `--max-groups 1
 refused call stops it with exit 3, and the in-session variant for targeted mode. `triage-scan.sh --summary` prints the
 counts by disposition and the non-keep lists with evidence; progress and cost go to `tmp/triage-scan.log`.
 
+**After a project convention changes direction, sweep the certified lane with `--include-unchanged --force`.** The
+script pass skips an issue whose own subjects have not moved, and a rule change moves none of them, so every spec the
+new direction puts in conflict reads `unchanged` and is never re-read. The scan asks the convention question of every
+issue it reads ([standards/issue-spec.md](../../standards/issue-spec.md) § A requirement that departs from a written
+convention is a decision); this flag is what makes it read them all. Write the decision into the project's rules first:
+the scan finds conflicts with what is written down and nothing else. Narrow a large pool with `--ids` for the issues on
+the surfaces the rule governs. (BF-452, 2026-11-11: certified on 2026-10-15 with a requirement that departed from the
+app's row action convention, which no rule file stated until after the revert; built unattended and reverted the same
+day.)
+
 ## Step 4: Apply — dispositions from proposals, batched by verdict
 
 Start from `triage-scan.sh --summary`. **Keeps and hand-to-spec listings need no approval** — their only write is the
@@ -127,7 +137,10 @@ let the next scan re-read the issue.
   pick gates it — the helper refuses a slot with no routing label; pass its leading `--allow-unrouted` only when this
   run's Certify pass is what will certify the child.
 - **Certify** — its own pass, after the other batches: each candidate needs a drafted spec and per-issue approval of the
-  **delta** (what the draft says that the filed text did not), which is the signoff `/spec` requires. On approval:
+  **delta** (what the draft says that the filed text did not), which is the signoff `/spec` requires. A draft never
+  sanctions its own departure from a written project convention: a requirement a rule prescribes against is put to the
+  user as its own question in the dialog, and is certified only with their answer recorded on the line as
+  `(decided: <who/why>)`. On approval:
   description via `linear-post.sh`; `~/.claude/scripts/linear-add-label.sh <ID> specified` (exit 2 is *unconfirmed*, not
   failed — gotcha #17); `human` when the work is console or production operations; `simple` when the risk-low semantics
   hold and no `security`/`human`/`epic` label is present; then Step 5's edges and a certification comment. **State is
@@ -142,7 +155,12 @@ let the next scan re-read the issue.
   **purely factual correction** — a pointer to an issue now in the Duplicate state, a checkbox the code proves
   satisfied, a clause a shipped sibling made false — may be applied here when the user approves the exact delta in the
   dialog, the same bar as Certify; anything needing judgment stays `/spec`'s. Defect gone entirely → Cancel or
-  Ship-close, whatever the label.
+  Ship-close, whatever the label. **A convention conflict** (the proposal's `convention_conflicts` is non-empty: a
+  requirement a written project rule prescribes against, with no `(decided:)` marker) →
+  `linear-remove-label.sh <ID> specified`, then `linear-add-label.sh <ID> 'needs decision'`, with a comment quoting the
+  requirement, naming the rule file and heading, and stating the two outcomes: the rule stands and the requirement is
+  dropped or reworked, or the request earns an exception a person records on the line and in the rule. Never resolve
+  it here in either direction; the same conflict on an uncertified issue arrives as hand-to-spec with that question.
 - **Epic** — stays open with open children even when its own brief shipped (the house auto-closes it when every child
   is terminal); a stale brief is a regroom note.
 

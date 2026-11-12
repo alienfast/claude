@@ -14,7 +14,7 @@
 #
 # Usage: triage-scan.sh [--out DIR] [--stage planned|backlog|triage|all] [--lane certified|uncertified|both]
 #                       [--ids ID,ID,...] [--group-size N] [--concurrency N] [--max-groups N]
-#                       [--model-light NAME] [--model-full NAME] [--force] [--summary]
+#                       [--model-light NAME] [--model-full NAME] [--force] [--include-unchanged] [--summary]
 #   --out DIR         where triage-cheap.ndjson lives and proposals go (default: tmp)
 #   --stage/--lane    scope; default all stages, both lanes, in the house order (Planned, Backlog, Triage;
 #                     certified lane first within a stage)
@@ -26,15 +26,17 @@
 #                     disposition other than keep, are re-run on --model-full
 #   --model-full      model for uncertified-lane groups and escalations (default opus)
 #   --force           re-scan issues that already have a proposal
+#   --include-unchanged  also scan `unchanged` rows: the sweep after a project convention changes direction. A rule change
+#                     touches none of an issue's subject files, so the issues it puts in conflict all read `unchanged`.
 #   --summary         print the proposal counts and per-disposition lists, then exit
 #
 # Resumable: an issue with a pending proposal is skipped (unless --force), and so is one with an applied proposal the
-# pool file predates; `unchanged` and `claimed` rows are never scanned. Re-run after a crash, or after an apply session,
-# and it continues. Cost and duration per group go to DIR/triage-scan.log.
+# pool file predates; `claimed` rows are never scanned, and `unchanged` rows only under --include-unchanged. Re-run after
+# a crash, or after an apply session, and it continues. Cost and duration per group go to DIR/triage-scan.log.
 set -o pipefail
 export PATH="$HOME/.cargo/bin:$PATH"
 HERE=${0:A:h}
-OUT="tmp"; STAGE="all"; LANE="both"; IDS=""; GROUP=5; CONC=6; MAXG=0; LIGHT="sonnet"; FULL="opus"; FORCE=0; SUMMARY=0
+OUT="tmp"; STAGE="all"; LANE="both"; IDS=""; GROUP=5; CONC=6; MAXG=0; LIGHT="sonnet"; FULL="opus"; FORCE=0; UNCHANGED=0; SUMMARY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --out) OUT="$2"; shift 2 ;;
@@ -47,6 +49,7 @@ while [ $# -gt 0 ]; do
     --model-light) LIGHT="$2"; shift 2 ;;
     --model-full) FULL="$2"; shift 2 ;;
     --force) FORCE=1; shift ;;
+    --include-unchanged) UNCHANGED=1; shift ;;
     --summary) SUMMARY=1; shift ;;
     *) echo "unknown argument: $1" >&2; exit 1 ;;
   esac
@@ -70,7 +73,7 @@ fi
 stage_rank() { case "$1" in Planned|Todo) echo 0 ;; Backlog) echo 1 ;; Triage) echo 2 ;; *) echo 3 ;; esac; }
 class_rank() { case "$1" in 'shipped?') echo 0 ;; drifted) echo 1 ;; touched) echo 2 ;; no-subjects) echo 3 ;; never-revalidated) echo 4 ;; *) echo 9 ;; esac; }
 sel=$(mktemp)
-jq -c 'select(.claimed|not) | select(.class != "unchanged")' "$CHEAP" | while IFS= read -r row; do
+jq -c --argjson unchanged "$UNCHANGED" 'select(.claimed|not) | select($unchanged == 1 or .class != "unchanged")' "$CHEAP" | while IFS= read -r row; do
   id=$(printf '%s' "$row" | jq -r '.id'); st=$(printf '%s' "$row" | jq -r '.stage'); ln=$(printf '%s' "$row" | jq -r '.lane'); cl=$(printf '%s' "$row" | jq -r '.class')
   if [ -n "$IDS" ]; then case ",$IDS," in *",$id,"*) ;; *) continue ;; esac; fi
   case "$STAGE" in all) ;; planned) [ "$st" = "Planned" ] || [ "$st" = "Todo" ] || continue ;; backlog) [ "$st" = "Backlog" ] || continue ;; triage) [ "$st" = "Triage" ] || continue ;; esac

@@ -16,9 +16,11 @@ residual a prefix allow-list cannot exclude.
 The prompt asks the same questions the deep pass asks in session: re-locate every subject by symbol, verdict against
 HEAD with the code fact, criteria still binding for a certified issue, the shipped discriminator (a comment-only commit
 is not shipped; an implementation that shipped under the issue's own id with the state never moved is `ship-close`),
-the business-language translation by mechanism, epics by their children, and one search per distinctive title token for
-duplicates and collisions. Each record carries the sha the agent measured, curated `subjects` (3 to 8 paths the next
-script pass reads), the one-line `evidence` a dialog shows, and the full `report`.
+the business-language translation by mechanism, epics by their children, one search per distinctive title token for
+duplicates and collisions, and each requirement read against the project's written conventions (`convention_conflicts`,
+which turns a certified keep into a regroom and an uncertified issue into a hand-to-spec). Each record carries the sha
+the agent measured, curated `subjects` (3 to 8 paths the next script pass reads), the one-line `evidence` a dialog
+shows, and the full `report`.
 
 ## Tiers
 
@@ -32,8 +34,9 @@ about 100 seconds and a few dollars; a five-issue group amortizes the fixed per-
 An issue with a pending proposal is skipped (`--force` re-scans), and so is one under `applied/` whose pool row's
 `marker_sha` differs from that proposal's `sha` — the pool file predates the apply. A matching sha means the cheap pass
 saw the marker and still flagged the issue, so it is re-scanned: `applied/` is never cleared, and skipping on presence
-alone would silently block every later run's re-scans. `unchanged` and `claimed` rows are never scanned; a failed group
-leaves no proposals, so the next invocation picks its issues up. `--max-groups 1 --ids A,B` is the trial run.
+alone would silently block every later run's re-scans. `claimed` rows are never scanned, and `unchanged` rows only under
+`--include-unchanged` (the sweep after a convention changes direction, SKILL.md Step 3); a failed group leaves no
+proposals, so the next invocation picks its issues up. `--max-groups 1 --ids A,B` is the trial run.
 
 Progress and per-group cost go to `tmp/triage-scan.log`, with group ids prefixed by the run's start time so two lanes'
 rows do not collide; `triage-scan.sh --summary` prints the counts by disposition and the non-keep lists with evidence.

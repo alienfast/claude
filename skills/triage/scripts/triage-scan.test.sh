@@ -75,6 +75,17 @@ ck "--add-dir is passed" '--add-dir' "$ARGV"
 ckeq "--add-dir names the out dir as an absolute path" "$(cd "$OUT" && pwd -P)" "$(grep -A1 -Fx -- '--add-dir' "$ARGV" | tail -n 1)"
 ckeq "the proposal the stub returned was written" yes "$([ -s "$OUT/triage-proposals/TT-1.json" ] && echo yes || echo no)"
 
+echo "== an unchanged row is scanned only under --include-unchanged =="
+OUT2="$ROOT/out2"; mkdir -p "$OUT2"; ARGV2="$ROOT/claude2.argv"
+printf '%s\n' '{"id":"TT-1","title":"t","stage":"Backlog","lane":"certified","class":"unchanged","claimed":false,"subjects":["app/x.rb"],"labels":["specified"],"created":"2026-10-01T00:00:00Z","creator":"t"}' > "$OUT2/triage-cheap.ndjson"
+echo "# TT-1 digest" > "$OUT2/triage-digest-TT-1.md"
+out=$(cd "$R" && HOME="$FAKEHOME" TRIAGE_TEST_ARGV="$ARGV2" zsh "$SCRIPT" --out "$OUT2" --max-groups 1 2>&1); rc=$?
+ckeq "without the flag the run exits clean" 0 "$rc"
+ckeq "without the flag no agent is launched for an unchanged row" no "$([ -f "$ARGV2" ] && echo yes || echo no)"
+out=$(cd "$R" && HOME="$FAKEHOME" TRIAGE_TEST_ARGV="$ARGV2" zsh "$SCRIPT" --out "$OUT2" --max-groups 1 --include-unchanged 2>&1); rc=$?
+ckeq "with the flag the run exits clean" 0 "$rc"
+ckeq "with the flag the unchanged row gets a proposal" yes "$([ -s "$OUT2/triage-proposals/TT-1.json" ] && echo yes || echo no)"
+
 echo
 echo "triage-scan: $pass passed, $fail failed"
 [ "$fail" = 0 ]
