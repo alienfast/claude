@@ -484,7 +484,9 @@ else
   for id in $all_shipped; do
     if printf '%s\n' "$recent_subjects" | grep -q "^$id:"; then
       printf -- '- %s — merged on `%s` ✓\n' "$id" "$src_branch"
-    elif (cd "$main_checkout" && "$SCRIPT_DIR/merge-queue.sh" list 2>/dev/null) | grep -q "^$id "; then
+    # No -q: the listing prints a row at a time, so a grep that exits on this issue's row leaves merge-queue.sh to die
+    # of SIGPIPE on the next one, and pipefail reads a queued merge as "not queued".
+    elif (cd "$main_checkout" && "$SCRIPT_DIR/merge-queue.sh" list 2>/dev/null) | grep "^$id " >/dev/null; then
       printf -- '- %s — **deferred**: sitting in the merge queue\n' "$id"
     else
       printf -- '- %s — ⚠️ recorded shipped but no commit found on `%s` and not queued — investigate\n' "$id" "$src_branch"

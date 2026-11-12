@@ -96,7 +96,8 @@ ship whose merge never landed — it never dispatches beside one.
 - A list never resumes a drain and a drain never takes an issue a running sequence holds; two merge-mode runners on
   one launch branch are refused in either order.
 - `/fleet-status` does not row these sessions (their ledgers are `mode: single`); `/fleet-retro` measures them when
-  named with `--sessions`.
+  named with `--sessions`, and with `--no-record`: a one-at-a-time run's row would enter the fleet history that sizing
+  and forecasts read as parallel fleets.
 
 ## Error Handling
 

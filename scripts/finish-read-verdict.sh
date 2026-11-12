@@ -39,6 +39,8 @@
 #   0 = success (even when VERDICT=none-found, VERDICT=malformed, or
 #       SUB_ISSUES_ERROR is populated — these are non-fatal warnings)
 #   2 = missing ISSUE-ID argument or not in a git repo
+#
+# Tested by finish-read-verdict.test.sh, which covers the staleness gate only.
 
 set -eo pipefail
 
@@ -209,7 +211,9 @@ if [ -n "$verdict_file" ]; then
     # staleness. Any path outside .claude/ — or an empty file list, which proves nothing — keeps the
     # gate armed.
     window_paths=$(git log --since="@$vmtime" --name-only --format='' HEAD 2>/dev/null | sed '/^$/d' | sort -u || true)
-    if [ -n "$window_paths" ] && ! printf '%s\n' "$window_paths" | grep -qv '^\.claude/'; then
+    # No -q: on a list larger than the pipe buffer grep would exit at the first outside path while printf is still
+    # writing, printf would die of SIGPIPE, and pipefail plus the `!` would read the largest windows as .claude/-only.
+    if [ -n "$window_paths" ] && ! printf '%s\n' "$window_paths" | grep -v '^\.claude/' >/dev/null; then
       echo "NOTE: commits since the verdict touch only .claude/ ($(printf '%s\n' "$window_paths" | paste -sd' ' -)) — workflow config, not treated as staleness." >&2
     else
       stale=1

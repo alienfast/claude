@@ -34,6 +34,21 @@ it and 3.2 has it. Two shapes hit it:
 Inside `$(…)` or a pipeline the crash kills only that subshell: the caller continues with an empty value and a non-zero
 `$?`, so the quieter failure is the common one.
 
+## `producer | grep -q` under `pipefail` fails on a match
+
+`grep -q` exits at its first match. A producer still writing then dies of SIGPIPE (exit 141), and under
+`set -o pipefail` the pipeline fails although grep matched: an `if` takes its else branch, a `||` fires, a `!` inverts.
+Two producer shapes reach it:
+
+- **One that writes more than once**: `git log`, which flushes per commit, and any script or loop that does work between
+  rows. A match on anything but the last write fails.
+- **A single write larger than the pipe buffer** (64 KB on macOS): `printf '%s\n' "$list"` over a long list with an
+  early match.
+
+A `printf` of a short value is safe. Where the input can be either shape, drop `-q` and discard the output instead,
+`grep … >/dev/null`, so grep reads to the end. The failure hides from tests: it appears only on the larger inputs, which
+a small fixture never is, so the regression arm needs a producer of the real shape.
+
 ## A script resolves its repo from its own path
 
 A script that sets `SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"` acts on the checkout it lives in,

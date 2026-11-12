@@ -60,7 +60,7 @@ echo '.claude/' >> "$REPO/.git/info/exclude"
 BIN="$WORK/bin"; mkdir -p "$BIN"
 cat > "$BIN/claude" <<STUB_CLAUDE
 #!/usr/bin/env bash
-if [ "\${1:-}" = "agents" ]; then cat "$WORK/agents.json" 2>/dev/null || echo '[]'; exit 0; fi
+if [ "\${1:-}" = "agents" ]; then [ -f "$WORK/agents-hook" ] && bash "$WORK/agents-hook"; cat "$WORK/agents.json" 2>/dev/null || echo '[]'; exit 0; fi
 if [ "\${1:-}" = "plugin" ]; then cat "$WORK/plugins.json" 2>/dev/null || echo '[{"id":"loop-boundary@alienfast-claude","enabled":true}]'; exit 0; fi
 echo "\$@" >> "$WORK/dispatches"
 n=\$(( \$(cat "$WORK/seq" 2>/dev/null || echo 0) + 1 )); echo "\$n" > "$WORK/seq"
@@ -180,7 +180,7 @@ setup_remote() {
 }
 reset() {
   rm -f "$WORK/dispatches" "$WORK/forks" "$WORK/seq" "$WORK/prseq" "$WORK/gh-calls" "$WORK/gh-create-fail" \
-        "$WORK"/outcome-* "$WORK"/hook-* "$WORK"/issue-* "$WORK"/pr-*
+        "$WORK"/outcome-* "$WORK"/hook-* "$WORK"/issue-* "$WORK"/pr-* "$WORK/agents-hook" "$WORK/agents-reads"
   echo '[]' > "$WORK/agents.json"
   rm -rf "$REPO/tmp" "$REPO/.claude"; mkdir -p "$REPO/tmp"
   git -C "$REPO" worktree prune
@@ -475,6 +475,21 @@ ck "unnamed commit exits 0"     "0" "$(run BF-1 BF-2)"
 ck_has "warns about the commit" "WARN: none of the commits seq/bf-1 gained mention BF-1" "$WORK/out"
 ck "unnamed commit still continues" "2" "$(dispatches)"
 
+# ---- a landing of many commits whose NEWEST names the issue raises no WARN: the check must read git log to its end.
+# A grep that exits on the first match leaves git log to die of SIGPIPE on its next subject, which pipefail turns into
+# a failed check on a ship that is named (2026-11-11: three of a drain's four multi-commit landings warned). ----
+reset
+cat > "$WORK/hook-BF-1" <<MANY_COMMITS
+tip=\$(git -C "$REPO" rev-parse refs/heads/seq/bf-1)
+for i in \$(seq 1 40); do tip=\$(git -C "$REPO" -c user.email=t@t -c user.name=t commit-tree -p "\$tip" -m "filler \$i" "\$tip^{tree}"); done
+tip=\$(git -C "$REPO" -c user.email=t@t -c user.name=t commit-tree -p "\$tip" -m "Merge BF-1" "\$tip^{tree}")
+git -C "$REPO" update-ref refs/heads/seq/bf-1 "\$tip"
+MANY_COMMITS
+ck "many-commit landing exits 0"    "0" "$(run BF-1 BF-2)"
+ck_has "every commit is counted"    "BF-1 landed on seq/bf-1 at" "$WORK/out"
+ck_has "the count is the whole range" "(42 commit(s))" "$WORK/out"
+ck_lacks "a named landing raises no WARN" "WARN: none of the commits" "$WORK/out"
+
 # ---- a session that never ends times out; nothing is killed; keys cleared ----
 reset
 echo hang > "$WORK/outcome-BF-1"
@@ -499,6 +514,41 @@ for st in failed stopped; do
   ck "$st unset the keys"               "" "$(fork_keys)"
 done
 export FLEET_SEQUENCE_ISSUE_TIMEOUT=5
+
+# ---- an ended listing before the session was ever listed live is not its end. 2026-11-11: a drain's session read ended
+# in the second it was dispatched, the runner recorded `unknown` and started the next solo issue beside it. born_ended
+# plays that session: done on the registry's first read, working on the second, its ledger and commit on the third, in
+# rows carrying the keys a `--bg` row had on 2026-11-12. ----
+born_ended() { # born_ended <target branch> — arms the registry hook for the first dispatch (BF-1, session ab000001)
+  cat > "$WORK/agents-hook" <<BORN_ENDED
+jq -e 'any(.[]; .id == "ab000001")' "$WORK/agents.json" >/dev/null 2>&1 || exit 0
+n=\$(( \$(cat "$WORK/agents-reads" 2>/dev/null || echo 0) + 1 )); echo "\$n" > "$WORK/agents-reads"
+state=working; status=busy; if [ "\$n" -eq 1 ]; then state=done; status=idle; fi
+tmp=\$(jq --arg st "\$state" --arg s "\$status" 'map(if .id == "ab000001" then {cwd: "$REPO", id, kind: "background", name: "fleet-sequence BF-1", pid: 4242, sessionId: "ab000001-0000-4000-8000-000000000000", startedAt: 1794509181225, state: \$st, status: \$s} else . end)' "$WORK/agents.json")
+printf '%s\n' "\$tmp" > "$WORK/agents.json"
+if [ "\$n" -eq 3 ]; then
+  jq -n '{mode:"single",status:"active",shipped:["BF-1"],canceled:[],skipped:[],failed:[]}' > "$REPO/tmp/auto-state-ab000001.json"
+  tip=\$(git -C "$REPO" rev-parse "refs/heads/$1")
+  new=\$(git -C "$REPO" -c user.email=t@t -c user.name=t commit-tree -p "\$tip" -m "BF-1: work" "\$tip^{tree}")
+  git -C "$REPO" update-ref "refs/heads/$1" "\$new"
+fi
+BORN_ENDED
+}
+reset
+echo listed-done > "$WORK/outcome-BF-1"
+born_ended seq/bf-1
+ck "born-ended exits 0"                  "0" "$(FLEET_SEQUENCE_GRACE=3 run BF-1 BF-2)"
+ck "born-ended was waited on, then the next ran" "/auto BF-1,/auto BF-2" "$(grep -o -- '/auto [A-Z]*-[0-9]*' "$WORK/dispatches" | paste -sd, -)"
+ck "the next forked from its landed work" "BF-2 head=main src=seq/bf-1 ahead=1" "$(sed -n 2p "$WORK/forks")"
+ck_has "the early listing is logged"     "BF-1: the registry lists session ab000001 as done before it was ever listed live" "$WORK/out"
+ck_has "and its return to work"          "BF-1: session ab000001 is working again" "$WORK/out"
+ck_lacks "born-ended is not read as an end" "BF-1 ended" "$WORK/out"
+# An ended listing that outlasts the grace is still an end, and still names the state.
+reset
+echo listed-failed > "$WORK/outcome-BF-1"
+ck "ended past the grace exits 1"        "1" "$(FLEET_SEQUENCE_GRACE=2 run BF-1 BF-2)"
+ck_has "ended past the grace names the state" "BF-1 ended without a ledger — the registry lists session ab000001 as failed" "$WORK/out"
+ck "ended past the grace dispatched once" "1" "$(dispatches)"
 
 # ---- a session listed idle with no ledger (2026-09-21: an API 500 ended its turn) is waited on, logged once, and named on timeout ----
 reset
@@ -877,6 +927,18 @@ ck "the next issue still ran"      "/auto BF-1,/auto BF-2,/auto BF-3" "$(auto_or
 ck "outcomes recorded"             "shipped failed shipped" "$(smarker '[.queue[] as $id | .issues[$id].outcome] | join(" ")')"
 ck "marker done after a skip"      "done" "$(smarker .status)"
 ck_has "the reason names the miss" "not shipped: BF-2 (failed)" "$WORK/out"
+# A session that ends without a ledger leaves the registry's last word in the log, the one trace of why the drain moved on.
+dreset BF-1 BF-2 BF-3
+echo listed-failed > "$WORK/outcome-BF-2"
+ck "a ledger-less end does not stop the drain" "0" "$(run solo)"
+ck_has "the skip names the registry state" "BF-2 did not ship (the registry last listed session ab000002 as failed)" "$WORK/out"
+# The 2026-11-11 drain: BF-1's session reads ended at dispatch. The drain waits, and BF-2 forks from BF-1's landing.
+dreset BF-1 BF-2
+echo listed-done > "$WORK/outcome-BF-1"
+born_ended main
+ck "a born-ended drain session exits 0" "0" "$(FLEET_SEQUENCE_GRACE=3 run solo)"
+ck "both shipped, in order"        "shipped shipped" "$(smarker '[.queue[] as $id | .issues[$id].outcome] | join(" ")')"
+ck "the second forked from the first's landing" "true" "$(smarker '.issues["BF-2"].tip_before == .issues["BF-1"].landed_sha')"
 
 # ---- two failures in a row are a pattern: the drain stops and no fleet follows ----
 dreset BF-1 BF-2 BF-3 BF-4

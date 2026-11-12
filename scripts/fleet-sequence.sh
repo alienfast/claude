@@ -85,7 +85,8 @@
 #
 # Sequencing: dispatch, wait for the session's ledger tmp/auto-state-<id>.json to record the issue (the
 # registry `claude agents --json --all` is the fallback for a session that ends without one: listed done,
-# failed or stopped, or dropped from the listing), then
+# failed or stopped, or dropped from the listing — either one only after the session was seen live or the
+# grace has passed), then
 # require the target branch's tip to have moved — a `shipped` whose merge the queue deferred is waited on
 # up to FLEET_SEQUENCE_MERGE_TIMEOUT. Any other outcome stops the sequence with the remaining issues
 # untouched — /auto already commented and labeled the issue. Re-running the same list resumes: issues the
@@ -341,7 +342,13 @@ wait_session() { # <short id> <timeout seconds> <ISSUE-ID> <since epoch> → 0 w
       # done, failed or stopped, or absent after it was seen (or after the grace when it was never seen). Any other
       # listed state — working, idle, blocked — is a session still there to wait on.
       case "$st" in
-        done|failed|stopped) last_state="$st"; return 0 ;;
+        # An ended listing is held to the same bar as an absent one: the session was seen live, or the grace has
+        # passed. 2026-11-11: BF-3016's session read ended in the second it was dispatched, the drain recorded
+        # `unknown` and dispatched the next solo issue, and the two ran side by side for hours.
+        done|failed|stopped)
+          if [ "$seen" -eq 1 ] || [ "$waited" -ge "$grace" ]; then last_state="$st"; return 0; fi
+          [ "$st" = "$last_state" ] || logln "$id: the registry lists session $sid as $st before it was ever listed live — not taken as its end until ${grace}s have passed"
+          last_state="$st" ;;
         "") if [ "$seen" -eq 1 ] || [ "$waited" -ge "$grace" ]; then return 0; fi ;;
         *) seen=1; [ "$st" = "$last_state" ] || note_state "$id" "$sid" "$st"; last_state="$st" ;;
       esac
@@ -359,8 +366,7 @@ wait_session_end() { # <short id> <timeout seconds> → 0 when the registry list
     if [ "$rc" -eq 2 ]; then [ "$waited" -ge "$grace" ] && return 0
     else
       case "$st" in
-        done|failed|stopped) return 0 ;;
-        "") if [ "$seen" -eq 1 ] || [ "$waited" -ge "$grace" ]; then return 0; fi ;;
+        done|failed|stopped|"") if [ "$seen" -eq 1 ] || [ "$waited" -ge "$grace" ]; then return 0; fi ;;
         *) seen=1 ;;
       esac
     fi
@@ -421,7 +427,9 @@ record_landing() { # <progress label> <ISSUE-ID> <tip before dispatch> — after
   update_marker --arg id "$id" --arg a "$after" '.issues[$id].landed_sha = $a'
   count=$(git rev-list --count "$before..$after" 2>/dev/null || echo "?")
   logln "$tag $id landed on $target at ${after:0:12} ($count commit(s))"
-  git log --format=%s "$before..$after" 2>/dev/null | grep -qi -- "$id" \
+  # No -q: grep would exit on the first match, git log (which flushes per commit) would die of SIGPIPE writing the
+  # next subject, and pipefail would fail the pipeline — a WARN on a landing whose newest commit names the issue.
+  git log --format=%s "$before..$after" 2>/dev/null | grep -i -- "$id" >/dev/null \
     || logln "WARN: none of the commits $target gained mention $id — check the session's log before trusting the ship"
   [ "$mode" = "merge" ] || push_branch "$target"
 }
@@ -658,7 +666,7 @@ cmd_run() { # [<slug>] — the launch passes it to the detached runner; a foregr
   cd "$main_checkout"
   trap on_exit_run EXIT
   local base mode target ids_csv id sid out outcome remaining now started before dirty current tag reason
-  local drain=0 team="" deadline="" fails=0 ended="" fresh rerun="re-run the same list"
+  local drain=0 team="" deadline="" fails=0 ended="" fresh listed rerun="re-run the same list"
   local queue=()
   base=$(jq -r '.base' "$marker"); mode=$(jq -r '.mode' "$marker"); target=$(target_branch)
   while IFS= read -r id; do queue+=("$id"); done < <(jq -r '.queue[]' "$marker")
@@ -765,7 +773,9 @@ cmd_run() { # [<slug>] — the launch passes it to the detached runner; a foregr
         # Solo issues do not build on each other, so a session that ended without shipping costs the drain that one
         # issue. `skipped` and `canceled` are /auto declining the issue, not failing at it, and leave the count alone.
         case "$outcome" in failed|unknown) fails=$((fails+1)) ;; esac
-        logln "$tag $id did not ship — claude logs $sid; /auto's Linear comment names the cause. Moving on"
+        listed=""
+        if [ "$outcome" = "unknown" ] && [ -n "$last_state" ]; then listed=" (the registry last listed session $sid as $last_state)"; fi
+        logln "$tag $id did not ship$listed — claude logs $sid; /auto's Linear comment names the cause. Moving on"
         continue
       fi
       remaining=$(printf '%s\n' "${queue[@]:$i}" | paste -sd, - | sed 's/,/, /g')

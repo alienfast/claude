@@ -118,7 +118,9 @@ Per issue, in list order:
    `/auto`'s last act, so an outcome means the work is over whatever the registry says; a session can sit busy for hours
    after its ledger said shipped). The registry is the fallback for a session that ends without a ledger (`done`,
    `failed`, `stopped` — the row `claude stop` leaves keeps its state and loses `status`/`pid`, read as `stopped` — or
-   absent after `FLEET_SEQUENCE_GRACE`, 120s). A session listed **`idle`** with no ledger ended its turn without
+   absent), and neither reading ends the wait until the session has been listed live or `FLEET_SEQUENCE_GRACE` (120s)
+   has passed: a session can read ended in the second it is dispatched, and the next issue would start beside it. A
+   session listed **`idle`** with no ledger ended its turn without
    finishing; `hooks/auto-rewake.sh` retries it every ~15 minutes for up to six hours, and the runner logs the
    transitions and keeps waiting. A ledger keyed by something other than the session id counts only if written since the
    dispatch. Polls every `FLEET_SEQUENCE_POLL` (30s), bounded by `FLEET_SEQUENCE_ISSUE_TIMEOUT` (12h — big and `solo` work
@@ -178,7 +180,9 @@ its own log (the only record of why the earlier run stopped); no launch touches 
   sets it because it knows each issue before the dispatch, an epic fleet's sessions set it themselves because only the
   picking session knows the issue ([`/fleet-launch`](../fleet-launch/SKILL.md) § Epic-scoped launch).
 - `/fleet-status` does not row these sessions: their ledgers are `mode: single`, which it labels rather than counts.
-  `/fleet-sequence status` is the readout; `/fleet-retro` measures them when named with `--sessions`.
+  `/fleet-sequence status` is the readout; `/fleet-retro` measures them when named with `--sessions`, and with
+  `--no-record`: a one-at-a-time run's row would enter the fleet history that sizing and forecasts read as parallel
+  fleets.
 - `/auto`'s targeted mode ignores the fleet deadline by construction, so an earlier fleet's marker does not gate a
   sequence.
 
