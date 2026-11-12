@@ -19,8 +19,9 @@ echo ""
 
 # Get PR info if it exists
 if command -v gh &> /dev/null; then
-  # Fetch PR with state information for validation
-  pr_info=$(gh pr view --json number,title,state,mergedAt,headRefName,baseRefName 2>/dev/null)
+  # Fetch PR with state information for validation. `|| true`: gh exits 1 on a branch with no PR, and under errexit a
+  # bare assignment ended the script here, before the "No PR found" branch below could run.
+  pr_info=$(gh pr view --json number,title,state,mergedAt,headRefName,baseRefName 2>/dev/null || true)
 
   if [[ -n "$pr_info" ]]; then
     pr_state=$(echo "$pr_info" | jq -r '.state // "UNKNOWN"')
