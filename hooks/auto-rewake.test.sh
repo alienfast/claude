@@ -253,6 +253,18 @@ run_hook() { # run_hook <event-json> <grace> <api-delay> → RC, stderr in $TMP/
   printf '%s' "$1" | AUTO_REWAKE_GRACE="$2" AUTO_REWAKE_API_DELAY="$3" AUTO_REWAKE_SETTLE=1 AUTO_REWAKE_LOG_DIR="$LOGS" "$HOOK" > /dev/null 2> "$TMP/err"
   RC=$?
 }
+# A case that feeds a waiting instance starts from the instance's own log line, never from a fixed sleep. The line is
+# written after the launch-time decision, as the wait begins, so the feed cannot land before the decision, and a record
+# stamped 3s past that moment clears the hook's 2s slack whatever the machine's load. What is left to chance is the feed
+# landing inside the wait, and it has the whole wait for one grep and a write. The fixed sleeps this replaces lost both
+# sides of that window at a load average near 258 (2026-11-11), the hook taking seconds to reach its decision.
+once_waiting() { # once_waiting <log pattern> → 0 once the hook has logged it, 1 after a minute without it
+  local i=0
+  until grep -q -- "$1" "$LOGS/auto-rewake.log" 2>/dev/null; do
+    i=$((i + 1)); [[ "$i" -le 600 ]] || return 1
+    sleep 0.1
+  done
+}
 
 # 21a. The wakeup never fires and nothing else happens: exit 2, and the model is told what to do.
 N=$(date +%s); f=$(tfile); { rec_loop $((N-3000)); rec_fire $((N-20)); rec_loop $((N-20)); rec_wake $((N-1)) 1; rec_result "$N"; rec_text "$N"; rec_stopsum "$N"; } > "$f"
@@ -265,11 +277,11 @@ ck "21a ... the counter moved"                                 1 "$(get_state s-
 ck "21a ... the log records the rewake"                        1 "$(grep -c 's-e2e-lo Stop rewake kind=stop' "$LOGS/auto-rewake.log")"
 
 # 21b. The wakeup fires (late) while the hook waits: a turn followed, so stand down in silence.
-#      The appended records carry whole-second stamps and must clear the hook's 2s slack with room to spare: appended
-#      at +3 they sat on that boundary, and this case flaked whenever the hook's start crossed a second.
-N=$(date +%s); f=$(tfile); { rec_loop $((N-3000)); rec_fire $((N-20)); rec_loop $((N-20)); rec_wake $((N-1)) 7; rec_result "$N"; rec_text "$N"; rec_stopsum "$N"; } > "$f"
-( sleep 5; M=$(date +%s); { rec_fire "$M"; rec_loop "$M"; } >> "$f" ) &
-run_hook "$(ev Stop "$f" s-e2e-live)" 2 900
+#      Due 2s out under a 5s grace: an idle machine waits out due + grace, and a loaded one, past due before the hook
+#      has decided, still waits the whole grace.
+N=$(date +%s); f=$(tfile); { rec_loop $((N-3000)); rec_fire $((N-20)); rec_loop $((N-20)); rec_wake $((N-1)) 3; rec_result "$N"; rec_text "$N"; rec_stopsum "$N"; } > "$f"
+( once_waiting 's-e2e-li Stop wait kind=stop' && { M=$(( $(date +%s) + 3 )); { rec_fire "$M"; rec_loop "$M"; } >> "$f"; } ) &
+run_hook "$(ev Stop "$f" s-e2e-live)" 5 900
 wait
 ck "21b a turn followed during the wait -> exit 0"             0 "$RC"
 ck "21b ... nothing is said to the model"                      0 "$(wc -c < "$TMP/err" | tr -d ' ')"
@@ -330,8 +342,8 @@ ck "24 ... and no log line"                                    0 "$(grep -c 's-o
 #     in the new file. The instance still holds the old path. It must read that as "cannot measure", never as "silent".
 P="$TMP/projects"; WT="$P/-work--claude-worktrees-bfp-137"; MAIN="$P/-work"; mkdir -p "$WT" "$MAIN"
 N=$(date +%s); f="$WT/s-e2e-rekey.jsonl"; { rec_loop $((N-3000)); rec_fire $((N-20)); rec_loop $((N-20)); rec_wake $((N-1)) 1; rec_result "$N"; rec_text "$N"; rec_stopsum "$N"; } > "$f"
-( sleep 1; mv "$f" "$MAIN/"; M=$(date +%s); { rec_work "$M"; rec_text "$M"; } >> "$MAIN/s-e2e-rekey.jsonl" ) &
-run_hook "$(ev Stop "$f" s-e2e-rekey '{"stop_hook_active":false}')" 3 900
+( once_waiting 's-e2e-re Stop wait kind=stop' && { mv "$f" "$MAIN/"; M=$(date +%s); { rec_work "$M"; rec_text "$M"; } >> "$MAIN/s-e2e-rekey.jsonl"; } ) &
+run_hook "$(ev Stop "$f" s-e2e-rekey '{"stop_hook_active":false}')" 5 900
 wait
 ck "27 transcript re-keyed during the wait -> exit 0"          0 "$RC"
 ck "27 ... nothing is said to the model"                       0 "$(wc -c < "$TMP/err" | tr -d ' ')"
@@ -353,8 +365,8 @@ ck "28 ... and the counter holds both"                         2 "$(get_state s-
 
 # 29. The cap is re-tested at the wake: an instance that launched under it does not rewake once others have reached it.
 N=$(date +%s); f=$(tfile); { rec_loop $((N-3000)); rec_fire $((N-20)); rec_loop $((N-20)); rec_wake $((N-1)) 1; rec_result "$N"; rec_text "$N"; rec_stopsum "$N"; } > "$f"
-( sleep 1; set_state s-e2e-capwake '{"stop_rewakes":12}' ) &
-run_hook "$(ev Stop "$f" s-e2e-capwake '{"stop_hook_active":true}')" 3 900
+( once_waiting 's-e2e-ca Stop wait kind=stop' && set_state s-e2e-capwake '{"stop_rewakes":12}' ) &
+run_hook "$(ev Stop "$f" s-e2e-capwake '{"stop_hook_active":true}')" 5 900
 wait
 ck "29 cap reached while the instance slept -> exit 0"         0 "$RC"
 ck "29 ... nothing is said to the model"                       0 "$(wc -c < "$TMP/err" | tr -d ' ')"
@@ -363,10 +375,8 @@ ck "29 ... the log names the cap"                              1 "$(grep -c 's-e
 # 30. THE ZERO WAIT (2026-09-20): a 60s arm inside a turn that ran sixteen minutes more. A wakeup cannot fire while the
 #     turn that armed it still runs, so it fired as that turn ended — 33ms after the stop summary — and the hook, launched
 #     past due + grace with nothing to wait out, looked before that record could exist and rewoke the session as well.
-#     The fire lands at +5s under a 7s grace: its whole-second stamp has to clear the hook's 2s slack, and 21b flaked
-#     about one run in four while its record sat on that boundary.
 N=$(date +%s); f=$(tfile); { rec_loop $((N-3000)); rec_fire $((N-1020)); rec_loop $((N-1020)); rec_wake $((N-1000)) 60; rec_result $((N-999)); rec_work $((N-5)); rec_text "$N"; rec_stopsum "$N"; } > "$f"
-( sleep 5; M=$(date +%s); { rec_fire "$M"; rec_loop "$M"; } >> "$f" ) &
+( once_waiting 's-e2e-ze Stop wait kind=stop' && { M=$(( $(date +%s) + 3 )); { rec_fire "$M"; rec_loop "$M"; } >> "$f"; } ) &
 run_hook "$(ev Stop "$f" s-e2e-zero '{"stop_hook_active":false}')" 7 900
 wait
 ck "30 overdue wakeup fires as its turn ends -> exit 0"        0 "$RC"
@@ -390,7 +400,7 @@ ck "40 ... the log records the retire"                         1 "$(grep -c 's-e
 # A turn that follows during the delay — an operator attached, a notification landed — stands the retire down.
 f=$(tfile); { rec_loop $((B-300)); rec_wake_stop "$B"; rec_text $((B+2)); rec_stopsum $((B+3)); } > "$f"
 : > "$TMP/claude-calls"
-( sleep 4; rec_cont "$(date +%s)" >> "$f" ) &
+( once_waiting 's-e2e-re Stop retire wait_s=7' && rec_cont "$(( $(date +%s) + 3 ))" >> "$f" ) &
 PATH="$SB:$PATH" AUTO_REWAKE_RETIRE_DELAY=7 run_hook "$(ev Stop "$f" s-e2e-retire "{\"cwd\":\"$R\"}")" 1 900
 wait
 ck "41 a turn during the delay -> exit 0, nothing stopped"     0 "$RC"

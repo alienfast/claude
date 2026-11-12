@@ -145,12 +145,15 @@ ck "non-repo exits 0"         "0" "$(CLAUDE_FRESHNESS_DIR="$WORK/plain" "$SCRIPT
 ck_has "non-repo NOTE"        "is not a git checkout) — launching" "$WORK/out"
 
 # ---- a hanging fetch: the watchdog kills it at its limit and the launch proceeds ----
-# A git stub hangs on `fetch` and defers everything else to the real git.
+# A git stub hangs on `fetch` and defers everything else to the real git. The bound is the hang itself, not an allowance
+# on top of the 1s limit: a run that returns before the fetch would have was cut short by the watchdog, however slowly a
+# loaded machine counts the limit out (2026-11-11, load average near 258: a fixed 4s allowance failed).
 REAL_GIT=$(command -v git)
+HANG=113
 mkdir -p "$WORK/hangbin"
 cat > "$WORK/hangbin/git" <<STUB_GIT
 #!/usr/bin/env bash
-for a in "\$@"; do [ "\$a" = "fetch" ] && exec sleep 23; done
+for a in "\$@"; do [ "\$a" = "fetch" ] && exec sleep $HANG; done
 exec "$REAL_GIT" "\$@"
 STUB_GIT
 chmod +x "$WORK/hangbin/git"
@@ -161,8 +164,8 @@ rc=$(PATH="$WORK/hangbin:$PATH" CLAUDE_FRESHNESS_DIR="$LOCAL" CLAUDE_FRESHNESS_T
 elapsed=$(( SECONDS - start ))
 ck "hanging fetch exits 0"    "0" "$rc"
 ck_has "hanging fetch NOTE"   "NOTE: could not check ~/.claude freshness (fetch failed) — launching" "$WORK/out"
-ck "hanging fetch ended by the watchdog" "yes" "$([ "$elapsed" -le 4 ] && echo yes || echo "no (${elapsed}s)")"
-ck "hung fetch killed"        "0" "$(pgrep -fx "sleep 23" 2>/dev/null | wc -l | tr -d ' ')"
+ck "hanging fetch ended by the watchdog" "yes" "$([ "$elapsed" -lt "$HANG" ] && echo yes || echo "no (${elapsed}s)")"
+ck "hung fetch killed"        "0" "$(pgrep -fx "sleep $HANG" 2>/dev/null | wc -l | tr -d ' ')"
 
 echo
 echo "$PASS passed / $FAIL failed"

@@ -485,6 +485,9 @@ echo "== 21. two fleets side by side: one section each, each scoped to its own s
 # each table rows only its own member and hides the other's ledger; the checkout-wide sections print once. The epic's
 # token renders it alone; an archived marker of a third fleet is never a section.
 rm -f "$REPO"/tmp/auto-state-*.json "$REPO"/tmp/fleet-deadline*.json
+# Taken here, not inherited: the deadline check below holds for 30s past NOW, and every section since the last capture
+# had been spending that on a loaded machine (2026-11-11).
+NOW=$(date +%s)
 jq -n --argjson le "$((NOW - 500))" --argjson de "$((NOW + 7230))" '{count: 1, launch_epoch: $le, deadline_epoch: $de, deadline: "t", fleet_sessions: ["sess-t"]}' > "$TM"
 jq -n --argjson le "$((NOW - 400))" '{count: 1, launch_epoch: $le, fleet_sessions: ["sess-e"], scope: "XX-100", members: ["XX-100","XX-2"], branch: "epic/xx-e", base: "main"}' > "$EM"
 jq -n --argjson le "$((NOW - 900))" '{count: 1, launch_epoch: $le, fleet_sessions: ["sess-old"], scope: "XX-7"}' > "$REPO/tmp/fleet-deadline-xx-7.1700000000.json"

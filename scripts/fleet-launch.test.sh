@@ -695,11 +695,14 @@ ck "settings clash exits 4"              "4" "$(run 1)"
 ck_has "settings clash names the pull"   "the ~/.claude pull will refuse (settings.json modified locally) — run /keeper first" "$WORK/out"
 ck "settings clash dispatched nothing"   "0" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
 
-# A fetch that hangs is killed at its limit and the launch proceeds; the stub hangs on `fetch` alone.
+# A fetch that hangs is killed at its limit and the launch proceeds; the stub hangs on `fetch` alone. The bound is the
+# hang itself, not an allowance on top of the 1s limit: a launch that returns before the fetch would have was not waiting
+# on it, however slowly a loaded machine counts the limit out (2026-11-11, load average near 258: a fixed 5s failed).
+HANG=127
 mkdir -p "$WORK/hangbin"
 cat > "$WORK/hangbin/git" <<STUB_GIT
 #!/usr/bin/env bash
-for a in "\$@"; do [ "\$a" = "fetch" ] && exec sleep 29; done
+for a in "\$@"; do [ "\$a" = "fetch" ] && exec sleep $HANG; done
 exec "$(command -v git)" "\$@"
 STUB_GIT
 chmod +x "$WORK/hangbin/git"
@@ -708,7 +711,7 @@ claude_upstream "hooks: unseen behind a hung fetch" hooks/auto-rewake.sh
 stale_setup
 start=$SECONDS
 ck "hung fetch launch exits 0"           "0" "$(PATH="$WORK/hangbin:$PATH" CLAUDE_FRESHNESS_TIMEOUT=1 run 1)"
-ck "hung fetch bounded by the watchdog"  "yes" "$([ $(( SECONDS - start )) -le 5 ] && echo yes || echo "no ($(( SECONDS - start ))s)")"
+ck "hung fetch bounded by the watchdog"  "yes" "$([ $(( SECONDS - start )) -lt "$HANG" ] && echo yes || echo "no ($(( SECONDS - start ))s)")"
 ck_has "hung fetch noted"                "NOTE: could not check ~/.claude freshness (fetch failed) — launching" "$WORK/out"
 ck "hung fetch dispatched"               "1" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
 
