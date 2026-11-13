@@ -89,7 +89,7 @@ Before dispositioning, search Linear for each candidate's short-id — the filin
   <the story: who was doing what when it failed, what they saw, what it cost them — N users / M events since <window start> — then the measured root cause, or the narrower claim actually confirmed (standards/issue-spec.md § The Problem is a story)>
 
   ## Evidence
-  Sentry: [<SHORT-ID>](<permalink>) — N users / M events since <window start>. <stack frame + file:line in this repo>
+  Sentry: [<SHORT-ID>](<permalink>) — N users / M events since <window start>. <stack frame + the file:line it maps to in this repo, located from the frame's context where the rule says lineNo can index transformed output>
 
   ## Desired Outcome
   <user-visible behavior once fixed>

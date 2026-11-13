@@ -130,7 +130,8 @@ discriminates at all is a property of the project's architecture, and the rule s
   `sentry api "issues/<numeric-id>/events/latest/"`.
 - Read the implicated code in this repo. Root-cause by measurement, under the project's planning rules where it has
   them — a claim about what the code does is measured, not reasoned; the stack frame is a starting point, not a
-  conclusion.
+  conclusion. Where the rule says a frame's `lineNo` can index a compiler's rewritten output, locate the line from the
+  frame's `context`, not from `lineNo`.
 - Read absence correctly: the rule says what the project's scrubbers strip from events (a missing email or a `user`
   reduced to an id is usually the scrubber, not a bug).
 - Correlate when needed through the project's investigation surfaces — the rule names them.
