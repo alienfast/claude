@@ -10,15 +10,17 @@ a fix. Linear drives the workflow (`/auto`, `/start`, `/finish` pick up from the
 tracks what needs no code. The skill is the judgment filter between Sentry's alert stream and the kanban the business
 watches — alert-rule auto-filing is deliberately not used.
 
-**Safety stance:** Sentry reads and **mutations** (resolve, archive, merge, linking a Linear issue) both run as ordinary
-skill work — nothing is held for approval, and the disposition table is a report, not a request. What makes that safe is
-reversibility: `resolve` has a first-class inverse (`unresolve`, alias `reopen`), `archive` (alias `ignore`) is reversed
-the same way, an `--until <cond>` archive un-archives itself on escalation, and an external-issue link is idempotent for
-the same Sentry/Linear pair and has a documented `DELETE`; the one non-idempotent case, a second Linear owner for the
-same Sentry issue, is refused by the link script (Step 7). `merge` is the one-way door — there is no `unmerge` — so
-choose the canonical issue deliberately and name the children in the report; a caution, not a gate. Linear filing is
-normal skill work, as are the Linear state moves and `related` edges Step 6 applies — a state move is one
-`issues update --state` away from undone, and an edge is `relations remove`.
+**Safety stance:** Sentry reads and **mutations** (resolve, unresolve, archive, merge, a hash unmerge, linking a Linear
+issue) both run as ordinary skill work — nothing is held for approval, and the disposition table is a report, not a
+request. What makes that safe is reversibility: `resolve` has a first-class inverse (`unresolve`, alias `reopen`),
+`archive` (alias `ignore`) is reversed the same way, an `--until <cond>` archive un-archives itself on escalation, and an
+external-issue link is idempotent for the same Sentry/Linear pair and has a documented `DELETE`; the one non-idempotent
+case, a second Linear owner for the same Sentry issue, is refused by the link script (Step 7). `merge` has no CLI
+inverse — the API's unmerge moves a hash's events into a *new* issue
+([triage.md § Mutation etiquette](./references/triage.md#mutation-etiquette)) — so choose the canonical issue
+deliberately and name the children in the report; a caution, not a gate. Linear filing is normal skill work, as are the
+Linear state moves and `related` edges Step 6 applies — a state move is one `issues update --state` away from undone,
+and an edge is `relations remove`.
 
 The harness gates what this prose cannot: in auto mode every `sentry issue resolve | archive | merge` and `sentry api`
 call is classified as an external write and refused unless a permission rule allows the command, and in default mode each
@@ -75,8 +77,8 @@ the safety net, run before ranking so the queue reflects reality:
 2. For any whose Sentry issue is still unresolved → queue `sentry issue resolve <short-id> --in <release>` (the release
    that shipped the fix; `@next` when not yet released) into the mutation batch.
 3. Report drift the other way too: a previously-filed Sentry issue that has **regressed** (new events from a release
-   carrying the fix; item 4 screens out false ones) reopens the Linear conversation. Comment on the Linear issue rather
-   than silently re-filing.
+   carrying the fix, on the path it changed; item 4 screens out the rest) reopens the Linear conversation. Comment on
+   the Linear issue rather than silently re-filing.
 4. **Catch the integration's regression bounces, which item 1 cannot see.** When a linked Sentry issue regresses,
    Linear's Sentry integration moves the Linear issue to Triage within seconds, which takes it out of item 1's states
    whether or not it is labelled. Pull by attachment instead: `linear-cli api query 'query { issues(first: 50, filter: {
@@ -90,7 +92,19 @@ the safety net, run before ranking so the queue reflects reality:
      necessarily the one it bounced from; restore that by hand when they differ.
    - **No release carries the fix yet:** the events are genuine. Leave both issues as they are and name the pair under
      *Needs work now*; a later run re-checks.
-   - **Carries the fix:** a real regression, handled by item 3.
+   - **Carries the fix:** before calling it a regression, read where the event came from — the in-app frames' source
+     `context` and the breadcrumbs before the capture — and which hash it joined under:
+     `sentry api "issues/<numeric-id>/hashes/"` lists each hash with its `latestEvent` and `mergedBySeer`. Sentry's
+     similarity grouping (Seer-backed, not the `explain`/`plan` this skill never runs) can merge a different stack into
+     an existing issue, so one issue can hold a path the fix never touched:
+     - **On the path the fix changed:** a real regression, handled by item 3.
+     - **On a path the fix left alone** (the fix's diff does not reach it): not that issue's regression. When its hash
+       is not the fixed path's (`mergedBySeer: true` is the usual tell), split it off, in this order: unmerge the hash
+       (triage.md § Mutation etiquette); check the new issue's status and `unresolve` it if it came out resolved — it
+       carries no Linear link; then re-resolve the source `--in <fix release>`, which moves the Linear issue out of
+       Triage (restore the state it bounced from by hand when they differ). Deep-dive the new issue as a finding (Steps
+       4–5). An unmerge moves whole hashes, so a path that shares the fixed path's hash stays put: leave both issues as
+       they are and name the pair under *Needs work now*.
 
 ### 3. Rank the queue
 
