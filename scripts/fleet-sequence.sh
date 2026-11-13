@@ -871,7 +871,7 @@ preflight_dirt() { # <the checkout's branch, "" when detached>
   return 0
 }
 
-preflight_tooling() { # <stale-ok: 0|1> — reads claude_args for an explicit --autocompact
+preflight_tooling() { # <stale-ok: 0|1> [<deadline epoch>] — reads claude_args for an explicit --autocompact
   # Once, here: every child session is dispatched later by the detached runner, whose log nobody reads at launch.
   local fresh_rc=0 explicit_cap=0 a
   "$here/claude-freshness.sh" || fresh_rc=$?
@@ -895,6 +895,8 @@ preflight_tooling() { # <stale-ok: 0|1> — reads claude_args for an explicit --
       exit 5
     fi
   fi
+
+  fleet_project_preflight "$main_checkout" "${2:-}"
 }
 
 have_flag() { # <flag> <args...>
@@ -1191,7 +1193,7 @@ cmd_drain() { # [list] [stale-ok] [<duration>] [then-fleet [<fleet-launch tokens
   fi
 
   claude_args=("${user_args[@]}")
-  preflight_tooling "$stale_ok"
+  preflight_tooling "$stale_ok" "$deadline_epoch"
   if [ "$fleet" = 1 ]; then
     case "$(lower "${fleet_args[0]:-}")" in
       stop) echo "ERROR: then-fleet takes fleet-launch.sh's launch tokens (count, duration, epic:<ID>, backlog, stale-ok) — 'stop' is not one" >&2; exit 1 ;;

@@ -276,5 +276,6 @@
   "theme": "dark",
   "switchModelsOnFlag": false,
   "agentPushNotifEnabled": true,
-  "skipAutoPermissionPrompt": true
+  "skipAutoPermissionPrompt": true,
+  "model": "opus"
 }

@@ -81,7 +81,10 @@ All four are in the `windows` block already emitted.
   per session against the fleet span and say what share it covers:
   `jq -r 'select([.windows[].kind] | index("five_hour")) | .measured_at' ~/.claude/local/rate-limits/<session>.jsonl | tail -1`.
   A lone `seven_day`-only line at a 5h block reset is a transient that has recurred through October with `five_hour` back
-  within minutes, so the account's shape is the persistence, not one line. What binds such an account is the weekly: size
+  within minutes, so the account's shape is the persistence, not one line. The reverse transient exists too: a weekly-only
+  account shows a `five_hour` window on a stray reading (2026-11-13: 4 of 695, all 1%, inside two minutes), so the analyzer
+  counts a `five_hour` reading only when most of the fleet's readings in that 5h block carry the window and names the
+  rest on the `Window readings` line as a transient. What binds such an account is the weekly: size
   nothing from the 5h gauges there. Its burn is measured once — the 2026-10-30 fleet's four sessions burned 62 weekly
   points over 112 session-hours and 35 ships in the account's weekly-only span (0.55 per session-hour, about 1.8 per
   ship), which is what `fleet-headroom.sh`'s weekly reserve of 3 rests on — so read the weekly meter's movement over the

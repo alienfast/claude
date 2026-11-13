@@ -16,9 +16,9 @@
 # (the 2026-10-30 fleet: 62 points over 112 session-hours on one such account; FLEET_WEEKLY_BURN overrides), the
 # room is the weekly points to the engine's threshold summed over the accounts with room (fleet-headroom.sh's
 # `weekly_room`), or on a single-account machine the active account's points to the gate's weekly reserve. What
-# bounds the count there is the machine and the backlog's lanes, which no script measures: the retro's Slowest
-# calls and the siblings' check durations are the evidence to lower it (under one twelve-hour load on 2026-10-31
-# sibling `pnpm check` medians tripled and 15% of runs hit the 600s Bash cap).
+# bounds the count there is the machine and the backlog's lanes, which this script does not read: the retro's
+# timeout-ceiling gauge (`ceil%` in its trend) and its Slowest calls are the evidence to lower it (under one twelve-hour
+# load on 2026-10-31 sibling `pnpm check` medians tripled and 15% of runs hit the 600s Bash cap).
 #
 # "Room" is fleet-headroom.sh's own predicate, read through its --json `cswap` verdict (an `ok` figure
 # under --stale old, the binding window — the higher of 5h and 7d, so the weekly alone on an account with no

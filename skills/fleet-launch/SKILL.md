@@ -6,11 +6,12 @@ description: Launch a fleet of parallel /loop /auto sessions as `claude agents` 
 # Fleet Launch
 
 The middle bookend of the fleet workflow: `/auto-prep` or `/epic-prep` (groom + recommend a count) → **`/fleet-launch`**
-(dispatch) → `/fleet-retro` (post-mortem). All logic lives in [scripts/fleet-launch.sh](../../scripts/fleet-launch.sh);
-this skill dispatches to it and narrates. Each session is a `claude --bg "/loop /auto"` background agent in
-`claude agents`. Dispatches are staggered on a new worktree under `.claude/worktrees/` whose identity sidecar names the
-dispatched session (the stamp `/auto`'s live-owner probe excludes from the next pick), so sessions never race for the same
-first issue and a sibling fleet's claim is never mistaken for this one's, capped at 180s per wait.
+(dispatch) → `/fleet-retro` (post-mortem). All logic lives in [scripts/fleet-launch.sh](../../scripts/fleet-launch.sh),
+except the project's own optional preflight (§ Behavior); this skill dispatches to it and narrates. Each session is a
+`claude --bg "/loop /auto"` background agent in `claude agents`. Dispatches are staggered on a new worktree under
+`.claude/worktrees/` whose identity sidecar names the dispatched session (the stamp `/auto`'s live-owner probe excludes
+from the next pick), so sessions never race for the same first issue and a sibling fleet's claim is never mistaken for
+this one's, capped at 180s per wait.
 
 **Every fleet is keyed by a slug** — the lowercased epic id of an epic-scoped launch, `team` for a bare one — and owns its
 two files under the project's `tmp/` ([lib/fleet-markers.sh](../../lib/fleet-markers.sh)): the marker
@@ -89,10 +90,15 @@ Run from the project the fleet should work on (a worktree cwd is fine):
 ~/.claude/scripts/fleet-launch.sh 5 10 hours
 ```
 
+After its last refusal the script runs the project's `.claude/fleet-preflight.sh` when that file exists and is executable, with
+`FLEET_DEADLINE_EPOCH` set to the launch's deadline (empty when it has none). Each line the project script prints becomes a
+`WARN:` line, a non-zero exit or a timeout is one `WARN:` of its own, and the launch always proceeds.
+
 Surface the script's output: the `Concurrency cap:` line with its reason, the `Concurrency:` line when other fleets or
 carried sessions are running, the deadline (if any), the `Kept un-retro'd fleet(s)` / `Expired retro'd fleet(s)` lines,
-each dispatch line, each claim-landed/timeout line, and the closing `claude agents` pointer. A claim-wait timeout is a
-WARN, not a failure — the session may be in preflight, resuming a dead worktree, or the pool may have drained mid-launch.
+each `WARN:` line the project's preflight printed (each names its own fix), each dispatch line, each claim-landed/timeout
+line, and the closing `claude agents` pointer. A claim-wait timeout is a WARN, not a failure — the session may be in
+preflight, resuming a dead worktree, or the pool may have drained mid-launch.
 
 ### Several fleets in one checkout
 
@@ -152,9 +158,10 @@ alone — and they resolve so:
   2026-10-30 fleet's measured burn, 62 weekly points over 112 session-hours on one such account) against the weekly
   points to cswap's threshold summed over the accounts with room; pass the duration and the script does the bound, and
   the launch prints the budget beside the weekly reading. What bounds the count on this machine is the machine and the
-  backlog's lanes, which no script measures: the operator has run 9, and the retro's Slowest calls and the siblings'
-  check durations are the evidence to lower it (under one twelve-hour load on 2026-10-31 sibling `pnpm check` medians
-  tripled and 15% of runs hit the 600s Bash cap). The Headroom verdict is dark there.
+  backlog's lanes, which the cap script does not read: the operator has run 12, and the retro's timeout-ceiling gauge
+  (`ceil%` in its trend, 15% at 12 sessions on 2026-11-12) with its Slowest calls is the evidence to lower it (under one
+  twelve-hour load on 2026-10-31 sibling `pnpm check` medians tripled and 15% of runs hit the 600s Bash cap). The
+  Headroom verdict is dark there.
 - **A rotating machine multiplies the cap by its accounts with room.** Every session burns on the one account the login
   names, so on a machine rotating through cswap (`scripts/cswap-setup.sh`) the engine moves the login at its threshold
   to an account with room, and that account's window gates next: the pool is the accounts with room, and the cap is

@@ -118,7 +118,7 @@ never quietly redefine an existing one.
 
 ### The gauges
 
-Seven gauges ride the same run and the retro reads all seven, not just the tables. Each is one line here; read
+Eight gauges ride the same run and the retro reads all eight, not just the tables. Each is one line here; read
 `references/gauges.md` for where each prints, how to read it, and what a move between fleets means.
 
 - **Context distribution** — share of billable prompt volume by context size at call time (the context gauge), with the
@@ -133,6 +133,8 @@ Seven gauges ride the same run and the retro reads all seven, not just the table
 - **Mid-run holds** — session-hours in `PLANNED-HOLD` / `BLOCKED-HOLD` (`held`, `hold%`), beside idle%, never folded
   into it.
 - **Tests per shipped issue** — the net test declarations each ship added: rspec examples, vitest tests, story exports.
+- **Timeout ceiling** — the share of long main-loop foreground Bash calls that ran to the tool's 600s timeout
+  (`ceiling`, `ceil%`): machine contention, read beside n.
 
 ### Windows and quota
 
@@ -164,6 +166,7 @@ full meaning and where to chase it. The flags and what each usually means:
 | classifier unavailable | the check failed — not a denial; the agent should retry the same call once, unchanged |
 | dangling tool calls | unanswered prompt or killed turn |
 | Linear RATELIMITED answers (`linear rl` > 0) | the account's per-user request window ran out, shared by every session, script and launchd job on the machine; the answer is a wait, never a re-rank |
+| API errors (`api err` > 0) | the API edge refused requests; one kind across most sessions in one window is the edge or the network, not a session fault — read whether each session paused and retried or dropped the step |
 | high blind-sleep % | agents waiting on background dispatch; correlate with the `bg/sync/ign` column |
 | shipped but no commit | the ledger is wrong, or the merge never landed — a code-free ship with a `NO-CODE:` witness is listed separately, never flagged |
 | shipped with no persisted verdict | `/quality-review` never persisted its Output block, or the issue shipped outside the review pipeline |
@@ -199,17 +202,21 @@ Independent of the transcripts, establish what the run really produced:
 - **Filed** — issues *created* during the window. This is the half a retro forgets. The census counts every filing in
   the team, not only the fleet's: teammates' filings, and the operator's own interactive ones during the run and after
   it, since the query has no upper bound. Agents file through `linear-cli` under the operator's personal login, so no
-  Linear field (`creator`, `botActor`, `integrationSourceType`) tells an agent filing from an interactive one. Drop
-  teammates' rows by `creator`; attribute each operator-login id to the session whose transcript (main, worktree or
-  `subagents/`) holds a timestamped record naming it seconds after its `createdAt` — the create call's own output
-  (`grep -lw -- <ID>` finds the files, then that record's `timestamp`). Never attribute by first mention alone: fleet
-  sessions name teammates' filings hours later while reading the pool (2026-11-10: three of five). Count only fleet
-  members' filings into R, and say how many rows the attribution excluded and why.
+  Linear field (`creator`, `botActor`, `integrationSourceType`) tells an agent filing from an interactive one. The
+  analyzer attributes the census once the export below is written: its **Filed (census)** line (`filings` in the JSON)
+  credits a row to the session whose create call's own result names it within two minutes of its `createdAt`, and lists
+  the rest as another creator's, as the operator's with no fleet create record, or as `named_only` — a fleet session
+  named the id inside the window with no create call behind it (a pool read, or a create wrapped in a script the session
+  wrote). Chase a `named_only` or unexpected excluded row by hand: `grep -lw -- <ID>` finds the transcripts, then read
+  the first record naming it as decoded text, never the raw line, where a result such as `EXIT=0\nBF-3248` hides the id
+  from a whole-word match. Never attribute by first mention alone: fleet sessions name teammates' filings hours later
+  while reading the pool (2026-11-10: three of five), and a sibling's pool read named one 74 seconds after another
+  session filed it (2026-11-13). Count only fleet members' filings into R, and say how many rows were excluded and why.
 
 ```bash
 # One command, two consumers: the census listing below, and tmp/fleet-linear-window.json, which
-# fleet-metrics.py's shipped-issue provenance join reads. Keep `creator` in the field list — the
-# join's by-creator split needs it.
+# fleet-metrics.py's shipped-issue provenance join and its filing attribution read. Keep `creator`
+# in the field list — the by-creator split and the excluded-row split need it.
 linear-cli api query 'query { issues(filter: { team: { key: { eq: "<KEY>" } }, createdAt: { gte: "<ISO>" } }, first: 100) { nodes { identifier title createdAt creator { name displayName } state { name } labels { nodes { name } } } } }' -o json \
   | tee tmp/fleet-linear-window.json \
   | jq -r '.data.issues.nodes | sort_by(.createdAt) | .[] | "\(.identifier) | \(.state.name) | [\(.labels.nodes|map(.name)|join(","))] | \(.title)"'
@@ -221,11 +228,12 @@ linear-cli api query 'query { issues(filter: { team: { key: { eq: "<KEY>" } }, n
 ```
 
 Re-run `fleet-metrics.py` after writing these — its Shipped-issue provenance section then classifies every ship
-(during-run / week-before / older) instead of reporting them unknown.
+(during-run / week-before / older) instead of reporting them unknown, and its Filed (census) line reads this fleet's
+census. Until then that line says `not measured`: an export older than the fleet's last record is the previous retro's.
 
 - **Net backlog delta** — drained vs. filed, stated as the reproduction ratio **R = issues filed / issues shipped** for
-  the window (the script's filed-per-shipped rate covers only review-pipeline filings; the census, attributed to the
-  fleet's sessions as the Filed bullet describes, is the full number).
+  the window (the script's filed-per-shipped rate covers only review-pipeline filings; the Filed (census) line's
+  census R, `census_filed_per_shipped` in the history row and `R` in the trend, is the full number).
   **The pool is the workable backlog only — `Planned`, `Backlog`, `Triage`, plus in-flight — and `Ready for Release`
   counts as done in every metric here.** Deployment cadence is a separate axis, and the rule holds whatever Linear type
   the state carries — a state-type census sweeps shipped-awaiting-deploy work into "open" and overstates the pool
@@ -348,7 +356,7 @@ Commit and push only on an explicit grant (`standards/git.md`) — running this 
   ledgers without `mode`, subagent token coverage, the `obs` witnesses, which verdicts count as this fleet's reviews.
   Read when the session count disagrees with the fleet's, or before quoting a subagent, `obs` or churn figure (Step 1,
   Step 3).
-- [references/gauges.md](references/gauges.md) — the seven gauges: where each prints, how to read it, what a move
+- [references/gauges.md](references/gauges.md) — the eight gauges: where each prints, how to read it, what a move
   between fleets means (Step 1).
 - [references/windows.md](references/windows.md) — the `windows` block's four numbers, reading a stall group, the
   `Window readings` line and its Headroom verdict, why a deliberate wind-down is not a stall (Step 1).

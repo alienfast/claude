@@ -1472,6 +1472,40 @@ echo "{\"deadline_epoch\": $((DL16H + 7200)), \"count\": 3, \"launch_epoch\": $(
 CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK16H" --hours 24 --json > "$J16H" 2>/dev/null
 ck "held: a future deadline admits no held session" "{} None" "$(q16h "str(d['pool_exhausted']['held_sessions']) + ' ' + str(d['pool_exhausted']['forfeited_session_hours'])")"
 
+# ---- 16c. a drained session working an issue that then parked was not idle on the pool ----
+# Measured 2026-11-13 (basefund, 12 sessions): one session landed its fourth ship 1.9h before the deadline, picked the next
+# issue five minutes later and worked it past the deadline to a `needs decision` park; the 1.9h from that landing to the
+# deadline printed as the fleet's whole idle tail. A hold tick dispatches no Agent, so a dispatch after the last landing is
+# work in flight and the tail starts there. Session D is that shape, E an attempt that ended an hour before the deadline,
+# F the control: its only dispatch came before its last landing, so its tail is the landing's.
+CK16C="$WORK/ck16c"; mkdir -p "$CK16C/tmp"
+git -C "$CK16C" init -q 2>/dev/null
+git -C "$CK16C" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "init"
+M16C="$(git -C "$CK16C" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
+T16C="$WORK/projects/$M16C"; mkdir -p "$T16C"
+echo "{\"deadline_epoch\": $DL16, \"deadline\": \"test\", \"count\": 3, \"launch_epoch\": $((DL16 - 43200))}" > "$CK16C/tmp/fleet-deadline-team.json"
+px16c() { # px16c <run> <issue> <landing offset> <dispatch offset> <last offset>  (seconds relative to the deadline)
+  echo "{\"status\":\"drained\",\"reason\":\"fleet deadline reached (test)\",\"mode\":\"loop\",\"shipped\":[\"$2\"],\"canceled\":[],\"skipped\":[],\"failed\":[]}" > "$CK16C/tmp/auto-state-$1.json"
+  local ship dispatch
+  ship="{\"type\":\"assistant\",\"timestamp\":\"$(at_epoch $((DL16 + $3)))\",\"message\":{\"role\":\"assistant\",\"id\":\"m_$1_ship\",\"model\":\"claude-opus-5\",\"usage\":{\"input_tokens\":10,\"output_tokens\":100},\"content\":[{\"type\":\"text\",\"text\":\"SHIPPED-MERGE: $2 done\"}]}}"
+  dispatch="{\"type\":\"assistant\",\"timestamp\":\"$(at_epoch $((DL16 + $4)))\",\"message\":{\"role\":\"assistant\",\"id\":\"m_$1_agent\",\"model\":\"claude-opus-5\",\"usage\":{\"input_tokens\":10,\"output_tokens\":100},\"content\":[{\"type\":\"tool_use\",\"id\":\"toolu_$1\",\"name\":\"Agent\",\"input\":{\"description\":\"Cycle-2 verification\",\"subagent_type\":\"quality-verifier\",\"prompt\":\"x\",\"run_in_background\":true}}]}}
+{\"type\":\"user\",\"timestamp\":\"$(at_epoch $((DL16 + $4 + 1)))\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"toolu_$1\",\"content\":\"Async agent launched successfully (agentId: a$1)\"}]}}"
+  { echo "{\"type\":\"user\",\"timestamp\":\"$(at_epoch $((DL16 - 36000)))\",\"message\":{\"role\":\"user\",\"content\":\"<command-name>/loop</command-name><command-args>/auto</command-args>\"}}"
+    if [ "$4" -lt "$3" ]; then printf '%s\n%s\n' "$dispatch" "$ship"; else printf '%s\n%s\n' "$ship" "$dispatch"; fi
+    echo "{\"type\":\"assistant\",\"timestamp\":\"$(at_epoch $((DL16 + $5)))\",\"message\":{\"role\":\"assistant\",\"id\":\"m_$1_end\",\"model\":\"claude-opus-5\",\"usage\":{\"input_tokens\":10,\"output_tokens\":100},\"content\":[{\"type\":\"text\",\"text\":\"NO-CANDIDATES: fleet deadline reached\"}]}}"
+  } > "$T16C/$1-0000.jsonl"
+  GIT_COMMITTER_DATE="$(at_epoch $((DL16 + $3)))" git -C "$CK16C" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "Merge $2"
+}
+px16c pxf00001 TT-122 -10800 -18000 0
+px16c pxe00001 TT-121 -14400 -3600 0
+px16c pxd00001 TT-120 -7200 4000 4700
+J16C="$WORK/out16c.json"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK16C" --hours 24 --json > "$J16C" 2>/dev/null
+q16c() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J16C"; }
+ck "worked tail: a dispatch after the last landing moves the tail" "{'pxd00001': 0.0, 'pxe00001': 1.0, 'pxf00001': 3.0}" "$(q16c "dict(sorted(d['pool_exhausted']['sessions'].items()))")"
+ck "worked tail: the fleet's idle tail drops the worked hours"      "4.0" "$(q16c "d['pool_exhausted']['idle_tail_session_hours']")"
+ck "worked tail: a session still working at the deadline leaves no exhausted pool" "0.0" "$(q16c "d['pool_exhausted']['hours_before_deadline']")"
+
 # ---- 17. early drain: one session drained while its siblings kept picking ----
 # Measured 2026-09-05: session 7f086212 wrote `drained` 10.4h before the deadline — the pool was
 # transitively blocked behind a sibling's in-flight issue, not empty — and its two siblings shipped 12 more
@@ -2563,8 +2597,9 @@ EOF
 run29 b
 ck_lacks "tests: no flag when the previous fleet was higher" "Tests per shipped issue rose" "$WORK/out29b.md"
 ck_has   "tests: previous fleet shown on the line" "previous fleet +9.0 / - / +9.0)" "$WORK/out29b.md"
-# The flag keys on tests per kloc, never on the per-ship sum: per-ship counts grow with issue size (the 2026-11-03 fleets landed
-# ~1,620 inserted lines per ship against 658 before, and per-ship tests rose while tests per 1,000 lines fell).
+# The flag needs both figures to rise, since either moves alone with issue size: larger ships raise the per-ship count while
+# tests per 1,000 lines fall (the 2026-11-03 fleets landed ~1,620 inserted lines per ship against 658 before), and smaller ships
+# raise the density while the per-ship count falls (run i below, the 2026-11-13 shape).
 cat > "$H29" <<'EOF'
 {"fleet_start": "2026-02-01T00:00:00Z", "session_set": "old00002", "shipped": 4, "sessions": 1, "rspec_examples_per_shipped": 2.0, "vitest_tests_per_shipped": 1.0, "inserted_lines_per_shipped": 900, "tests_per_kloc": 100.0}
 EOF
@@ -2576,6 +2611,14 @@ EOF
 run29 e
 ck_has   "tests: per-ship rising while per-kloc falls is a size effect" "previous fleet +0.5 / +0.5 / +0.5) · 14 inserted lines per ship · 344.8 tests per kloc" "$WORK/out29e.md"
 ck_lacks "tests: per-ship rising while per-kloc falls prints no flag" "Tests per shipped issue rose" "$WORK/out29e.md"
+# The mirror, measured on the 2026-11-13 basefund fleet: ships 35% smaller than the fleet before (351 inserted lines against 536)
+# carried fewer tests each (+11.6 summed against +13.1) at a higher density (33.2 per kloc against 24.4), and the flag fired.
+cat > "$H29" <<'EOF'
+{"fleet_start": "2026-02-01T00:00:00Z", "session_set": "old00002", "shipped": 4, "sessions": 1, "rspec_examples_per_shipped": 3.0, "vitest_tests_per_shipped": 3.0, "story_exports_per_shipped": 3.0, "inserted_lines_per_shipped": 900, "tests_per_kloc": 10.0}
+EOF
+run29 i
+ck_has   "tests: per-kloc rising while per-ship falls is a size effect" "previous fleet +3.0 / +3.0 / +3.0) · 14 inserted lines per ship · 344.8 tests per kloc" "$WORK/out29i.md"
+ck_lacks "tests: per-kloc rising while per-ship falls prints no flag" "Tests per shipped issue rose" "$WORK/out29i.md"
 cat > "$H29" <<'EOF'
 {"fleet_start": "2026-02-01T00:00:00Z", "session_set": "old00002", "shipped": 4, "sessions": 1, "rspec_examples_per_shipped": 0.5, "inserted_lines_per_shipped": 14, "tests_per_kloc": 344.8}
 EOF
@@ -2792,6 +2835,246 @@ python3 -c "import json,sys; d=json.load(open(sys.argv[1])); d.pop('backlog'); j
 runn
 ck_has "backlog: a ledger without the token keeps the ran-without wording" "withheld because it ran without \`backlog\`: a \`backlog\` launch would have worked them." "$MDN"
 ck "nopick: the gauge does not read the ledger" "3.38" "$(qn "S['0d9dc25d']['no_pick']['hours']")"
+
+# ---- 33. refused API requests, from the 2026-11-13 basefund fleet ----
+# For 34 minutes 10 of that fleet's 12 sessions had requests answered by a Cloudflare challenge page (37 rows: 18 in main loops,
+# 19 in subagents) and every per-session column read clean; the outage was found by reading transcripts. The two error rows are
+# that fleet's own, a main-loop one and a subagent one, with ids, cwd and branch rewritten. The second session is the control: an
+# Agent result that merely quotes the error text is not a refused request.
+CK33="$WORK/ck33"; mkdir -p "$CK33/tmp"
+git -C "$CK33" init -q 2>/dev/null
+git -C "$CK33" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "init"
+M33="$(git -C "$CK33" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
+T33="$WORK/projects/$M33"; mkdir -p "$T33/ae330001-0000/subagents"
+for k in ae330001 ae330002; do
+  echo '{"mode": "loop", "status": "drained", "reason": "deadline", "shipped": [], "canceled": [], "skipped": [], "failed": []}' > "$CK33/tmp/auto-state-$k.json"
+done
+cat > "$T33/ae330001-0000.jsonl" <<'EOF'
+{"type":"user","timestamp":"2026-11-13T09:40:00.000Z","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto backlog</command-args>"}}
+{"parentUuid":"a3c70e6f-0000-0000-0000-000000000033","isSidechain":false,"type":"assistant","uuid":"4050c768-0000-0000-0000-000000000033","timestamp":"2026-11-13T09:47:00.406Z","message":{"diagnostics":null,"id":"784cfaae-0000-0000-0000-000000000033","container":null,"model":"<synthetic>","role":"assistant","stop_details":null,"stop_reason":"stop_sequence","stop_sequence":"","type":"message","usage":{"output_tokens_details":null,"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":null,"cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":0},"inference_geo":null,"iterations":null,"speed":null,"fallback_credit":null},"content":[{"type":"text","text":"Please run /login · API Error: 403 Attention Required! | Cloudflare"}],"context_management":null},"error":"authentication_failed","isApiErrorMessage":true,"apiErrorStatus":403,"perTurnEffort":"xhigh","failedResponseHadNoToolCall":true,"session_id":"ae330001-0000","sessionKind":"bg","userType":"external","entrypoint":"cli","cwd":"/w/.claude/worktrees/tt-33","sessionId":"ae330001-0000","version":"2.1.323","gitBranch":"t/tt-33"}
+{"type":"assistant","timestamp":"2026-11-13T10:30:00.000Z","message":{"role":"assistant","id":"msg_ae1","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"working"}]}}
+EOF
+cat > "$T33/ae330001-0000/subagents/agent-a33.jsonl" <<'EOF'
+{"parentUuid":"6aed0235-0000-0000-0000-000000000033","isSidechain":true,"agentId":"a33","type":"assistant","uuid":"c3f592aa-0000-0000-0000-000000000033","timestamp":"2026-11-13T09:48:59.584Z","message":{"diagnostics":null,"id":"e3b54b46-0000-0000-0000-000000000033","container":null,"model":"<synthetic>","role":"assistant","stop_details":null,"stop_reason":"stop_sequence","stop_sequence":"","type":"message","usage":{"output_tokens_details":null,"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":null,"cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":0},"inference_geo":null,"iterations":null,"speed":null,"fallback_credit":null},"content":[{"type":"text","text":"Please run /login · API Error: 403 Attention Required! | Cloudflare"}],"context_management":null},"error":"authentication_failed","isApiErrorMessage":true,"apiErrorStatus":403,"perTurnEffort":"xhigh","failedResponseHadNoToolCall":true,"sessionKind":"bg","userType":"external","entrypoint":"cli","cwd":"/w/.claude/worktrees/tt-33","sessionId":"ae330001-0000","version":"2.1.323","gitBranch":"t/tt-33"}
+EOF
+echo '{"agentType":"Explore","description":"map the code","toolUseId":"toolu_ae1","spawnDepth":1}' > "$T33/ae330001-0000/subagents/agent-a33.meta.json"
+cat > "$T33/ae330002-0000.jsonl" <<'EOF'
+{"type":"user","timestamp":"2026-11-13T09:40:00.000Z","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto backlog</command-args>"}}
+{"type":"assistant","timestamp":"2026-11-13T09:50:00.000Z","message":{"role":"assistant","id":"msg_ae2","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"tool_use","id":"toolu_ae2","name":"Agent","input":{"description":"map the code","subagent_type":"Explore","prompt":"x","run_in_background":false}}]}}
+{"type":"user","timestamp":"2026-11-13T09:50:30.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_ae2","content":"Please run /login · API Error: 403 Attention Required! | Cloudflare"}]}}
+{"type":"assistant","timestamp":"2026-11-13T10:30:00.000Z","message":{"role":"assistant","id":"msg_ae3","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"working"}]}}
+EOF
+J33="$WORK/out33.json"; MD33="$WORK/out33.md"
+run33() { CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK33" --sessions "$1" --json > "$J33" 2>/dev/null
+          CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK33" --sessions "$1" > "$MD33" 2>&1; }
+q33() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J33"; }
+run33 ae330001,ae330002
+ck "api errors: per session, a subagent's folds into its parent" "ae330001=2 ae330002=0" "$(q33 "' '.join(s['run_key'] + '=' + str(s['api_errors']) for s in sorted(d['sessions'], key=lambda s: s['run_key']))")"
+ck "api errors: the fleet summary" "2 ['ae330001'] {'403 authentication_failed': 2} 1 1 2026-11-13T09:47:00Z 2026-11-13T09:48:59Z" "$(q33 "' '.join(str(d['api_errors'][k]) for k in ('count','sessions','by_kind','main','subagent','first','last'))")"
+ck_has "api errors: the column follows no-pick" "| held | no-pick | api err |" "$MD33"
+ck "api errors: the session rows' last cell" "2 0" "$(python3 -c "
+import sys
+cells = lambda l: [c.strip() for c in l.strip().strip('|').split('|')]
+lines = open(sys.argv[1], encoding='utf-8').read().splitlines()
+col = cells(next(l for l in lines if l.startswith('| run |'))).index('api err')
+rows = dict((l.split('\`')[1], cells(l)[col]) for l in lines if l.startswith('| \`ae33'))
+print(rows['ae330001'], rows['ae330002'])" "$MD33")"
+ck_has "api errors: totals clause" "· 2 API error(s) in 1 of 2 sessions" "$MD33"
+ck_has "api errors: flag" "- **API errors** — 2 refused request(s) in 1 of 2 session(s) (1 main loop, 1 subagent) between 2026-11-13T09:47:00Z and 2026-11-13T09:48:59Z: \`403 authentication_failed\` x2." "$MD33"
+run33 ae330002
+ck "api errors: none seen, no summary"        "None" "$(q33 "d['api_errors']")"
+ck_lacks "api errors: none seen, no flag"     "**API errors**" "$MD33"
+ck_lacks "api errors: none seen, no totals clause" "API error(s) in" "$MD33"
+
+# ---- 34. a five_hour window most of its block's readings lack is a transient, not the account's meter ----
+# The 2026-11-13 basefund fleet ran on an account that reports only seven_day (Claude Ultra). Four of its 695 readings, all at
+# 1% and all inside two minutes, carried a five_hour window as well; the verdict took one as the fleet's peak and printed "a
+# whole block fits ~483 concurrent session(s): 471 more sessions would have fit", and the trend row would have recorded 5h% 1%.
+# The reading rows are two of that fleet's sessions' own, with the account rewritten. The control strips the seven_day-only
+# rows from the block, which makes the window the account's shape there, and the same two readings then count.
+CK34="$WORK/ck34"; mkdir -p "$CK34/tmp"
+git -C "$CK34" init -q 2>/dev/null
+git -C "$CK34" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "init"
+M34="$(git -C "$CK34" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
+mkdir -p "$WORK/projects/$M34"
+for spec in "uf340001 2026-11-12T23:51:11.000Z 2026-11-13T14:02:48.000Z" "uf340002 2026-11-12T23:55:58.000Z 2026-11-13T13:06:37.000Z"; do
+  set -- $spec
+  echo '{"mode": "loop", "status": "drained", "reason": "deadline", "shipped": [], "canceled": [], "skipped": [], "failed": []}' > "$CK34/tmp/auto-state-$1.json"
+  cat > "$WORK/projects/$M34/$1-0000.jsonl" <<EOF
+{"type":"user","timestamp":"$2","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto backlog</command-args>"}}
+{"type":"assistant","timestamp":"$3","message":{"role":"assistant","id":"msg_$1","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"working"}]}}
+EOF
+done
+cat > "$RATE_LIMITS_DIR/uf340001-0000.jsonl" <<'EOF'
+{"measured_at":"2026-11-12T23:54:00.475Z","account":"ultra@example.com","windows":[{"kind":"seven_day","percentUsed":30,"resetsAt":"2026-11-14T01:00:00.000Z"}]}
+{"measured_at":"2026-11-12T23:54:10.529Z","account":"ultra@example.com","windows":[{"kind":"seven_day","percentUsed":31,"resetsAt":"2026-11-14T01:00:00.000Z"}]}
+{"measured_at":"2026-11-13T10:02:25.019Z","account":"ultra@example.com","windows":[{"kind":"seven_day","percentUsed":75,"resetsAt":"2026-11-14T01:00:00.000Z"}]}
+{"measured_at":"2026-11-13T10:02:40.669Z","account":"ultra@example.com","windows":[{"kind":"seven_day","percentUsed":75,"resetsAt":"2026-11-14T01:00:00.000Z"}]}
+{"measured_at":"2026-11-13T10:08:28.571Z","account":"ultra@example.com","windows":[{"kind":"seven_day","percentUsed":76,"resetsAt":"2026-11-14T01:00:00.000Z"}]}
+{"measured_at":"2026-11-13T10:13:16.952Z","account":"ultra@example.com","windows":[{"kind":"seven_day","percentUsed":77,"resetsAt":"2026-11-14T01:00:00.000Z"}]}
+{"measured_at":"2026-11-13T10:20:53.286Z","account":"ultra@example.com","windows":[{"kind":"five_hour","percentUsed":1,"resetsAt":"2026-11-13T13:20:00.000Z"},{"kind":"seven_day","percentUsed":77,"resetsAt":"2026-11-14T01:00:00.000Z"}]}
+{"measured_at":"2026-11-13T10:21:10.514Z","account":"ultra@example.com","windows":[{"kind":"seven_day","percentUsed":77,"resetsAt":"2026-11-14T01:00:00.000Z"}]}
+{"measured_at":"2026-11-13T10:36:03.047Z","account":"ultra@example.com","windows":[{"kind":"seven_day","percentUsed":78,"resetsAt":"2026-11-14T01:00:00.000Z"}]}
+{"measured_at":"2026-11-13T10:41:58.577Z","account":"ultra@example.com","windows":[{"kind":"seven_day","percentUsed":79,"resetsAt":"2026-11-14T01:00:00.000Z"}]}
+{"measured_at":"2026-11-13T13:03:56.760Z","account":"ultra@example.com","windows":[{"kind":"seven_day","percentUsed":91,"resetsAt":"2026-11-14T01:00:00.000Z"}]}
+{"measured_at":"2026-11-13T13:20:25.456Z","account":"ultra@example.com","windows":[{"kind":"seven_day","percentUsed":92,"resetsAt":"2026-11-14T01:00:00.000Z"}]}
+EOF
+cat > "$RATE_LIMITS_DIR/uf340002-0000.jsonl" <<'EOF'
+{"measured_at":"2026-11-12T23:58:33.722Z","account":"ultra@example.com","windows":[{"kind":"seven_day","percentUsed":32,"resetsAt":"2026-11-14T01:00:00.000Z"}]}
+{"measured_at":"2026-11-13T09:55:10.036Z","account":"ultra@example.com","windows":[{"kind":"seven_day","percentUsed":75,"resetsAt":"2026-11-14T01:00:00.000Z"}]}
+{"measured_at":"2026-11-13T10:04:00.754Z","account":"ultra@example.com","windows":[{"kind":"seven_day","percentUsed":75,"resetsAt":"2026-11-14T01:00:00.000Z"}]}
+{"measured_at":"2026-11-13T10:08:33.981Z","account":"ultra@example.com","windows":[{"kind":"seven_day","percentUsed":76,"resetsAt":"2026-11-14T01:00:00.000Z"}]}
+{"measured_at":"2026-11-13T10:13:13.554Z","account":"ultra@example.com","windows":[{"kind":"seven_day","percentUsed":77,"resetsAt":"2026-11-14T01:00:00.000Z"}]}
+{"measured_at":"2026-11-13T10:19:07.429Z","account":"ultra@example.com","windows":[{"kind":"five_hour","percentUsed":1,"resetsAt":"2026-11-13T13:20:00.000Z"},{"kind":"seven_day","percentUsed":77,"resetsAt":"2026-11-14T01:00:00.000Z"}]}
+{"measured_at":"2026-11-13T10:42:31.233Z","account":"ultra@example.com","windows":[{"kind":"seven_day","percentUsed":78,"resetsAt":"2026-11-14T01:00:00.000Z"}]}
+{"measured_at":"2026-11-13T10:42:33.823Z","account":"ultra@example.com","windows":[{"kind":"seven_day","percentUsed":79,"resetsAt":"2026-11-14T01:00:00.000Z"}]}
+{"measured_at":"2026-11-13T13:02:32.923Z","account":"ultra@example.com","windows":[{"kind":"seven_day","percentUsed":91,"resetsAt":"2026-11-14T01:00:00.000Z"}]}
+EOF
+J34="$WORK/out34.json"; MD34="$WORK/out34.md"
+run34() { CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK34" --sessions uf340001,uf340002 --json > "$J34" 2>/dev/null
+          CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK34" --sessions uf340001,uf340002 > "$MD34" 2>&1; }
+q34() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J34"; }
+run34
+ck "transient 5h: not the fleet's peak"            "None" "$(q34 "d['windows']['readings']['peaks'].get('five_hour')")"
+ck "transient 5h: kept apart with its coverage"    "1 2 17" "$(q34 "' '.join(str(d['windows']['readings']['five_hour_transient'][k]) for k in ('percent','readings','of'))")"
+ck "transient 5h: no verdict"                      "None" "$(q34 "d['windows']['headroom']")"
+ck "transient 5h: the trend's 5h% stays empty"     "None None" "$(q34 "' '.join(str(d['history'][-1][k]) for k in ('peak_five_hour_pct','five_hour_fits_sessions'))")"
+ck "transient 5h: the weekly peak is untouched"    "92" "$(q34 "d['windows']['readings']['peaks']['seven_day']['percent']")"
+ck_has "transient 5h: the readings line names it"  "A five_hour window showed on 2 of the 17 reading(s) the fleet took in one 5h block (1% at" "$MD34"
+ck_has "transient 5h: says why there is no verdict" "**Headroom verdict** — none: the account reports no five_hour window" "$MD34"
+ck_lacks "transient 5h: no fit is printed"         "would have fit" "$MD34"
+for k in uf340001 uf340002; do
+  python3 -c "
+import json,sys
+p = sys.argv[1]
+keep = lambda r: any(w['kind'] == 'five_hour' for w in r['windows']) or not ('2026-11-13T08:20' <= r['measured_at'] < '2026-11-13T13:20')
+rows = [l for l in open(p) if keep(json.loads(l))]
+open(p, 'w').write(''.join(rows))" "$RATE_LIMITS_DIR/$k-0000.jsonl"
+done
+run34
+ck "metered block: the same readings count"        "1" "$(q34 "d['windows']['readings']['peaks']['five_hour']['percent']")"
+ck "metered block: nothing kept apart"             "None" "$(q34 "d['windows']['readings']['five_hour_transient']")"
+ck "metered block: a verdict prints"               "True" "$(q34 "d['windows']['headroom'] is not None")"
+
+# ---- 35. the filing census, attributed to the session whose create call's own result names the issue ----
+# Every agent files under the operator's Linear login, so the census (retro Step 3's created-in-window export) cannot say which
+# rows are the fleet's, and five retros in a row hand-wrote the attribution. Measured on the 2026-11-12 basefund fleet: 20 of 22
+# rows were the fleet's and 2 an interactive session's; a sibling's pool read named another session's filing 74s after its
+# createdAt; and matching the raw transcript line missed 19 of 22 create results, whose text is `EXIT=0\nBF-3248` with the
+# escaped newline against the id. The create call and its result are that fleet's own, ids rewritten.
+CK35="$WORK/ck35"; mkdir -p "$CK35/tmp"
+git -C "$CK35" init -q 2>/dev/null
+git -C "$CK35" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "init"
+M35="$(git -C "$CK35" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
+T35="$WORK/projects/$M35"; mkdir -p "$T35/fc350001-0000/subagents"
+echo '{"mode": "loop", "status": "drained", "reason": "deadline", "shipped": ["TT-800"], "canceled": [], "skipped": [], "failed": []}' > "$CK35/tmp/auto-state-fc350001.json"
+echo '{"mode": "loop", "status": "drained", "reason": "deadline", "shipped": [], "canceled": [], "skipped": [], "failed": []}' > "$CK35/tmp/auto-state-fc350002.json"
+# TT-901: created by fc350001's main loop. TT-902: by its subagent. TT-903: an interactive filing a fleet pool read names 60s
+# later. TT-904: an interactive filing the fleet names only hours later. TT-905: a teammate's. TT-700 predates the fleet.
+cat > "$CK35/tmp/fleet-linear-window.json" <<'EOF'
+{"data":{"issues":{"nodes":[
+{"identifier":"TT-700","title":"older","createdAt":"2026-11-12T20:00:00.000Z","creator":{"name":"op@example.com","displayName":"op"},"state":{"name":"Backlog"},"labels":{"nodes":[]}},
+{"identifier":"TT-901","title":"a","createdAt":"2026-11-13T01:39:04.764Z","creator":{"name":"op@example.com","displayName":"op"},"state":{"name":"Backlog"},"labels":{"nodes":[{"name":"specified"}]}},
+{"identifier":"TT-902","title":"b","createdAt":"2026-11-13T02:00:00.000Z","creator":{"name":"op@example.com","displayName":"op"},"state":{"name":"Backlog"},"labels":{"nodes":[]}},
+{"identifier":"TT-903","title":"c","createdAt":"2026-11-13T03:00:00.000Z","creator":{"name":"op@example.com","displayName":"op"},"state":{"name":"Backlog"},"labels":{"nodes":[]}},
+{"identifier":"TT-904","title":"d","createdAt":"2026-11-13T03:10:00.000Z","creator":{"name":"op@example.com","displayName":"op"},"state":{"name":"Backlog"},"labels":{"nodes":[]}},
+{"identifier":"TT-905","title":"e","createdAt":"2026-11-13T03:20:00.000Z","creator":{"name":"mate@example.com","displayName":"mate"},"state":{"name":"Triage"},"labels":{"nodes":[]}}
+]}}}
+EOF
+cat > "$T35/fc350001-0000.jsonl" <<'EOF'
+{"type":"user","timestamp":"2026-11-13T00:00:00.000Z","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto backlog</command-args>"}}
+{"type":"assistant","timestamp":"2026-11-13T01:39:03.077Z","message":{"role":"assistant","id":"msg_fc1","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"tool_use","id":"toolu_fc1","name":"Bash","input":{"command":"~/.claude/scripts/linear-create-child.sh --allow-unrouted TT-800 TT Backlog \"A count-limited list under an amount order returns an unspecified subset\" /w/.claude/worktrees/tt-800/tmp/linear-filing-sort.md bug,simple 3 >| tmp/linear-filing-sort.id; echo \"EXIT=$?\"; cat tmp/linear-filing-sort.id","description":"File the tiebreak issue under TT-800"}}]}}
+{"type":"user","timestamp":"2026-11-13T01:39:10.141Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_fc1","content":"EXIT=0\nTT-901"}]}}
+{"type":"assistant","timestamp":"2026-11-13T05:00:00.000Z","message":{"role":"assistant","id":"msg_fc2","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"text","text":"SHIPPED-MERGE: TT-800 done"}]}}
+EOF
+cat > "$T35/fc350001-0000/subagents/agent-f35.jsonl" <<'EOF'
+{"type":"assistant","timestamp":"2026-11-13T01:59:58.000Z","agentId":"f35","isSidechain":true,"message":{"role":"assistant","id":"msg_fs1","model":"claude-sonnet-5","usage":{"input_tokens":5,"output_tokens":50},"content":[{"type":"tool_use","id":"toolu_fs1","name":"Bash","input":{"command":"~/.claude/scripts/linear-create-child.sh TT-800 TT Backlog \"b\" tmp/b.md specified 3"}}]}}
+{"type":"user","timestamp":"2026-11-13T02:00:04.000Z","agentId":"f35","isSidechain":true,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_fs1","content":"TT-902"}]}}
+EOF
+echo '{"agentType":"quality-reviewer","description":"review","toolUseId":"toolu_x","spawnDepth":1}' > "$T35/fc350001-0000/subagents/agent-f35.meta.json"
+cat > "$T35/fc350002-0000.jsonl" <<'EOF'
+{"type":"user","timestamp":"2026-11-13T00:00:00.000Z","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto backlog</command-args>"}}
+{"type":"assistant","timestamp":"2026-11-13T01:40:17.000Z","message":{"role":"assistant","id":"msg_fd1","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"tool_use","id":"toolu_fd1","name":"Bash","input":{"command":"~/.claude/scripts/next-candidates.sh --team TT --label specified"}}]}}
+{"type":"user","timestamp":"2026-11-13T01:40:18.764Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_fd1","content":"## Suggested next\n\n1. **TT-12** — \"x\"\n\n_PLANNED-HOLD: Backlog withheld (TT-901 behind TT-800 [In Progress]); 9 need the keeper_"}]}}
+{"type":"assistant","timestamp":"2026-11-13T03:00:59.000Z","message":{"role":"assistant","id":"msg_fd2","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"tool_use","id":"toolu_fd2","name":"Bash","input":{"command":"~/.claude/scripts/next-candidates.sh --team TT --label specified"}}]}}
+{"type":"user","timestamp":"2026-11-13T03:01:00.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_fd2","content":"## Suggested next\n\n1. **TT-903** — \"c\""}]}}
+{"type":"assistant","timestamp":"2026-11-13T06:00:00.000Z","message":{"role":"assistant","id":"msg_fd3","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"tool_use","id":"toolu_fd3","name":"Bash","input":{"command":"linear-cli issues get TT-904 -o json"}}]}}
+{"type":"user","timestamp":"2026-11-13T06:00:02.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_fd3","content":"{\"identifier\":\"TT-904\"}"}]}}
+EOF
+J35="$WORK/out35.json"; MD35="$WORK/out35.md"
+run35() { CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK35" --sessions fc350001,fc350002 --json > "$J35" 2>/dev/null
+          CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK35" --sessions fc350001,fc350002 > "$MD35" 2>&1; }
+q35() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J35"; }
+run35
+ck "census: a create result and a subagent's are the parent session's" "TT-901=fc350001@5.4 TT-902=fc350001@4.0" "$(q35 "' '.join(a['id'] + '=' + a['filed_by'] + '@' + str(a['delta_s']) for a in d['filings']['attributed'])")"
+ck "census: a pool read inside the window is named, not counted" "TT-903=fc350002@60.0" "$(q35 "' '.join(a['id'] + '=' + a['named_by'] + '@' + str(a['delta_s']) for a in d['filings']['named_only'])")"
+ck "census: a mention hours later and a teammate's row are excluded" "TT-904=operator-login TT-905=other-creator" "$(q35 "' '.join(a['id'] + '=' + a['kind'] for a in d['filings']['excluded'])")"
+ck "census: a row created before the fleet is no census row" "False" "$(q35 "'TT-700' in json.dumps(d['filings'])")"
+ck "census: R over the shipped set" "2.0 2.0" "$(q35 "str(d['filings']['census_filed_per_shipped']) + ' ' + str(d['history'][-1]['census_filed_per_shipped'])")"
+ck_has "census: report line" "**Filed (census)** — 2 of the 5 issue(s) in \`fleet-linear-window.json\` created since the fleet started were created by its sessions (\`fc350001\` x2)" "$MD35"
+ck_has "census: the uncounted rows are split and named" "Not counted: 1 under another creator (TT-905), 2 under the operator's login with no fleet create record (TT-904, TT-903); of these a fleet session named 1 inside the window with no create call behind it" "$MD35"
+ck_has "census: R on the line" "Census R = 2 / 1 shipped = **2.0**." "$MD35"
+ck_has "census: trend header appends R and ceil%" "| t/kloc | np% | R | ceil% |" "$MD35"
+# An export written before the fleet's last record is an earlier retro's: unmeasured, never a zero.
+touch -t 202611120000 "$CK35/tmp/fleet-linear-window.json"
+run35
+ck "census: a stale export is unmeasured" "False None" "$(q35 "str(d['filings']['measured']) + ' ' + str(d['history'][-1]['census_filed_per_shipped'])")"
+ck_has "census: and says why" "**Filed (census)** — not measured: \`fleet-linear-window.json\` was written 2026-11-12 " "$MD35"
+rm "$CK35/tmp/fleet-linear-window.json"
+run35
+ck "census: no export is unmeasured" "False" "$(q35 "d['filings']['measured']")"
+ck_has "census: no export says what writes it" "**Filed (census)** — not measured: no created-in-window census export" "$MD35"
+
+# ---- 36. foreground Bash calls that ran to the tool's timeout ceiling ----
+# Measured by hand across three basefund fleets (2026-11-09, -10, -12; 7, 8 and 12 sessions): 20 of 459, 35 of 300 and 46 of 302
+# main-loop foreground Bash calls of 60s or more came back at the 600s ceiling, while Slowest calls printed "10m Bash" for the
+# ceiling and for a call that really took ten minutes alike. The first result row is that fleet's own (paths rewritten); the
+# second carries stdout ahead of the line, as 8 of the 46 did; a caller-chosen 170s timeout emits the same sentence and is no
+# ceiling; a fast result quoting the line is no timeout; and a subagent's call is cut at 180s with other wording.
+CK36="$WORK/ck36"; mkdir -p "$CK36/tmp"
+git -C "$CK36" init -q 2>/dev/null
+git -C "$CK36" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "init"
+M36="$(git -C "$CK36" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"
+T36="$WORK/projects/$M36"; mkdir -p "$T36/bc360001-0000/subagents"
+echo '{"mode": "loop", "status": "drained", "reason": "deadline", "shipped": [], "canceled": [], "skipped": [], "failed": []}' > "$CK36/tmp/auto-state-bc360001.json"
+cat > "$T36/bc360001-0000.jsonl" <<'EOF'
+{"type":"user","timestamp":"2026-11-13T00:00:00.000Z","message":{"role":"user","content":"<command-name>/loop</command-name><command-args>/auto backlog</command-args>"}}
+{"type":"assistant","timestamp":"2026-11-13T00:46:38.050Z","message":{"role":"assistant","id":"msg_bc1","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"tool_use","id":"toolu_bc1","name":"Bash","input":{"command":"pnpm check >| tmp/qr-check-tt-1.log 2>&1; echo \"EXIT=$?\"; tail -5 tmp/qr-check-tt-1.log","timeout":600000,"description":"Run the review's pnpm check gate"}}]}}
+{"type":"user","timestamp":"2026-11-13T00:56:39.707Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_bc1","is_error":false,"content":"Command did not complete within its 600s timeout and was moved to the background (ID: b543q2s8a). Output is being written to: /private/tmp/claude-501/-w/bc360001-0000/tasks/b543q2s8a.output. You will be notified when it completes. It is running now: do not start a second copy while it runs. If it is no longer needed, stop it with TaskStop. No output had been read from it when it was moved. A program that buffers its output, or a pipe into one such as tail, can keep the output file empty until the command finishes. To check interim output, use Read on that file path."}]}}
+{"type":"assistant","timestamp":"2026-11-13T07:53:20.958Z","message":{"role":"assistant","id":"msg_bc2","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"tool_use","id":"toolu_bc2","name":"Bash","input":{"command":"grep -n '.\\{161,\\}' apps/api/x.rb | cut -c1-80; echo long-lines-check-done; pnpm check >| tmp/c.out 2>&1; echo \"EXIT=$?\"","timeout":600000}}]}}
+{"type":"user","timestamp":"2026-11-13T08:03:21.764Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_bc2","is_error":false,"content":"apps/api/x.rb:40:    UPDATE_UNADDRESSABLE_DENIAL = \nlong-lines-check-done\nCommand did not complete within its 600s timeout and was moved to the background (ID: bl1o3itlx). Output is being written to: /private/tmp/claude-501/-w/bc360001-0000/tasks/bl1o3itlx.output. You will be notified when it completes. It is running now: do not start a second copy while it runs. If it is no longer needed, stop it with TaskStop. To check interim output, use Read on that file path."}]}}
+{"type":"assistant","timestamp":"2026-11-13T09:00:00.000Z","message":{"role":"assistant","id":"msg_bc3","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"tool_use","id":"toolu_bc3","name":"Bash","input":{"command":"zsh tmp/wait-rspec.sh","timeout":170000}}]}}
+{"type":"user","timestamp":"2026-11-13T09:02:51.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_bc3","is_error":false,"content":"Command did not complete within its 170s timeout and was moved to the background (ID: bq7). Output is being written to: /private/tmp/claude-501/-w/bc360001-0000/tasks/bq7.output."}]}}
+{"type":"assistant","timestamp":"2026-11-13T09:10:00.000Z","message":{"role":"assistant","id":"msg_bc4","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"tool_use","id":"toolu_bc4","name":"Bash","input":{"command":"sed -n 1,3p tmp/notes.md"}}]}}
+{"type":"user","timestamp":"2026-11-13T09:10:02.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_bc4","is_error":false,"content":"Command did not complete within its 600s timeout and was moved to the background (ID: b543q2s8a)."}]}}
+{"type":"assistant","timestamp":"2026-11-13T09:20:00.000Z","message":{"role":"assistant","id":"msg_bc5","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":100},"content":[{"type":"tool_use","id":"toolu_bc5","name":"Bash","input":{"command":"pnpm check >| tmp/c2.out 2>&1; echo \"EXIT=$?\"","timeout":600000}}]}}
+{"type":"user","timestamp":"2026-11-13T09:22:06.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_bc5","is_error":false,"content":"EXIT=0\n Test Files  19 passed (19)"}]}}
+EOF
+cat > "$T36/bc360001-0000/subagents/agent-b36.jsonl" <<'EOF'
+{"type":"assistant","timestamp":"2026-11-13T04:29:07.000Z","agentId":"b36","isSidechain":true,"message":{"role":"assistant","id":"msg_bs1","model":"claude-sonnet-5","usage":{"input_tokens":5,"output_tokens":50},"content":[{"type":"tool_use","id":"toolu_bs1","name":"Bash","input":{"command":"pnpm check >| tmp/s.out 2>&1; echo \"EXIT=$?\"","timeout":600000}}]}}
+{"type":"user","timestamp":"2026-11-13T04:32:07.296Z","agentId":"b36","isSidechain":true,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_bs1","is_error":false,"content":"Command was moved to the background (ID: bg82mxmen) after running for 180s. Output is being written to: /private/tmp/claude-501/-w/bc360001-0000/tasks/bg82mxmen.output. You will be notified when it completes. It is running now: do not start a second copy while it runs. If it is no longer needed, stop it with TaskStop."}]}}
+EOF
+echo '{"agentType":"developer","description":"fix batch","toolUseId":"toolu_y","spawnDepth":1}' > "$T36/bc360001-0000/subagents/agent-b36.meta.json"
+J36="$WORK/out36.json"; MD36="$WORK/out36.md"
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK36" --sessions bc360001 --json > "$J36" 2>/dev/null
+CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK36" --sessions bc360001 > "$MD36" 2>&1
+q36() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print($1)" "$J36"; }
+ck "ceiling: two hits of four long main-loop calls" "2 4 0.5" "$(q36 "' '.join(str(d['bash_ceiling'][k]) for k in ('hits','long_calls','share'))")"
+ck "ceiling: on the session row" "{'hits': 2, 'long_calls': 4}" "$(q36 "d['sessions'][0]['bash_ceiling']")"
+ck "ceiling: on the history row" "0.5" "$(q36 "d['history'][-1]['bash_ceiling_share']")"
+ck_has "ceiling: totals clause" "· 2 of 4 main-loop foreground Bash calls of 60s or more ran to the 600s ceiling (50%)" "$MD36"
+ck "ceiling: the session's cell under its header" "2/4" "$(python3 -c "
+import sys
+cells = lambda l: [c.strip() for c in l.strip().strip('|').split('|')]
+lines = open(sys.argv[1], encoding='utf-8').read().splitlines()
+col = cells(next(l for l in lines if l.startswith('| run |'))).index('ceiling')
+print(cells(next(l for l in lines if l.startswith('| \`bc36')))[col])" "$MD36")"
+ck "ceiling: trend cell under its header" "50%" "$(python3 -c "
+import sys
+cells = lambda l: [c.strip() for c in l.strip().strip('|').split('|')]
+lines = open(sys.argv[1], encoding='utf-8').read().splitlines()
+col = cells(next(l for l in lines if l.startswith('| fleet start'))).index('ceil%')
+print(cells(next(l for l in lines if l.startswith('| 2026-11-13 00:00')))[col])" "$MD36")"
 
 echo
 echo "$PASS passed / $FAIL failed / $SKIP skipped"

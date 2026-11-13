@@ -30,7 +30,9 @@ interactive review persisted inside the window. `linear_ratelimited` and the tab
 RATELIMITED answers in tool results — were added 2026-10-16; older rows carry no such field. The tests-per-shipped gauge
 (`rspec_examples_per_shipped`, `story_exports_per_shipped` and their nets) was added 2026-10-19; older rows carry none.
 `inserted_lines_per_shipped` and `tests_per_kloc`, the size-normalized companions, were added 2026-11-04; older rows carry
-neither, and the tests-rose flag stays silent against one.)
+neither, and the tests-rose flag stays silent against one. `census_filed_per_shipped` (the trend's `R`) and
+`bash_ceiling_share` (`ceil%`), with the per-session `api err` and `ceiling` columns, were added 2026-11-13; older rows carry
+none.)
 
 WHAT IT READS
   <checkout>/tmp/auto-state-<runKey>.json   run bookkeeping written by /auto Step 4
@@ -46,7 +48,8 @@ WHAT IT READS
                                             --linear-issues
   <checkout>/tmp/fleet-linear-window.json   retro Step 3's created-in-window census — provenance
                                             fallback: a shipped issue found HERE was filed by the
-                                            run it shipped in
+                                            run it shipped in; and the filing census itself, each row
+                                            attributed to the session whose create call's result names it
 
 WHAT IT WRITES
   <checkout>/tmp/fleet-metrics-history.jsonl  one headline row per measured fleet, keyed by session
@@ -80,7 +83,7 @@ import os
 import re
 import subprocess
 import sys
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -136,6 +139,19 @@ SHIP_CALL = re.compile(r"(?:^|[;&|(])\s*(?:[\w~./-]*/)?mark-ready-for-release\.s
 NO_CODE_LINE = re.compile(r"^NO-CODE:\s*([A-Z]+-\d+)", re.M)
 # fleet-headroom.sh's text and --json answers; the source of its reading (session|snapshot|none) rides along. Transcripts before
 # 2026-10-13 carry the token-sum form, whose source names the ceiling it parked against (calibration|default|flag).
+# A foreground Bash call still running at its timeout comes back as a result carrying this line, after any stdout the command
+# had printed. 600s is the largest timeout the tool accepts, so only that figure is the ceiling: a shorter one is a timeout the
+# caller chose. A subagent's foreground call is cut at 180s with other wording and never reaches this text.
+BASH_TIMEOUT_MOVED = re.compile(r"^Command did not complete within its (\d+)s timeout and was moved to the background", re.M)
+BASH_TIMEOUT_CEILING_S = 600
+LONG_FOREGROUND_S = 60
+# The filing paths an agent takes (standards/linear-filing.md); a create wrapped in a script the session wrote matches none.
+CREATE_CALL = re.compile(r"linear-create-child\.sh|linear-file-improvement\.sh|linear-cli\s+issues\s+create")
+# Exported issues as (created epoch, identifier, whole-word pattern), sorted, with the epochs alone beside them for bisect. Set
+# once by set_census() before any transcript is scanned: a tool result is a filing witness only inside this window around the
+# issue's createdAt, so the scan checks the few issues created near each result instead of every id in every result.
+CENSUS, CENSUS_KEYS = [], []
+CENSUS_BEFORE_S, CENSUS_AFTER_S = 5, 120
 HEADROOM_PROBE = re.compile(r"^(THROTTLE|PICK-OK)\s+five_hour=[^\n]*?\bsource=(\w+)", re.M)
 HEADROOM_PROBE_JSON = re.compile(r"\"pick_ok\":\s*(true|false).*?\"source\":\s*\"(\w+)\"", re.S)
 HEADROOM_PROBE_LEGACY = re.compile(r"^(THROTTLE|PICK-OK)\s+trailing-5h=\d+\s+ceiling=\d+\((\w+)\)", re.M)
@@ -475,6 +491,14 @@ def scan_transcript(path, agg, agent_type="main", description=""):
         content = msg.get("content") if isinstance(msg, dict) else None
         activity.feed(r, t, content)
 
+        # The harness writes a refused request as a synthetic assistant row (`isApiErrorMessage`), in the main loop and in a
+        # subagent alike. Keyed by status and error, so an outage every session saw reads as one kind in one window.
+        if r.get("isApiErrorMessage") is True:
+            agg["api_errors"][f"{r.get('apiErrorStatus') or '?'} {r.get('error') or 'unknown'}"] += 1
+            agg["api_error_lanes"]["main" if agent_type == "main" else "subagent"] += 1
+            if t:
+                agg["api_error_times"].append(t)
+
         # A message's rows share one id, so a row-wise sum double-counts — credit each id once. The
         # prompt-side fields repeat verbatim across those rows, but output_tokens does NOT in a subagent
         # transcript: each streamed row carries the count so far (2–8 tokens on the thinking row), and
@@ -699,6 +723,23 @@ def scan_transcript(path, agg, agent_type="main", description=""):
                         agg["classifier_blocks"].append(label)
                 if LINEAR_RATELIMITED.search(body):
                     agg["linear_ratelimited"] += 1
+                if name == "Bash" and agent_type == "main" and not r.get("isSidechain") and t and t0 \
+                        and inp.get("run_in_background") is not True:
+                    took = (t - t0).total_seconds()
+                    if took >= LONG_FOREGROUND_S:
+                        agg["bash_long"] += 1
+                        moved = BASH_TIMEOUT_MOVED.search(body)
+                        # The duration guard keeps out a fast result that merely quotes the line (a Read of a transcript).
+                        if moved and int(moved.group(1)) == BASH_TIMEOUT_CEILING_S and took >= BASH_TIMEOUT_CEILING_S - 5:
+                            agg["bash_ceiling"] += 1
+                if CENSUS and t:
+                    at = t.timestamp()
+                    i = bisect_left(CENSUS_KEYS, at - CENSUS_AFTER_S)
+                    while i < len(CENSUS) and CENSUS[i][0] <= at + CENSUS_BEFORE_S:
+                        if CENSUS[i][2].search(body):
+                            agg["filing_witnesses"].append(
+                                (CENSUS[i][1], t, name == "Bash" and bool(CREATE_CALL.search(str(inp.get("command", ""))))))
+                        i += 1
                 if name == "Bash" and agent_type == "main" and not r.get("isSidechain") \
                         and "finish-merge" in str(inp.get("command", "")):
                     for issue in NO_CODE_LINE.findall(body):
@@ -857,6 +898,11 @@ def new_agg():
     return {
         "first": None, "last": None, "tool_calls": 0, "wakeups": 0, "wakeup_stops": 0,
         "loop_firings": 0, "human_prompts": 0, "terminal_tags": 0, "dangling": 0, "linear_ratelimited": 0,
+        "api_errors": Counter(), "api_error_lanes": Counter(), "api_error_times": [],
+        # Main-loop foreground Bash calls of LONG_FOREGROUND_S or more, and how many of them ran to the tool's timeout ceiling.
+        "bash_long": 0, "bash_ceiling": 0,
+        # (identifier, time, the result's own call was a create) per tool result naming an exported issue near its createdAt.
+        "filing_witnesses": [],
         "dispatch": Counter(), "classifier_blocks": [], "classifier_unavailable": [], "gaps": [], "activity_times": [],
         "sleep_blind_s": 0.0, "sleep_blind_n": 0, "sleep_marker_s": 0.0, "sleep_marker_n": 0,
         "ship_tags": set(), "ship_outcomes": set(), "cancel_tags": set(), "subagents": 0,
@@ -1397,8 +1443,9 @@ def boundary_compactions(checkout, run_key):
 def rate_limit_peaks(run_key):
     """The highest reading of each window in a session's mods/rate-limits history, with when it was taken and the account it
     metered (the row's `account`, absent before the mod recorded one), plus every five_hour reading with its resetsAt and the
-    start of the 5h block it fell in (that resetsAt less five hours); None without one."""
-    peaks, five_hour, n = {}, [], 0
+    start of the 5h block it fell in (that resetsAt less five hours), and every reading as (time, account, carried a five_hour
+    window); None without one."""
+    peaks, five_hour, rows, n = {}, [], [], 0
     for p in sorted(RATE_LIMITS_DIR.glob(f"{run_key}*.jsonl")):
         try:
             lines = p.read_text(encoding="utf-8").splitlines()
@@ -1410,10 +1457,12 @@ def rate_limit_peaks(run_key):
             except json.JSONDecodeError:
                 continue
             n += 1
+            carried = False
             for w in row.get("windows") or []:
                 kind, pct = w.get("kind"), w.get("percentUsed")
                 if not isinstance(kind, str) or not isinstance(pct, (int, float)):
                     continue
+                carried = carried or kind == "five_hour"
                 if kind not in peaks or pct > peaks[kind]["percent"]:
                     peaks[kind] = {"percent": pct, "at": row.get("measured_at"), "account": row.get("account")}
                 if kind == "five_hour":
@@ -1421,7 +1470,8 @@ def rate_limit_peaks(run_key):
                     five_hour.append({"percent": pct, "at": row.get("measured_at"), "account": row.get("account"),
                                       "resets_at": w.get("resetsAt"),
                                       "block_start": reset - timedelta(hours=5) if reset else None})
-    return {"readings": n, "peaks": peaks, "five_hour": five_hour} if n else None
+            rows.append((ts(row.get("measured_at")), row.get("account"), carried))
+    return {"readings": n, "peaks": peaks, "five_hour": five_hour, "rows": rows} if n else None
 
 
 def fleet_rate_limit_peaks(sessions, fleet_first):
@@ -1430,7 +1480,13 @@ def fleet_rate_limit_peaks(sessions, fleet_first):
     The five_hour peak counts only blocks that began at or after the fleet's first activity. The meter's 5h blocks are fixed, so
     a block already running at launch carries whatever was spent in it before: on 2026-10-13 a 90% reading taken at launch, in a
     block that reset 28 minutes later, read as the fleet's own and sized the window at one session, where the fleet's first whole
-    block peaked at 72% with three. A higher reading from such a block is kept apart as `five_hour_inherited`."""
+    block peaked at 72% with three. A higher reading from such a block is kept apart as `five_hour_inherited`.
+
+    A five_hour reading counts only when the window is what its account reported through that block: the fleet's readings on
+    the account inside the block must mostly carry it. An account with no 5-hour window (Claude Ultra) still shows one for a
+    moment now and then — on 2026-11-13 four readings of 695, all 1% and all within two minutes, in a block whose other
+    readings carried only seven_day — and one such reading read as the fleet's peak sized the window at 483 sessions. Those
+    are kept apart as `five_hour_transient`."""
     have = [(s["run_key"], s["rate_limit_peaks"]) for s in sessions if s.get("rate_limit_peaks")]
     if not have:
         return None
@@ -1439,9 +1495,26 @@ def fleet_rate_limit_peaks(sessions, fleet_first):
         for kind, pk in rp["peaks"].items():
             if kind != "five_hour" and (kind not in peaks or pk["percent"] > peaks[kind]["percent"]):
                 peaks[kind] = {**pk, "run_key": key}
-    owned = inherited = None
+    coverage = {}
+
+    def block_coverage(block_start, account):
+        if (block_start, account) not in coverage:
+            end = block_start + timedelta(hours=5)
+            in_block = [carried for _, rp in have for at, acct, carried in rp.get("rows") or ()
+                        if at and acct == account and block_start <= at < end]
+            coverage[(block_start, account)] = (sum(in_block), len(in_block))
+        return coverage[(block_start, account)]
+
+    owned = inherited = transient = None
     for key, rp in have:
         for r in rp.get("five_hour") or []:
+            if r["block_start"]:
+                with_window, in_block = block_coverage(r["block_start"], r.get("account"))
+                if with_window * 2 < in_block:
+                    if transient is None or r["percent"] > transient["percent"]:
+                        transient = {"percent": r["percent"], "at": r["at"], "run_key": key, "account": r.get("account"),
+                                     "readings": with_window, "of": in_block}
+                    continue
             own = bool(fleet_first and r["block_start"] and r["block_start"] >= fleet_first)
             best = owned if own else inherited
             if best is None or r["percent"] > best["percent"]:
@@ -1456,7 +1529,7 @@ def fleet_rate_limit_peaks(sessions, fleet_first):
     if inherited and owned and inherited["percent"] <= owned["percent"]:
         inherited = None
     return {"sessions_with_history": len(have), "readings": sum(rp["readings"] for _, rp in have), "peaks": peaks,
-            "five_hour_inherited": inherited}
+            "five_hour_inherited": inherited, "five_hour_transient": transient}
 
 
 def project_label(run_key):
@@ -1523,6 +1596,27 @@ def headroom_verdict(sessions, fleet_rl):
             "other_sessions": [{"run_key": k, "project": project_label(k)} for k in others],
             "pct_per_session": round(pk["percent"] / n, 1), "pct_per_session_hour": round(per_session_hour, 2),
             "fits_sessions": fits, "more_sessions": fits - n}
+
+
+def fleet_api_errors(sessions):
+    """The fleet's refused API requests: count, the sessions that saw one, the kinds, the main-loop/subagent split and the
+    window they fell in; None when no session saw one. One kind across most sessions inside one window is the API edge or the
+    machine's network, never a session fault (2026-11-13: 37 `403 authentication_failed` Cloudflare challenge pages across
+    10 of 12 sessions in 34 minutes, which every per-session column read clean on)."""
+    kinds, lanes, times, saw = Counter(), Counter(), [], []
+    for s in sessions:
+        a = s["agg"]
+        if a["api_errors"]:
+            saw.append(s["run_key"])
+            kinds.update(a["api_errors"])
+            lanes.update(a["api_error_lanes"])
+            times.extend(a["api_error_times"])
+    if not kinds:
+        return None
+    return {"count": sum(kinds.values()), "sessions": saw, "by_kind": dict(kinds.most_common()),
+            "main": lanes["main"], "subagent": lanes["subagent"],
+            "first": min(times).strftime("%Y-%m-%dT%H:%M:%SZ") if times else None,
+            "last": max(times).strftime("%Y-%m-%dT%H:%M:%SZ") if times else None}
 
 
 def fleet_boundary_compactions(sessions, shipped_count):
@@ -1639,6 +1733,68 @@ def linear_issue_index(paths):
                     "creator": creator.get("displayName") or creator.get("name"),
                 })
     return idx, read
+
+
+def set_census(linear_idx):
+    """Arm the transcript scan with the exported issues that carry a createdAt (scan_transcript's CENSUS)."""
+    global CENSUS, CENSUS_KEYS
+    CENSUS = sorted((rec["created_at"].timestamp(), ident, re.compile(r"\b" + re.escape(ident) + r"\b"))
+                    for ident, rec in linear_idx.items() if rec.get("created_at"))
+    CENSUS_KEYS = [c[0] for c in CENSUS]
+
+
+def census_filings(sessions, linear_idx, census_path, shipped_count):
+    """Which exported issues the fleet's sessions created: the retro's filing census attributed, and its reproduction ratio.
+
+    The witness is the create call's own result: a tool result in one of the session's transcripts (a subagent's counts for its
+    parent) naming the identifier as a whole word within CENSUS_BEFORE_S/CENSUS_AFTER_S of the issue's createdAt, whose paired
+    call ran a create. The earliest one wins. A mention inside the window is not a filing: on the 2026-11-12 fleet a sibling's
+    pool read named an issue 74s after another session created it, and the retro's own census query named two interactive
+    filings within a minute, so a result with no create call behind it is listed as `named_only` and never counted. Every agent
+    files under the operator's Linear login, so no Linear field separates these rows.
+
+    Unmeasured, never zero, without a census export or with one written before the fleet's last record: the export outlives
+    the retro that wrote it, so the first analyzer run of the next retro would otherwise read the previous fleet's census."""
+    firsts = [s["agg"]["first"] for s in sessions if s["agg"]["first"]]
+    lasts = [s["agg"]["last"] for s in sessions if s["agg"]["last"]]
+    if census_path is None:
+        return {"measured": False, "reason": "no created-in-window census export (retro Step 3 writes "
+                                             "`tmp/fleet-linear-window.json`)"}
+    if not firsts or not lasts:
+        return {"measured": False, "reason": "no timestamped transcript to bound the fleet"}
+    try:
+        written = datetime.fromtimestamp(census_path.stat().st_mtime, timezone.utc)
+    except OSError:
+        return {"measured": False, "reason": f"`{census_path.name}` could not be read"}
+    if written < max(lasts):
+        return {"measured": False,
+                "reason": f"`{census_path.name}` was written {written:%Y-%m-%d %H:%MZ}, before the fleet's last record "
+                          f"({max(lasts):%Y-%m-%d %H:%MZ}) — an earlier retro's census; re-run once Step 3 has rewritten it"}
+    witnesses = {}
+    for s in sessions:
+        for ident, t, by_create in s["agg"]["filing_witnesses"]:
+            witnesses.setdefault(ident, []).append((t, s["run_key"], by_create))
+    attributed, named_only, excluded = [], [], []
+    for ident, rec in sorted(linear_idx.items(), key=lambda kv: (kv[1]["created_at"] or min(firsts), kv[0])):
+        created = rec.get("created_at")
+        if not created or created < min(firsts):
+            continue
+        seen = sorted(witnesses.get(ident, []))
+        creates = [w for w in seen if w[2]]
+        row = {"id": ident, "created_at": created.strftime("%Y-%m-%dT%H:%M:%SZ"), "creator": rec.get("creator")}
+        if creates:
+            attributed.append({**row, "filed_by": creates[0][1], "delta_s": round((creates[0][0] - created).total_seconds(), 1)})
+        elif seen:
+            named_only.append({**row, "named_by": seen[0][1], "delta_s": round((seen[0][0] - created).total_seconds(), 1)})
+        else:
+            excluded.append(row)
+    operators = {a["creator"] for a in attributed if a["creator"]}
+    for row in excluded + named_only:
+        row["kind"] = "operator-login" if row["creator"] in operators else "other-creator"
+    return {"measured": True, "reason": None, "source": census_path.name,
+            "attributed": attributed, "named_only": named_only, "excluded": excluded,
+            "by_session": dict(Counter(a["filed_by"] for a in attributed).most_common()),
+            "census_filed_per_shipped": round(len(attributed) / shipped_count, 2) if shipped_count else None}
 
 
 def kept_row_reason(stored, headline, launch_epoch):
@@ -2203,6 +2359,11 @@ def main():
                 continue
         states.append((p, st, mtime))
 
+    linear_paths = [Path(p) for p in args.linear_issues] if args.linear_issues else \
+        [checkout / "tmp" / "fleet-shipped-issues.json", checkout / "tmp" / "fleet-linear-window.json"]
+    linear_idx, linear_read = linear_issue_index(linear_paths)
+    set_census(linear_idx)
+
     def measure(run_key, state, mtime, ledger_missing=False):
         state, ledger_normalized, ledger_dropped = normalize_ledger(state)
         agg = new_agg()
@@ -2385,12 +2546,17 @@ def main():
     # Pool exhausted: the whole fleet idling on an empty or GATED certified pool after its last ship.
     # Per deadline-drained session, the tail from its last productive moment (a landing or a canceled
     # attempt — a cancel after the last ship is work, not idling; skips and failures carry no
-    # timestamp and still read as idle) to the deadline; a session that shipped nothing idled from
-    # its first pick. A deadline drain proves the session was alive and polling the pool right
-    # through the deadline, so its whole tail is pool idle. `halted` and ledger-less sessions are
-    # excluded. Measured 2026-09-16: three sessions held 4.1h, 3.3h and 3.0h on a keeper-gated Planned
-    # column (10.4 session-hours, 28% of the fleet) while every per-session row read clean and Flags
-    # said None.
+    # timestamp) to the deadline; a session that shipped nothing idled from its first pick. A deadline
+    # drain proves the session was alive and polling the pool right through the deadline, so its whole
+    # tail is pool idle. `halted` and ledger-less sessions are excluded. Measured 2026-09-16: three
+    # sessions held 4.1h, 3.3h and 3.0h on a keeper-gated Planned column (10.4 session-hours, 28% of
+    # the fleet) while every per-session row read clean and Flags said None.
+    #
+    # An Agent dispatch after that moment moves it: a hold tick dispatches none, so the session was
+    # working an issue that then failed or parked, and the tail starts at its last dispatch. Measured
+    # 2026-11-13: a session picked an issue five minutes after its last landing and worked it past
+    # the deadline to a `needs decision` park, and the 1.9h from that landing to the deadline was the
+    # fleet's whole idle tail.
     def last_productive_of(s):
         times = list(landings[s["run_key"]].values()) + s["agg"]["cancel_times"]
         if times:
@@ -2407,6 +2573,9 @@ def main():
             last_productive, from_first = last_productive_of(s)
             if last_productive is None:
                 continue
+            dispatched = s["agg"].get("last_agent_dispatch")
+            if dispatched and dispatched > last_productive:
+                last_productive, from_first = dispatched, False
             idle_tails[s["run_key"]] = (
                 max(0.0, (fleet_deadline_dt - last_productive).total_seconds() / 3600), from_first)
 
@@ -2568,9 +2737,6 @@ def main():
     # (review deferrals, /reflect filings) vs pre-existing backlog. Issues/hour looks identical
     # either way — this join is what tells a draining backlog from a treadmill.
     fleet_first = min((s["agg"]["first"] for s in sessions if s["agg"]["first"]), default=None)
-    linear_paths = [Path(p) for p in args.linear_issues] if args.linear_issues else \
-        [checkout / "tmp" / "fleet-shipped-issues.json", checkout / "tmp" / "fleet-linear-window.json"]
-    linear_idx, linear_read = linear_issue_index(linear_paths)
     provenance, prov_counts, prov_creators = {}, Counter(), Counter()
     for issue in sorted(all_shipped):
         rec = linear_idx.get(issue)
@@ -2589,6 +2755,12 @@ def main():
         prov_counts[klass] += 1
         if rec and rec.get("creator"):
             prov_creators[rec["creator"]] += 1
+    # The census is the created-in-window export by name; an explicit --linear-issues list passes it last.
+    census_path = next((Path(p) for p in reversed(linear_read) if Path(p).name == "fleet-linear-window.json"),
+                       Path(linear_read[-1]) if args.linear_issues and linear_read else None)
+    filings = census_filings(sessions, linear_idx, census_path, len(all_shipped))
+    bash_long = sum(s["agg"]["bash_long"] for s in sessions)
+    bash_ceiling = sum(s["agg"]["bash_ceiling"] for s in sessions)
     prov_known = len(all_shipped) - prov_counts["unknown"]
     fresh_share = round((prov_counts["during_run"] + prov_counts["week_before"]) / prov_known, 3) \
         if prov_known else None
@@ -2681,6 +2853,7 @@ def main():
     fleet_boundary = fleet_boundary_compactions(sessions, len(all_shipped))
     fleet_rl = fleet_rate_limit_peaks(sessions, fleet_first)
     fleet_headroom = headroom_verdict(sessions, fleet_rl)
+    api_err = fleet_api_errors(sessions)
     headline = {
         "recorded_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "fleet_start": fleet_first.strftime("%Y-%m-%dT%H:%M:%SZ") if fleet_first else None,
@@ -2723,6 +2896,8 @@ def main():
         "hold_share": None,  # filled below once session_hours exists
         "nopick_session_hours": round(nopick_total_h, 1),
         "nopick_share": None,  # filled below once session_hours exists
+        "census_filed_per_shipped": filings.get("census_filed_per_shipped"),
+        "bash_ceiling_share": round(bash_ceiling / bash_long, 3) if bash_long else None,
         "rewritten_request_share": fleet_lanes["rewritten_request_share"] if fleet_lanes else None,
         "non_judgment_token_share": fleet_lanes["non_judgment_token_share"] if fleet_lanes else None,
         "peak_five_hour_pct": (fleet_rl["peaks"].get("five_hour") or {}).get("percent") if fleet_rl else None,
@@ -2891,6 +3066,8 @@ def main():
                 "classifier_unavailable": len(s["agg"]["classifier_unavailable"]),
                 "dangling_tool_calls": s["agg"]["dangling"],
                 "linear_ratelimited": s["agg"]["linear_ratelimited"],
+                "api_errors": sum(s["agg"]["api_errors"].values()),
+                "bash_ceiling": {"hits": s["agg"]["bash_ceiling"], "long_calls": s["agg"]["bash_long"]},
                 "subagent_transcripts": s["agg"]["subagents"],
                 "named_dispatches": s["agg"]["named_dispatches"],
                 "drained_early_h": (early_drain.get(s["run_key"]) or {}).get("hours"),
@@ -2973,6 +3150,9 @@ def main():
             },
             "history": history,
             "rewakes": rewake_tot,
+            "api_errors": api_err,
+            "filings": filings,
+            "bash_ceiling": {"hits": bash_ceiling, "long_calls": bash_long, "share": headline["bash_ceiling_share"]},
             "pool_exhausted": {
                 "hours_before_deadline": pool_exhausted_h,
                 "idle_tail_session_hours": idle_tail_session_hours,
@@ -3066,8 +3246,8 @@ def main():
                           else f"started {e['started']}") + ")" for e in excluded_stale) + "\n")
 
     print("## Per session\n")
-    print("| run | span | ctx>=200k | shipped (rec/obs) | canceled (rec/obs) | wakeups | dispatch bg/sync/ign | blind sleep | marker | cls denied/unavail | dangling | linear rl | throttled | held | no-pick |")
-    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    print("| run | span | ctx>=200k | shipped (rec/obs) | canceled (rec/obs) | wakeups | dispatch bg/sync/ign | blind sleep | marker | cls denied/unavail | dangling | linear rl | throttled | held | no-pick | api err | ceiling |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     tot = Counter()
     for s in sessions:
         a = s["agg"]
@@ -3090,7 +3270,7 @@ def main():
               + " | "
               + (f"{nopicks[s['run_key']]['hours']:.1f}h ({nopicks[s['run_key']]['ticks']}, "
                  f"{nopicks[s['run_key']]['untagged_ticks']} untagged)" if nopicks[s["run_key"]]["ticks"] else "-")
-              + " |")
+              + f" | {sum(a['api_errors'].values())} | {a['bash_ceiling']}/{a['bash_long']} |")
         tot["span"] += span
         tot["blind"] += a["sleep_blind_s"]
         tot["marker"] += a["sleep_marker_s"]
@@ -3117,6 +3297,9 @@ def main():
           + (f" · no-pick {nopick_total_h:.1f}h ({100 * headline['nopick_share']:.0f}% of fleet; {nopick_ticks_total} ticks, "
              f"{nopick_untagged_total} untagged — held plus the no-pick time no hold tag names)"
              if nopick_ticks_total and headline["nopick_share"] is not None else "")
+          + (f" · {api_err['count']} API error(s) in {len(api_err['sessions'])} of {len(sessions)} sessions" if api_err else "")
+          + (f" · {bash_ceiling} of {bash_long} main-loop foreground Bash calls of {LONG_FOREGROUND_S}s or more ran to the "
+             f"{BASH_TIMEOUT_CEILING_S}s ceiling ({100 * bash_ceiling / bash_long:.0f}%)" if bash_long else "")
           + "\n")
     if rewake_tot is not None:
         print(f"rewakes {rewake_tot['stop']} stop ({rewake_tot['save']} save / "
@@ -3191,7 +3374,7 @@ def main():
               f"{sum(v['sev']['HIGH'] for v in verdicts)}/{sum(v['sev']['MED'] for v in verdicts)} · "
               f"origin-tagged {tagged}/{resolved_total} ({origins}) · "
               f"{filed_total} deferred filings from this fleet's reviews → {ratio}. Review-pipeline filings only — "
-              f"retro Step 3's Linear census, attributed to the fleet's sessions, is the full filing count.\n")
+              f"the **Filed (census)** line under Shipped-issue provenance is the full filing count.\n")
         if tier_join:
             parts = " | ".join(
                 f"{label} n={len(vals)} · mean {sum(vals) / len(vals):.1f} · median {median(vals):.1f}"
@@ -3232,6 +3415,26 @@ def main():
               f"{prov_counts['week_before']} in the 7 days before launch, {prov_counts['older']} older, "
               f"{prov_counts['unknown']} unknown (absent from the export). {fresh}{by_creator}"
               f"Sources: {', '.join(Path(p).name for p in linear_read)}.\n")
+    if not filings["measured"]:
+        print(f"**Filed (census)** — not measured: {filings['reason']}.\n")
+    else:
+        made = len(filings["attributed"])
+        rows = made + len(filings["named_only"]) + len(filings["excluded"])
+        by = ", ".join(f"`{k}` x{n}" for k, n in filings["by_session"].items())
+        left = filings["excluded"] + filings["named_only"]
+        ops = [r["id"] for r in left if r["kind"] == "operator-login"]
+        others = [r["id"] for r in left if r["kind"] != "operator-login"]
+        named = ", ".join(f"{r['id']} (`{r['named_by']}`, +{r['delta_s']:.0f}s)" for r in filings["named_only"])
+        ratio = filings["census_filed_per_shipped"]
+        print(f"**Filed (census)** — {made} of the {rows} issue(s) in `{filings['source']}` created since the fleet started "
+              f"were created by its sessions" + (f" ({by})" if by else "") + ": a create call's own result names each within "
+              f"{CENSUS_AFTER_S}s of its createdAt. Not counted: {len(others)} under another creator"
+              + (f" ({', '.join(others)})" if others else "") + f", {len(ops)} under the operator's login with no fleet create "
+              f"record" + (f" ({', '.join(ops)})" if ops else "")
+              + (f"; of these a fleet session named {len(filings['named_only'])} inside the window with no create call behind "
+                 f"it — a pool read, or a create wrapped in a script — so read those by hand: {named}" if named else "")
+              + (f". Census R = {made} / {len(all_shipped)} shipped = **{ratio}**.\n" if ratio is not None
+                 else ". No shipped issue to form R against.\n"))
 
     if tests["measured_ships"]:
         tests_line = (f"Tests per shipped issue: {signed_one(tests['rspec_examples_per_shipped'])} rspec examples, "
@@ -3413,14 +3616,22 @@ def main():
         inherited_note = (f" {lead} {inh['percent']}% at {inh.get('at') or '?'} (`{inh['run_key']}`) fell in a 5h block already "
                           f"running when the fleet started, so it carries usage from before the launch and is left out of the "
                           f"peak and the verdict." if inh else "")
+        tr = fleet_rl.get("five_hour_transient")
+        transient_note = (f" A five_hour window showed on {tr['readings']} of the {tr['of']} reading(s) the fleet took in one 5h "
+                          f"block ({tr['percent']}% at {tr.get('at') or '?'}, `{tr['run_key']}`) — a transient on an account whose "
+                          f"other readings there carry only seven_day, so it is left out of the peak and the verdict." if tr else "")
         print(f"**Window readings** — {fleet_rl['sessions_with_history']} of {len(sessions)} session(s) kept a mods/rate-limits "
               f"history ({fleet_rl['readings']} readings): peak five_hour {reading('five_hour')} in a 5h block the fleet ran "
-              f"from its start; peak seven_day {reading('seven_day')}.{inherited_note} These are the account's own meter, so "
+              f"from its start; peak seven_day {reading('seven_day')}.{inherited_note}{transient_note} These are the account's own meter, so "
               f"they answer what the token peaks above cannot — how close the 5h window came to its limit. Sessions on one "
               f"account share its windows, so the fleet's peak is the highest any of them saw.\n")
         if not fleet_headroom and inh and not fleet_rl["peaks"].get("five_hour"):
             print("**Headroom verdict** — none: no 5h block began inside the fleet's span, so every reading carries usage from "
                   "before the launch and cannot say how many sessions the window fits.\n")
+        elif not fleet_headroom and tr and not fleet_rl["peaks"].get("five_hour"):
+            print("**Headroom verdict** — none: the account reports no five_hour window, so there is no 5h block to size. The "
+                  "weekly meter's movement over the fleet span is the account-side figure "
+                  "(skills/fleet-retro/references/windows.md).\n")
         if fleet_headroom:
             hv = fleet_headroom
             more = hv["more_sessions"]
@@ -3532,8 +3743,8 @@ def main():
             return f"{round(100 * v)}%" if v is not None else "-"
         print("| fleet start | n | hours | shipped | $/issue | ktok/issue | $/Mtok out | sub-final% | "
               "cycles | find/rev | C+H/rev | plan% | ctx>=200k% | filed/ship | ex/ship | vt/ship | st/ship | fresh% | idle% | "
-              "thr% | hold% | rewr% | 5h% | ins/ship | t/kloc | np% |")
-        print("|" + "---|" * 26)
+              "thr% | hold% | rewr% | 5h% | ins/ship | t/kloc | np% | R | ceil% |")
+        print("|" + "---|" * 28)
         for r in history[-6:]:
             mark = " ←" if r.get("session_set") == headline["session_set"] and not args.all else ""
             fs = (r.get("fleet_start") or "?")[:16].replace("T", " ")
@@ -3550,7 +3761,8 @@ def main():
                   f"{pct(r.get('fresh_shipped_share'))} | {pct(r.get('idle_tail_share'))} | "
                   f"{pct(r.get('throttle_share'))} | {pct(r.get('hold_share'))} | {pct(r.get('rewritten_request_share'))} | "
                   f"{cell(r.get('peak_five_hour_pct'), '{}%')} | {cell(r.get('inserted_lines_per_shipped'))} | "
-                  f"{cell(r.get('tests_per_kloc'), '{:.1f}')} | {pct(r.get('nopick_share'))} |")
+                  f"{cell(r.get('tests_per_kloc'), '{:.1f}')} | {pct(r.get('nopick_share'))} | "
+                  f"{cell(r.get('census_filed_per_shipped'))} | {pct(r.get('bash_ceiling_share'))} |")
         if len(history) > 6:
             print(f"\n({len(history) - 6} earlier row(s) in the ledger, not shown)")
         print("\nRead $/issue as its two factors: ktok/issue is work per shipped issue (churn or harder "
@@ -3579,9 +3791,14 @@ def main():
               f"session's mods/rate-limits history recorded in a 5h block that began inside the fleet's span — a block already "
               f"running at launch carries earlier usage — the account's own meter, so read it beside n for headroom (the "
               f"Headroom verdict line does that arithmetic); a `-` is a fleet with no history or no such block. np%, appended "
-              f"last, is the no-pick gauge: session-hours over EVERY `AUTO-CONTINUE: no pick` tick, hold-tagged or not, as a "
+              f"after t/kloc, is the no-pick gauge: session-hours over EVERY `AUTO-CONTINUE: no pick` tick, hold-tagged or not, as a "
               f"share of the same span — hold% plus the no-pick time no hold tag names (a candidate dropped as a sibling's "
-              f"live-owned worktree, which a dead session's stamp can fake); a `-` is a row recorded before the gauge.\n")
+              f"live-owned worktree, which a dead session's stamp can fake); a `-` is a row recorded before the gauge. R is the "
+              f"census reproduction ratio: issues the fleet's own sessions created (the Filed (census) line) per shipped issue, "
+              f"where filed/ship counts review-pipeline filings alone; a `-` is a row recorded before the gauge or measured "
+              f"without a current census export. ceil%, appended last, is the share of main-loop foreground Bash calls of "
+              f"{LONG_FOREGROUND_S}s or more that ran to the tool's {BASH_TIMEOUT_CEILING_S}s timeout — a machine-contention "
+              f"signal to read beside n, which names no mechanism and counts waits written to run to the ceiling.\n")
     elif not args.all:
         print("- first recorded fleet — the trend accrues one row per windowed run in "
               "`tmp/fleet-metrics-history.jsonl`\n")
@@ -3796,6 +4013,14 @@ def main():
               f"but every 5h-keyed gauge above covers only the hours the meter carried the window "
               f"(skills/fleet-retro/references/windows.md); the weekly is the account's only window there — cswap rotates on it "
               f"and the gate parks on it.")
+    if api_err:
+        flagged = True
+        kinds = ", ".join(f"`{k}` x{n}" for k, n in api_err["by_kind"].items())
+        print(f"- **API errors** — {api_err['count']} refused request(s) in {len(api_err['sessions'])} of {len(sessions)} "
+              f"session(s) ({api_err['main']} main loop, {api_err['subagent']} subagent) between {api_err['first'] or '?'} and "
+              f"{api_err['last'] or '?'}: {kinds}. One kind across most sessions in one window is the API edge or the machine's "
+              f"network, not a session fault; read what each session did next — paused and retried, or dropped the step the "
+              f"refused subagent was carrying.")
     # fleet-launch.sh checks only that mods/loop-boundary is enabled, not that it fires; its first fleet (2026-10-10) passed
     # every looping turn as `prefix`, and the context gauge read the uncompacted run as the mod working.
     if fleet_boundary and all_shipped and fleet_boundary["accepted"] == 0:
@@ -3856,14 +4081,17 @@ def main():
     cur_kloc, cur_ins = tests["tests_per_kloc"], tests["inserted_lines_per_shipped"]
     # The sum is over the gauges both fleets measured: one gauge rising while the others fall is a shift between layers.
     pairs = [(c, p) for c, p in ((cur_ex, prev_ex), (cur_vt, prev_vt), (cur_st, prev_st)) if c is not None and p is not None]
-    # Per-ship counts grow with issue size (2026-11-03: landings averaged 1,620 inserted lines against 658 the fleet before, and
-    # per-ship tests rose while tests per 1,000 inserted lines fell), so only the size-normalized figure raises the flag.
-    if cur_kloc is not None and prev_kloc is not None and cur_kloc > prev_kloc:
+    # Either figure moves alone with issue size, so the flag needs both: larger ships raise the per-ship count while tests per
+    # 1,000 inserted lines fall (2026-11-03: landings averaged 1,620 inserted lines against 658 the fleet before), and smaller
+    # ships raise the density while the per-ship count falls (2026-11-13: 351 against 536, 33.2 tests/kloc against 24.4 and a
+    # summed +11.6 against +13.1).
+    cur_sum, prev_sum = sum(c for c, _ in pairs), sum(p for _, p in pairs)
+    if cur_kloc is not None and prev_kloc is not None and cur_kloc > prev_kloc and pairs and cur_sum > prev_sum:
         flagged = True
         print(f"- **Tests per shipped issue rose**: rspec {signed_one(cur_ex)} vs {signed_one(prev_ex)}, vitest "
               f"{signed_one(cur_vt)} vs {signed_one(prev_vt)}, stories "
               f"{signed_one(cur_st)} vs {signed_one(prev_st)} (summed over the gauges both fleets measured: "
-              f"{signed_one(sum(c for c, _ in pairs))} vs {signed_one(sum(p for _, p in pairs))}); tests/kloc {cur_kloc:.1f} vs "
+              f"{signed_one(cur_sum)} vs {signed_one(prev_sum)}); tests/kloc {cur_kloc:.1f} vs "
               f"{prev_kloc:.1f}, ins/ship {'-' if cur_ins is None else cur_ins} vs {'-' if prev_ins is None else prev_ins} — "
               f"ships are adding tests where the issue sits rather than where the mechanism lives; read the project's layer contract and route the duplicate "
               f"arms to /test-sweep")

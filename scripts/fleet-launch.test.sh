@@ -855,6 +855,72 @@ ck "check refuses a duration it cannot parse" "1" "$(FLEET_LAUNCH_CHECK=1 run 2 
 ck_has "check names the duration"     "cannot parse duration 'soon'" "$WORK/out"
 ck "the refusals dispatched nothing"  "0" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
 
+# ---- the project's own preflight: <checkout>/.claude/fleet-preflight.sh — its lines become WARNs, nothing it does blocks ----
+# The function lives in lib/fleet-markers.sh and is pinned here, through the real launch: a line is a WARN, a failing or hung
+# script is one WARN of its own, none of it refuses, and check mode and a refused launch never reach it.
+echo '.claude/' >> "$REPO/.git/info/exclude"
+PF="$REPO/.claude/fleet-preflight.sh"
+pf_setup() { # <script body>
+  rm -f "$REPO"/tmp/fleet-deadline*.json "$REPO"/tmp/auto-state-*.json
+  echo '[]' > "$WORK/agents.json"
+  : > "$WORK/dispatches"
+  mkdir -p "$REPO/.claude"
+  printf '#!/usr/bin/env bash\n%s\n' "$1" > "$PF"
+  chmod +x "$PF"
+}
+claude_fresh
+rm -rf "$REPO/.claude"
+rm -f "$REPO"/tmp/fleet-deadline*.json "$REPO"/tmp/auto-state-*.json
+echo '[]' > "$WORK/agents.json"
+: > "$WORK/dispatches"
+ck "no project preflight exits 0"        "0" "$(run 1 10h)"
+ck_lacks "no project preflight is silent" "fleet-preflight" "$WORK/out"
+ck "no project preflight dispatched"     "1" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
+
+pf_setup 'echo "the sign-in is 20 hours old"; echo "fix: gcp-auth.sh login"'
+ck "preflight lines exit 0"              "0" "$(run 1 10h)"
+ck_has "preflight line one is a WARN"    "WARN: the sign-in is 20 hours old" "$WORK/out"
+ck_has "preflight line two is a WARN"    "WARN: fix: gcp-auth.sh login" "$WORK/out"
+ck "preflight lines still dispatch"      "1" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
+
+pf_setup 'echo "cwd=$(pwd -P) deadline=[$FLEET_DEADLINE_EPOCH]"'
+ck "preflight with a deadline exits 0"   "0" "$(run 1 10h)"
+ck_has "preflight runs from the checkout" "cwd=$(cd "$REPO" && pwd -P) deadline=[" "$WORK/out"
+ck "preflight gets the deadline epoch"   "yes" "$(grep -Eq 'deadline=\[[0-9]{10}\]' "$WORK/out" && echo yes || echo no)"
+pf_setup 'echo "deadline=[$FLEET_DEADLINE_EPOCH]"'
+ck "preflight without a deadline exits 0" "0" "$(run 1)"
+ck_has "preflight deadline is empty"     "WARN: deadline=[]" "$WORK/out"
+
+pf_setup 'echo "half a result"; exit 3'
+ck "failing preflight exits 0"           "0" "$(run 1 10h)"
+ck_has "failing preflight is one WARN"   "WARN: .claude/fleet-preflight.sh exited 3" "$WORK/out"
+ck "failing preflight dispatched"        "1" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
+
+# The bound is the hang itself, not an allowance on top of the limit (the hung-fetch case above).
+pf_setup "sleep $HANG"
+start=$SECONDS
+ck "hung preflight exits 0"              "0" "$(FLEET_PREFLIGHT_TIMEOUT=1 run 1 10h)"
+ck "hung preflight bounded by the watchdog" "yes" "$([ $(( SECONDS - start )) -lt "$HANG" ] && echo yes || echo "no ($(( SECONDS - start ))s)")"
+ck_has "hung preflight is one WARN"      "WARN: .claude/fleet-preflight.sh did not finish in 1s" "$WORK/out"
+ck "hung preflight dispatched"           "1" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
+
+# A script that leaves a file behind shows whether it ran at all.
+pf_setup "touch '$WORK/preflight-ran'"
+rm -f "$WORK/preflight-ran"
+ck "check mode with a preflight exits 0" "0" "$(FLEET_LAUNCH_CHECK=1 run 2 10h)"
+ck "check mode did not run the preflight" "no" "$([ -e "$WORK/preflight-ran" ] && echo yes || echo no)"
+ck "a real launch runs the preflight"    "0" "$(run 1 10h)"
+ck "a real launch ran the preflight"     "yes" "$([ -e "$WORK/preflight-ran" ] && echo yes || echo no)"
+
+claude_upstream "hooks: preflight ordering" hooks/auto-rewake.sh
+rm -f "$WORK/preflight-ran"
+ck "refused launch exits 4"              "4" "$(run 1 10h)"
+ck "refused launch did not run the preflight" "no" "$([ -e "$WORK/preflight-ran" ] && echo yes || echo no)"
+claude_fresh
+rm -rf "$REPO/.claude"
+rm -f "$REPO"/tmp/fleet-deadline*.json
+echo '[]' > "$WORK/agents.json"
+
 # ---- a checkout with many worktrees: the main-checkout lookup reads the whole listing. git lists worktrees with work
 # between rows, so a consumer that exited at the first row left it to die of SIGPIPE, and under pipefail and errexit the
 # launch ended on that assignment with nothing said. ----

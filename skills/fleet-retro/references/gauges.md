@@ -1,6 +1,6 @@
 # The gauges
 
-Read from `/fleet-retro` Step 1 when reading any of the seven gauges past its one-line meaning: where each prints, how
+Read from `/fleet-retro` Step 1 when reading any of the eight gauges past its one-line meaning: where each prints, how
 to read it, and what a move between fleets means.
 
 ## Context distribution
@@ -56,7 +56,9 @@ rewrites. A `-` is a fleet with no effort-phase ledger.
 The idle-tail number Step 5's Capacity item leads with. Printed under **Totals** when the last ship landed an hour or
 more before the deadline: hours from that landing to the deadline, the session-hours the deadline-drained sessions then
 sat idle, and that as a share of the fleet (the trend table's `idle%`; `pool_exhausted` in the JSON). Landings are git
-committer dates with the transcript's SHIPPED tag as fallback — tags alone miss ships and read the tail too long. An
+committer dates with the transcript's SHIPPED tag as fallback — tags alone miss ships and read the tail too long. A
+drained session that dispatched an Agent after its last landing was working an issue that then failed or parked (a hold
+tick dispatches none), so its tail starts at that dispatch. An
 empty pool is a prep finding, not a session fault: read it beside Step 3's Remaining pool census, and read the "drained
 early, siblings kept picking" flag as its complement — a pool that was gated rather than empty. A session that DIED
 holding on the pool never wrote `drained` (the holds never do), so it is admitted on a structural test instead — the
@@ -94,7 +96,25 @@ in the trend, `tests_per_shipped` in the JSON. It is a static count over each sh
 `export default` never count — against the merge commit's first parent, or the fast-forward commits whose subject names
 the issue. A ship with no landing commit is excluded from the denominator and counted (`N of M`); a `-` in the trend is a
 row recorded before the gauge. Read all three columns: a fleet can add a third of a story suite in one night while the
-rspec column reads `+0.0`. A rise against the previous fleet flags: ships are adding tests where the issue sits rather
-than where the mechanism lives, so read the project's layer contract and route the duplicate arms to `/test-sweep`.
+rspec column reads `+0.0`. The flag needs both the summed per-ship count and tests per kloc to rise against the previous
+fleet, since either moves alone with issue size (larger ships raise the count, smaller ships the density): ships are then
+adding tests where the issue sits rather than where the mechanism lives, so read the project's layer contract and route
+the duplicate arms to `/test-sweep`.
 `/test-sweep`'s `baseline-series.sh` gives the suite-wide slope but reads only trees a session measured, so it cannot
 attribute growth to ships.
+
+## Timeout ceiling
+
+The share of main-loop foreground Bash calls of 60 seconds or more that ran to the Bash tool's 600-second timeout and
+were moved to the background: a clause on the **Totals** line, the `ceiling` column per session (`hits/long calls`),
+`ceil%` in the trend, `bash_ceiling` in the JSON. It is a machine-contention signal — a `pnpm check` or an rspec wait
+that outruns ten minutes is waiting on the machine's serialized lanes — to read beside n and ships per session-hour
+when sizing the next fleet's count, which no quota reading bounds on a weekly-only account
+(`skills/fleet-launch/SKILL.md` § The count). It names no mechanism by itself, and it does not track the session count
+alone: three fleets read 4%, 12% and 15% at 7, 8 and 12 sessions (2026-11-09 to 2026-11-12), and a four-session fleet
+under a twelve-hour load had already read 15% (2026-10-31). The numerator includes waits written to run to the ceiling
+(7, 6 and 9 of those three fleets' hits), and only the 600-second figure counts: a shorter timeout the caller chose
+prints the same sentence. Subagents are out of scope — the harness cuts a subagent's foreground call at 180 seconds
+with other wording, at a share that stayed flat across those fleets (41%, 45%, 42% of their Bash calls) — so a
+`pnpm check` median near 180 seconds measured over subagent calls is that cut, not a duration. Slowest calls prints the
+ceiling and a call that really took ten minutes alike (`10m Bash`); this is the count that tells them apart.

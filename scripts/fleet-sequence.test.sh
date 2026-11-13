@@ -265,6 +265,22 @@ ck "stale-ok dispatched"        "1" "$(dispatches)"
 ck_lacks "stale-ok not an issue" "stale-ok" "$WORK/dispatches"
 git -C "$CLAUDE_FRESHNESS_DIR" pull -q --ff-only
 
+# The project's own preflight (fleet-launch.test.sh pins its policy): preflight_tooling runs it for a sequence, which has no
+# deadline, and its lines are WARNs on a launch that proceeds.
+reset
+mkdir -p "$REPO/.claude"
+printf '#!/usr/bin/env bash\necho "sign-in lapses: [$FLEET_DEADLINE_EPOCH]"\n' > "$REPO/.claude/fleet-preflight.sh"
+chmod +x "$REPO/.claude/fleet-preflight.sh"
+ck "a sequence with a project preflight exits 0" "0" "$(run merge BF-1)"
+ck_has "its line is a WARN with no deadline"     "WARN: sign-in lapses: []" "$WORK/out"
+ck "the sequence still dispatched"               "1" "$(dispatches)"
+
+# A project that ships none is not mentioned.
+reset
+ck "a sequence without a project preflight exits 0" "0" "$(run merge BF-1)"
+ck_lacks "and says nothing of it"                   "WARN: sign-in" "$WORK/out"
+
+
 # A checkout-wide start.wt-source-branch (an epic fleet's posture, or one left behind) is no concern of this
 # runner: it reads and writes only per-issue keys, and start-wt-setup.sh consults the checkout-wide key
 # only under a detached HEAD.
@@ -996,6 +1012,13 @@ ck "flags with then-fleet exit 0"  "0" "$(run solo then-fleet 3 -- --model sonne
 ck_has "the child got the flag"    "--model sonnet" "$WORK/dispatches"
 ck_lacks "the default model is not added over it" "opus[1m]" "$WORK/dispatches"
 ck_has "the fleet got it after --" "launch 3 -- --model sonnet" "$WORK/fleet-calls"
+# A drain with a time budget hands that deadline to the project's preflight.
+dreset BF-1
+mkdir -p "$REPO/.claude"
+printf '#!/usr/bin/env bash\necho "deadline=[$FLEET_DEADLINE_EPOCH]"\n' > "$REPO/.claude/fleet-preflight.sh"
+chmod +x "$REPO/.claude/fleet-preflight.sh"
+ck "a budgeted drain with a project preflight exits 0" "0" "$(run solo 10h)"
+ck "the preflight got the drain's deadline epoch" "yes" "$(grep -Eq 'WARN: deadline=\[[0-9]{10}\]' "$WORK/out" && echo yes || echo no)"
 # An empty pool still owes the fleet.
 dreset
 ck "an empty pool with then-fleet exits 0" "0" "$(run solo then-fleet 3)"

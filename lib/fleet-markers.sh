@@ -96,3 +96,41 @@ fleet_marker_token() {
   slug=$(fleet_marker_slug "$1")
   if [ "$slug" = team ]; then printf 'team'; else printf 'epic:%s' "$(printf '%s' "$slug" | tr '[:lower:]' '[:upper:]')"; fi
 }
+
+# <main checkout> <deadline epoch, empty for an open-ended launch> → runs the project's own launch-time checks, when it ships any:
+# <main checkout>/.claude/fleet-preflight.sh. Each stdout line it prints becomes a `WARN:` on stderr; a non-zero exit or a timeout is one
+# WARN of its own. Always returns 0: a launch never waits on or refuses over a project's preflight, and the script's status never reaches
+# the caller's `set -e`. FLEET_PREFLIGHT_TIMEOUT (seconds, default 60) bounds it; macOS ships no `timeout`, so the run is polled, as
+# scripts/claude-freshness.sh polls its fetch.
+fleet_project_preflight() {
+  local script="$1/.claude/fleet-preflight.sh" limit="${FLEET_PREFLIGHT_TIMEOUT:-60}" out pid ticks rc=0 line
+  [ -f "$script" ] && [ -x "$script" ] || return 0
+  [[ "$limit" =~ ^[0-9]+$ ]] && [ "$limit" -ge 1 ] || limit=60
+  mkdir -p "$1/tmp"
+  out=$(mktemp "$1/tmp/fleet-preflight.XXXXXX") || return 0
+  ( cd "$1" && FLEET_DEADLINE_EPOCH="${2:-}" exec "$script" ) >"$out" 2>/dev/null </dev/null &
+  pid=$!
+  ticks=$(( limit * 5 ))
+  while kill -0 "$pid" 2>/dev/null && [ "$ticks" -gt 0 ]; do
+    sleep 0.2
+    ticks=$(( ticks - 1 ))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    pkill -TERM -P "$pid" 2>/dev/null
+    kill -TERM "$pid" 2>/dev/null
+    wait "$pid" 2>/dev/null || true
+    rc=timeout
+  else
+    wait "$pid" || rc=$?
+  fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [ -n "$line" ]; then echo "WARN: $line" >&2; fi
+  done <"$out"
+  rm -f "$out"
+  if [ "$rc" = timeout ]; then
+    echo "WARN: .claude/fleet-preflight.sh did not finish in ${limit}s and was stopped — its checks did not run; launching anyway" >&2
+  elif [ "$rc" -ne 0 ]; then
+    echo "WARN: .claude/fleet-preflight.sh exited $rc — its checks did not complete; launching anyway" >&2
+  fi
+  return 0
+}
