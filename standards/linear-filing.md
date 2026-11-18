@@ -37,7 +37,11 @@ module the fix depends on (the store, read guard or fold its Evidence names), no
 shows: a sibling filed from another issue's review shares that module and need not share one surface identifier.
 Search the module's stem, the shortest token its file family shares, since the sibling may cite another file of the
 family: a sibling citing `historyLoadStore.ts` is found by `historyLoad` and missed by `historyLoadRead`. Also check
-the current run's already-filed list. On a hit:
+the current run's already-filed list. The search is a snapshot, and a sibling session can file the same fix between it
+and your create, so pass the same tokens to the create as `--search <token>` (§ 3): it re-runs them immediately before
+creating and refuses (exit 5) on an open hit filed in the last hour that the body, the parent or a `--seen <ID>` does
+not name. (2026-11-15: three sessions filed one fix shape within 4.5 minutes, BF-3306, BF-3310 and BF-3311, the last off
+a search 14 minutes old; two of them shipped rival hooks, which BF-3314 then had to reconcile.) On a hit:
 
 - **Same root cause, and the change already in your working tree meets its Desired Outcome** → the fix is that
   issue's deliverable, not an occurrence to record. Say so to the user at once, claim it
@@ -108,12 +112,14 @@ keeping `specified` when the body meets the bar.
 ## 3. Create through the helper
 
 ```bash
-~/.claude/scripts/linear-create-child.sh --allow-unrouted [--allow-planned] <PARENT|-> <TEAM> <Backlog|Planned> "<title>" /abs/path/tmp/linear-filing-<slug>.md <class-labels|-> <1|2|3> >| tmp/linear-filing-<slug>.id; echo "EXIT=$?"
+~/.claude/scripts/linear-create-child.sh --allow-unrouted [--allow-planned] --search <token> [--search <token>]... [--seen <ID>]... <PARENT|-> <TEAM> <Backlog|Planned> "<title>" /abs/path/tmp/linear-filing-<slug>.md <class-labels|-> <1|2|3> >| tmp/linear-filing-<slug>.id; echo "EXIT=$?"
 ```
 
 Read the id back with `cat tmp/linear-filing-<slug>.id`; empty means no issue exists. The `EXIT=` line, printed in the
 same call before anything else runs, is what the exit-status rules below branch on.
 
+- **Search tokens**: § 1's tokens, one `--search` each. `--seen <ID>` acknowledges a hit you already weighed in § 1
+  and filed beside; the parent and any identifier the body names need no flag.
 - **Parent**: the originating issue, or `-` for a top-level issue when the context has none; never invent one. The helper
   creates the issue, links the parent with `relations parent`, and verifies the link, failing hard on an orphan.
   `linear-cli issues create` has no `--parent` flag, and a hand-rolled create-then-link is skipped or silently fails
@@ -153,6 +159,12 @@ The helper prints the id on every path where the issue was created; empty stdout
 - **3** (or **4**, which is 3 plus 2): the parent is at Linear's sub-issue nesting cap (10 ancestors), so the helper
   wired a `related` peer edge instead. The issue is filed and usable: skip the parent re-query for it, annotate
   `(related, not sub-issue — parent at Linear's nesting cap)`, continue.
+- **5** (no id): the create-time re-search found an open issue filed in the last hour that the body, the parent and
+  `--seen` leave unnamed; stderr lists each. Nothing was created. Read each per § 1's hit rules: same root cause →
+  append your evidence to it and record `(existing — evidence appended)`; the same fix shape at another site → regroup
+  into one issue; adjacent but distinct → re-run the same create adding `--seen <ID>`, then wire its edge in § 4.
+- **1 with no id and `create-time search` or `could not read the issues filed` in stderr**: nothing was created. A rate
+  limit means wait for the hourly window, never an immediate retry; otherwise re-run the same create.
 - **1 with an id on stdout**: the issue exists but its state or linkage could not be established; stderr says which.
   Record it with stderr's first line and continue.
 - **1 with no id, stderr naming a local precondition** (`body file not found`, the `usage:` line, `priority must be 0-4`,

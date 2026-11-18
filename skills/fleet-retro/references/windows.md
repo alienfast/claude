@@ -85,10 +85,12 @@ All four are in the `windows` block already emitted.
   account shows a `five_hour` window on a stray reading (2026-11-13: 4 of 695, all 1%, inside two minutes), so the analyzer
   counts a `five_hour` reading only when most of the fleet's readings in that 5h block carry the window and names the
   rest on the `Window readings` line as a transient. What binds such an account is the weekly: size
-  nothing from the 5h gauges there. Its burn is measured once — the 2026-10-30 fleet's four sessions burned 62 weekly
+  nothing from the 5h gauges there. Its burn is measured twice: the 2026-10-30 fleet's four sessions burned 62 weekly
   points over 112 session-hours and 35 ships in the account's weekly-only span (0.55 per session-hour, about 1.8 per
-  ship), which is what `fleet-headroom.sh`'s weekly reserve of 3 rests on — so read the weekly meter's movement over the
-  fleet span against that rate, and the token peaks for cost.
+  ship), which is what `fleet-headroom.sh`'s weekly reserve of 3 rests on; the 2026-11-13 fleet's five sessions burned
+  84 over 142 session-hours and 80 ships on one account before cswap rotated it at 94% (0.59 per session-hour, about
+  1.05 per ship). The session-hour rate held while the per-ship cost fell, so read the weekly meter's movement over the
+  fleet span against the session-hour rate, and the token peaks for cost.
 - **Cross-run token comparisons are valid only within one `limit_kind`.** Unrelated ceilings can coincide closely, and
   a 5h window is simply the wrong instrument for a weekly cutoff: trailing-5h totals at a `weekly` and a `5-hour`
   cutoff agreeing to a fraction of a percent is coincidence, not an identified meter.

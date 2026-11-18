@@ -12,8 +12,12 @@ For follow-ups use the helper anyway: it links via `relations parent` and **veri
 does not), failing hard on an orphan:
 
 ```bash
-~/.claude/scripts/linear-create-child.sh [--allow-planned] [--allow-unrouted] <parent|-> <team> <state|-> <title> <body-file> [label|-] [priority|-]
+~/.claude/scripts/linear-create-child.sh [--allow-planned] [--allow-unrouted] [--search <token>]... [--seen <ID>]... <parent|-> <team> <state|-> <title> <body-file> [label|-] [priority|-]
 ```
+
+`--search` re-runs the dedup search at create time and refuses (exit 5, nothing created) on an open hit filed in the
+last hour that the body, the parent or a `--seen <ID>` does not name; agent filings pass it
+(`standards/linear-filing.md` § 3).
 
 The label slot must carry a routing label — `specified`, `needs decision`, `human` or `keeper` (`sentry` /
 `dependencies` from those two producers). A call without one is refused before anything is created unless it passes

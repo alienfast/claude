@@ -2,7 +2,8 @@
 # linear-create-child.sh — create a Linear issue (optionally linked to a parent),
 # with its description read from a file, and verify the parent link took.
 #
-# Usage: linear-create-child.sh [--allow-planned] [--allow-unrouted] <parent|-> <team> <state|-> <title> <body-file> [label|-] [priority|-]
+# Usage: linear-create-child.sh [--allow-planned] [--allow-unrouted] [--search <token>]... [--seen <ID>]...
+#                               <parent|-> <team> <state|-> <title> <body-file> [label|-] [priority|-]
 #
 #   --allow-planned  Required (leading) to pass `Planned` as the state. Unattended filings land in
 #                Backlog — the human curates Planned (keeper ruling 2026-08-15) — and a caller-passed
@@ -19,6 +20,15 @@
 #                record that the caller attaches the routing label in a later step of the same run —
 #                quality-review's recipe certifies last, and /prd and /spec batches certify after
 #                their collision pass.
+#   --search <token>  Leading, repeatable: re-run linear-dedup-search.sh with these tokens (the filer's own
+#                standards/linear-filing.md § 1 tokens) immediately before the create. An open hit filed in the
+#                last LINEAR_CREATE_RECENT_MIN minutes (default 60) that is not acknowledged refuses the create
+#                with exit 5. The filer's own search is a snapshot, and a sibling session can file the same fix
+#                after it: on 2026-11-15 three sessions filed one fix shape within 4.5 minutes (BF-3306, BF-3310,
+#                BF-3311), one off a search 14 minutes old, and two of them shipped rival hooks. Older hits were
+#                there for the filer's own search to weigh, so they never refuse.
+#   --seen <ID>  Leading, repeatable: acknowledge a hit the filer has already weighed. The parent and every
+#                identifier the body names count as acknowledged without it.
 #   <parent>     Parent issue identifier (e.g., PL-396) to link under, or "-" / ""
 #                for a top-level issue.
 #   <team>       Team key or name (e.g., PL).
@@ -68,9 +78,12 @@
 #       EXISTS and is fully usable — do NOT treat the item as unfiled; annotate it as
 #       related-not-sub-issue.
 #   4 = both 2 and 3: parent at cap (`related` edge wired) AND the label attach failed
+#   5 = refused pre-create — nothing exists: --search found an unacknowledged open issue filed inside the
+#       window; stderr lists each hit. Read them per standards/linear-filing.md § 1, then re-run.
 #   1 = usage / caller-passed Planned without --allow-planned, or an unrouted label slot without
-#       --allow-unrouted (both refused pre-create — nothing exists) / missing body file / create
-#       failed / no identifier returned — or created but the state or the parent linkage could
+#       --allow-unrouted (both refused pre-create — nothing exists) / missing body file / the --search
+#       re-search or its recent-filings read failed or was rate limited (pre-create — nothing exists) /
+#       create failed / no identifier returned — or created but the state or the parent linkage could
 #       not be established at all (stderr says which; id already on stdout whenever the issue
 #       exists)
 
@@ -81,16 +94,25 @@ export PATH="$HOME/.cargo/bin:$PATH"
 
 allow_planned=0
 allow_unrouted=0
+search_tokens=()
+seen_ids=()
 while :; do
   case "${1:-}" in
     --allow-planned)  allow_planned=1;  shift ;;
     --allow-unrouted) allow_unrouted=1; shift ;;
+    --search|--seen)
+      if [ $# -lt 2 ] || [ -z "$2" ]; then
+        echo "ERROR: $1 needs a non-empty value" >&2
+        exit 1
+      fi
+      if [ "$1" = "--search" ]; then search_tokens+=("$2"); else seen_ids+=("$2"); fi
+      shift 2 ;;
     *) break ;;
   esac
 done
 
 if [ $# -lt 5 ] || [ $# -gt 7 ]; then
-  echo "usage: linear-create-child.sh [--allow-planned] [--allow-unrouted] <parent|-> <team> <state|-> <title> <body-file> [label|-] [priority|-]" >&2
+  echo "usage: linear-create-child.sh [--allow-planned] [--allow-unrouted] [--search <token>]... [--seen <ID>]... <parent|-> <team> <state|-> <title> <body-file> [label|-] [priority|-]" >&2
   exit 1
 fi
 
@@ -135,6 +157,58 @@ done
 if [ ! -f "$body_file" ]; then
   echo "ERROR: body file not found: $body_file" >&2
   exit 1
+fi
+
+if [ "${#search_tokens[@]}" -gt 0 ]; then
+  recent_min="${LINEAR_CREATE_RECENT_MIN:-60}"
+  if ! [[ "$recent_min" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: LINEAR_CREATE_RECENT_MIN must be a positive whole number of minutes (got '$recent_min')" >&2
+    exit 1
+  fi
+  dedup_err=$(mktemp)
+  trap 'rm -f "$dedup_err"' EXIT
+  drc=0
+  hits=$("$(dirname "$0")/linear-dedup-search.sh" "${search_tokens[@]}" 2>"$dedup_err") || drc=$?
+  if [ "$drc" -eq 3 ]; then
+    echo "ERROR: the create-time search was rate limited — nothing was created; wait for the hourly window, then re-run the same create: $(head -1 "$dedup_err")" >&2
+    exit 1
+  elif [ "$drc" -ne 0 ]; then
+    echo "ERROR: the create-time search failed (linear-dedup-search.sh exit $drc) — nothing was created: $(head -3 "$dedup_err" | tr '\n' ' ')" >&2
+    exit 1
+  fi
+
+  open_hits=$(printf '%s\n' "$hits" | grep -v -e '^prior-art: ' -e '^$' || true)
+  acknowledged=$( { printf '%s\n' "${seen_ids[@]}" "$parent"; grep -oE '[A-Za-z][A-Za-z0-9]*-[0-9]+' "$body_file" || true; } \
+    | tr '[:lower:]' '[:upper:]' | grep . | sort -u || true)
+  candidates=$(printf '%s\n' "$open_hits" | awk -F' [|] ' 'NF { print $1 }' | grep -vxF -f <(printf '%s\n' "$acknowledged") || true)
+
+  if [ -n "$candidates" ]; then
+    qrc=0
+    recent=$(linear-cli api query 'query($since: DateTimeOrDuration!) { issues(filter: { createdAt: { gte: $since } }, first: 250) { nodes { identifier createdAt } } }' \
+      --variable "since=-PT${recent_min}M" -o json 2>&1) || qrc=$?
+    if [ "$qrc" -ne 0 ] || ! printf '%s' "$recent" | jq -e '.data.issues.nodes | type == "array"' >/dev/null 2>&1; then
+      if printf '%s' "$recent" | grep -qE 'RATELIMITED|Rate limit exceeded'; then
+        next="rate limited: wait for the hourly window, then re-run the same create"
+      else
+        next="re-run the same create"
+      fi
+      echo "ERROR: could not read the issues filed in the last ${recent_min} minutes — nothing was created; ${next}: $(printf '%s' "$recent" | head -2 | tr '\n' ' ')" >&2
+      exit 1
+    fi
+    blocking=$(printf '%s' "$recent" | jq -r '.data.issues.nodes[] | "\(.identifier)\t\(.createdAt)"' \
+      | while IFS=$'\t' read -r id at; do
+          printf '%s\n' "$candidates" | grep -qxF -- "$id" || continue
+          printf '  %s | filed %s\n' "$(printf '%s\n' "$open_hits" | awk -F' [|] ' -v id="$id" '$1 == id { print; exit }')" "$at"
+        done) || true
+    if [ -n "$blocking" ]; then
+      {
+        echo "REFUSED: $(printf '%s\n' "$blocking" | grep -c .) open issue(s) filed in the last ${recent_min} minutes match --search and are not acknowledged — nothing was created:"
+        printf '%s\n' "$blocking"
+        echo "Read each one (standards/linear-filing.md § 1, On a hit): same root cause → append your evidence to it instead of filing; the same fix shape at another site → one issue, so regroup; adjacent but distinct → re-run this create with --seen <ID> and wire its edge in § 4."
+      } >&2
+      exit 5
+    fi
+  fi
 fi
 
 # Create with the description via `-d -` (stdin), then link the parent separately via

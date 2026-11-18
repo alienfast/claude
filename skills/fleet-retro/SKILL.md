@@ -149,7 +149,11 @@ there the weekly meter's movement over the fleet span is the account-side figure
 `limit_kind` as wording rather than scope, `recovery_lag_s` over lost hours, which 5h blocks count, and why a deliberate
 wind-down is not a stall. Compare realized burn against the `sizing.rate_tok_per_session_hour` that the fleet's own
 `tmp/fleet-recommendation-<slug>.json` assumed (the team's, or the epic's): a projection that missed by 2x is the
-finding, and silently repeating it next run is how a sizing error becomes permanent.
+finding, and silently repeating it next run is how a sizing error becomes permanent. First check that the file sized
+this launch. Nothing removes it but the next prep's overwrite, and a launch given an explicit count takes no count from
+it and never prints `fleet-launch.sh`'s 24h staleness WARN. So a `sessions` that differs from the marker's `count`, or a
+`generated_epoch` after its `launch_epoch`, makes the gap no projection miss: report that the fleet launched on its own
+count (2026-11-13: a 5-session launch beside the 12-session file `/auto-prep` wrote for the 2026-11-12 fleet).
 
 ## Step 2 — Read the flags, then chase them
 

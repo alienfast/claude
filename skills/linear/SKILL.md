@@ -88,7 +88,7 @@ All under `~/.claude/scripts/`. Each header carries the usage line, exit codes a
 |---|---|
 | `linear-context.sh` | Markdown digest of an issue including anchored comments (#1). |
 | `linear-deps-graph.sh` | Dependency graph as `{nodes, edges}` for one issue or a whole team (#2). |
-| `linear-create-child.sh` | Create, link the parent, verify the link; refuses `Planned` and an unrouted label slot without the leading flags (#3, #21). |
+| `linear-create-child.sh` | Create, link the parent, verify the link; refuses `Planned` and an unrouted label slot without the leading flags (#3, #21); `--search` refuses an unacknowledged open sibling filed in the last hour (exit 5). |
 | `linear-post.sh` | Post a comment or replace a description from a file (#18). |
 | `linear-stdin.sh` | Pipe a file to any `linear-cli` command's stdin flag. |
 | `linear-add-label.sh` | Add one label without clobbering the rest; heals near-miss names, never mints (#7, #17). |
