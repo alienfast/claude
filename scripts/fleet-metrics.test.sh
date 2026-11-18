@@ -2784,6 +2784,35 @@ CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK31" --list-fleets 
 ck "retro'd: a shared leading digit is not a recorded session" "1" "$(grep -c -E '^  tt-9 .* NOT retro-d ' "$O31")"
 ck "retro'd: the exact id in a comma-joined set still is"      "1" "$(grep -c -E '^  team .*  retro-d ' "$O31")"
 
+# ---- 31b. --sessions naming a set the lone marker does not record takes no launch filter from it ----
+# A targeted run's ledger that outlives a later fleet launch predates the checkout's only marker (a launch clears one only once
+# the registry lists its session as ended, and clears nothing without a registry). The lone-marker fallback applied that marker's
+# launch_epoch to the named set and dropped the ledger as a prior fleet's: `No auto-state files … matching the window`
+# (reproduced 2026-11-12 and again 2026-11-18 with this fixture's shape).
+CK31D="$WORK/ck31d"; mkdir -p "$CK31D/tmp"; git -C "$CK31D" init -q; git -C "$CK31D" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "TT-95: ship it"
+M31D="$(git -C "$CK31D" rev-parse --show-toplevel | sed 's/[^A-Za-z0-9]/-/g')"; mkdir -p "$WORK/projects/$M31D"
+NOW31D=$(python3 -c "import time; print(int(time.time()))")
+echo '{"status":"active","reason":"","mode":"single","shipped":["TT-95"],"canceled":[],"skipped":[],"failed":[]}' > "$CK31D/tmp/auto-state-dr310001.json"
+single_txn "$WORK/projects/$M31D/dr310001-0000.jsonl" 10800 7500
+# The ledger's last write is two hours old, an hour before the marker's launch.
+python3 -c "import os,sys; t=int(sys.argv[2])-7200; os.utime(sys.argv[1], (t, t))" "$CK31D/tmp/auto-state-dr310001.json" "$NOW31D"
+run31d() { CLAUDE_PROJECTS_DIR="$WORK/projects" "$SCRIPT" --checkout "$CK31D" --sessions dr310001 --no-record > "$O31" 2> "$E31"; }
+echo "{\"count\": 1, \"launch_epoch\": $((NOW31D - 3600)), \"fleet_sessions\": [\"ff310001\"]}" > "$CK31D/tmp/fleet-deadline-team.json"
+run31d
+ck "disjoint lone marker: the named set measures"        "0" "$?"
+ck_has "disjoint lone marker: one session"               "sessions: 1  ·" "$O31"
+ck_has "disjoint lone marker: its row"                   "| \`dr310001\`" "$O31"
+# A marker that names the session is that session's fleet: its launch filter still drops the older ledger.
+echo "{\"count\": 1, \"launch_epoch\": $((NOW31D - 3600)), \"fleet_sessions\": [\"dr310001\"]}" > "$CK31D/tmp/fleet-deadline-team.json"
+run31d
+ck "matching marker: its launch filter applies"          "1" "$?"
+ck_has "matching marker: nothing left in the window"     "matching the window" "$E31"
+# A lone marker that records no set (it predates fleet_sessions) still serves a hand-typed one.
+echo "{\"count\": 1, \"launch_epoch\": $((NOW31D - 3600))}" > "$CK31D/tmp/fleet-deadline-team.json"
+run31d
+ck "set-less lone marker: still serves a typed set"      "1" "$?"
+ck_has "set-less lone marker: its launch filter applies" "matching the window" "$E31"
+
 # ---- 32. untagged no-pick ticks, and a `backlog` session held by an unpickable candidate, from the 2026-11-09 basefund fleet ----
 # fixtures/fleet-metrics-nopick/ holds trimmed REAL records of two sessions — every /loop firing, loop-boundary record and
 # outcome turn across the stall — and their real ledgers, both carrying `backlog`. A deleted session's worktree stamp read

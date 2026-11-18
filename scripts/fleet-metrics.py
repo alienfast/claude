@@ -2183,7 +2183,8 @@ def resolve_marker(checkout, args, req_keys, explicit_window):
     """The marker this run measures: (path, data, how) or (None, {}, None) when no marker applies.
 
     One marker per fleet means the retro has to say which fleet it measures. --fleet names it (a live one by slug, an
-    archived run by slug@launch_epoch). --sessions picks the marker sharing the most keys, else the only marker. A
+    archived run by slug@launch_epoch). --sessions picks the marker sharing the most keys, else a lone marker that
+    records no set; a set no marker shares measures with no marker at all, so no launch filter and no deadline. A
     window flag takes the newest live marker for its launch_epoch and deadline. A bare run with ONE marker measures
     it, as before; with several it measures the one fleet /fleet-retro has not yet recorded (fleet-metrics-history.jsonl
     shares no session with it), and when that is not one fleet it lists them and exits 2 — the operator chooses with
@@ -2204,7 +2205,10 @@ def resolve_marker(checkout, args, req_keys, explicit_window):
         return None, {}, None
     if req_keys:
         best = max(markers, key=lambda m: len({str(k) for k in (m[3].get("fleet_sessions") or [])} & req_keys))
-        if {str(k) for k in (best[3].get("fleet_sessions") or [])} & req_keys or len(markers) == 1:
+        best_set = {str(k) for k in (best[3].get("fleet_sessions") or [])}
+        # A lone marker serves a hand-typed set only when it records no set of its own (it predates fleet_sessions).
+        # One recording a disjoint set is another run's, and its launch_epoch would drop the named ledgers as a prior fleet's.
+        if best_set & req_keys or (len(markers) == 1 and not best_set):
             return best[0], best[3], None
         return None, {}, None
     if explicit_window:

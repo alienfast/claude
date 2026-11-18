@@ -85,6 +85,12 @@ yet name; with several un-retro'd fleets it lists them and exits 2 — ask (AskU
 slug, launch time and session count in the question, then re-run with `--fleet`. Measuring a fleet writes its history
 row, and the next launch expires its marker and ledgers; a fleet never measured is kept until the operator decides.
 
+**A `/fleet-solo` or `/fleet-sequence` run is not in that list.** It has no `fleet-deadline` marker and its ledgers are
+`mode: single`, so `--list-fleets` never names it and only `--sessions` measures it. When the operator names one, or a
+`tmp/fleet-sequence-<slug>.json` marker (`solo` for a drain) was written since the last history row was recorded, read
+`references/sequence-runs.md` for its session set, why its measurement takes `--no-record`, and the reconcile of the
+runner against its sessions that no analyzer table makes.
+
 A re-run of an already-recorded fleet reads it through the current launch's verdict filter and deadline, after
 `/reap-tmp` has aged its verdicts out, so its review columns come back empty. The analyzer keeps the stored row in that
 case and says so (`--rerecord` overwrites it); pass `--no-record` to make the comparison run write nothing at all.
@@ -360,6 +366,8 @@ Commit and push only on an explicit grant (`standards/git.md`) — running this 
   ledgers without `mode`, subagent token coverage, the `obs` witnesses, which verdicts count as this fleet's reviews.
   Read when the session count disagrees with the fleet's, or before quoting a subagent, `obs` or churn figure (Step 1,
   Step 3).
+- [references/sequence-runs.md](references/sequence-runs.md) — a `/fleet-solo` or `/fleet-sequence` run: its session
+  set, `--no-record`, the runner-against-sessions reconcile (Step 1).
 - [references/gauges.md](references/gauges.md) — the eight gauges: where each prints, how to read it, what a move
   between fleets means (Step 1).
 - [references/windows.md](references/windows.md) — the `windows` block's four numbers, reading a stall group, the
