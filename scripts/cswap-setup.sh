@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # cswap-setup.sh — opt this machine into multi-account rotation with claude-swap (cswap): install it, enroll this
-# machine's Claude logins, apply the rotation policy, and keep `cswap auto` running under launchd.
+# machine's Claude logins, apply the rotation policy, and keep `cswap auto` and an hourly login check under launchd.
 #
 # WHY A SCRIPT, NOT THE README: cswap's defaults are wrong for us. Its `best` strategy parks on the account with the
 # most headroom — the quota with the longest to live — so weekly quota on the soon-to-reset accounts expires unused.
@@ -25,20 +25,24 @@
 #   Enrollment is interactive: the current login is enrolled, then each further account is a `claude auth login`
 #   followed by `cswap add` (never /logout first — cswap backs the live login up before the next replaces it). Without
 #   a TTY only the current login is enrolled and the remaining commands are printed. Re-run freely: every step is
-#   idempotent, and the flags re-apply the policy (the running engine is restarted to pick it up).
-# Remove: launchctl bootout gui/$(id -u)/com.alienfast.cswap-auto; uv tool uninstall claude-swap
+#   idempotent, and the flags re-apply the policy (the running engine is restarted to pick it up). A lapsed login is
+#   redone the same way: re-run this and answer `y` for each account cswap-logins.sh names; the login check then
+#   re-runs at once.
+# Remove: launchctl bootout gui/$(id -u)/com.alienfast.cswap-auto, the same for com.alienfast.cswap-logins, then
+#   uv tool uninstall claude-swap
 #   (cswap's account backups stay in the Keychain until `cswap remove`; see its README).
 # Run ./cswap-setup.test.sh after ANY change.
 set -uo pipefail
 
 LABEL="com.alienfast.cswap-auto"
+LOGINS_LABEL="com.alienfast.cswap-logins"
 THRESHOLD=95
 STRATEGY="consume-first"
 SERVICE=1
 ENROLL=1
 here=$(cd "$(dirname "$0")" && pwd)
 
-usage() { sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,/^set -uo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }
 die() { echo "ERROR: $*" >&2; exit 1; }
 step() { echo; echo "== $*"; }
 
@@ -128,30 +132,38 @@ case $rc in
   *) echo "  → the tick errored (exit $rc); see the lines above" ;;
 esac
 
-if [ "$SERVICE" = 1 ]; then
-  step "Keeping 'cswap auto' running"
-  if [ "$os" = Darwin ]; then
-    template="$here/../launchd/$LABEL.plist"
-    dest="$HOME/Library/LaunchAgents/$LABEL.plist"
-    [ -f "$template" ] || die "launchd template missing: $template"
-    mkdir -p "$HOME/Library/LaunchAgents" "$HOME/.claude/logs"
-    domain="gui/$(id -u)"
-    rendered=$(sed "s|__HOME__|$HOME|g" "$template")
-    if [ "$rendered" != "$(cat "$dest" 2>/dev/null)" ]; then
-      printf '%s\n' "$rendered" > "$dest"
-      launchctl bootout "$domain/$LABEL" 2>/dev/null || true
-      launchctl bootstrap "$domain" "$dest" && echo "  launchd agent $LABEL loaded" \
-        || die "launchctl bootstrap failed; load it by hand: launchctl bootstrap $domain $dest"
-    elif launchctl print "$domain/$LABEL" >/dev/null 2>&1; then
-      launchctl kickstart -k "$domain/$LABEL" 2>/dev/null && echo "  launchd agent $LABEL restarted on the new policy" \
-        || echo "  launchd agent $LABEL already loaded"
-    else
-      launchctl bootstrap "$domain" "$dest" && echo "  launchd agent $LABEL loaded" \
-        || die "launchctl bootstrap failed; load it by hand: launchctl bootstrap $domain $dest"
-    fi
-    echo "  log: ~/.claude/logs/cswap-auto.log (one JSON event per line)"
+load_agent() { # <label> <what a restart did> — render the template and load it; an agent already loaded and current is restarted
+  local label="$1" template dest domain rendered
+  template="$here/../launchd/$label.plist"
+  dest="$HOME/Library/LaunchAgents/$label.plist"
+  [ -f "$template" ] || die "launchd template missing: $template"
+  domain="gui/$(id -u)"
+  rendered=$(sed "s|__HOME__|$HOME|g" "$template")
+  if [ "$rendered" != "$(cat "$dest" 2>/dev/null)" ]; then
+    printf '%s\n' "$rendered" > "$dest"
+    launchctl bootout "$domain/$label" 2>/dev/null || true
+    launchctl bootstrap "$domain" "$dest" && echo "  launchd agent $label loaded" \
+      || die "launchctl bootstrap failed; load it by hand: launchctl bootstrap $domain $dest"
+  elif launchctl print "$domain/$label" >/dev/null 2>&1; then
+    launchctl kickstart -k "$domain/$label" 2>/dev/null && echo "  launchd agent $label $2" \
+      || echo "  launchd agent $label already loaded"
   else
-    echo "  launchd is macOS-only; run $here/cswap-auto-run.sh under your service manager (systemd --user, tmux)"
+    launchctl bootstrap "$domain" "$dest" && echo "  launchd agent $label loaded" \
+      || die "launchctl bootstrap failed; load it by hand: launchctl bootstrap $domain $dest"
+  fi
+}
+
+if [ "$SERVICE" = 1 ]; then
+  step "Keeping 'cswap auto' running, and checking the logins hourly"
+  if [ "$os" = Darwin ]; then
+    mkdir -p "$HOME/Library/LaunchAgents" "$HOME/.claude/logs"
+    load_agent "$LABEL" "restarted on the new policy"
+    load_agent "$LOGINS_LABEL" "re-ran the login check"
+    echo "  log: ~/.claude/logs/cswap-auto.log (one JSON event per line)"
+    echo "  logins: a notification when a login has lapsed or is about to; ~/.claude/logs/cswap-logins.log"
+  else
+    echo "  launchd is macOS-only; run $here/cswap-auto-run.sh under your service manager (systemd --user, tmux),"
+    echo "  and $here/cswap-logins-cron.sh hourly from cron"
   fi
 fi
 
@@ -159,6 +171,7 @@ step "Done"
 echo "  cswap list                            every account's 5h/7d usage and reset times"
 echo "  cswap switch [N|email]                move the login by hand; the engine never undoes a manual move"
 echo "  cswap auto --once --dry-run --json    what the engine would do right now"
+echo "  ~/.claude/scripts/cswap-logins.sh     which logins have lapsed or are about to (silent when none)"
 echo "  tail -f ~/.claude/logs/cswap-auto.log"
 echo "  cswap config set autoswitch.model Fable   also leave an account whose Fable weekly limit is spent"
 case ":$orig_path:" in

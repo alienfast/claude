@@ -28,9 +28,14 @@
 # gates `seven_day`), or with no reading cswap's active row. The weekly window sizes neither n nor duration on
 # a plan with a 5h window: rotation is the lever (skills/fleet-launch/SKILL.md § The count).
 #
+# A lapsed login is one of the ways an account has no room, and the room predicate cannot tell it from a full account,
+# so on a rotating machine the reason ends with a `Logins:` sentence naming every login cswap-logins.sh flags: lapsed
+# now, or lapsing before the run would end when --hours is given and within two days otherwise. It changes no figure.
+#
 # Output: `CAP <n>  per_account=<3|machine>  accounts_with_room=<k>/<total>  <why>`; --json for the fields, the
-# line included. --hours <h> is the fleet's duration (fleet-launch.sh passes its own); --now and --stale pass
-# through to fleet-headroom.sh (test seams). Exit 0 always: the cap is advice.
+# line included, and `need_login` (`lapsed` and `due` emails, null when nothing is flagged). --hours <h> is the
+# fleet's duration (fleet-launch.sh passes its own); --now and --stale pass through to fleet-headroom.sh (test
+# seams). Exit 0 always: the cap is advice.
 # Run ./fleet-cap.test.sh after ANY change.
 
 set -uo pipefail
@@ -42,12 +47,14 @@ WEEKLY_BURN="${FLEET_WEEKLY_BURN:-0.55}"
 HOURS=""
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AS_JSON=0
+NOW=""
 pass=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --json)        AS_JSON=1; shift ;;
     --hours)       HOURS="${2:-}"; shift 2 ;;
-    --now|--stale) pass+=("$1" "${2:-}"); shift 2 ;;
+    --now)         NOW="${2:-}"; pass+=("$1" "${2:-}"); shift 2 ;;
+    --stale)       pass+=("$1" "${2:-}"); shift 2 ;;
     -h|--help)     sed -n '2,/^set -uo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; shift ;;
   esac
@@ -149,15 +156,37 @@ else
   fi
 fi
 
+need_login=null
+if [ "$rotating" = true ]; then
+  [[ "$NOW" =~ ^[0-9]+$ ]] || NOW=$(date +%s)
+  if [ -n "$HOURS" ]; then
+    login_window=(--before "$(jq -rn --argjson n "$NOW" --argjson h "$HOURS" '$n + $h * 3600 | floor')")
+    login_scope="before this run would end"
+  else
+    login_window=(--within 2)
+    login_scope="within 2 days"
+  fi
+  logins=$("$here/cswap-logins.sh" --json --now "$NOW" "${login_window[@]}" 2>/dev/null) || true
+  login_note=$(jq -r --arg scope "$login_scope" '
+    [ (.lapsed | select(length > 0) | "\(length) login\(if length == 1 then "" else "s" end) lapsed (\(map(.email) | join(", ")))"),
+      (.due | select(length > 0)
+       | "\(length) login\(if length == 1 then " lapses" else "s lapse" end) \($scope) (\(map("\(.email) in \(.expires_in)") | join(", ")))") ]
+    | join("; ")' <<<"$logins" 2>/dev/null) || login_note=""
+  if [ -n "$login_note" ]; then
+    need_login=$(jq -c '{lapsed: (.lapsed | map(.email)), due: (.due | map(.email))}' <<<"$logins")
+    why="$why. Logins: $login_note — an account is no room once its login lapses, until it is redone (claude auth login, then cswap add)"
+  fi
+fi
+
 line="CAP $cap  per_account=$per_label  accounts_with_room=$k/$total  $why"
 if [ "$AS_JSON" = 1 ]; then
   jq -n --argjson cap "$cap" --argjson per "$per_json" --argjson k "$k" --argjson total "$total_json" --argjson max "$RANGE_MAX" \
         --argjson rotating "$rotating" --arg state "$state" --arg note "$note" --arg why "$why" --argjson room "$room" \
         --argjson wo "$weekly_only" --argjson wr "$weekly_room" --argjson wh "$weekly_hours" --argjson burn "$WEEKLY_BURN" \
-        --argjson hours "$hours_json" --arg line "$line" \
+        --argjson hours "$hours_json" --argjson nl "$need_login" --arg line "$line" \
         '{cap: $cap, per_account: $per, accounts_with_room: $k, accounts: $total, range_max: $max, rotating: $rotating,
           state: $state, note: $note, why: $why, room: $room, weekly_only: $wo, weekly_room: $wr,
-          weekly_session_hours: $wh, burn_per_session_hour: $burn, hours: $hours, line: $line}'
+          weekly_session_hours: $wh, burn_per_session_hour: $burn, hours: $hours, need_login: $nl, line: $line}'
 else
   echo "$line"
 fi

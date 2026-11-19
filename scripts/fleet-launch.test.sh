@@ -816,6 +816,22 @@ ck_has "cap: rotating line"              "Concurrency cap: 6  per_account=3  acc
 ck_lacks "cap: 4 under 6 is silent"      "over the cap of" "$WORK/out"
 ck "cap: rotating 7 launches"            "0" "$(run 7 5h)"
 ck_has "cap: 7 over 6 warns"             "WARN: 7 sessions is over the cap of 6 — more than the account pool's 5h windows refill for at any duration (3 per account with room" "$WORK/out"
+# A lapsed or soon-lapsing login is named before dispatch (lib/fleet-markers.sh's fleet_login_preflight → cswap-logins.sh): one WARN
+# each and the fix, read against the launch's own deadline, and nothing it finds stops the launch.
+ck_lacks "logins: current logins are silent" "cswap login" "$WORK/out"
+acct_login() { printf '{"number":%s,"email":"%s","active":%s,"usageStatus":"%s","usage":{"fiveHour":{"pct":0},"sevenDay":{"pct":0,"resetsAt":"2026-10-22T05:00:00+00:00"}},"usageAgeSeconds":30,"loginExpiresAt":"%s"}' "$@"; }
+printf '{"schemaVersion":1,"activeAccountNumber":1,"accounts":[%s,%s,%s]}\n' "$(acct 1 a@x true 40 20)" \
+  "$(acct_login 2 b@x false relogin_required "$(iso_at $(( $(date +%s) - 86400 )))")" "$(acct_login 3 c@x false ok "$(iso_at $(( $(date +%s) + 8 * 3600 )))")" > "$CSWAP_STUB_LIST"
+: > "$WORK/dispatches"
+ck "logins: a lapsed login still launches" "0" "$(run 2 5h)"
+ck "logins: and still dispatches"        "2" "$(wc -l < "$WORK/dispatches" | tr -d ' ')"
+ck_has "logins: the lapsed one is a WARN" "WARN: cswap login lapsed: b@x (expired " "$WORK/out"
+ck_has "logins: the fix is a WARN"       "WARN: cswap logins: redo each in a terminal" "$WORK/out"
+ck_lacks "logins: one that outlasts the deadline is not named" "cswap login lapses in" "$WORK/out"
+ck_has "logins: the cap line names it too" "Logins: 1 login lapsed (b@x) — " "$WORK/out"
+ck "logins: a longer run launches"       "0" "$(run 2 10h)"
+ck_has "logins: one lapsing inside the run is a WARN" "WARN: cswap login lapses in 7h: c@x (" "$WORK/out"
+printf '{"schemaVersion":1,"activeAccountNumber":1,"accounts":[%s,%s]}\n' "$(acct 1 a@x true 40 20)" "$(acct 2 b@x false 0 0)" > "$CSWAP_STUB_LIST"
 beat $(( $(date +%s) - 600 ))
 ck "cap: idle engine launches"           "0" "$(run 4 5h)"
 ck_has "cap: idle engine is one account" "Concurrency cap: 3  per_account=3  accounts_with_room=1/?  cswap is enrolled but its engine is idle (last engine event 10m ago)" "$WORK/out"

@@ -428,6 +428,7 @@ fi
 
 # After the last refusal, so a launch that exits above never ran the project's checks.
 fleet_project_preflight "$main_checkout" "$deadline_epoch"
+fleet_login_preflight "$deadline_epoch"
 
 # A /fleet-sequence may be running alongside (skills/fleet-sequence/SKILL.md § Relationship to the fleet
 # skills): keeping its queued issues out of this fleet's picks is next-candidates.sh's job, and its runner

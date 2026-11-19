@@ -322,6 +322,7 @@ manual step.
 | [tmp-reap](launchd/com.alienfast.tmp-reap.plist) | Daily | Ages `tmp/` scratch out by name-based lane, never the handoff files other skills still read (`/reap-tmp`) |
 | [auto-stall-watch](launchd/com.alienfast.auto-stall-watch.plist) | Every 10 min | Surfaces a `/loop /auto` background session gone silent mid-iteration — the backstop for the `auto-rewake` hook when that hook failed or never ran |
 | [cswap-auto](launchd/com.alienfast.cswap-auto.plist) | Continuous, opt-in | Keeps claude-swap's auto-switch engine running on a machine that rotates accounts. Installed by `scripts/cswap-setup.sh`, not `update.sh`; see [Multi-account rotation](#multi-account-rotation-optional) |
+| [cswap-logins](launchd/com.alienfast.cswap-logins.plist) | Hourly, opt-in | Checks every login enrolled in cswap and raises a notification when one has lapsed or is three days from it, repeated daily until it is redone. Loaded by `scripts/cswap-setup.sh`, and by `update.sh` wherever the rotation is already installed |
 
 ## Setup
 
@@ -440,8 +441,9 @@ It installs cswap through `uv` where it is missing (the latest release; from the
 machine where it is installed), enrolls the current login, then loops: answer `y`, complete a `claude auth login` for
 the next account, and it is added, until you answer `n`. Never `/logout` between accounts; cswap backs the live login
 up before the next one replaces it. It then applies the policy, prints one dry-run tick so you can see the engine's
-decision, and loads a `launchd` agent that keeps `cswap auto` running. Every step is idempotent; re-run it with
-`--threshold` or `--strategy` to change the policy, and the engine restarts on the new values.
+decision, and loads two `launchd` agents: one keeps `cswap auto` running, the other checks the enrolled logins every
+hour. Every step is idempotent; re-run it with `--threshold` or `--strategy` to change the policy, and the engine
+restarts on the new values.
 
 Day to day, in a session ([skill](skills/cswap/)):
 
@@ -463,6 +465,15 @@ read ([fleet-cap.sh](scripts/fleet-cap.sh)): 3 sessions per account with room on
 `/auto-prep`, `/epic-prep` and `/fleet-launch` size a five-account machine at up to 12 where a single account holds 3;
 on a weekly-only pool the per-account factor is gone, and the cap is the count range bounded by the pool's weekly room
 for the fleet's duration.
+
+A stored login ends on a date cswap reports ahead of time, and the engine cannot land on an account whose login has
+ended. [cswap-logins.sh](scripts/cswap-logins.sh) names each enrolled login that has lapsed or is within three days of
+it, and four places read it: the hourly agent, which raises a macOS notification and repeats it daily until the login
+is redone; the pin under the prompt (`· 2 logins lapsed`); the cap line, which closes with a `Logins:` sentence; and
+`/fleet-launch` and `/fleet-sequence`, which print a `WARN:` for any login that lapses before the fleet's deadline. Redo
+a login from a terminal: re-run the setup script and answer `y` for that account, or `claude auth login` as the account
+and then `cswap add`.
+
 From a terminal:
 
 ```sh
@@ -470,9 +481,10 @@ cswap list                            # every account's usage and reset times
 cswap switch 2                        # move by hand; the engine never undoes a manual move
 cswap auto --once --dry-run --json    # what the engine would do right now
 tail -f ~/.claude/logs/cswap-auto.log # one JSON event per poll, switch, quarantine or error
+~/.claude/scripts/cswap-logins.sh     # which logins have lapsed or are about to; silent when none
 ```
 
-`update.sh` refreshes the agent and upgrades cswap to the latest release only where the setup script installed it,
+`update.sh` refreshes both agents and upgrades cswap to the latest release only where the setup script installed it,
 restarting the engine onto the new code when the version moved, so run it with no fleet in flight; on any other machine
 it never installs cswap. The tool holds every enrolled account's refresh token and its 0.2x releases change the
 credential path often, so if a release breaks switching, `uv tool install --reinstall 'claude-swap==<last good>'` rolls
@@ -485,8 +497,8 @@ Known edges while this is a trial:
 - cswap is a 0.2x release with an active issue list on its credential path. Its account backups live in the macOS
   Keychain; `cswap export` is plaintext by default.
 
-To remove: `launchctl bootout gui/$(id -u)/com.alienfast.cswap-auto`, then `uv tool uninstall claude-swap`. The
-Keychain backups stay until `cswap remove`.
+To remove: `launchctl bootout gui/$(id -u)/com.alienfast.cswap-auto`, the same for `com.alienfast.cswap-logins`, then
+`uv tool uninstall claude-swap`. The Keychain backups stay until `cswap remove`.
 
 ## References
 

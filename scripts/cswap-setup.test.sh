@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Regression suite for cswap-setup.sh and cswap-auto-run.sh through stubbed uv / cswap / claude / launchctl / uname.
+# cswap-logins-cron.sh, the second agent the setup loads, has its own suite (cswap-logins.test.sh).
 # Every stub appends its argv to calls.log; the checks read that log and the rendered plist.
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
@@ -57,6 +58,7 @@ STUB_LAUNCHCTL
 chmod +x "$BIN"/*
 export PATH="$BIN:$PATH"
 plist="$HOME/Library/LaunchAgents/com.alienfast.cswap-auto.plist"
+logins_plist="$HOME/Library/LaunchAgents/com.alienfast.cswap-logins.plist"
 
 # 1. fresh machine, no TTY: install the latest release, enroll the current login, apply the policy, load the agent
 rm -f "$WORK/cswap.version"; : > "$CALLS"
@@ -71,7 +73,10 @@ ck "fresh dry-runs one tick" 1 "$(count 'cswap auto --once --dry-run --json')"
 ck "fresh renders the plist" 1 "$([ -f "$plist" ] && echo 1 || echo 0)"
 ck "plist carries HOME" 0 "$(grep -c __HOME__ "$plist")"
 ck "plist names the wrapper" 1 "$(grep -c "$HOME/.claude/scripts/cswap-auto-run.sh" "$plist")"
-ck "fresh bootstraps the agent" 1 "$(count 'launchctl bootstrap')"
+ck "fresh renders the login check's plist" 1 "$([ -f "$logins_plist" ] && echo 1 || echo 0)"
+ck "login plist carries HOME" 0 "$(grep -c __HOME__ "$logins_plist")"
+ck "login plist names its wrapper" 1 "$(grep -c "$HOME/.claude/scripts/cswap-logins-cron.sh" "$logins_plist")"
+ck "fresh bootstraps both agents" 2 "$(count 'launchctl bootstrap')"
 ck "fresh says how to enroll the rest" 1 "$(has 'claude auth login && cswap add' "$out")"
 
 # 2. re-run on a converged machine: no reinstall (update.sh owns upgrades), the loaded agent is restarted onto the policy
@@ -80,7 +85,8 @@ rc=0; out=$("$here/cswap-setup.sh" </dev/null 2>&1) || rc=$?
 ck "rerun exits 0" 0 "$rc"
 ck "rerun does not reinstall" 0 "$(count 'uv tool install')"
 ck "rerun names update.sh as the upgrade path" 1 "$(has 'update.sh keeps it current' "$out")"
-ck "rerun restarts the agent" 1 "$(count 'launchctl kickstart -k')"
+ck "rerun restarts the engine" 1 "$(count 'launchctl kickstart -k gui/'"$(id -u)"'/com.alienfast.cswap-auto')"
+ck "rerun re-runs the login check" 1 "$(count 'launchctl kickstart -k gui/'"$(id -u)"'/com.alienfast.cswap-logins')"
 ck "rerun does not bootstrap again" 0 "$(count 'launchctl bootstrap')"
 
 # 3. flags: policy re-applied without enrollment or service
@@ -116,6 +122,7 @@ rc=0; out=$("$here/cswap-setup.sh" </dev/null 2>&1) || rc=$?
 ck "linux exits 0" 0 "$rc"
 ck "linux touches no launchctl" 0 "$(count 'launchctl')"
 ck "linux names the wrapper" 1 "$(has 'cswap-auto-run.sh' "$out")"
+ck "linux names the login check" 1 "$(has 'cswap-logins-cron.sh hourly from cron' "$out")"
 echo Darwin > "$WORK/os"
 
 # 7. uv missing: a hard stop that names the install

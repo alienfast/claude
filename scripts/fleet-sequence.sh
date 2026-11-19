@@ -897,6 +897,7 @@ preflight_tooling() { # <stale-ok: 0|1> [<deadline epoch>] — reads claude_args
   fi
 
   fleet_project_preflight "$main_checkout" "${2:-}"
+  fleet_login_preflight "${2:-}"
 }
 
 have_flag() { # <flag> <args...>

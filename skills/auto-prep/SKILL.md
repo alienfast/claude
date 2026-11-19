@@ -259,6 +259,9 @@ Launch checklist for the report:
 - `export LINEAR_TEAM=<KEY>` in every fleet session (else `/next` roams the workspace).
 - Project main checkout clean and parked off the integration branch (`git checkout --detach`) — every merge then takes
   the ref-only path.
+- Every login the cap line's closing `Logins:` sentence names (`~/.claude/scripts/cswap-logins.sh` prints them alone):
+  redo each from a terminal before launch, `claude auth login` as that account and then `cswap add`. A lapsed login is
+  an account the cap already left out, and one that lapses mid-run leaves the pool at that hour.
 - Run the `solo` issues with `/fleet-solo` before or after the fleet, not during (one issue: `/auto <ID>`; a named
   list in one PR: `/fleet-sequence`). Bare `--label solo` is the **workable-now** set — exactly what the drain takes;
   the `--include-blocked` diff is the **blocked** set, which waits on its blockers regardless of the quiet window.

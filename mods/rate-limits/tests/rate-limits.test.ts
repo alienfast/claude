@@ -1,5 +1,5 @@
 import { expect, mock, test, type TestBody } from 'claude-code/testing'
-import { accountOf, configPath, historyLine, historyPath, readOptions, readingOf, readingPath, rotationDirs, statusText, weeklyResetOf } from '../hooks/limits'
+import { accountOf, configPath, historyLine, historyPath, loginsNote, loginsPath, readOptions, readingOf, readingPath, rotationDirs, statusText, weeklyResetOf } from '../hooks/limits'
 
 type TestOn = Parameters<TestBody>[1]
 
@@ -15,11 +15,11 @@ const WINDOWS = [FIVE_HOUR, SEVEN_DAY]
 const SNAPSHOT = '/home/u/.claude/local/rate-limits.json'
 const HISTORY = `/home/u/.claude/local/rate-limits/${SID}.jsonl`
 
-function harness(on: TestOn, env: Readonly<Record<string, string>> = { HOME: '/home/u' }, files: Readonly<Record<string, string>> = {}) {
+function harness(on: TestOn, env: Readonly<Record<string, string>> = { HOME: '/home/u' }, files: Readonly<Record<string, string>> = {}, clock: () => number = () => NOW) {
   const writes: { path: string; text: string }[] = []
   on('session.start', () => ({ cwd: '/work' }))
   on('session.id', () => ({ value: SID }))
-  on('clock.now', () => ({ value: NOW }))
+  on('clock.now', () => ({ value: clock() }))
   on('fs.exists', ($, e) => ({ value: e.path in files }))
   on('fs.read', ($, e) => ({ value: files[e.path] ?? '' }))
   on('fs.write', ($, e) => {
@@ -119,13 +119,13 @@ const login = (email: string) => JSON.stringify({ oauthAccount: { emailAddress: 
 // A second account's windows: the weekly reset differs, which is what the reading itself shows when the login moved.
 const OTHER_WEEK = { kind: 'seven_day', percentUsed: 4, resetsAt: '2026-10-15T05:00:00.000Z' }
 
-function statusHarness(on: TestOn, files: Record<string, string>) {
+function statusHarness(on: TestOn, files: Record<string, string>, clock: () => number = () => NOW) {
   const statuses: (string | undefined)[] = []
   on('ui.status', ($, e) => {
     statuses.push(e.text)
     return { value: undefined }
   })
-  return { ...harness(on, { HOME: '/home/u' }, files), statuses }
+  return { ...harness(on, { HOME: '/home/u' }, files, clock), statuses }
 }
 
 test('a rotating machine gets the account and its windows pinned under the prompt, and the files name the account', async ($, on) => {
@@ -208,4 +208,57 @@ test('pure helpers: the identity file, the rotation roots, the pin text', async 
   expect(statusText(null, [{ kind: 'spend_limit', percentUsed: 50 }, FIVE_HOUR])).toBe('⇄ account ? · 5h 12.5%')
   expect(readOptions({})).toEqual({ enabled: true, status: true })
   expect(readOptions({ status: false })).toEqual({ enabled: true, status: false })
+})
+
+// ---- the enrolled logins that need redoing, from the verdict scripts/cswap-logins-cron.sh writes ----
+
+const LOGINS = '/home/u/.claude/local/cswap-logins.json'
+// Rows as scripts/cswap-logins.sh --json printed them on 2026-11-18, emails shortened; `checked_at` moved inside this suite's clock.
+const LAPSED_ROW = { number: 2, email: 'b@x', status: 'relogin_required', login_expires_at: '2026-11-15T12:07:14Z', expired: true }
+const DUE_ROW = { number: 3, email: 'a@x', status: 'ok', login_expires_at: '2026-12-13T09:45:48Z', expires_in_s: 2125884, expires_in: '24d14h' }
+const verdict = (over: Record<string, unknown>) =>
+  JSON.stringify({ checked_at: '2026-10-10T20:00:00Z', rotating: true, accounts: 5, within_days: 3, before: null, lapsed: [], due: [], error: null, ...over })
+
+test('a rotating machine with a lapsed login says so on the pin, from the first line on', async ($, on) => {
+  const h = statusHarness(on, { [ROTATING]: '', [CONFIG]: login('a@example.com'), [LOGINS]: verdict({ lapsed: [LAPSED_ROW] }) })
+  await $.session.start(SESSION)
+  expect(h.statuses).toEqual(['⇄ a@example.com · 1 login lapsed'])
+  await $.session.measure({ context: CONTEXT, rateLimits: WINDOWS, changed: ['rateLimits'] })
+  expect(h.statuses.at(-1)).toBe('⇄ a@example.com · 5h 12.5% · 7d 71% · 1 login lapsed')
+})
+
+test('the verdict is re-read once ten minutes have passed, not on every measurement', async ($, on) => {
+  const files: Record<string, string> = { [ROTATING]: '', [CONFIG]: login('a@example.com'), [LOGINS]: verdict({ lapsed: [LAPSED_ROW] }) }
+  let clock = NOW
+  const h = statusHarness(on, files, () => clock)
+  await $.session.start(SESSION)
+  files[LOGINS] = verdict({})
+  clock = NOW + 9 * 60 * 1000
+  await $.session.measure({ context: CONTEXT, rateLimits: WINDOWS, changed: ['rateLimits'] })
+  expect(h.statuses.at(-1)).toBe('⇄ a@example.com · 5h 12.5% · 7d 71% · 1 login lapsed')
+  clock = NOW + 10 * 60 * 1000
+  await $.session.measure({ context: CONTEXT, rateLimits: WINDOWS, changed: ['rateLimits'] })
+  expect(h.statuses.at(-1)).toBe('⇄ a@example.com · 5h 12.5% · 7d 71%')
+})
+
+test('a single-account machine pins nothing about logins, whatever the file holds', async ($, on) => {
+  const h = statusHarness(on, { [CONFIG]: login('a@example.com'), [LOGINS]: verdict({ lapsed: [LAPSED_ROW] }) })
+  await $.session.start(SESSION)
+  await $.session.measure({ context: CONTEXT, rateLimits: WINDOWS, changed: ['rateLimits'] })
+  expect(h.statuses).toEqual([])
+})
+
+test('pure helpers: the login verdict', async () => {
+  expect(loginsPath('/home/u/')).toBe(LOGINS)
+  expect(loginsPath(undefined)).toBe(null)
+  expect(loginsNote(verdict({}), NOW)).toBe(null)
+  expect(loginsNote(verdict({ lapsed: [LAPSED_ROW, LAPSED_ROW], due: [DUE_ROW] }), NOW)).toBe('2 logins lapsed, 1 login due in 24d14h')
+  expect(loginsNote(verdict({ due: [{ ...DUE_ROW, expires_in: '10h' }, DUE_ROW] }), NOW)).toBe('2 logins due in 10h')
+  expect(loginsNote(verdict({ accounts: null, error: 'cswap list --json carried no accounts array' }), NOW)).toBe('login check failed')
+  expect(loginsNote(verdict({ checked_at: '2026-10-09T10:00:00Z', lapsed: [LAPSED_ROW] }), NOW)).toBe('login check stale')
+  expect(loginsNote(verdict({ checked_at: '2026-10-09T19:00:00Z', lapsed: [LAPSED_ROW] }), NOW)).toBe('1 login lapsed')
+  expect(loginsNote(verdict({ rotating: false, accounts: 0 }), NOW)).toBe(null)
+  expect(loginsNote('not json', NOW)).toBe(null)
+  expect(loginsNote('{"lapsed":[{}]}', NOW)).toBe(null)
+  expect(statusText('a@example.com', [SEVEN_DAY], '1 login lapsed')).toBe('⇄ a@example.com · 7d 71% · 1 login lapsed')
 })

@@ -197,7 +197,10 @@ the whole capacity input — never a `/cswap quota` table or a usage reading —
 duration is chosen on a weekly-only pool). The simulation does
 not model file collisions, and one epic's members share files by construction: when the last session added gains only by
 running `related` members side by side, take the count below it. State the binding term — the chain's serial floor
-(`floor`), which no count moves; lanes; or the cap with its accounts-with-room reading. The duration is the last `SHIP`
+(`floor`), which no count moves; lanes; or the cap with its accounts-with-room reading. When the cap line closes with a
+`Logins:` sentence, carry it into the report ahead of the launch command: each login it names is redone from a terminal
+before launch (`claude auth login` as that account, then `cswap add`), since a lapsed login is an account the cap
+already left out. The duration is the last `SHIP`
 time at the recommended count **plus two `HOURS-PER-ISSUE`**, rounded up to the next whole hour: an epic fleet ends
 itself on `EPIC-DRAINED`, so the deadline is only the upper bound and a long one costs nothing, while a tight one strands
 the chain's tail — the forecast is flat per issue (no member carries an estimate), its calibration is an average per

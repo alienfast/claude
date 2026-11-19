@@ -94,9 +94,15 @@ After its last refusal the script runs the project's `.claude/fleet-preflight.sh
 `FLEET_DEADLINE_EPOCH` set to the launch's deadline (empty when it has none). Each line the project script prints becomes a
 `WARN:` line, a non-zero exit or a timeout is one `WARN:` of its own, and the launch always proceeds.
 
+It then asks `scripts/cswap-logins.sh` about the logins enrolled in cswap, against the same deadline (two days out when
+the launch has none). Each login that has lapsed, or lapses before then, is a `WARN:` line and the last one names the
+fix; a machine that does not rotate accounts prints nothing. The launch proceeds either way, on a pool smaller by those
+accounts, which the cap line's closing `Logins:` sentence also says.
+
 Surface the script's output: the `Concurrency cap:` line with its reason, the `Concurrency:` line when other fleets or
 carried sessions are running, the deadline (if any), the `Kept un-retro'd fleet(s)` / `Expired retro'd fleet(s)` lines,
-each `WARN:` line the project's preflight printed (each names its own fix), each dispatch line, each claim-landed/timeout
+each `WARN:` line the project's preflight printed (each names its own fix), each `WARN: cswap login …` line with the
+fix line that follows them, each dispatch line, each claim-landed/timeout
 line, and the closing `claude agents` pointer. A claim-wait timeout is a WARN, not a failure — the session may be in
 preflight, resuming a dead worktree, or the pool may have drained mid-launch.
 
@@ -173,7 +179,10 @@ alone — and they resolve so:
   multiplying a per-account count: the pool's room is the sum of each with-room account's points to the threshold, and
   the line says how many session-hours it covers. An idle engine or an unreadable cswap is one account's
   window again, and the line says so (`/cswap log`). Nothing asks for `/cswap quota` to size a fleet: the cap is the pool
-  as the engine sees it, and more sessions than lanes idle whatever the pool holds.
+  as the engine sees it, and more sessions than lanes idle whatever the pool holds. A lapsed login is one way an account
+  has no room, and the count alone reads it as a full account, so the line closes with a `Logins:` sentence naming each
+  login that has lapsed or lapses before the run would end (`scripts/cswap-logins.sh`; within two days when no duration
+  is passed). Redoing those logins is what raises the cap.
 - **The weekly window sizes neither `n` nor duration, on any plan.** The keeper runs multiple accounts, so rotating to
   an account with room before launch is the lever; on an account with no 5h window the weekly is the only window, so it
   is what `room` and the headroom gate read, still not a count input. The script prints the active account's

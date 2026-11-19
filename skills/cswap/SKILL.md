@@ -68,12 +68,17 @@ Under the table, one line per condition that holds, and "nothing needs action" w
 - figures older than 15 minutes: that account's usage is unknown since the time shown. When it is the active account,
   the engine is deciding on the same stale figure and the account can reach its limit without a switch.
 - `usageStatus` `unavailable`: cswap stopped trusting the last figure after refused refreshes; no login is needed.
+- a login lapsed or about to: run `~/.claude/scripts/cswap-logins.sh` and relay each line it prints. It is silent when
+  no login needs redoing, and exit 3 means it could not read cswap (quote its stderr). The script owns this condition
+  (`relogin_required`, or a `loginExpiresAt` past or within 3 days) for the hourly notice, the fleet cap and the
+  launchers as well, so never judge it from the table.
+- `token_expired`, `keychain_unavailable`, `foreign_credential`: no login is needed. cswap's own notes for the three
+  are "retries automatically", "locked or in use; try again" and "a switch repairs it".
 - any other `usageStatus` but `ok`: `claude auth login` as that account, then `cswap add`.
 - a weekly or Fable window at or above the threshold that resets within 48 hours: its remaining percent expires unused
   unless the user moves to it by hand (`cswap switch <n>`) — the engine only lands on accounts under the threshold.
 - `willLastToReset` false: on pace to run out before its reset.
 - extra-usage spend at 80% of its cap or more: billed beyond the plan.
-- `loginExpiresAt` within 3 days: `claude auth login` as that account before it lapses.
 
 ## log
 

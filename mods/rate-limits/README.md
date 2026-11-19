@@ -5,7 +5,7 @@ A hooks-only mod that writes the account's rate-limit windows, and which account
 (`five_hour`) and weekly (`seven_day`) readings before it dispatches, and `scripts/fleet-headroom.sh` can park a fleet session
 on the same meter. Nothing at launch reported weekly use before it: the 2026-10-10 fleet (3 sessions, 12h) was launched on an
 account 5.75h from its weekly limit and lost 18.75 of its 36 session-hours. On a machine that rotates accounts it also pins the
-active account and its windows under the prompt.
+active account and its windows under the prompt, with any enrolled login that has lapsed or is about to.
 
 ## What it writes
 
@@ -52,6 +52,12 @@ Where cswap's backup directory exists (`~/.claude-swap-backup`, or `$XDG_DATA_HO
 session is on is visible while the engine moves the login underneath it. Everywhere else it pins nothing. This is deliberately
 not a `statusLine` command in the shared settings: configuring one removes the footer's keyboard hints for every user of this
 repo, rotating or not, and a command that prints nothing still does that.
+
+The pin ends with the enrolled logins that need redoing, when there are any: `· 2 logins lapsed`, `· 1 login due in 2d4h` (the
+soonest), or both. It reads `~/.claude/local/cswap-logins.json`, the verdict `scripts/cswap-logins-cron.sh` rewrites every hour
+(`scripts/cswap-logins.sh` owns what counts as lapsed or due), at session start and then at most every ten minutes. A verdict
+more than 26 hours old reads `· login check stale`, since the hourly agent is then not running, and one that could not read
+cswap reads `· login check failed`. Without the file the pin is unchanged.
 
 ## Measured, 2026-10-10
 

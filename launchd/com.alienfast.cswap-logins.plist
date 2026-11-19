@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  TEMPLATE for the cswap login check (launchd, macOS only). The __HOME__ tokens are placeholders:
+  launchd requires absolute paths and does NOT expand ~ or $HOME, so this is NOT loaded as-is.
+
+  OPT-IN, with the rotation: scripts/cswap-setup.sh renders and loads it beside the auto-switch engine, and update.sh
+  installs or refreshes it wherever that engine's agent is installed. To do it by hand:
+
+    sed "s|__HOME__|$HOME|g" ~/.claude/launchd/com.alienfast.cswap-logins.plist \
+      > ~/Library/LaunchAgents/com.alienfast.cswap-logins.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.alienfast.cswap-logins.plist
+
+  To remove:
+
+    launchctl bootout gui/$(id -u)/com.alienfast.cswap-logins
+    rm ~/Library/LaunchAgents/com.alienfast.cswap-logins.plist
+
+  Hourly rather than daily although the notice it raises repeats only once a day: each tick also rewrites
+  ~/.claude/local/cswap-logins.json, which the rate-limits mod pins under the prompt, so a redone login clears there
+  within the hour. cswap-setup.sh kickstarts it after enrolling, so a login redone there clears at once.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.alienfast.cswap-logins</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__HOME__/.claude/scripts/cswap-logins-cron.sh</string>
+  </array>
+
+  <key>StartInterval</key>
+  <integer>3600</integer>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/.claude/logs/cswap-logins.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/.claude/logs/cswap-logins.launchd.log</string>
+</dict>
+</plist>

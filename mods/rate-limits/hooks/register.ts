@@ -1,5 +1,5 @@
 import type { Register } from 'claude-code'
-import { accountOf, configPath, historyLine, historyPath, readOptions, readingOf, readingPath, rotationDirs, statusText, weeklyResetOf } from './limits'
+import { accountOf, configPath, historyLine, historyPath, loginsNote, loginsPath, readOptions, readingOf, readingPath, rotationDirs, statusText, weeklyResetOf } from './limits'
 
 let sessionId = ''
 let path: string | null = null
@@ -9,6 +9,12 @@ let configFile: string | null = null
 let rotating = false
 let account: string | null = null
 let weeklyReset: string | null = null
+let loginsFile: string | null = null
+let logins: string | null = null
+let loginsReadAt = 0
+
+// The login verdict is rewritten hourly, so the pin re-reads it at most this often and a turn in between costs no file read.
+const LOGINS_REREAD_MS = 10 * 60 * 1000
 
 type Host = { fs: { exists(p: string): Promise<boolean>; read(p: string): Promise<string> } }
 
@@ -16,6 +22,15 @@ async function readAccount($: Host): Promise<string | null> {
   if (configFile === null) return null
   try {
     return (await $.fs.exists(configFile)) ? accountOf(await $.fs.read(configFile)) : null
+  } catch {
+    return null
+  }
+}
+
+async function readLogins($: Host, nowMs: number): Promise<string | null> {
+  if (loginsFile === null) return null
+  try {
+    return (await $.fs.exists(loginsFile)) ? loginsNote(await $.fs.read(loginsFile), nowMs) : null
   } catch {
     return null
   }
@@ -44,7 +59,14 @@ export const register: Register = (on, options) => {
     }
     account = await readAccount($)
     weeklyReset = null
-    if (opts.enabled && opts.status && rotating) $.ui.status(statusText(account, []))
+    loginsFile = loginsPath(home)
+    logins = null
+    loginsReadAt = 0
+    if (opts.enabled && opts.status && rotating) {
+      loginsReadAt = await $.clock.now()
+      logins = await readLogins($, loginsReadAt)
+      $.ui.status(statusText(account, [], logins))
+    }
     return next(e)
   })
 
@@ -86,7 +108,13 @@ export const register: Register = (on, options) => {
       }
       // Pinned under the prompt only on a machine that rotates accounts; everywhere else the mod stays silent, so a single-account
       // user sees no change. Not a statusLine command: configuring one of those removes the footer's keyboard hints for everyone.
-      if (opts.status && rotating && e.rateLimits.length > 0) $.ui.status(statusText(account, e.rateLimits))
+      if (opts.status && rotating && e.rateLimits.length > 0) {
+        if (now - loginsReadAt >= LOGINS_REREAD_MS) {
+          logins = await readLogins($, now)
+          loginsReadAt = now
+        }
+        $.ui.status(statusText(account, e.rateLimits, logins))
+      }
     }
     return next(e)
   })

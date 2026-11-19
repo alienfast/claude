@@ -153,6 +153,10 @@ git -C "$CL_UP" push -q origin main
 git clone -q "$CL_ORIGIN" "$CLAUDE_FRESHNESS_DIR"
 export FLEET_SEQUENCE_POLL=0 FLEET_SEQUENCE_GRACE=0 FLEET_SEQUENCE_FOREGROUND=1 FLEET_SEQUENCE_ISSUE_TIMEOUT=5 \
        FLEET_SEQUENCE_MERGE_TIMEOUT=1 FLEET_SEQUENCE_PR_UPDATE_TIMEOUT=5
+# The login preflight asks cswap about this machine's own accounts; a stub with none enrolled keeps the suite off them.
+printf '#!/usr/bin/env bash\ncat "%s"\n' "$WORK/cswap-list.json" > "$WORK/cswap-stub"; chmod +x "$WORK/cswap-stub"
+printf '{"accounts":[]}\n' > "$WORK/cswap-list.json"
+export CSWAP_BIN="$WORK/cswap-stub"
 
 run() { ( cd "$REPO" && "$SCRIPT" "$@" ) >"$WORK/out" 2>&1; echo $?; }
 marker() { jq -r "$1" "$REPO/tmp/fleet-sequence-${2:-bf-1}.json"; } # marker <jq filter> [<slug>, default bf-1]
@@ -279,6 +283,15 @@ ck "the sequence still dispatched"               "1" "$(dispatches)"
 reset
 ck "a sequence without a project preflight exits 0" "0" "$(run merge BF-1)"
 ck_lacks "and says nothing of it"                   "WARN: sign-in" "$WORK/out"
+
+# The login preflight (lib/fleet-markers.test.sh pins its window): a lapsed cswap login is a WARN on a sequence that proceeds.
+reset
+mkdir -p "$WORK/xdg/claude-swap"
+printf '{"accounts":[{"number":2,"email":"b@x","active":false,"usageStatus":"relogin_required"}]}\n' > "$WORK/cswap-list.json"
+ck "a sequence with a lapsed login exits 0"   "0" "$(XDG_DATA_HOME="$WORK/xdg" run merge BF-1)"
+ck_has "the lapsed login is a WARN"           "WARN: cswap login lapsed: b@x (cswap reports relogin_required)" "$WORK/out"
+ck "the sequence with a lapsed login dispatched" "1" "$(dispatches)"
+printf '{"accounts":[]}\n' > "$WORK/cswap-list.json"
 
 
 # A checkout-wide start.wt-source-branch (an epic fleet's posture, or one left behind) is no concern of this

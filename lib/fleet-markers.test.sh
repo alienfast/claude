@@ -87,6 +87,26 @@ ck "a bare number is not a duration" 1 "$(rc fleet_duration_secs 10)"
 ck "an issue id is not a duration" 1 "$(rc fleet_duration_secs BF-12)"
 ck "nothing is not a duration"     1 "$(rc fleet_duration_secs '')"
 
+echo "== login preflight"
+# scripts/cswap-logins.sh runs for real against a stub cswap; its own suite pins the predicate, this pins the window and the WARNs.
+H="$WORK/home"; mkdir -p "$H"
+iso() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
+printf '#!/usr/bin/env bash\ncat "%s"\n' "$WORK/cswap-list.json" > "$WORK/cswap"; chmod +x "$WORK/cswap"
+printf '{"accounts":[{"number":1,"email":"a@x","active":true,"usageStatus":"ok","loginExpiresAt":"%s"},{"number":2,"email":"b@x","active":false,"usageStatus":"relogin_required","loginExpiresAt":"%s"},{"number":3,"email":"c@x","active":false,"usageStatus":"ok","loginExpiresAt":"%s"}]}\n' \
+  "$(iso $(( now + 30 * 86400 )))" "$(iso $(( now - 86400 )))" "$(iso $(( now + 18600 )))" > "$WORK/cswap-list.json"
+login_warns() { HOME="$H" CSWAP_BIN="$WORK/cswap" fleet_login_preflight "$@" 2>&1 >/dev/null; }
+ck "no rotation is silent"         "" "$(login_warns "")"
+mkdir -p "$H/.claude-swap-backup"
+ck "returns 0 with logins flagged" 0 "$(HOME="$H" CSWAP_BIN="$WORK/cswap" rc fleet_login_preflight "")"
+ck "a lapsed login is a WARN"      1 "$(login_warns "" | grep -c '^WARN: cswap login lapsed: b@x (expired ')"
+ck "open-ended: due within 2 days" 1 "$(login_warns "" | grep -c '^WARN: cswap login lapses in 5h: c@x ')"
+ck "the fix is the last WARN"      1 "$(login_warns "" | sed -n '$p' | grep -c '^WARN: cswap logins: redo each in a terminal')"
+ck "a deadline before it drops it" 0 "$(login_warns "$(( now + 3600 ))" | grep -c 'c@x')"
+ck "a deadline past it names it"   1 "$(login_warns "$(( now + 36000 ))" | grep -c '^WARN: cswap login lapses in 5h: c@x ')"
+ck "the current login is not named" 0 "$(login_warns "$(( now + 36000 ))" | grep -c 'a@x')"
+printf 'not json\n' > "$WORK/cswap-list.json"
+ck "an unreadable cswap is a WARN" 1 "$(login_warns "" | grep -c '^WARN: cswap-logins: cswap list --json carried no accounts array')"
+
 echo
 echo "$PASS passed / $FAIL failed"
 [ "$FAIL" -eq 0 ]

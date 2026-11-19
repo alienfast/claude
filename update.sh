@@ -529,9 +529,13 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
   echo "Installing tmp reaper (launchd)..."
   install_launchd_agent "com.alienfast.tmp-reap" "ages out tmp/ scratch daily."
   # Opt-in per machine — scripts/cswap-setup.sh installs it where accounts rotate — so refresh it only where it already is.
+  # The login check rides the same opt-in and is installed here too, so a machine enrolled before it existed gains it
+  # from an update rather than from a second run of the setup script.
   if [ -f "$HOME/Library/LaunchAgents/com.alienfast.cswap-auto.plist" ]; then
     echo "Refreshing cswap auto-switch engine (launchd)..."
     install_launchd_agent "com.alienfast.cswap-auto" "keeps cswap auto running."
+    echo "Installing cswap login check (launchd)..."
+    install_launchd_agent "com.alienfast.cswap-logins" "checks every enrolled login hourly."
   fi
 else
   echo "  skipped (macOS/launchd-only; this is $OSTYPE)."

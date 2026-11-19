@@ -52,11 +52,47 @@ export function weeklyResetOf(windows: readonly RateLimit[]): string | null {
   return windows.find((w) => w.kind === 'seven_day')?.resetsAt ?? null
 }
 
-export function statusText(account: string | null, windows: readonly RateLimit[]): string {
+export function statusText(account: string | null, windows: readonly RateLimit[], logins: string | null = null): string {
   const parts = windows
     .filter((w) => w.kind === 'five_hour' || w.kind === 'seven_day')
     .map((w) => `${w.kind === 'five_hour' ? '5h' : '7d'} ${w.percentUsed}%`)
-  return [`⇄ ${account ?? 'account ?'}`, ...parts].join(' · ')
+  return [`⇄ ${account ?? 'account ?'}`, ...parts, ...(logins === null ? [] : [logins])].join(' · ')
+}
+
+// The verdict scripts/cswap-logins-cron.sh rewrites every hour on a machine that rotates accounts: which enrolled logins have lapsed
+// or are about to. The pin reads the file rather than asking cswap, for the reason rotationDirs gives.
+export function loginsPath(home: string | undefined): string | null {
+  const h = trimDir(home)
+  return h === '' ? null : `${h}/.claude/local/cswap-logins.json`
+}
+
+// Past a day without a rewrite the hourly agent is not running, and the pin says that instead of repeating what the file last held.
+export const LOGINS_STALE_MS = 26 * 3600 * 1000
+
+// What the pin says about the enrolled logins, null when nothing needs saying: how many have lapsed, how many are due with the
+// soonest's time left as the script printed it, or that the check itself is stale or could not read cswap.
+export function loginsNote(text: string, nowMs: number): string | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return null
+  }
+  if (parsed === null || typeof parsed !== 'object') return null
+  const verdict = parsed as { checked_at?: unknown; lapsed?: unknown; due?: unknown; error?: unknown }
+  const checked = typeof verdict.checked_at === 'string' ? Date.parse(verdict.checked_at) : Number.NaN
+  if (Number.isNaN(checked)) return null
+  if (nowMs - checked > LOGINS_STALE_MS) return 'login check stale'
+  if (typeof verdict.error === 'string' && verdict.error !== '') return 'login check failed'
+  const lapsed = Array.isArray(verdict.lapsed) ? verdict.lapsed.length : 0
+  const due: readonly unknown[] = Array.isArray(verdict.due) ? verdict.due : []
+  const parts: string[] = []
+  if (lapsed > 0) parts.push(`${lapsed} login${lapsed === 1 ? '' : 's'} lapsed`)
+  if (due.length > 0) {
+    const soonest = (due[0] as { expires_in?: unknown } | null)?.expires_in
+    parts.push(`${due.length} login${due.length === 1 ? '' : 's'} due${typeof soonest === 'string' && soonest !== '' ? ` in ${soonest}` : ''}`)
+  }
+  return parts.length === 0 ? null : parts.join(', ')
 }
 
 function windowsOf(windows: readonly RateLimit[]) {

@@ -134,3 +134,18 @@ fleet_project_preflight() {
   fi
   return 0
 }
+
+# <deadline epoch, empty for an open-ended launch> → one `WARN:` on stderr per enrolled cswap login that has lapsed or lapses before
+# the deadline (within two days when the launch has none), then one naming the fix. scripts/cswap-logins.sh owns the predicate and
+# prints nothing on a machine that does not rotate accounts; a cswap it could not read becomes a WARN too, so a blind check never
+# reads as a clean one. Always returns 0: a pool short an account runs a smaller fleet, it does not stop one.
+fleet_login_preflight() {
+  local probe line
+  probe="$(cd "$(dirname "${BASH_SOURCE[0]}")/../scripts" 2>/dev/null && pwd)/cswap-logins.sh"
+  [ -x "$probe" ] || return 0
+  if [ -n "${1:-}" ]; then set -- --before "$1"; else set -- --within 2; fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [ -n "$line" ]; then echo "WARN: $line" >&2; fi
+  done < <("$probe" "$@" 2>&1)
+  return 0
+}

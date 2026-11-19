@@ -95,6 +95,18 @@ t "--stale widens what counts"            'CAP 6  per_account=3  accounts_with_r
 accounts "$(acct 1 a@x true ok 40 20 30)" "$(acct 2 b@x false unavailable 0 0 60)"
 t "an untrusted figure is not room"       'accounts_with_room=1/2  1 of 2 enrolled accounts have room (a@x)'
 
+# A lapsed login is no room either, and the line says it is the login: the room count alone reads it as a full account.
+acct_login() { # <number> <email> <active> <usageStatus> <5h pct> <7d pct> <age seconds> <loginExpiresAt>
+  printf '{"number":%s,"email":"%s","active":%s,"usageStatus":"%s","usage":{"fiveHour":{"pct":%s},"sevenDay":{"pct":%s,"resetsAt":"2026-10-22T05:00:00.190415+00:00"}},"usageAgeSeconds":%s,"loginExpiresAt":"%s"}' "$@"
+}
+accounts "$(acct 1 a@x true ok 40 20 30)" "$(acct_login 2 b@x false relogin_required 0 0 60 "$(iso $(( NOW - 86400 )))")" "$(acct_login 3 c@x false ok 0 0 60 "$(iso $(( NOW + 18000 )))")"
+t "a lapsed login is no room, and is named" 'CAP 6  per_account=3  accounts_with_room=2/3  2 of 3 enrolled accounts have room (a@x, c@x): .* Logins: 1 login lapsed (b@x); 1 login lapses within 2 days (c@x in 5h) — an account is no room once its login lapses'
+t "a run that ends first drops the due login" 'Logins: 1 login lapsed (b@x) — ' --hours 3
+t "a run that outlasts it names it"       'Logins: 1 login lapsed (b@x); 1 login lapses before this run would end (c@x in 5h)' --hours 10
+tj "need_login: json"                     '.need_login == {"lapsed": ["b@x"], "due": ["c@x"]} and .accounts_with_room == 2'
+accounts "$(acct 1 a@x true ok 40 20 30)" "$(acct_login 2 b@x false ok 0 0 60 "$(iso $(( NOW + 30 * 86400 )))")"
+tj "no login flagged: need_login is null" '.need_login == null and (.line | contains("Logins:") | not)'
+
 # Nothing has room: the floor stays 3 and the line says the window is the constraint.
 accounts "$(acct 1 a@x true ok 97 20 30)" "$(acct 2 b@x false ok 96 0 60)"
 t "no room anywhere: cap 3, the window governs" 'CAP 3  per_account=3  accounts_with_room=1/2  no account has room (none of the other 1 accounts is under threshold 95'
