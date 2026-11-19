@@ -99,6 +99,19 @@ agent explicitly to run it synchronously with a long Bash timeout (up to 600000m
 output file within the same turn. A subagent that ends its turn "waiting for a background task" does not self-resume;
 the orchestrator must notice the stall and re-message it.
 
+**A message reaches a running delegate only at its next tool round.** It resumes one that ended its turn; one still
+mid-turn takes it at that round, and the `SendMessage` result says what it found. "Moved 1 running tool call to the
+background without stopping it" means the delegate was inside a command and the round now comes. "Sending this moved
+nothing it is running to the background just now, so the message waits for that round" is also what a healthy delegate
+between rounds returns, moments before it reads the message, so it marks a stall only beside silence: when a
+write-capable delegate lists `running` but has changed nothing in its tree and runs no process of its own since the
+previous heartbeat, treat it as stalled. Stop it (`TaskStop`) on that tick, establish the tree's real state, and
+re-dispatch a fresh delegate scoped to what remains, as for a delegation that died mid-task (below); that is the path
+measured, and resuming the stopped delegate by message was not tried. A ping and a re-armed heartbeat only buy another
+interval of silence. On 2026-11-18 a developer sent four calls in one batch, the auto-mode classifier refused two, and
+the other two never started: the orchestrator's message sat queued and was never delivered, and the delegate was
+stopped 70 minutes after it stalled, 32 after the stall was first seen.
+
 **Past 600000ms there is no synchronous option, so don't delegate the command at all.** Exceeding the Bash ceiling does
 not fail: the harness backgrounds the command and returns a task ID, so "run it in the foreground" silently becomes the
 backgrounded case, and the agent strands either way. Keep the full test suite, the long build and the end-to-end run in

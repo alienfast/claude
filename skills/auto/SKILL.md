@@ -406,7 +406,10 @@ delay is this skill's call. Read `references/pacing.md` for the mechanics behind
   heartbeat.
 - A wakeup that re-delivers this skill mid-iteration is a status check, not a new iteration; one that finds no work in
   flight and no tag is a stall to resume; an `auto-rewake:` system reminder is a hook's recovery prompt, not a human's.
-  All three are in `references/api-failures.md`.
+  All three are in `references/api-failures.md`. On the status check, a write-capable delegate that still lists
+  `running` but has changed nothing in its tree and runs no process of its own since the previous tick is stopped
+  (`TaskStop`) and re-dispatched on this tick, never pinged and waited on (`standards/agent-coordination.md`
+  § Long-running commands in delegations).
 
 ## User stop semantics
 

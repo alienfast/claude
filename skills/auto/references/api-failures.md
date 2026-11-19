@@ -62,9 +62,11 @@ multi-day block sits inside the dynamic loop's 7-day age-out. When the stated re
 Under self-paced `/loop`, a fallback wakeup may re-deliver this skill while the current iteration's delegated work is
 still in flight in this session. That re-entry is a status check, not a new iteration:
 
-- Check on the in-flight work (ping stalled agents, verify state), re-arm the fallback at 1200–1800s — the delegated
-  `Agent` call's task notification is the real wake signal, not the timer; this is not the 60s `AUTO-CONTINUE` tick —
-  and end the turn on that call.
+- Check on the in-flight work (ping stalled agents, verify state; a ping reaches a delegate only at its next tool
+  round, so one that still lists `running` but has changed nothing and runs no process since the previous tick is
+  stopped and re-dispatched on this tick: `standards/agent-coordination.md` § Long-running commands in delegations),
+  re-arm the fallback at 1200–1800s — the delegated `Agent` call's task notification is the real wake signal, not the
+  timer; this is not the 60s `AUTO-CONTINUE` tick — and end the turn on that call.
 - Do not run Step 0's re-anchor or `ExitWorktree`: the in-flight iteration is registered on its worktree, and releasing
   that registration guard-blocks its outstanding `developer` writes. `ExitWorktree` is safe only at a true iteration
   boundary, with no delegated work live.
