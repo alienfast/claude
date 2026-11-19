@@ -555,6 +555,51 @@ run_fs epic:XX-404 --no-runway
 ck "many worktrees: the main checkout is still resolved" "1" "$RC"
 ck_has "  and the script reaches its own error" "no fleet marker for epic:XX-404" "$ERR"
 
+echo "== 23. a marker carrying fleet_sessions never rows an /auto worktree owner outside the set"
+# xx-7 (owner a1b2c3d4) and xx-60 (owner c0ffee00) are still live worktrees whose owners opened with /loop /auto and have
+# no ledger: the shape an earlier fleet's leftover worktree has once a launch expired its ledger (2026-11-18: a /loop
+# session of a fleet a week earlier, still owning a Canceled issue's dirty worktree, rowed `dead | no ledger` as an eighth
+# member of a seven-session fleet). sess-n is a recorded member with no ledger and must still row.
+rm -f "$REPO"/tmp/auto-state-*.json "$REPO"/tmp/fleet-deadline*.json
+NOW=$(date +%s)
+jq -n --argjson le "$((NOW - 500))" '{count: 2, launch_epoch: $le, fleet_sessions: ["sess-m", "sess-n"]}' > "$TM"
+jq -n '{status: "active", shipped: [], canceled: [], failed: [], reviewBlocks: 0}' > "$REPO/tmp/auto-state-sess-m.json"
+write_agents '[{"id":"sess-m","cwd":"/x","kind":"background","sessionId":"sess-m-full","name":"n","state":"working"},
+               {"id":"sess-n","cwd":"/x","kind":"background","sessionId":"sess-n-full","name":"n","state":"working"},
+               {"id":"a1b2c3d4","cwd":"/x","kind":"background","sessionId":"a1b2c3d4-9722-4503-9f27-d7156e65ecfb","name":"n","state":"working"}]'
+run_fs --no-runway
+ck "clean exit" "0" "$RC"
+ck_has "  member with a ledger rowed"                "| sess-m | ALIVE (working) | active" "$OUT"
+ck_has "  member without a ledger still rowed"       "| sess-n | ALIVE (working) | **no ledger** |" "$OUT"
+ck_lacks "  /auto owner outside the set gets no row" "| a1b2c3d4 |" "$OUT"
+ck_lacks "  nor does a dead one"                     "| c0ffee00 |" "$OUT"
+ck_has "  the footnote counts the member alone"      "_1 fleet session(s) have written no" "$OUT"
+ck_has "  its worktree is still in flight"           "session a1b2c3d4-9722" "$OUT"
+
+echo "== 24. two fleets: a ledger-less member owning a worktree rows in its own fleet's table only"
+jq -n --argjson le "$((NOW - 400))" '{count: 1, launch_epoch: $le, fleet_sessions: ["a1b2c3d4"], scope: "XX-100"}' > "$EM"
+run_fs --no-runway
+ck "clean exit" "0" "$RC"
+ck "  the worktree owner rows once, in its own fleet" "1" "$(grep -c '^| a1b2c3d4 |' "$OUT")"
+ck "  the other fleet's member rows once too"         "1" "$(grep -c '^| sess-n |' "$OUT")"
+run_fs team --no-runway
+ck_lacks "  team token: the epic's ledger-less member is not rowed" "| a1b2c3d4 |" "$OUT"
+run_fs epic:xx-100 --no-runway
+ck_has "  epic token: its ledger-less member is rowed" "| a1b2c3d4 | ALIVE (working) | **no ledger** |" "$OUT"
+
+echo "== 25. without the set — an older marker, an empty set, or no marker — the worktree-owner pass still rows /auto owners"
+rm -f "$EM"
+write_marker $((NOW - 500)) $((NOW + 3600))
+run_fs --no-runway
+ck_has "  older marker: /auto owner rowed" "| a1b2c3d4 | ALIVE (working) | **no ledger** |" "$OUT"
+jq '. + {fleet_sessions: []}' "$TM" > "$ROOT/m.tmp" && mv "$ROOT/m.tmp" "$TM"
+run_fs --no-runway
+ck_has "  empty set: /auto owner rowed" "| a1b2c3d4 | ALIVE (working) | **no ledger** |" "$OUT"
+rm -f "$TM"
+run_fs --no-runway
+ck_has "  no marker: /auto owner rowed" "| a1b2c3d4 | ALIVE (working) | **no ledger** |" "$OUT"
+ck_lacks "  no marker: interactive owner still not rowed" "| beefcafe |" "$OUT"
+
 echo ""
 echo "$PASS passed / $FAIL failed"
 [ "$FAIL" -eq 0 ]

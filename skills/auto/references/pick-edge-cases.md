@@ -32,6 +32,11 @@ lands; the pick proceeds on its fork source with the overlap recorded (`standard
 States). Adding the label and a `blocks` edge to such a candidate hides a human-planned issue behind a gate no human
 set (BF-3115, 2026-11-09).
 
+Neither of those, and neither a push-then-wait nor a proceed: the files and symbols the candidate's criteria name are
+absent from the fork source because its blocker shipped on another branch. Pushing the launch branch lands nothing for
+it and it cannot be built here, so park it `needs decision` naming the branch and what is absent. Never add the label:
+in that shape it is a person's (`standards/issue-spec.md` § The `deploy-gated` label, the branch shape).
+
 1. `next-candidates.sh` withholds an issue carrying the `deploy-gated` label until its blockers reach the project's
    `$LINEAR_DEPLOYED_STATES` (`standards/issue-spec.md` § The `deploy-gated` label), counting it as the keeper's so the
    Backlog fallback opens instead of the whole fleet holding on it. A candidate of this shape that IS offered was filed

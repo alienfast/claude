@@ -60,10 +60,12 @@ once. An archived marker (an ended run a later launch displaced) is never a sect
     `claude rm`), with their ledgers `drained`.
   - **`unknown (no registry; pid …)`** — `claude` was unavailable; **not evidence of death, never reap against it.**
 
-  A **`no ledger`** row is a session that owns a live worktree here but has written no `auto-state` file. Its shipped work
-  is *not* in the Shipped cross-check below, which is built from ledgers alone — treat the row as a gap in the ledger, not
-  an idle session. Only `/auto` sessions are listed; an interactive session holding a worktree appears under In flight
-  only. `/fleet-retro` recovers ledger-less sessions from transcripts.
+  A **`no ledger`** row is a recorded member that has written no `auto-state` file — or, on a marker without
+  `fleet_sessions` (or with no marker), an `/auto` session that owns a live worktree here. Its shipped work is *not* in
+  the Shipped cross-check below, which is built from ledgers alone — treat the row as a gap in the ledger, not an idle
+  session. A session outside the recorded set is never rowed, `/auto` or not: another fleet's member, an earlier
+  fleet's leftover worktree and an interactive session holding a worktree all appear under In flight only.
+  `/fleet-retro` recovers ledger-less sessions from transcripts.
 - **In flight** — live worktrees joined with Linear state and the owning session. A worktree whose issue reads terminal
   is leftover, awaiting `/reap-worktrees`.
 - **Shipped, cross-checked** — the union of the fleet's ledgers, each entry verified against commits on the integration

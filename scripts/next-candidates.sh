@@ -134,9 +134,12 @@
 # `deploy-gated`-labeled issues wait on a RELEASE, not a merge, and are hidden until every `blocks`
 # blocker reaches one of the project's deployed states — $LINEAR_DEPLOYED_STATES, a comma list the
 # project exports (basefund: `Done` in .claude/settings.json, because its CI sweeps Ready for Release
-# to Done only after deploy_production). TERMINAL_STATES still resolves every other edge: Ready for
-# Release means the code is on the branch a fleet forks from, which is all a code prerequisite needs,
-# and holding chains until a human deploys would freeze every chain after its first link. Fail
+# to Done only after deploy_production). The same wait holds a dependent whose blocker's code shipped
+# on another branch, where the blocker deploying is what says that branch merged (standards/issue-spec.md
+# § The `deploy-gated` label, the branch shape). TERMINAL_STATES still resolves every other edge: Ready
+# for Release means the code is on the branch a fleet forks from, that shape excepted, which is all a
+# code prerequisite needs, and holding chains until a human deploys would freeze every chain after its
+# first link. Fail
 # closed: with the variable unset, or with no blocks edge naming the release, the issue is held for
 # the keeper and the hold note says which. Surfaced via --label deploy-gated. Measured 2026-10-15/16:
 # two such filings ranked #1 and #2 all night on Ready for Release blockers that read as resolved,
@@ -788,7 +791,7 @@ eligible_json=$(jq \
       # and by nothing else. It yields to no other listing, the solo one above all: /fleet-solo
       # dispatches that listing in order, so a held issue shown there would ship.
       | select((($label | ascii_downcase) == "hold") or (all(($i.labels // [])[]; ascii_downcase != "hold")))
-      # deploy-gated gate: waits on a release, not a merge — hidden until every blocker is deployed
+      # deploy-gated gate: hidden until every blocker is deployed, for either shape the header names
       # (deploy_held above), listed by --label deploy-gated. Yields to a needs-decision listing too,
       # since an issue can carry both.
       | select((($label | ascii_downcase) | . == "deploy-gated" or . == "needs decision" or . == "hold") or (deploy_held($i) | not))

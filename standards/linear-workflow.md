@@ -89,9 +89,10 @@ or not at all (BF-2911, 2026-10-29). The dedup search in [linear-filing.md](line
 learns it is tracked: a hit whose Desired Outcome the working tree already meets is claimed and finished as that
 issue's, never only commented on.
 
-**The one exception is a dependency on the release itself, carried by the `deploy-gated` label**: such an issue waits
-until every blocker reaches one of the project's declared deployed states ([issue-spec.md](issue-spec.md) § The
-`deploy-gated` label).
+**The two exceptions are carried by the `deploy-gated` label: a dependency on the release itself, and a dependent that
+cannot be built on the fork source because its blocker shipped on another branch.** Such an issue waits until every
+blocker reaches one of the project's declared deployed states ([issue-spec.md](issue-spec.md) § The `deploy-gated`
+label).
 
 **In Review must be matched by NAME, not state type.** Linear registers every team's In Review state as type `started`,
 and the API cannot change a state's type after creation, so a type-based terminal filter reads In Review as in-flight and

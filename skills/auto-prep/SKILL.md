@@ -42,7 +42,7 @@ collision analysis depend on body content, not titles.
 
 `specified` means "an unattended agent may pick this up and ship it" ([standards/issue-spec.md](../../standards/issue-spec.md),
 which owns every label below). Test each certified issue against that sentence, sort failures into the dispositions, then
-run item 5 over every certified issue, failures included.
+run item 5 over every certified issue, failures included, and item 6 over the ungated ones.
 
 1. **Mark `needs decision`** — the body itself contradicts unattended shipping: a present-tense "must not ship from an
    unattended run" about *this* issue (a past-tense "was deferred because too big" does not count), or capabilities no
@@ -78,6 +78,34 @@ run item 5 over every certified issue, failures included.
    body no longer qualifies or a `security`, `human`, `needs decision`, or `epic` label has attached. Body-first; open code
    only for issues near the top of the ranking, as one grep of the named file for a policy, lock, or transaction token
    that would move the remedy across a contract. List adds and removes with reasons; apply what the user confirms.
+6. **A resolved blocker's code is on the fork source** — the ranking resolves a `blocks` edge at Ready for Release or
+   In Review, which assumes the fleet forks from the branch that carries the blocker's code. A blocker that shipped on
+   another long-lived branch (a feature branch with its own PR to the default branch) breaks that: its dependent ranks
+   as unblocked, and the session that picks it finds none of the code it changes. List every certified issue with no
+   gate label behind such a blocker, in either column (the fleet reaches Backlog once Planned drains or under
+   `backlog`), then count the fork source's commit subjects that name each blocker listed:
+
+   ```bash
+   jq -r '[.nodes[] | [.labels.nodes[].name | ascii_downcase] as $l | select(($l | index("specified")) and all($l[]; IN("needs decision", "human", "solo", "hold", "deploy-gated", "epic") | not)) | .identifier as $d | .inverseRelations.nodes[] | select(.type == "blocks" and (.issue.state.name | ascii_downcase | IN("ready for release", "in review"))) | "\(.issue.identifier) blocks \($d)"] | unique | .[], "EDGES: \(length)"' tmp/pool.json
+   git log --format=%s <fork-source> | grep -cE '^(Merge )?<BLOCKER-ID>([^0-9]|$)'
+   ```
+
+   The `EDGES:` line prints on every run, so a listing without it is a mistranscribed filter, never an empty list.
+   `<fork-source>` is the checkout's branch (`start.wt-source-branch` when it is parked detached). Match subjects,
+   never the whole message: a sibling's commit body that cites the blocker reads as landed. A count of zero is a lead,
+   not a verdict, and takes two more reads. **The blocker:** after a `git fetch`, the same pattern over
+   `git log --all --format='%H %s'`, then `git branch -a --contains <sha>`, names the ref that carries it; no commit on
+   any ref is an epic, work absorbed into a sibling's commit, or a hand-made subject that does not lead with the ID,
+   and is no finding. **The dependent:** the edge is often the filing recipe's parent → child edge on a defect that
+   predates the blocker, workable where it is, so confirm the files and symbols its criteria name are absent from the
+   fork source (`git grep -l '<symbol>' <fork-source>` prints nothing) and present on the other ref. Only then list
+   the dependent for the keeper with the two dispositions: label it `deploy-gated` (it waits until every `blocks`
+   blocker it carries reaches a deployed state, and in Planned it holds the gate until then —
+   `standards/issue-spec.md` § The `deploy-gated` label), or ship it from the branch that carries the code before the
+   launch. `/epic-prep` skips this item: its Step 7 landed gate is this check against the integration branch.
+   Measured 2026-11-18: of two issues filed from one review behind one Ready for Release blocker on a feature branch,
+   a team fleet shipped the first on its fork source and parked the second, whose named symbols existed only on the
+   feature branch, for a branch decision within eight minutes of claiming it.
 
 While reading bodies, catch cheap ranking wins: a flake fix or check-stabilizer other sessions' gates depend on deserves a
 priority bump; `bug`/`security` labels missing from issues that plainly are one feed the class rank.

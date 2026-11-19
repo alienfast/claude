@@ -361,7 +361,9 @@ done
 # Ledger-less sessions: an /auto session that owns a worktree here but has written no auto-state file
 # — one killed before /auto Step 4 records its outcome. Without this pass it is absent from the table
 # entirely while its worktree still shows up under "In flight", which reads as an unowned worktree.
-# The gate below is what keeps that from over-firing: on 2026-08-25 the only worktree owner missing a
+# The pass finds sessions only where the marker carries no set (an older marker, or none): with the set
+# recorded, membership is the set, and the loop after this one rows every member that has no ledger.
+# The is_auto_run gate below is what keeps that from over-firing: on 2026-08-25 the only worktree owner missing a
 # ledger was the operator's own interactive session, which belongs in neither this pass nor the table.
 # The worktree identity sidecar is the source rather than
 # the registry's cwd: a sidecar means the session claimed an issue here, whereas cwd would also
@@ -391,6 +393,12 @@ for sc in "$main_checkout"/.claude/worktree-identity/wt-identity-*.env; do
     [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-*) o=${o%%-*} ;;
   esac
   [ -n "$o" ] || continue
+  # The launch recorded the set, so an /auto owner outside it is another run's session — an earlier fleet's leftover worktree, a
+  # sibling fleet's member on its first issue, a targeted /auto run — and is hidden as its ledger would be above. A member with
+  # no ledger is added from fleet_set below, worktree or not.
+  if [ -n "$fleet_set" ]; then
+    case " $fleet_set " in *" $o "*) ;; *) continue ;; esac
+  fi
   case "$ledger_keys" in *" $o "*) continue ;; esac
   case " $ledgerless_keys " in *" $o "*) continue ;; esac
   # Only an /auto session belongs in a fleet table. An interactive session owning a worktree here is
