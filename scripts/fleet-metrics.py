@@ -176,8 +176,10 @@ HOLD_TICK = re.compile(r"^[ \t]*AUTO-CONTINUE: no pick\b[^\n]*?(PLANNED-HOLD|BLO
 # which HOLD_TICK cannot see: 2026-11-09, a deleted session's stamp held a whole fleet that way. Counted as the `no-pick` gauge
 # beside `held`, never folded into it.
 NOPICK_TICK = re.compile(r"^[ \t]*AUTO-CONTINUE: no pick\b", re.M)
-# next-candidates.sh's clause under --backlog-fallback when Backlog is as empty as the gated column: the pool ran out.
-BACKLOG_EMPTY_TICK = re.compile(r"backlog fallback is on but Backlog has nothing pickable either")
+# next-candidates.sh's clause under --backlog-fallback when Backlog is as empty as the gated column: the pool ran out. Matched on
+# its core, not the whole clause: the one tick seen paraphrasing the note kept this phrase, and one such tick among verbatim ones
+# otherwise defeats every-tick `pool_ran_out` (2026-11-22, 1 of 56 ticks). "nothing further pickable" is a different state.
+BACKLOG_EMPTY_TICK = re.compile(r"Backlog has nothing pickable either")
 # The count every PLANNED-HOLD note states (since the 2026-08-28 stage gate), zero included. /auto sometimes abbreviates the note
 # and drops it, so an absent count proves nothing; a stated one does, either way.
 BACKLOG_WAITING = re.compile(r"(\d+) Backlog candidate\(s\) wait behind the gate")

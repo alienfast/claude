@@ -2174,6 +2174,31 @@ ck "holds: the clause count excludes the BLOCKED-HOLD tick" "4 3" "$(qh "' '.joi
 ck "holds: the pool still read as run out"      "True" "$(qh "[s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['held']['pool_ran_out']")"
 ck "holds: the hours stand with the BLOCKED-HOLD tick" "10.1" "$(qh "[s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['held']['hours']")"
 ck_lacks "holds: no mixed-launch flag for a BLOCKED-HOLD tick on an empty pool" "held 10.1h while siblings landed" "$MDH"
+# One tick that paraphrases the note instead of quoting it: the line session 1dbd3b0c emitted on 2026-11-22 (snapshotted
+# verbatim) among 18 clause-carrying ticks. It keeps the clause's core, and requiring the full clause fired the mixed-launch flag
+# on a `backlog` session whose pool had run out.
+python3 - "$WORK/holds-empty.jsonl" "$WORK/projects/$MH/1cc250ad-0000.jsonl" <<'MK_PARAPHRASED_AMONG_EMPTY'
+import json, sys
+paraphrased = ("AUTO-CONTINUE: no pick — PLANNED-HOLD (11 keeper-gated: BF-3378, BF-3269, BF-3134, BF-3131, BF-3090, BF-3060, "
+               "BF-3036, BF-3035, BF-3022, BF-2636, BF-2128; Backlog has nothing pickable either). 10/0/0/0 this run; waiting for the "
+               "Planned/Todo column to drain.")
+src, dest = sys.argv[1:3]
+lines = open(src).readlines()
+def is_tick(line):
+    rec = json.loads(line) if "AUTO-CONTINUE: no pick" in line else {}
+    return rec.get("type") == "assistant" and isinstance(rec.get("message", {}).get("content"), list)
+first = min(i for i, line in enumerate(lines) if is_tick(line))
+rec = json.loads(lines[first])
+for block in rec["message"]["content"]:
+    if block.get("type") == "text":
+        block["text"] = "\n".join(paraphrased if l.startswith("AUTO-CONTINUE: no pick") else l for l in block["text"].split("\n"))
+lines[first] = json.dumps(rec, ensure_ascii=False) + "\n"
+open(dest, "w").write("".join(lines))
+MK_PARAPHRASED_AMONG_EMPTY
+runh
+ck "holds: a paraphrased tick still proves Backlog empty" "4 4" "$(qh "' '.join(str([s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['held'][k]) for k in ('ticks','backlog_empty_ticks'))")"
+ck "holds: the pool read as run out with a paraphrased tick" "True" "$(qh "[s for s in d['sessions'] if s['run_key']=='1cc250ad'][0]['held']['pool_ran_out']")"
+ck_lacks "holds: no mixed-launch flag for a paraphrased tick on an empty pool" "held 10.1h while siblings landed" "$MDH"
 cp "$FIXH/1cc250ad-0000.jsonl" "$WORK/projects/$MH/"
 # A launch with no `backlog` anywhere (2026-10-28, BFP): every tick replaced by a line session a4bff3f6 emitted, snapshotted
 # verbatim, and the sibling's ledger stripped of the token. Its sessions held behind 2 candidates their own fleet had filed,

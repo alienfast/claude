@@ -58,6 +58,8 @@ Bash-only idioms fail silently, so an empty `EXIT=` or an all-zero table reads a
 - `status` is read-only: `rc=$?`, never `status=$?`.
 - `path`, `fpath`, `cdpath`, `manpath` are tied to `PATH`: name loop and `read` variables `p` or `file`.
 - Unquoted `$var` does not word-split: `${=var}` or an array.
+- A committed script runs as `./x.sh` (every `*.test.sh` is executable), which honors its shebang; `zsh x.test.sh` runs
+  a bash suite under zsh, and its unsplit `set -- $spec` fixtures fail as `got []`, a red that reads as pre-existing.
 - `${var,,}` / `${var^^}` abort the call: `${var:l}` / `${var:u}`.
 - `$var:` + a modifier letter rewrites the word, quoted or not: brace it, `${tag}:apps/x`.
 - A leading unquoted `=` is EQUALS expansion: quote `=====`.
