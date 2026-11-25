@@ -51,8 +51,9 @@
 # stdout: the new issue identifier (e.g., PL-451), single line — printed on EVERY path
 #         where the issue was created, including the degraded ones (exits 2/3/4 and the
 #         post-create exit-1 cases). Empty stdout means no issue exists.
-# stderr (failure/degraded): one-line diagnostic. An exit 0 can also carry a WARN: the parent
-#         link was accepted on the link mutation's own answer, or only after a second link.
+# stderr (failure/degraded): one-line diagnostic. An exit 0 can also carry a WARN: the state
+#         could not be read back, or the parent link was accepted on the link mutation's own
+#         answer, or only after a second link.
 #
 # Why a helper: `linear-cli issues create` has no `--parent` flag. You *can* set the
 # parent's UUID as `parentId` via `--data` JSON (it carries `description` too on 0.3.26),
@@ -262,10 +263,14 @@ printf '%s\n' "$new_id"
 # than failing: the issue and its body already exist, and stranding it is the outcome this
 # check exists to prevent. Only a state we could not fix is worth aborting for.
 if [ -n "$state" ] && [ "$state" != "-" ]; then
-  landed=$(linear-cli issues get "$new_id" -o json --no-cache 2>/dev/null | jq -r '.state.name // empty')
+  # `|| true`: under `set -eo pipefail` a failed read would end the script here with linear-cli's own exit code (4 on a
+  # rate limit), before the labels and the parent link, and 2, 3 and 4 each tell a caller the issue was filed.
+  state_of() { linear-cli issues get "$new_id" -o json --no-cache 2>/dev/null | jq -r '.state.name // empty' 2>/dev/null || true; }
+  landed=$(state_of)
+  [ -n "$landed" ] || echo "WARN: created $new_id but its state could not be read back — '$state' is unverified" >&2
   if [ -n "$landed" ] && ! printf '%s' "$landed" | grep -Fqxi -- "$state"; then
     linear-cli issues update "$new_id" -s "$state" >/dev/null 2>&1 || true
-    landed=$(linear-cli issues get "$new_id" -o json --no-cache 2>/dev/null | jq -r '.state.name // empty')
+    landed=$(state_of)
     if ! printf '%s' "$landed" | grep -Fqxi -- "$state"; then
       echo "ERROR: created $new_id but its state is '${landed:-unknown}', expected '$state', and the correcting update did not take" >&2
       exit 1

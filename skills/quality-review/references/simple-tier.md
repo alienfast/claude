@@ -59,10 +59,10 @@ record why, so the next pickup runs the full tier from the start instead of repe
 `~/.claude/scripts/linear-remove-label.sh <ISSUE-ID> simple`, then write one line
 (`simple tier escalated at /quality-review: <trigger>`) to `<repo-root>/tmp/simple-escalation-<issue-lower>.md` (an
 absolute path) and post it with `~/.claude/scripts/linear-post.sh comment <ISSUE-ID> <that absolute path>`. Bookkeeping
-never blocks the escalation: a failing remove or post is annotated in the tier note (`label not removed: <first stderr
-line>`) and the run proceeds; a token-only request has nothing to remove; with no issue ID resolved (the scope-mismatch
-guard, an unauthenticated auto run) the label cannot be touched — say so in chat and in the tier note, since the next
-pickup repeats the mismatch until a human or `/auto-prep` clears it.
+never blocks the escalation: a failing remove or post is annotated in the tier note
+(`label removal not confirmed: <first stderr line>`) and the run proceeds; a token-only request has nothing to remove;
+with no issue ID resolved (the scope-mismatch guard, an unauthenticated auto run) the label cannot be touched — say so
+in chat and in the tier note, since the next pickup repeats the mismatch until a human or `/auto-prep` clears it.
 
 Then dispatch Step 3's `quality-reviewer` template as the next review cycle, **adding** two lines it does not natively
 carry: `Previous findings addressed:` naming what the simple-tier cycles already fixed, and the `Already tracked (do NOT
@@ -94,7 +94,8 @@ substantive converges normally.
 Append `Review tier: simple (quality-verifier scoped review; N cycles)` — or
 `Review tier: simple → escalated at <trigger> (cycle N of M)` when a guard fired, with `pre-dispatch` in place of
 `cycle N` when guard 1 or 2 fired or the `ESCALATE:` answer arrived before any cycle completed, plus any
-`label not removed:` annotation — as the first line of the Output block's trailing process-notes paragraph: a blank line
-after `Open items:`, never the line directly below it, which `/finish` Step 8 may read as a continuation of that field.
+`label removal not confirmed:` annotation — as the first line of the Output block's trailing process-notes paragraph: a
+blank line after `Open items:`, never the line directly below it, which `/finish` Step 8 may read as a continuation of
+that field.
 Consumers ignore it today; `fleet-metrics.py`'s impl-vs-fix developer-lane split keys on the first `quality-reviewer`
 dispatch, so a simple run that never escalates reads its fix batches as `impl` until that script learns the note.

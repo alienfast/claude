@@ -14,7 +14,8 @@
 # replaying the 2026-11-15 race (BF-3306 and BF-3310 filed minutes before BF-3311, off a search that
 # predated both). And the parent-link verification: a link the mutation's own answer names stands when the read
 # straight after shows none, the link is re-issued once otherwise, a failing parent read never ends the script with
-# linear-cli's own exit code, and a link neither signal confirms exits 1 naming the repair.
+# linear-cli's own exit code, and a link neither signal confirms exits 1 naming the repair. And the state read-back: a
+# failing state read warns and carries on to the labels and the parent link instead of ending the script with that code.
 # linear-cli is a PATH shim that logs every invocation; HOME is an empty dir so the
 # script's cargo-bin PATH prepend cannot resurrect the real CLI. The re-search runs the real
 # linear-dedup-search.sh beside the script, so it hits the same shim.
@@ -338,6 +339,24 @@ ck_has  "parent read fails, mutation answered: WARN"               "the link mut
 rc=$(PARENT_ANSWERS=BF-3302 runs BF-3302 "Account forms.")
 ck "both signals agree: exit 0"                  "0" "$rc"
 ck "both signals agree: silent"                  "" "$(cat "$WORK/err")"
+
+echo "linear-create-child.sh state read-back —"
+
+# The state read is the first `issues get`, so a leading `!N` in PARENT_READS fails it with exit N. linear-cli exits 4
+# on a rate limit, 2 on not-found and 3 on auth; here 2, 3 and 4 each say the issue was filed with something degraded.
+for code in 4 2 3; do
+  rc=$(PARENT_ANSWERS=BF-3302 PARENT_READS="!$code,BF-3302" runs BF-3302 "Account forms.")
+  ck "state read exits $code: exit 0"              "0" "$rc"
+  ck "state read exits $code: id on stdout"        "TT-9" "$(cat "$WORK/out")"
+  ck_has  "state read exits $code: WARN says the state is unverified" "its state could not be read back — 'Backlog' is unverified" "$WORK/err"
+  ck_has  "state read exits $code: the labels still attach"          "-l|specified" "$WORK/calls.log"
+  ck_has  "state read exits $code: the parent is still linked"       "relations|parent|TT-9|BF-3302" "$WORK/calls.log"
+done
+
+rc=$(STATE_FIX=Triage PARENT_READS='BF-3302,!4' runs BF-3302 "Account forms.")
+ck "wrong state, re-read fails: exit 1"          "1" "$rc"
+ck "wrong state, re-read fails: id on stdout"    "TT-9" "$(cat "$WORK/out")"
+ck_has  "wrong state, re-read fails: says the correction did not take" "its state is 'unknown', expected 'Backlog', and the correcting update did not take" "$WORK/err"
 
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

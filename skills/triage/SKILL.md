@@ -221,5 +221,6 @@ hand-to-/spec list with each one's open question); found in passing; milestones 
   permission refusal inside the headless run is the usual cause. Re-running the scan picks the group's issues up again.
 - **`linear-set-state.sh` exit non-zero mid-batch** → issues already verified stand; report which did not transition
   and stop the batch.
-- **`linear-add-label.sh` exit 2** → the write may have landed; re-read with `--no-cache` before repeating it, and report
-  certification as unconfirmed rather than failed.
+- **`linear-add-label.sh` exit 2** → the write may have landed and the read may be what lags (linear gotcha #17: a
+  `--no-cache` re-read settles nothing, and repeating the write can drop a label). Report certification as unconfirmed
+  rather than failed, and confirm it the way that gotcha describes.

@@ -12,6 +12,8 @@
 #   0 = label absent from the issue (including already-absent no-op)
 #   1 = usage error, missing dependency, or the issue could not be read/parsed
 #   2 = the update failed, or it succeeded but verification could not confirm it
+#
+# Tested by linear-remove-label.test.sh, with linear-cli as a PATH shim.
 
 set -eo pipefail
 
@@ -111,6 +113,6 @@ for name in "${remaining[@]}"; do
   grep -Fxqi -- "$name" <<< "$after" || missing+=("$name")
 done
 if [ "${#missing[@]}" -gt 0 ]; then
-  echo "ERROR: removal dropped other labels on $issue_id — expected to keep [${remaining[*]}], missing [${missing[*]}]. Re-add them manually." >&2
+  echo "ERROR: could not confirm $issue_id kept its other labels after removing '$label' — expected [${remaining[*]}], the verification read is missing [${missing[*]}]. Unconfirmed, not failed: a stale read, another writer, or a dropped label all look like this (linear skill gotcha #17, skills/linear/references/labels.md) — confirm a label is really gone before re-adding it." >&2
   exit 2
 fi
