@@ -21,8 +21,9 @@ the park comment's own words.
 In the failure marking's ordering slots (comment → label → release → state file):
 
 1. Post the comment naming the specific decision or the specific human step.
-2. Apply the routed label: `~/.claude/scripts/linear-add-label.sh <ISSUE-ID> <label>`; exit 2 → the label may not
-   exist: `linear-cli labels create "<label>" -t issue`, then retry once.
+2. Apply the routed label: `~/.claude/scripts/linear-add-label.sh <ISSUE-ID> <label>`; exit 2 → its stderr names the
+   case. `could not confirm` is unconfirmed, not failed, and is not retried (linear gotcha #17). `could not attach`
+   means the label may not exist: `linear-cli labels create "<label>" -t issue`, then retry once.
 3. Move the issue back to `Planned` and unassign it — `linear-cli issues update <ISSUE-ID> -s Planned`, then
    `issues assign <ISSUE-ID>` with no user. The board must not show a dead session as active work.
 4. Release the worktree stamp (`wt-disown.sh`), preserving the worktree and its commits for resumption.
@@ -68,8 +69,9 @@ decline is ranked first again and a fresh session re-pays `/start`'s worktree cr
 leaving an empty worktree behind:
 
 1. Post a comment naming the specific decision or access needed and what would clear it.
-2. Apply the routed label (`linear-add-label.sh <ISSUE-ID> 'needs decision'` or `… human`; exit 2 → create the label,
-   retry once). Comment before label, per the failure rows' outward-markers-first ordering.
+2. Apply the routed label (`linear-add-label.sh <ISSUE-ID> 'needs decision'` or `… human`; exit 2 → as in Park
+   mechanics step 2: `could not confirm` stands unretried, `could not attach` gets the label created and one retry).
+   Comment before label, per the failure rows' outward-markers-first ordering.
 3. Remove the worktree if `/start` created one before declining:
    `git worktree remove .claude/worktrees/<issue-id-lowercased> && git branch -D <branch>`.
 

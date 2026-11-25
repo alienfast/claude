@@ -58,7 +58,9 @@ run item 5 over every certified issue, failures included, and item 6 over the un
    path exists. Keep the label, list it: the user decides now (best) or accepts the conservative option. A decision counts
    only once it is in the description — route it through `/spec <ID>`; a comment does not unblock `/auto`.
 3. **Mark `solo`** — implementable unattended but fleet-hostile; the remedy is sequencing. Apply the label
-   (`linear-add-label.sh <ID> solo`; exit 2 → `linear-cli labels create "solo" -t issue`, retry once) and recommend
+   (`linear-add-label.sh <ID> solo`; on exit 2 its stderr names the case: `could not confirm` is unconfirmed, not
+   failed, and is not retried (linear gotcha #17); `could not attach` → `linear-cli labels create "solo" -t issue`,
+   retry once) and recommend
    `/fleet-solo` (or a targeted `/auto <ID>`) while the fleet is quiet. The label hides the issue from every ranking;
    targeted runs still ship it. **It over-triggers, and a false positive parks a workable issue on the one serial
    resource** — read `references/solo-qualification.md` before marking one. Exactly three grounds qualify, named in the

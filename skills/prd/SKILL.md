@@ -52,7 +52,7 @@ Use this skill when:
    ~/.claude/scripts/linear-add-label.sh ENG-100 specified
    ```
 
-   `specified` marks a certified spec — the gate `/auto` picks up ([standards/issue-spec.md](../../standards/issue-spec.md)). Label post-create rather than via `issues create -l`, so a label problem can never fail issue creation. On exit 2, surface the helper's create-label pointer and tell the user certification is incomplete.
+   `specified` marks a certified spec — the gate `/auto` picks up ([standards/issue-spec.md](../../standards/issue-spec.md)). Label post-create rather than via `issues create -l`, so a label problem can never fail issue creation. On exit 2 the helper's stderr names the case: `could not confirm` is unconfirmed, not failed (linear gotcha #17) — report it as that and do not repeat the write; anything else, surface the helper's create-label pointer and tell the user certification is incomplete.
 
    One class of sub-issue certifies **gated**: work only a human can perform — customer outreach, vendor contact, production data remediation, a confirmation pass the body itself assigns to a person. The quality bar tests spec shape, not agent capability, so these pass it and then sit rankable in the certified pool until a fleet session picks one and declines it. Attach `human` alongside `specified` here, naming the owner when known — the spec is right, the executor is a person ([standards/issue-spec.md](../../standards/issue-spec.md)); `needs decision` is the wrong gate for these, since it advertises a pending decision that would hand the issue back to agents. `/auto-prep` Step 2 applies the identical disposition later, but only after the issue has already spent time rankable.
 

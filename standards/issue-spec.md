@@ -27,7 +27,7 @@ In a fleet this decays fast, because parallel sessions land adjacent work contin
 ~/.claude/scripts/linear-add-label.sh PL-13 specified
 ```
 
-It reads current labels, merges, sets, and verifies the attach; idempotent when the label is already present; exit 2 with a create-label pointer when the label is missing or unattachable. Direct `-l` is acceptable only on a just-created issue, whose label set is empty by construction.
+It reads current labels, merges, sets, and verifies the attach; idempotent when the label is already present; exit 2 with a create-label pointer when the label is missing or unattachable, and exit 2 with `could not confirm` when its verification read does not show the write (unconfirmed, not failed: linear gotcha #17). Direct `-l` is acceptable only on a just-created issue, whose label set is empty by construction.
 
 ## Certification includes collision edges
 

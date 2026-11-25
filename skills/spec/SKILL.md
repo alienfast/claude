@@ -218,9 +218,11 @@ options rather than carrying it silently into the draft.
    ~/.claude/scripts/linear-remove-label.sh <ID> 'needs decision'
    ```
 
-   Read-merge-set — never a bare `issues update -l`, which replaces the whole label set. Exit 2 on the add → the spec
-   landed but the issue is **not** certified: surface the helper's pointer, report certification incomplete, skip items
-   6–7. The removal is a no-op when the label is absent; when present, this certification is what clears it. The one
+   Read-merge-set — never a bare `issues update -l`, which replaces the whole label set. Exit 2 on the add → its
+   stderr names the case. `could not confirm` is inconclusive, not a failure (linear gotcha #17): carry on through
+   items 6–7, report certification as unconfirmed, and never repeat the write. Any other exit 2 → the spec landed but
+   the issue is **not** certified: surface the helper's pointer, report certification incomplete, skip items 6–7. The
+   removal is a no-op when the label is absent; when present, this certification is what clears it. The one
    exception: when this run is what parked the issue (Step 3), skip the removal and instead apply the label — with its
    naming comment — right after `specified` attaches.
 
@@ -312,7 +314,9 @@ certification). Stop when the user is done.
 - **Any exit after Step 2's claim that never reaches Step 6 item 8** — signoff withheld, an error below, the work turning
   out `human`, the user moving on — release the claim before stopping (`linear-cli issues assign <ID>`): a dangling
   assignment hides the issue from teammates' rankings indefinitely.
-- **`linear-add-label.sh` exit 2** → the spec landed but the issue is NOT certified; give the
-  `linear-cli labels create "specified" -t issue` pointer and stop before the collision step and the comment.
+- **`linear-add-label.sh` exit 2** → its stderr names the case. `could not confirm` is inconclusive (linear gotcha
+  #17): finish the collision step and the comment, and report certification as unconfirmed. Anything else → the spec
+  landed but the issue is NOT certified; give the `linear-cli labels create "specified" -t issue` pointer and stop
+  before the collision step and the comment.
 - **Explore agent unavailable** → proceed on Linear context alone and say so before the interview.
 - **`linear-cli auth status` logged out** → prompt: `linear-cli auth oauth`.
