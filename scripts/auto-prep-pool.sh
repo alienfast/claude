@@ -32,6 +32,7 @@
 #
 # Exit codes: 0 success, 1 arg error, 2 Linear/network failure, 3 missing dependency.
 # Read-only — no Linear writes, no git mutations.
+# Fetch mode is tested by auto-prep-pool.test.sh, with linear-cli as a PATH shim; collision mode has no suite.
 
 set -eo pipefail
 
@@ -68,8 +69,12 @@ pages="$(mktemp tmp/pool-pages-XXXXXX)"
 trap 'rm -f "$pages"' EXIT
 after=''
 while :; do
-  if [ -z "$after" ]; then page=$(linear-cli api query -q -o json -v team="$team" "$q")
-  else page=$(linear-cli api query -q -o json -v team="$team" -v after="$after" "$q"); fi
+  # The guard is the exit contract: unguarded, `set -e` ends the script with linear-cli's own code, whose 1 and 3
+  # (general, auth) mean an argument error and a missing dependency here.
+  vars=(-v team="$team")
+  [ -z "$after" ] || vars+=(-v after="$after")
+  page=$(linear-cli api query -q -o json "${vars[@]}" "$q") \
+    || { echo "ERROR: issue fetch failed (linear-cli exit $?)" >&2; exit 2; }
   [ -n "$page" ] || { echo "ERROR: issue fetch returned nothing (auth? network?)" >&2; exit 2; }
   if [ "$(printf '%s' "$page" | jq 'has("errors")')" = "true" ]; then
     printf '%s' "$page" | jq -c '.errors' >&2; exit 2
