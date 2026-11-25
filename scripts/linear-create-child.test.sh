@@ -12,7 +12,10 @@
 # unless the call passes the leading --allow-unrouted. And the --search create-time re-search: an
 # unacknowledged open hit filed inside the window refuses with exit 5 before anything is created,
 # replaying the 2026-11-15 race (BF-3306 and BF-3310 filed minutes before BF-3311, off a search that
-# predated both). linear-cli is a PATH shim that logs every invocation; HOME is an empty dir so the
+# predated both). And the parent-link verification: a link the mutation's own answer names stands when the read
+# straight after shows none, the link is re-issued once otherwise, a failing parent read never ends the script with
+# linear-cli's own exit code, and a link neither signal confirms exits 1 naming the repair.
+# linear-cli is a PATH shim that logs every invocation; HOME is an empty dir so the
 # script's cargo-bin PATH prepend cannot resurrect the real CLI. The re-search runs the real
 # linear-dedup-search.sh beside the script, so it hits the same shim.
 #
@@ -70,7 +73,8 @@ EOF
 
 # The shim logs each invocation as pipe-joined args (spaces inside one arg stay visible).
 # LABELS_FIX selects the workspace label fixture per case; STATE_FIX is the state `issues get`
-# reports back and PARENT_FIX the parent it reports. `search issues <q>` answers $FIX/q-<q>.json
+# reports back and PARENT_FIX the parent it reports; PARENT_READS and PARENT_ANSWERS (described at the parent-link
+# cases) script successive reads and successive `relations parent` answers. `search issues <q>` answers $FIX/q-<q>.json
 # (an empty array when absent), or the rate-limit envelope on stderr for q=ratelimited. The
 # `api query` carrying `since=` is the recent-filings read (RECENT_FIX; RECENT_FAIL=1 fails it);
 # any other `api query` is the parent-chain read, answered with a one-deep chain.
@@ -78,13 +82,34 @@ cat > "$WORK/bin/linear-cli" <<EOF
 #!/bin/bash
 LOG="$WORK/calls.log"
 printf '%s\n' "\$(IFS='|'; printf '%s' "\$*")" >> "\$LOG"
+nth() { # nth <comma-list> <n> — the nth item, the last one repeating past the end
+  local IFS=, items
+  read -ra items <<< "\$1"
+  local i=\$(( \$2 - 1 ))
+  [ "\$i" -ge "\${#items[@]}" ] && i=\$(( \${#items[@]} - 1 ))
+  printf '%s' "\${items[\$i]}"
+}
 case "\${1:-} \${2:-}" in
   "issues create") cat >/dev/null; printf '{"identifier":"TT-9"}\n' ;;
-  "issues get")    printf '{"identifier":"TT-9","state":{"name":"%s"},"parent":{"identifier":"%s"}}\n' "\${STATE_FIX:-Backlog}" "\${PARENT_FIX:-}" ;;
+  "issues get")
+    par="\${PARENT_FIX:-}"
+    if [ -n "\${PARENT_READS:-}" ]; then par=\$(nth "\$PARENT_READS" "\$(grep -c '^issues|get' "\$LOG")"); fi
+    case "\$par" in
+      '!'*) exit "\${par#!}" ;;
+      -)    par="" ;;
+    esac
+    printf '{"identifier":"TT-9","state":{"name":"%s"},"parent":{"identifier":"%s"}}\n' "\${STATE_FIX:-Backlog}" "\$par" ;;
   "labels list")   cat "\${LABELS_FIX:?}" ;;
   "labels create") exit 0 ;;
   "issues update") exit 0 ;;
-  "relations parent") exit 0 ;;
+  "relations parent")
+    ans=""
+    if [ -n "\${PARENT_ANSWERS:-}" ]; then ans=\$(nth "\$PARENT_ANSWERS" "\$(grep -c '^relations|parent' "\$LOG")"); fi
+    case "\$ans" in
+      "") ;;
+      -)  printf '{\n  "issue": {\n    "id": "u-1",\n    "identifier": "TT-9",\n    "parent": null\n  },\n  "success": true\n}\n' ;;
+      *)  printf '{\n  "issue": {\n    "id": "u-1",\n    "identifier": "TT-9",\n    "parent": {\n      "identifier": "%s",\n      "title": "Parent title"\n    }\n  },\n  "success": true\n}\n' "\$ans" ;;
+    esac ;;
   "search issues")
     if [ "\${3:-}" = ratelimited ]; then cat "$FIX/ratelimited.err" >&2; exit 1; fi
     if [ -f "$FIX/q-\${3:-}.json" ]; then cat "$FIX/q-\${3:-}.json"; else echo '[]'; fi ;;
@@ -274,6 +299,45 @@ ck_lacks "no --search: no search ran"               "search|issues"     "$WORK/c
 
 rc=$(RECENT_FIX="$FIX/recent-incident.json" runs BF-3302 "Account forms." --allow-unrouted --search transport --allow-planned)
 ck "mixed leading flags: still refuses"  "5" "$rc"
+
+echo "linear-create-child.sh parent-link verification —"
+
+# PARENT_ANSWERS feeds successive `relations parent` responses (an id names it, `-` answers a null parent, unset prints
+# nothing); PARENT_READS feeds the parent successive `issues get` calls report (`-` none, `!N` exits N). The state
+# check's read is the first `issues get`, so the parent read is the second.
+rc=$(PARENT_ANSWERS=BF-3302 PARENT_READS=- runs BF-3302 "Account forms.")
+ck "stale read, mutation answered: exit 0"       "0" "$rc"
+ck "stale read, mutation answered: id on stdout" "TT-9" "$(cat "$WORK/out")"
+ck "stale read, mutation answered: one write"    "1" "$(grep -c '^relations|parent' "$WORK/calls.log")"
+ck_has  "stale read, mutation answered: WARN names both signals" "the link mutation answered parent 'BF-3302' but the read straight after showed 'none'" "$WORK/err"
+ck_has  "the link is asked for in JSON"                           "relations|parent|TT-9|BF-3302|-o|json" "$WORK/calls.log"
+
+rc=$(PARENT_ANSWERS=-,BF-3302 PARENT_READS=- runs BF-3302 "Account forms.")
+ck "write did not take once: exit 0"             "0" "$rc"
+ck "write did not take once: two writes"         "2" "$(grep -c '^relations|parent' "$WORK/calls.log")"
+ck_has  "write did not take once: WARN says a second write confirmed" "confirmed only after a second 'relations parent'" "$WORK/err"
+
+rc=$(PARENT_READS=-,-,BF-3302 runs BF-3302 "Account forms.")
+ck "no answer, late read: exit 0"                "0" "$rc"
+ck "no answer, late read: two writes"            "2" "$(grep -c '^relations|parent' "$WORK/calls.log")"
+ck_has  "no answer, late read: WARN"                               "confirmed only after a second 'relations parent'" "$WORK/err"
+
+rc=$(PARENT_ANSWERS=- PARENT_READS=- runs BF-3302 "Account forms.")
+ck "never linked: exit 1"                        "1" "$rc"
+ck "never linked: id still on stdout"            "TT-9" "$(cat "$WORK/out")"
+ck "never linked: two writes, no third"          "2" "$(grep -c '^relations|parent' "$WORK/calls.log")"
+ck_has  "never linked: says what was read"                         "could not confirm its parent after re-issuing the link" "$WORK/err"
+ck_has  "never linked: names the repair"                           "linear-cli relations parent TT-9 BF-3302" "$WORK/err"
+ck_lacks "never linked: no longer claims the link failed"          "link failed" "$WORK/err"
+
+# A failed parent read must not end the script with linear-cli's own exit code: 4 here means cap plus label failure.
+rc=$(PARENT_ANSWERS=BF-3302 PARENT_READS='BF-3302,!4' runs BF-3302 "Account forms.")
+ck "parent read fails, mutation answered: exit 0" "0" "$rc"
+ck_has  "parent read fails, mutation answered: WARN"               "the link mutation answered parent 'BF-3302'" "$WORK/err"
+
+rc=$(PARENT_ANSWERS=BF-3302 runs BF-3302 "Account forms.")
+ck "both signals agree: exit 0"                  "0" "$rc"
+ck "both signals agree: silent"                  "" "$(cat "$WORK/err")"
 
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

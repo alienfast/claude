@@ -103,7 +103,7 @@ fi
 after=$(printf '%s' "$after_json" | label_names)
 
 if grep -Fxqi -- "$label" <<< "$after"; then
-  echo "ERROR: '$label' is still on $issue_id after the update (concurrent modification?)." >&2
+  echo "ERROR: could not confirm '$label' was removed from $issue_id — the write command exited 0 but the verification read still lists it. Unconfirmed, not failed: label reads lag behind writes (linear skill gotcha #17, skills/linear/references/labels.md) — read it before re-running." >&2
   exit 2
 fi
 missing=()

@@ -51,14 +51,16 @@
 # stdout: the new issue identifier (e.g., PL-451), single line — printed on EVERY path
 #         where the issue was created, including the degraded ones (exits 2/3/4 and the
 #         post-create exit-1 cases). Empty stdout means no issue exists.
-# stderr (failure/degraded): one-line diagnostic.
+# stderr (failure/degraded): one-line diagnostic. An exit 0 can also carry a WARN: the parent
+#         link was accepted on the link mutation's own answer, or only after a second link.
 #
 # Why a helper: `linear-cli issues create` has no `--parent` flag. You *can* set the
 # parent's UUID as `parentId` via `--data` JSON (it carries `description` too on 0.3.26),
 # but a bare create — `--data` or otherwise — never confirms the link took. So this
 # creates the issue with the description via `-d -` (robust stdin for large markdown
 # bodies, no JSON-escaping or ARG_MAX concerns), links the parent with `relations parent`,
-# and then VERIFIES the link — failing hard on an orphan, with one benign exception: a
+# and then VERIFIES the link from that mutation's own answer and a read of the issue,
+# re-issuing it once before failing hard on an orphan, with one benign exception: a
 # parent at Linear's sub-issue nesting cap (10 ancestors) deterministically rejects every
 # new child, so the helper wires a `related` peer edge instead and exits 3 (or 4). The
 # verification is what makes this safe: the orphan the "create then forget to link"
@@ -346,10 +348,12 @@ if [ -n "$parent" ] && [ "$parent" != "-" ]; then
   [ "${chain:-0}" -ge 11 ] && capped=1
 
   if [ "$capped" -eq 0 ]; then
-    perr=$(linear-cli relations parent "$new_id" "$parent" 2>&1 >/dev/null) || {
-      case "$perr" in
+    # `-o json` keeps the mutation's own answer: `relations parent` selects issue{parent{identifier}}, and its table
+    # line prints the REQUESTED parent when that answer carries none, so only the JSON form is evidence.
+    pout=$(linear-cli relations parent "$new_id" "$parent" -o json 2>&1) || {
+      case "$pout" in
         *"invalid parent"*) capped=1 ;;   # backstop: pre-check raced or under-counted
-        *) echo "ERROR: created $new_id but 'relations parent $new_id $parent' failed — issue has no parent link: $perr" >&2; exit 1 ;;
+        *) echo "ERROR: created $new_id but 'relations parent $new_id $parent' failed — issue has no parent link: $pout" >&2; exit 1 ;;
       esac
     }
   fi
@@ -363,10 +367,31 @@ if [ -n "$parent" ] && [ "$parent" != "-" ]; then
     fi
     echo "WARN: created $new_id but parent '$parent' is at Linear's sub-issue nesting cap (10 ancestors) — wired as 'related' instead of a sub-issue" >&2
   else
-    linked=$(linear-cli issues get "$new_id" -o json 2>/dev/null | jq -r '.parent.identifier // empty')
+    # Two signals, each empty when it could not be read: the parent the link mutation's own response names, and a
+    # separate read of the issue. The read taken straight after the write can show no parent for a link that landed
+    # (BF-3343, 2026-11-17: this check exited 1 on 'none', and a bare read four seconds later, with no second write,
+    # showed the parent), so the response is consulted before the issue is called an orphan. Whether `relations parent`
+    # can also report success without writing, as `issues update` does (linear gotcha #8), is unmeasured; re-issuing
+    # the same parent once covers it. Each WARN names the signals that disagreed, never a mechanism. The `|| true`
+    # keeps a failed read from ending the script under `set -eo pipefail` with linear-cli's own exit code, since 2, 3
+    # and 4 mean something else here.
+    answered_parent() { printf '%s' "$1" | jq -r '.issue.parent.identifier // .data.issueUpdate.issue.parent.identifier // empty' 2>/dev/null || true; }
+    read_parent() { linear-cli issues get "$new_id" -o json --no-cache 2>/dev/null | jq -r '.parent.identifier // empty' 2>/dev/null || true; }
+    answered=$(answered_parent "$pout")
+    linked=$(read_parent)
     if [ "$linked" != "$parent" ]; then
-      echo "ERROR: created $new_id but its parent is '${linked:-none}', expected '$parent' — link failed" >&2
-      exit 1
+      if [ "$answered" = "$parent" ]; then
+        echo "WARN: created $new_id — the link mutation answered parent '$parent' but the read straight after showed '${linked:-none}'; linked on the mutation's answer" >&2
+      else
+        answered=$(answered_parent "$(linear-cli relations parent "$new_id" "$parent" -o json 2>/dev/null || true)")
+        [ "$answered" = "$parent" ] || linked=$(read_parent)
+        if [ "$answered" = "$parent" ] || [ "$linked" = "$parent" ]; then
+          echo "WARN: created $new_id — its parent '$parent' was confirmed only after a second 'relations parent'" >&2
+        else
+          echo "ERROR: created $new_id but could not confirm its parent after re-issuing the link: the mutation answered '${answered:-nothing}' and the issue reads '${linked:-none}', expected '$parent' — confirm or re-link: linear-cli relations parent $new_id $parent" >&2
+          exit 1
+        fi
+      fi
     fi
   fi
 fi

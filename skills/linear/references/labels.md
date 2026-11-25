@@ -31,7 +31,8 @@ Label reads are eventually consistent and flap in both directions across reads s
 alone, then both labels, then `specified` alone, then both, over ~20s, for a write that had landed on the first
 attempt). `linear-add-label.sh` verifies with its own re-read, so it inherits this: `ERROR: label set on <ID> may have
 been modified concurrently — expected […], found […], missing […]` (exit 2) means **could not confirm**, not
-**failed**. A caller that treats exit 2 as a hard failure acts on a write that succeeded.
+**failed**. A caller that treats exit 2 as a hard failure acts on a write that succeeded. `linear-remove-label.sh`
+re-reads the same way, and its `ERROR: could not confirm …` message (exit 2) means the same.
 
 **Do not retry the write on the strength of it.** `issues update -l` replaces the whole label set (gotcha #7), so a
 retry built from a stale read can drop a label another actor just added — the exact loss the helper's `--no-cache`
