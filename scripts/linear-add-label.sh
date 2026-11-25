@@ -16,11 +16,13 @@
 #   1 = usage error (bad issue id, invalid label), missing dependency, or the issue
 #       could not be read/parsed
 #   2 = the attach failed, or it succeeded but verification could not confirm it
-#       (concurrent label change, or a transient re-read failure) — stderr names
-#       the case and, for a missing label: linear-cli labels create "<label>" -t issue.
+#       (a lagging read, a concurrent label change, or a transient re-read failure) —
+#       stderr names the case and, for a missing label: linear-cli labels create "<label>" -t issue.
 #       Also 2 when the requested name matches SEVERAL existing labels after
 #       normalization (ambiguous near-miss) — a unique near-miss heals to the existing
 #       label instead (NOTE on stderr), never minting a spacing/case twin.
+#
+# Tested by linear-add-label.test.sh, with linear-cli as a PATH shim.
 
 set -eo pipefail
 
@@ -62,7 +64,7 @@ workspace_label_names() { jq -r '.. | objects | select(has("name")) | .name'; }
 # "zero labels", while a bare array or scalar crashes label_names outside the 0/1/2 exit contract. The
 # "zero labels" misread is wrong on both call sites this guards: on the initial read it would make the
 # update below REPLACE the whole label set with just the new one; on the verify re-read it would falsely
-# trigger the concurrent-modification alarm. has("labels") alone isn't enough: `.labels: null` passes it
+# report every sent label missing. has("labels") alone isn't enough: `.labels: null` passes it
 # but reads as zero labels, and `.labels: "weird"` passes it but reads as zero labels too. Require
 # .labels.nodes to be an array of objects with non-degenerate string names — the one issues-get shape
 # (linear skill gotcha #13), which label_names above then reads unguarded.
@@ -167,6 +169,6 @@ for name in "${expected[@]}"; do
   grep -Fxqi -- "$name" <<< "$after" || missing+=("$name")
 done
 if [ "${#missing[@]}" -gt 0 ]; then
-  echo "ERROR: label set on $issue_id may have been modified concurrently — expected [${expected[*]}], found [$(printf '%s' "$after" | tr '\n' ' ')], missing [${missing[*]}]." >&2
+  echo "ERROR: could not confirm the label set on $issue_id after attaching '$label' — expected [${expected[*]}], the verification read shows [$(printf '%s' "$after" | tr '\n' ' ')], missing [${missing[*]}]. Unconfirmed, not failed: a stale read, another writer, or a dropped label all look like this (linear skill gotcha #17, skills/linear/references/labels.md) — read it before re-running." >&2
   exit 2
 fi

@@ -29,10 +29,10 @@ Read this before any label read or write. What each label means and who applies 
 
 Label reads are eventually consistent and flap in both directions across reads seconds apart (observed: `specified`
 alone, then both labels, then `specified` alone, then both, over ~20s, for a write that had landed on the first
-attempt). `linear-add-label.sh` verifies with its own re-read, so it inherits this: `ERROR: label set on <ID> may have
-been modified concurrently — expected […], found […], missing […]` (exit 2) means **could not confirm**, not
-**failed**. A caller that treats exit 2 as a hard failure acts on a write that succeeded. `linear-remove-label.sh`
-re-reads the same way, and its two `ERROR: could not confirm …` messages (exit 2) mean the same.
+attempt). `linear-add-label.sh` and `linear-remove-label.sh` each verify with their own re-read, so they inherit
+this: their `ERROR: could not confirm …` messages (exit 2) mean **could not confirm**, not **failed**. A caller that
+treats that exit 2 as a hard failure acts on a write that succeeded. The same exit code also carries the helpers' real
+failures (an update `linear-cli` rejected, an ambiguous near-miss), and stderr names which.
 
 **Do not retry the write on the strength of it.** `issues update -l` replaces the whole label set (gotcha #7), so a
 retry built from a stale read can drop a label another actor just added — the exact loss the helper's `--no-cache`
